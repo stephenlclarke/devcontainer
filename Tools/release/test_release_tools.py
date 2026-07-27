@@ -119,16 +119,17 @@ class ReleaseToolTests(unittest.TestCase):
             (source / "target").write_text("value", encoding="utf-8")
             (source / "link").symlink_to("target")
 
+            arguments = (
+                "create-reproducible-archive.py",
+                "--source",
+                str(source),
+                "--output",
+                str(root / "archive.tar.gz"),
+                "--epoch",
+                "1",
+            )
             with self.assertRaises(subprocess.CalledProcessError):
-                self.run_tool(
-                    "create-reproducible-archive.py",
-                    "--source",
-                    str(source),
-                    "--output",
-                    str(root / "archive.tar.gz"),
-                    "--epoch",
-                    "1",
-                )
+                self.run_tool(*arguments)
 
     def test_sbom_contains_the_root_and_every_resolved_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -274,22 +275,23 @@ class ReleaseToolTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            arguments = (
+                "write-sbom.py",
+                "--version",
+                "1.2.3",
+                "--commit",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--source-date-epoch",
+                "1785100000",
+                "--resolved",
+                str(resolved),
+                "--license-manifest",
+                str(licenses),
+                "--output",
+                str(output),
+            )
             with self.assertRaises(subprocess.CalledProcessError):
-                self.run_tool(
-                    "write-sbom.py",
-                    "--version",
-                    "1.2.3",
-                    "--commit",
-                    "0123456789abcdef0123456789abcdef01234567",
-                    "--source-date-epoch",
-                    "1785100000",
-                    "--resolved",
-                    str(resolved),
-                    "--license-manifest",
-                    str(licenses),
-                    "--output",
-                    str(output),
-                )
+                self.run_tool(*arguments)
 
     def test_homebrew_formula_embeds_version_and_archive_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

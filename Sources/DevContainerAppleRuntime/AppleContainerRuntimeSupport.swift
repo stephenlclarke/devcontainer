@@ -471,11 +471,18 @@ extension AppleContainerRuntime {
                 }
             }
             continuation.onTermination = { _ in
-                task.cancel()
-                Task {
-                    session.cancel()
-                }
+                Self.cancelStreamTask(task, session: session)
             }
+        }
+    }
+
+    private static func cancelStreamTask(
+        _ task: Task<Void, Never>,
+        session: AppleProcessSession
+    ) {
+        task.cancel()
+        Task {
+            session.cancel()
         }
     }
 

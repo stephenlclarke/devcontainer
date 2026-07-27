@@ -20,6 +20,19 @@ import DevContainerRuntimeSPI
 import Foundation
 
 extension DockerRouter {
+    func container(
+        _ snapshot: ContainerSnapshot,
+        matches expectedLabels: [String: String]
+    ) throws -> Bool {
+        let actualLabels = try RuntimeLabels.projectComposeLabels(snapshot.spec.labels)
+        return expectedLabels.allSatisfy { key, expected in
+            guard let actual = actualLabels[key] else {
+                return false
+            }
+            return expected.isEmpty || actual == expected
+        }
+    }
+
     func stripAPIVersion(_ path: String) -> String {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
         guard let first = components.first, first.hasPrefix("v"), first.dropFirst().contains(".") else {
@@ -212,9 +225,11 @@ extension DockerRouter {
                     for try await data in stream {
                         let text = String(data: data, encoding: .utf8)
                             ?? "non-UTF-8 progress output"
-                        let object: [String: String] = status.map {
-                            ["status": $0, "progress": text]
-                        } ?? ["stream": text]
+                        let object: [String: String] = if let status {
+                            ["status": status, "progress": text]
+                        } else {
+                            ["stream": text]
+                        }
                         var encoded = try DockerJSON.encoder.encode(object)
                         encoded.append(0x0A)
                         continuation.yield(encoded)
@@ -361,24 +376,39 @@ extension DockerRouter {
     func portBindings(
         _ values: [String: [DockerPortBindingRequest]]
     ) throws -> [PortBinding] {
-        try values.flatMap { containerKey, hostBindings in
+        var result: [PortBinding] = []
+        for (containerKey, hostBindings) in values {
             let keyParts = containerKey.split(separator: "/", maxSplits: 1)
             guard let containerPort = UInt16(keyParts[0]) else {
                 throw DevContainerError(.invalidRequest, message: "invalid port \(containerKey)")
             }
             let protocolName = keyParts.count == 2 ? String(keyParts[1]) : "tcp"
             if hostBindings.isEmpty {
-                return [PortBinding(containerPort: containerPort, protocolName: protocolName)]
+                result.append(
+                    PortBinding(
+                        containerPort: containerPort,
+                        protocolName: protocolName
+                    )
+                )
+                continue
             }
-            return hostBindings.map { binding in
-                PortBinding(
-                    containerPort: containerPort,
-                    hostPort: binding.hostPort.flatMap(UInt16.init),
-                    protocolName: protocolName,
-                    hostAddress: binding.hostIP.flatMap { $0.isEmpty ? nil : $0 } ?? "127.0.0.1"
+            for binding in hostBindings {
+                let hostAddress: String = if let requested = binding.hostIP, !requested.isEmpty {
+                    requested
+                } else {
+                    "127.0.0.1"
+                }
+                result.append(
+                    PortBinding(
+                        containerPort: containerPort,
+                        hostPort: binding.hostPort.flatMap(UInt16.init),
+                        protocolName: protocolName,
+                        hostAddress: hostAddress
+                    )
                 )
             }
         }
+        return result
     }
 
     func networkAttachments(

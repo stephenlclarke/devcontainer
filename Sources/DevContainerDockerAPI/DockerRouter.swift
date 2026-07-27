@@ -336,10 +336,7 @@ private extension DockerRouter {
                 context: context
             )
             let filtered = try containers.filter { snapshot in
-                let projected = try RuntimeLabels.projectComposeLabels(snapshot.spec.labels)
-                return labels.allSatisfy { key, expected in
-                    projected[key].map { expected.isEmpty || $0 == expected } ?? false
-                }
+                try container(snapshot, matches: labels)
             }
             return try .json(filtered.map(containerSummary))
         }

@@ -151,22 +151,26 @@ enum DevContainerComposeCommand {
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                process.terminationHandler = { process in
-                    continuation.resume(returning: process.terminationStatus)
-                }
-                do {
-                    try process.run()
-                } catch {
-                    FileHandle.standardError.write(
-                        Data("devcontainer-compose: cannot launch \(executable.path): \(error)\n".utf8)
-                    )
-                    continuation.resume(returning: 127)
-                }
-            }
+            await run(process, executable: executable)
         } onCancel: {
             if process.isRunning {
                 process.terminate()
+            }
+        }
+    }
+
+    private static func run(_ process: Process, executable: URL) async -> Int32 {
+        await withCheckedContinuation { continuation in
+            process.terminationHandler = { process in
+                continuation.resume(returning: process.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                FileHandle.standardError.write(
+                    Data("devcontainer-compose: cannot launch \(executable.path): \(error)\n".utf8)
+                )
+                continuation.resume(returning: 127)
             }
         }
     }
