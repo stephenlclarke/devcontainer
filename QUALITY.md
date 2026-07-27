@@ -7,10 +7,13 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
-below. At this development-candidate snapshot, 92 Swift tests pass with 90.13%
-first-party executable-line coverage. Full isolated stock Apple runtime and
-live VS Code release evidence remains outstanding, so these implemented gates
-are not yet a stable-support claim.
+below. At this development-candidate snapshot, 113 Swift tests pass with
+90.52% first-party executable-line coverage. All 18 CLI parity fixtures and
+the pinned real VS Code fixture pass through real Docker, signed stock Apple
+`container` 1.1.0, and the separately identified Apple Compose lane with zero
+normalized differences. Candidate-bound trusted-runner evidence, signing,
+notarization, and tap publication remain release blockers, so these results are
+not yet a stable-support claim.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -71,13 +74,13 @@ source-line segments written to SonarQube generic coverage XML. It does not use
 LLVM's aggregate summary, which can count multiple executable regions on one
 source line and therefore does not match Sonar's line metric.
 
-Sonar coverage excludes only
-`Sources/DevContainerCLI/DevContainerCommand.swift` and
-`Sources/DevContainerCore/DevContainerProject.swift`: these files contain
-compile-time command registration and immutable build-info forwarding but no
-LLVM executable coverage regions. All command implementations and both CLI
-products remain instrumented. The repository-owned gate and Sonar therefore
-measure the same executable source rather than granting a broad CLI exclusion.
+The exporter has no first-party path exclusions. A source file that contains
+no LLVM executable-line region contributes no denominator; every executable
+line emitted for first-party `Sources` is measured. The root command's
+subcommand factory is executable and covered, while immutable compile-time
+build-info forwarding naturally emits no line region. The repository-owned
+gate and Sonar therefore measure the same executable source without granting a
+broad CLI exclusion.
 
 The coverage job produces a human-readable summary, LCOV, and SonarQube
 generic coverage XML from one unique executable-line map. It fails on missing
