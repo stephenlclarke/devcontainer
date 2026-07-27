@@ -52,7 +52,9 @@ mkdir -p \
   "$stage/share/devcontainer"
 
 GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
-  swift build --disable-automatic-resolution -c release
+  swift build --disable-automatic-resolution \
+    -Xswiftc -warnings-as-errors \
+    -c release
 
 install -m 0755 .build/release/devcontainer "$stage/bin/devcontainer"
 install -m 0755 .build/release/devcontainer-engine "$stage/bin/devcontainer-engine"

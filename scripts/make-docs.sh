@@ -14,6 +14,7 @@ source_reference="${DOCS_SOURCE_REFERENCE:-${GITHUB_SHA:-main}}"
 
 swift package \
   --disable-automatic-resolution \
+  -Xswiftc -warnings-as-errors \
   --scratch-path "$scratch_path" \
   --allow-writing-to-directory "$output_path" \
   generate-documentation \

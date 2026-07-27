@@ -110,6 +110,28 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertLess(initialize, recompile)
         self.assertLess(recompile, analyze)
 
+    def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        package = (ROOT / "scripts" / "package.sh").read_text(encoding="utf-8")
+        docs = (ROOT / "scripts" / "make-docs.sh").read_text(encoding="utf-8")
+        codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors",
+            makefile,
+        )
+        self.assertGreaterEqual(makefile.count("$(SWIFT_STRICT_FLAGS)"), 8)
+        for name, contents in (
+            ("package", package),
+            ("documentation", docs),
+            ("CodeQL", codeql),
+        ):
+            self.assertIn(
+                "-Xswiftc -warnings-as-errors",
+                contents,
+                f"{name} build permits compiler warnings",
+            )
+
     def test_docker_compose_smoke_fixture_is_strict(self) -> None:
         success = subprocess.run(
             [SMOKE_FIXTURE, "compose", "version"],

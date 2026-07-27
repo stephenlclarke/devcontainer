@@ -4,6 +4,7 @@ SHELL := /usr/bin/env bash
 
 DEVCONTAINER_VERSION ?= 0.1.0
 SWIFT ?= swift
+SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
 MARKDOWNLINT ?= markdownlint
 SWIFTLINT ?= swiftlint
@@ -51,11 +52,11 @@ resolve:
 	$(SWIFT) package resolve
 
 build:
-	$(SWIFT) build $(SWIFT_RESOLVED_FLAGS)
+	$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS)
 
 build-release:
 	GIT_COMMIT="$$(git rev-parse HEAD)" DEVCONTAINER_BUILD_LANE=release \
-		$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) -c release
+		$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) -c release
 
 test: swift-test
 
@@ -71,7 +72,7 @@ swift-test:
 	@SWIFT_TEST_RESULT_LOG="$(SWIFT_TEST_RESULT_LOG)" \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) --no-parallel
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) --no-parallel
 
 coverage:
 	@mkdir -p .build
@@ -82,12 +83,14 @@ coverage:
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/coverage --enable-code-coverage --no-parallel
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/coverage --enable-code-coverage \
 		--product devcontainer
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/coverage --enable-code-coverage \
 		--product devcontainer-compose
 	@Tools/coverage/run-cli-coverage.sh \
@@ -153,14 +156,14 @@ asan:
 	@SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/asan --sanitize=address --no-parallel
 
 tsan:
 	@SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/tsan --sanitize=thread --no-parallel
 
 test-asan: asan
