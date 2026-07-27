@@ -99,6 +99,13 @@ DEVCONTAINER_VSCODE_LIVE=1 make parity-vscode-docker
 
 Live runtime tests are deliberately not run on public pull-request code or GitHub-hosted macOS. They execute on an isolated physical runner only after a trusted exact commit has passed hosted checks.
 
+## Documentation
+
+The generated [DocC site](https://stephenlclarke.github.io/devcontainer/)
+contains the public Swift API reference and architecture articles. GitHub Pages
+publishes it from the exact `main` commit that passes the documentation
+workflow.
+
 ## Primary upstream references
 
 The design follows the maintained sources in the [Dev Containers GitHub organization](https://github.com/devcontainers):
