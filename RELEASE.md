@@ -52,6 +52,7 @@ Tools/release/package-context.py
 Tools/release/release-version.py
 Tools/release/render-homebrew-formula.py
 Tools/release/sign-and-notarize.sh
+Tools/release/verify-package.py
 Tools/release/write-build-info.py
 Tools/release/write-notarization-evidence.py
 ```
@@ -463,7 +464,7 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Add DocC build and Pages deployment.
 - [x] Add strict Developer ID signing, notarization, and sanitized evidence tooling.
 - [ ] Provision the release identity/profile and record an accepted package submission.
-- [x] Add deterministic SPDX SBOM generation and package checksums.
+- [x] Add deterministic SPDX SBOM generation, portable checksums, and strict package verification.
 - [ ] Add GitHub artifact attestation.
 - [x] Add formula template, local renderer, syntax validation, and style validation.
 - [ ] Add immutable Current/stable release publication and serialized tap promotion.

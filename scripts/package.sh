@@ -42,6 +42,7 @@ archive_name="$(
 )"
 stage="$dist/stage/devcontainer-$version"
 archive="$dist/$archive_name"
+cp "$context" "$archive.context.json"
 python3 Tools/ci/safe-package-path.py "$stage" "$dist"
 
 rm -rf "$dist/stage"
@@ -80,5 +81,18 @@ if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
 fi
 
 tar -C "$dist/stage" -czf "$archive" "devcontainer-$version"
-shasum -a 256 "$archive" >"$archive.sha256"
+archive_digest="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
+printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" >"$archive.sha256"
+verification_arguments=(
+  --archive "$archive"
+  --checksum "$archive.sha256"
+  --expected-version "$version"
+  --expected-lane "$lane"
+  --expected-commit "$commit"
+  --output "$archive.verification.json"
+)
+if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
+  verification_arguments+=(--require-notarization)
+fi
+python3 Tools/release/verify-package.py "${verification_arguments[@]}"
 printf '%s\n' "$archive"

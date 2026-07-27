@@ -46,3 +46,4 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
             dist/*.rb
+            dist/*.json

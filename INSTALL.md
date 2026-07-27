@@ -140,7 +140,7 @@ The `devcontainer` output should show:
 
 ## Verify Release Integrity
 
-Every published channel will include an archive, SHA-256 sidecar, SPDX SBOM, build-info file, and GitHub build-provenance attestation.
+Every published channel will include an archive, portable SHA-256 sidecar, SPDX SBOM, build-info file, package-verification result, and GitHub build-provenance attestation. Packaging rejects unsafe archive paths, special or privileged files, missing executables, metadata/SBOM mismatches, checksum errors, and missing required notarization evidence before publication.
 
 For a downloaded stable archive:
 
