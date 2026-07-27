@@ -2,7 +2,14 @@
 
 ## Status
 
-This document is the pre-implementation test design for `devcontainer`. The repository currently contains a bootstrap Swift package, a small unit test, and the planned parity manifest in [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). The Docker API server, Apple runtime adapters, differential harness, live-runtime jobs, sanitizer jobs, and VS Code end-to-end suite described below do not exist yet.
+The repository contains the production Docker compatibility service, stock
+Apple runtime adapter, optional `container-compose` provider, differential
+parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
+driver. The hosted-safe suite currently contains 75 Swift tests and records
+90.50% first-party line coverage. All 18 CLI fixtures pass against the real
+Docker oracle and Stephen's matched Apple Compose stack. The V01 real VS Code
+fixture passes against Docker; isolated stock-Apple and Apple-Compose VS Code
+recordings remain required before a stable compatibility claim.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
@@ -197,7 +204,14 @@ GitHub-hosted `macos-26` is suitable for Swift builds, unit/contract tests, cove
 - repository and runtime source checkouts outside Desktop and Documents to avoid Apple `vmnet` path-related failures;
 - labels such as `self-hosted`, `macOS`, `ARM64`, `macos-26`, and `devcontainer-live`.
 
-Live jobs will use a single concurrency group and matrix `max-parallel: 1`. Each run will create an explicit `APP_ROOT`, temporary Docker context, socket, state database, runtime namespace, and fixture prefix. Cleanup runs even after cancellation and fails the job if owned resources remain.
+Live jobs use three provenance-specific self-hosted runner labels:
+`devcontainer-docker`, `devcontainer-apple-stock`, and
+`devcontainer-apple-compose`. This keeps the stock Apple package, Stephen's
+matched runtime stack, and the Docker oracle on independently managed hosts
+and avoids changing a live runtime distribution underneath another job. Each
+run creates an explicit application root, Docker context, socket, state
+database, runtime namespace, and fixture prefix. Cleanup runs even after
+cancellation and fails the job if owned resources remain.
 
 The self-hosted runner will never execute untrusted public-fork pull-request code. Live runs are limited to an exact trusted commit from protected `main`, a schedule, or an explicit maintainer dispatch after hosted checks pass. Release credentials are unavailable to test steps.
 
@@ -214,9 +228,18 @@ Changes to fixture definitions, the normalizer, comparison rules, or release man
 
 ## VS Code end-to-end tests
 
-The E2E suite will pin a stable VS Code build, the stable Dev Containers extension, and the extension's installed Dev Container CLI. The installed CLI is required because its command set includes the `open` operation used by VS Code; a standalone `@devcontainers/cli` package must not be assumed to expose identical commands.
+The E2E suite pins VS Code 1.130.0 for arm64 at commit
+`1b6a188127eeaf9194f945eb6eb89a657e93c54c`, Dev Containers extension 0.467.0,
+and its embedded Dev Container CLI 0.88.0 at
+`f683c29f64a20109b4453e5149807e390ff65133`. The driver authenticates the
+official application, VSIX, and embedded CLI by checked-in SHA-256 digests.
+The installed CLI is required because its command set includes the `open`
+operation used by VS Code; a standalone `@devcontainers/cli` package must not
+be assumed to expose identical commands.
 
-A small workspace probe extension will record activation, remote authority, remote operating system, selected settings, workspace path, forwarded ports, and command results. The fixture will:
+A small test-only workspace probe extension records activation, remote
+authority, remote operating system, workspace path, forwarded ports, command
+results, and container identity. The fixture:
 
 1. Open a folder in a Dev Container through the compatibility socket.
 2. Wait for the remote extension host and probe activation.
@@ -226,9 +249,21 @@ A small workspace probe extension will record activation, remote authority, remo
 6. Rebuild after a configuration change, asserting replacement and cleanup.
 7. Close the workspace and prove no fixture-owned resources remain.
 
-The same scenario runs through stock Apple and `container-compose` where applicable and is compared with a pinned Docker recording. VS Code Insiders may run nightly as an early warning, but it cannot replace the pinned stable-build release gate.
+The Docker recording has passed locally against the exact pins above. The same
+scenario is dispatched independently through stock Apple and
+`container-compose`, then all observations are compared with that Docker
+recording. VS Code Insiders may run as an early warning, but it cannot replace
+the pinned stable-build release gate.
 
 Screenshots are diagnostic artifacts only. Assertions come from machine-readable extension output, process state, protocol recordings, and runtime observations.
+
+The host process environment is fail-closed. Runtime commands receive an
+explicit non-secret allowlist, while VS Code receives a narrower allowlist,
+an isolated home and temporary directory, disabled login-shell environment
+import, and in-memory secret storage. Before publication, the harness scans
+all JSON and log evidence for credential-shaped environment names. A match
+deletes the affected evidence file and fails the lane; it can never become an
+uploaded artifact or a passing result.
 
 ## Coverage design
 
@@ -245,7 +280,7 @@ Unit tests are expected to contribute most branch, translation, and error-path c
 
 ### Collection and merge
 
-The planned Swift coverage flow is:
+The implemented Swift coverage flow is:
 
 1. Build tests and product executables with `swift test --enable-code-coverage`.
 2. Run unit, contract, and hosted integration suites with unique `LLVM_PROFILE_FILE` patterns.
@@ -265,7 +300,8 @@ Coverage is evidence of exercised lines, not behavioral parity. Tests will not b
 
 The sanitizer design deliberately follows the current `container-compose` CI mechanism so both projects diagnose SwiftPM failures consistently.
 
-The shared harness will be implemented as `Tools/ci/run-swift-test.sh`, matching the `container-compose` path and interface. It will:
+The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
+`container-compose` path and interface. It:
 
 - write complete output to `SWIFT_TEST_RESULT_LOG`, defaulting to `.build/swift-test.log`;
 - run `SWIFT_TEST_ATTEMPTS`, defaulting to two attempts;
@@ -310,18 +346,20 @@ Every non-unit run will publish a manifest containing:
 
 Secrets, tokens, host usernames, and unrelated paths are redacted before upload. Redaction is structural and tested; it must not alter the fields used for parity. Stable evidence is retained with the release record, while pull-request artifacts may use a shorter retention period.
 
-## Implementation sequence
+## Remaining release evidence
 
-1. Expand test support with controllable fakes, temporary socket/state isolation, and deterministic observations.
-2. Implement unit and raw Docker contract tests alongside each production endpoint.
-3. Add the separate-process hosted harness, Docker CLI black-box suite, fault injection, and coverage profile merge.
-4. Implement the Docker oracle recorder and strict semantic comparator.
-5. Bring up the stock Apple stable/main live lanes, then the `container-compose` stable/main lanes.
-6. Add concurrency and cleanup stress suites plus ASan and TSan workflows.
-7. Add the pinned VS Code extension-host E2E fixture.
-8. Enable stable-release validation only after every manifest entry is implemented and all required evidence is candidate-bound.
+The service, unit/contract/integration suite, differential CLI harness,
+sanitizer jobs, coverage gate, and pinned VS Code fixture are implemented.
+Stable publication remains fail-closed until the exact release commit has:
 
-At every phase, checked-in manifest entries remain `planned` until the implementation and required lane evidence exist. Documentation must not promote planned coverage to a compatibility claim.
+1. clean, isolated stock-Apple and Apple-Compose CLI recordings;
+2. clean, isolated stock-Apple and Apple-Compose VS Code recordings;
+3. a successful three-lane semantic comparison and cleanup proof;
+4. candidate-bound signing, notarization, package verification, and quality
+   evidence.
+
+Documentation must not promote a locally implemented fixture to a
+compatibility claim until its required candidate-bound recordings exist.
 
 ## Primary references
 

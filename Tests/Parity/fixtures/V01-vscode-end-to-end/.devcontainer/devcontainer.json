@@ -1,0 +1,24 @@
+{
+  "name": "devcontainer-parity-vscode",
+  "dockerComposeFile": "../compose.yaml",
+  "service": "app",
+  "runServices": [
+    "app"
+  ],
+  "shutdownAction": "stopCompose",
+  "overrideCommand": false,
+  "remoteUser": "root",
+  "userEnvProbe": "none",
+  "workspaceFolder": "/workspaces/vscode-parity",
+  "forwardPorts": [
+    8123
+  ],
+  "portsAttributes": {
+    "8123": {
+      "label": "VS Code parity HTTP",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "/bin/sh .devcontainer/lifecycle.sh create",
+  "postAttachCommand": "/bin/sh .devcontainer/lifecycle.sh attach"
+}

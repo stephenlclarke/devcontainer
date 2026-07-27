@@ -1,58 +1,78 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors.
 # Licensed under the Apache License, Version 2.0.
+#
+# USAGE:
+#   run-vscode.sh EVIDENCE_DIR [LANE...]
+#
+# Lanes default to docker, apple-stock, and apple-compose. Set
+# DEVCONTAINER_VSCODE_LANES to a space-separated subset when a dedicated
+# runner owns only one runtime distribution.
 
 set -euo pipefail
 
-if (( $# != 1 )); then
-  printf 'usage: %s EVIDENCE_DIR\n' "$0" >&2
-  exit 2
-fi
+readonly SELF_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_NAME="$(basename "$SELF_PATH")"
+readonly SCRIPT_NAME
+REPOSITORY_ROOT="$(cd "$(dirname "$SELF_PATH")/../.." && pwd -P)"
+readonly REPOSITORY_ROOT
+readonly ALL_LANES=(docker apple-stock apple-compose)
 
-evidence_dir="$1/vscode"
-mkdir -p "$evidence_dir"
-
-if [[ "${DEVCONTAINER_VSCODE_LIVE:-0}" != "1" ]]; then
-  printf 'VS Code live parity requires DEVCONTAINER_VSCODE_LIVE=1\n' >&2
-  exit 1
-fi
-
-command -v code >/dev/null || {
-  printf 'VS Code command-line launcher is required\n' >&2
-  exit 1
+# Print command usage without starting a VS Code session.
+usage() {
+  sed -n 's/^# *//p' "$SELF_PATH" | sed -n '/^USAGE:/,$p'
 }
 
-code --version >"$evidence_dir/version.txt"
-if ! code --list-extensions --show-versions \
-  | grep -E '^ms-vscode-remote[.]remote-containers@' \
-  >"$evidence_dir/extension.txt"; then
-  printf 'the VS Code Dev Containers extension is required\n' >&2
-  exit 1
-fi
+# Reject lane spelling mistakes before any runtime side effects.
+validate_lane() {
+  local requested="$1"
+  local lane
 
-# Interactive attach/rebuild validation is driven by the isolated release
-# runner's VS Code automation. That driver must write its signed result before
-# this gate is called; a missing result is a release failure, never a skip.
-result="${DEVCONTAINER_VSCODE_RESULT:-$evidence_dir/live-result.json}"
-python3 - "$result" <<'PY'
-import json
-import sys
-from pathlib import Path
+  for lane in "${ALL_LANES[@]}"; do
+    if [[ "$lane" == "$requested" ]]; then
+      return 0
+    fi
+  done
 
-path = Path(sys.argv[1])
-if not path.is_file():
-    raise SystemExit(f"VS Code automation result is missing: {path}")
-value = json.loads(path.read_text(encoding="utf-8"))
-required = {
-    "open": True,
-    "attach": True,
-    "integratedCommand": True,
-    "forwardPort": True,
-    "rebuild": True,
-    "reopen": True,
-    "cleanup": True,
+  printf '%s: unsupported lane: %s\n' "$SCRIPT_NAME" "$requested" >&2
+  return 1
 }
-if any(value.get(key) is not expected for key, expected in required.items()):
-    raise SystemExit(f"VS Code parity result failed: {value}")
-print("VS Code live parity passed")
-PY
+
+# Run the authenticated VS Code driver for each explicitly selected lane.
+main() {
+  if (( $# == 1 )) && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    return 0
+  fi
+  if (( $# < 1 )); then
+    usage >&2
+    return 2
+  fi
+  if [[ "${DEVCONTAINER_VSCODE_LIVE:-0}" != "1" ]]; then
+    printf '%s: live parity requires DEVCONTAINER_VSCODE_LIVE=1\n' \
+      "$SCRIPT_NAME" >&2
+    return 1
+  fi
+
+  local evidence_dir="$1/vscode"
+  shift
+  local -a lanes=("$@")
+  if (( ${#lanes[@]} == 0 )); then
+    # Intentional word splitting turns the operator-owned subset into lanes.
+    read -r -a lanes <<<"${DEVCONTAINER_VSCODE_LANES:-${ALL_LANES[*]}}"
+  fi
+
+  local lane
+  for lane in "${lanes[@]}"; do
+    validate_lane "$lane"
+    python3 "$REPOSITORY_ROOT/Tools/parity/run_vscode.py" \
+      "$lane" "$evidence_dir"
+  done
+
+  if (( ${#lanes[@]} == ${#ALL_LANES[@]} )); then
+    python3 "$REPOSITORY_ROOT/Tools/parity/compare_results.py" \
+      "$evidence_dir"
+  fi
+}
+
+main "$@"

@@ -474,6 +474,6 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Add immutable stable and staged/finalized Current publication workflows.
 - [x] Add serialized tap formula and managed README promotion.
 - [ ] Protect `main` with signed commits and stable required contexts.
-- [ ] Enable Dependabot, secret scanning, push protection, and private vulnerability reporting.
+- [x] Enable Dependabot security updates, vulnerability alerts, secret scanning, push protection, and private vulnerability reporting.
 - [ ] Publish the first Current build.
 - [ ] Soak and promote the first stable release.

@@ -13,27 +13,72 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  parity:
+  lane:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: docker
+            runner: devcontainer-docker
+          - lane: apple-stock
+            runner: devcontainer-apple-stock
+          - lane: apple-compose
+            runner: devcontainer-apple-compose
+    runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner }}"]
     timeout-minutes: 240
     steps:
       - name: Check out exact trusted commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate runner provenance
-        run: Tools/parity/runner-preflight.sh
-      - name: Run real Docker and Apple parity
-        run: make parity
-      - name: Run VS Code parity
+        run: Tools/parity/runner-preflight.sh "${{ matrix.lane }}"
+      - name: Run Dev Containers CLI parity
+        run: make "parity-${{ matrix.lane }}"
+      - name: Run real VS Code parity
         env:
           DEVCONTAINER_VSCODE_LIVE: "1"
-        run: make parity-vscode
-      - name: Validate release evidence
-        run: make parity-release
-      - name: Upload parity evidence
+        run: make "parity-vscode-${{ matrix.lane }}"
+      - name: Scrub and validate VS Code evidence
+        if: always()
+        run: >-
+          python3 Tools/parity/scrub_vscode_evidence.py
+          ".build/parity/vscode/${{ matrix.lane }}"
+      - name: Upload lane evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: parity-evidence
+          name: parity-${{ matrix.lane }}
+          path: |
+            .build/parity/${{ matrix.lane }}
+            .build/parity/vscode/${{ matrix.lane }}
+          if-no-files-found: error
+
+  compare:
+    needs: lane
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact trusted commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download all lane evidence
+        uses: actions/download-artifact@3e5f2d17c3dc71e769f702cc7c9e62c90d109d23 # v8
+        with:
+          pattern: parity-*
           path: .build/parity
+          merge-multiple: true
+      - name: Require exact CLI and VS Code equivalence
+        run: |
+          python3 Tools/parity/compare_results.py .build/parity
+          python3 Tools/parity/compare_results.py .build/parity/vscode
+          python3 Tools/parity/validate_manifest.py --release
+      - name: Upload candidate-bound comparison
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parity-comparison
+          path: |
+            .build/parity/comparison.json
+            .build/parity/matrix.md
+            .build/parity/vscode/comparison.json
+            .build/parity/vscode/matrix.md
           if-no-files-found: error

@@ -2,9 +2,12 @@
 
 The parity suite treats a pinned real Docker Engine plus the official [`@devcontainers/cli`](https://github.com/devcontainers/cli) as the behavioral oracle. Every claimed fixture must produce equivalent semantic observations through the stock Apple and container-compose lanes.
 
-The checked-in [`manifest.json`](manifest.json) is the release contract. During bootstrap, fixtures are marked `planned`; `python3 Tools/parity/validate_manifest.py --release` deliberately fails until every fixture is implemented. A stable release cannot bypass that check.
+The checked-in [`manifest.json`](manifest.json) is the release contract.
+`python3 Tools/parity/validate_manifest.py --release` fails closed if a fixture
+or required pin is incomplete. A stable release cannot bypass the
+candidate-bound runtime recordings and comparison.
 
-Each implemented fixture will contain:
+Each implemented CLI fixture contains:
 
 - `.devcontainer/devcontainer.json` and any Dockerfile or Compose files;
 - `contract.json`, containing the semantic assertions;
@@ -12,4 +15,11 @@ Each implemented fixture will contain:
 - only public, digest-pinned images and Features;
 - no credentials, private registry names, personal paths, or machine-specific state.
 
-Runtime jobs will retain raw output, normalized observation JSON, JUnit results, a Markdown matrix, backend fingerprints, cleanup evidence, and diagnostics for every difference.
+The V01 fixture is driven through the real, authenticated VS Code application,
+the official Dev Containers VSIX, and a test-only workspace probe extension.
+It records open, activation, command, port, rebuild, reopen, server, and cleanup
+observations without patching the Microsoft extension.
+
+Runtime jobs retain raw output, normalized observation JSON, JUnit results, a
+Markdown matrix, backend fingerprints, cleanup evidence, and diagnostics for
+every difference.

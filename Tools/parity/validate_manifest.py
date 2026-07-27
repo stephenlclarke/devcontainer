@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 REQUIRED_BACKENDS = {"docker", "apple-stock", "apple-compose"}
 IMPLEMENTED_STATUS = "implemented"
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ManifestError(ValueError):
@@ -28,6 +31,46 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
     """Validate one parsed parity manifest."""
 
     _require(payload.get("schemaVersion") == 1, "schemaVersion must be 1")
+
+    references = payload.get("referencePins")
+    _require(isinstance(references, dict), "referencePins must be an object")
+    vscode = references.get("vscode")
+    _require(isinstance(vscode, dict), "referencePins.vscode must be an object")
+    _require(
+        GIT_COMMIT.fullmatch(str(vscode.get("commit", ""))) is not None,
+        "referencePins.vscode.commit must be a full Git commit",
+    )
+    _require(
+        SHA256.fullmatch(str(vscode.get("archiveSHA256", ""))) is not None,
+        "referencePins.vscode.archiveSHA256 must be a SHA-256 digest",
+    )
+    _require(
+        vscode.get("platform") == "darwin-arm64",
+        "the VS Code reference must use darwin-arm64",
+    )
+    extension = vscode.get("devContainersExtension")
+    _require(
+        isinstance(extension, dict),
+        "referencePins.vscode.devContainersExtension must be an object",
+    )
+    _require(
+        SHA256.fullmatch(str(extension.get("vsixSHA256", ""))) is not None,
+        "the Dev Containers VSIX must have a SHA-256 digest",
+    )
+    _require(
+        GIT_COMMIT.fullmatch(str(extension.get("embeddedCliCommit", "")))
+        is not None,
+        "the embedded Dev Containers CLI must have a full Git commit",
+    )
+    _require(
+        SHA256.fullmatch(str(extension.get("embeddedCliSHA256", ""))) is not None,
+        "the embedded Dev Containers CLI must have a SHA-256 digest",
+    )
+    _require(
+        extension.get("embeddedCliVersion")
+        == references.get("devcontainersCli", {}).get("version"),
+        "VS Code and direct parity must use the same Dev Containers CLI version",
+    )
 
     policy = payload.get("releasePolicy")
     _require(isinstance(policy, dict), "releasePolicy must be an object")

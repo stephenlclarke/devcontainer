@@ -21,6 +21,25 @@
       "stableVersion": "0.10.0",
       "stableCommit": "42b737dcda830f79b3f0993212e97fefe179f427",
       "mainCommit": "517be1f08abfc4f48849c78071d428c5b03f9b8d"
+    },
+    "vscode": {
+      "version": "1.130.0",
+      "commit": "1b6a188127eeaf9194f945eb6eb89a657e93c54c",
+      "platform": "darwin-arm64",
+      "source": "https://github.com/microsoft/vscode",
+      "archiveURL": "https://update.code.visualstudio.com/1.130.0/darwin-arm64/stable",
+      "archiveSHA256": "6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3",
+      "applicationIdentifier": "com.microsoft.VSCode",
+      "signingTeamIdentifier": "UBF8T346G9",
+      "devContainersExtension": {
+        "version": "0.467.0",
+        "source": "https://github.com/microsoft/vscode-remote-release",
+        "vsixURL": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-containers/0.467.0/vspackage",
+        "vsixSHA256": "b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012",
+        "embeddedCliVersion": "0.88.0",
+        "embeddedCliCommit": "f683c29f64a20109b4453e5149807e390ff65133",
+        "embeddedCliSHA256": "ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca"
+      }
     }
   },
   "releasePolicy": {
@@ -185,7 +204,8 @@
     },
     {
       "id": "V01-vscode-end-to-end",
-      "status": "planned",
+      "status": "implemented",
+      "runner": "vscode",
       "backends": ["docker", "apple-stock", "apple-compose"],
       "assertions": ["open and attach", "extension activation and integrated command", "port forwarding rebuild reopen and cleanup"]
     }

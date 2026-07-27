@@ -22,7 +22,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from parity_lib import (
     LANES,
@@ -100,13 +100,7 @@ class LaneRunner:
         if self.lane != "docker":
             self.start_engine()
         else:
-            self.environment["DOCKER_HOST"] = os.environ.get(
-                "DEVCONTAINER_DOCKER_ORACLE_HOST",
-                os.environ.get("DOCKER_HOST", ""),
-            )
-            if not self.environment["DOCKER_HOST"]:
-                self.environment.pop("DOCKER_HOST")
-            self.require_docker_oracle()
+            self.configure_docker_oracle()
 
         results: list[dict[str, Any]] = []
         try:
@@ -278,6 +272,38 @@ class LaneRunner:
         operating_system = str(info.get("OperatingSystem", "")).lower()
         if "apple container" in operating_system or "devcontainer" in operating_system:
             raise ParityError("docker oracle lane points at the Apple compatibility service")
+
+    def configure_docker_oracle(self) -> None:
+        """Resolve the selected context to one explicit, non-ambient endpoint."""
+
+        endpoint = os.environ.get(
+            "DEVCONTAINER_DOCKER_ORACLE_HOST",
+            os.environ.get("DOCKER_HOST", ""),
+        )
+        explicit_endpoint = bool(endpoint)
+        if not endpoint:
+            context = run_checked(
+                [
+                    self.docker,
+                    "context",
+                    "inspect",
+                    "--format",
+                    "{{.Endpoints.docker.Host}}",
+                ],
+                environment=self.environment,
+            )
+            endpoint = context.stdout.strip()
+        if not endpoint:
+            raise ParityError("Docker oracle context has no endpoint")
+        self.environment["DOCKER_HOST"] = endpoint
+        if explicit_endpoint:
+            self.environment.pop("DOCKER_CONTEXT", None)
+        elif self.environment.get("DOCKER_CONTEXT"):
+            self.environment.setdefault(
+                "DOCKER_CONFIG",
+                str(Path(self.environment["HOME"]) / ".docker"),
+            )
+        self.require_docker_oracle()
 
     def fingerprint(self) -> dict[str, Any]:
         commands: dict[str, Sequence[str]] = {
@@ -1121,13 +1147,48 @@ class LaneRunner:
         return cleanup_output + "no fixture containers remained\n"
 
 
-def safe_environment(source: os._Environ[str]) -> dict[str, str]:
-    """Drop loader injection variables while preserving test configuration."""
+SAFE_ENVIRONMENT_KEYS = frozenset(
+    {
+        "CONTAINER_HOST",
+        "CONTAINER_INSTALLATION_ROOT",
+        "CONTAINER_REGISTRY_CONFIG",
+        "CONTAINER_RUNTIME_CONFIG",
+        "DEVELOPER_DIR",
+        "DEVCONTAINER_ALLOW_CUSTOM_STOCK",
+        "DEVCONTAINER_COMPOSE_BIN",
+        "DEVCONTAINER_CONTAINER_BIN",
+        "DEVCONTAINER_DOCKER_BIN",
+        "DEVCONTAINER_DOCKER_ORACLE_HOST",
+        "DEVCONTAINER_PARITY_FIXTURES",
+        "DOCKER_CERT_PATH",
+        "DOCKER_CONFIG",
+        "DOCKER_CONTEXT",
+        "DOCKER_DEFAULT_PLATFORM",
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "NO_COLOR",
+        "PATH",
+        "SDKROOT",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "TERM",
+        "TMPDIR",
+        "TOOLCHAINS",
+    }
+)
+
+
+def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
+    """Build a fail-closed environment without credentials or shell hooks."""
 
     return {
         key: value
         for key, value in source.items()
-        if not key.startswith(("DYLD_", "LD_")) and key not in {"BASH_ENV", "ENV"}
+        if key in SAFE_ENVIRONMENT_KEYS
     }
 
 

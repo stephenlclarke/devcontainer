@@ -1,0 +1,13 @@
+{
+  "expected": {
+    "attach": true,
+    "cleanup": true,
+    "extension_activation": true,
+    "forward_port": true,
+    "integrated_command": true,
+    "open": true,
+    "rebuild": true,
+    "reopen": true,
+    "vscode_server": true
+  }
+}

@@ -28,7 +28,9 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: test-contract test-integration swift-test coverage coverage-check
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
-.PHONY: parity-apple-compose parity parity-vscode parity-release runtime-check
+.PHONY: parity-apple-compose parity parity-vscode-docker
+.PHONY: parity-vscode-apple-stock parity-vscode-apple-compose parity-vscode
+.PHONY: parity-release runtime-check
 .PHONY: package package-release homebrew-formula homebrew-formula-current
 .PHONY: release-version
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan clean
@@ -153,8 +155,8 @@ lint:
 	$(SWIFTLINT) lint --strict --quiet \
 		--baseline .build/swiftlint-baseline.json Sources Tests
 	$(SWIFTFORMAT) Sources Tests --lint
-	bash -n Tools/ci/*.sh Tools/release/*.sh scripts/*.sh
-	shellcheck Tools/ci/*.sh Tools/release/*.sh scripts/*.sh
+	bash -n Tools/ci/*.sh Tools/parity/*.sh Tools/release/*.sh scripts/*.sh
+	shellcheck Tools/ci/*.sh Tools/parity/*.sh Tools/release/*.sh scripts/*.sh
 	$(ACTIONLINT)
 
 format:
@@ -180,6 +182,15 @@ parity: parity-docker parity-apple-stock parity-apple-compose
 
 parity-vscode:
 	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)"
+
+parity-vscode-docker:
+	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" docker
+
+parity-vscode-apple-stock:
+	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" apple-stock
+
+parity-vscode-apple-compose:
+	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" apple-compose
 
 parity-release: parity parity-vscode
 	$(PYTHON) Tools/parity/validate_manifest.py --release

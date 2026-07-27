@@ -6,9 +6,10 @@
 > This repository is a functional development candidate, not a supported
 > release. It contains the Docker Engine compatibility service, stock Apple
 > runtime adapter, and optional Compose dispatcher. All checked-in fixtures
-> pass locally against real Docker and the custom Apple Compose stack. A clean
-> isolated run against the exact stock Apple package and live VS Code
-> attach/rebuild evidence are still release blockers, so no row below is yet
+> pass locally against real Docker and the custom Apple Compose stack. The
+> pinned VS Code end-to-end fixture passes against the Docker oracle. Clean,
+> isolated VS Code recordings against the exact stock Apple package and
+> Apple-Compose provider remain release blockers, so no row below is yet
 > marked `supported`.
 
 This document is the support and claim ledger for `devcontainer`. A stable
@@ -74,14 +75,15 @@ command.
 | `container-compose` main evidence | No release claim | `517be1f08abfc4f48849c78071d428c5b03f9b8d` | Forward provider evidence only |
 | Main provider's `stephenlclarke/container` | Revision | `221fafc24ebd19502f4553e0b5d38c14be3f2b22` | Exact fork dependency at the recorded provider commit |
 | Main provider's `stephenlclarke/containerization` | Revision | `164088e02e16ed80e536d0c59822b09931d213df` | Exact fork dependency at the recorded provider commit |
-| VS Code | Pending exact pin | Version, commit/build, distribution digest, and signing identity are not yet recorded | End-to-end client |
-| VS Code Dev Containers extension | Pending exact pin | Marketplace version, VSIX digest, and embedded CLI identity are not yet recorded | End-to-end reference integration |
+| VS Code | `1.130.0`, arm64 stable | Commit `1b6a188127eeaf9194f945eb6eb89a657e93c54c`; official archive SHA-256 `6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
+| VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
 | macOS and Xcode | Pending exact release image | Product/build versions must be captured in the evidence manifest | Host and toolchain |
 
-Missing digests and pending VS Code, extension, macOS, and Xcode pins are
+Pending Docker/Compose binary digests and macOS/Xcode release-image pins are
 release blockers. Moving branch heads are never stable compatibility claims.
 Evidence against a `main` commit is maintained separately from the stable
-matrix and cannot replace it.
+matrix and cannot replace it. The machine-readable VS Code identities are
+authoritative in [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json).
 
 The Apple adapter must take `containerization` from the selected
 `apple/container` release resolution. Depending on a second independently
@@ -100,22 +102,19 @@ parity lane.
 
 This repository must never carry a patched vendor directory, copied upstream
 source, ad hoc diff, or release-only binary replacement for those projects.
-There is no upstream pull request associated with the current
-pre-implementation documentation.
+No upstream runtime fix has been required by the implementation to date.
 
 ## Docker Engine API bounds
 
-There is currently no implemented or advertised Docker API version.
+The candidate service advertises the bounded API envelope:
 
-The initial contract-capture envelope is:
-
-- minimum version under investigation: `1.41`;
-- maximum version under investigation: `1.53`;
+- minimum implemented version: `1.44`;
+- maximum implemented version: `1.53`;
 - pinned oracle version: `1.53`, from Docker Engine `29.2.1`;
 - versions above `1.53`: out of scope until separately pinned and tested;
-- versions below `1.41`: out of scope for the initial release.
+- versions below `1.44`: out of scope for the initial release.
 
-A release will advertise one contiguous, tested subset of `1.41...1.53`.
+A release will advertise the contiguous, tested subset `1.44...1.53`.
 Unversioned routes and every advertised version prefix must negotiate and
 return Docker-compatible status codes, JSON fields, headers, event ordering,
 and stream framing. Advertising a version means every endpoint needed by the
@@ -140,29 +139,30 @@ Feature, build-context, and UID-update fixtures.
 
 ## Functional support ledger
 
-All entries are currently `planned`.
+Every row has an implemented parity fixture and remains a development
+`candidate` until all required candidate-bound lane evidence is complete.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
-| Engine negotiation | Ping, version negotiation, versioned paths, errors | `planned` |
-| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `planned` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `planned` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `planned` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `planned` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `planned` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `planned` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `planned` |
-| Users and environment | Container/remote users, UID update, environment probing | `planned` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `planned` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `planned` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `planned` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `planned` |
-| Compose service | Selected service, generated overrides, workspace projection | `planned` |
-| Compose dependencies | `runServices`, health gates, service DNS | `planned` |
-| Compose resources | Named volumes, networks, aliases, environment files | `planned` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `planned` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `planned` |
-| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `planned` |
+| Engine negotiation | Ping, version negotiation, versioned paths, errors | `candidate` |
+| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `candidate` |
+| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `candidate` |
+| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `candidate` |
+| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `candidate` |
+| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `candidate` |
+| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `candidate` |
+| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `candidate` |
+| Users and environment | Container/remote users, UID update, environment probing | `candidate` |
+| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `candidate` |
+| Features | OCI resolution, ordering, installation, locks, frozen locks | `candidate` |
+| Ports | Publish, forward, collision handling, host/service connectivity | `candidate` |
+| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `candidate` |
+| Compose service | Selected service, generated overrides, workspace projection | `candidate` |
+| Compose dependencies | `runServices`, health gates, service DNS | `candidate` |
+| Compose resources | Named volumes, networks, aliases, environment files | `candidate` |
+| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `candidate` |
+| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `candidate` |
+| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `candidate` (Docker recorded; Apple recordings pending) |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must
@@ -259,5 +259,6 @@ Every stable candidate also requires:
 - all three parity lanes with no required fixture skipped;
 - a signed evidence manifest bound to the release commit and binary checksums.
 
-Build and runner commands are defined as a planned interface in
-[`BUILD.md`](BUILD.md).
+The implemented build, verification, parity, packaging, and runner commands
+are documented in [`BUILD.md`](BUILD.md) and exposed through the checked-in
+`Makefile`.

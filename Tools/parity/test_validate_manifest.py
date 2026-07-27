@@ -24,8 +24,14 @@ class ValidateManifestTests(unittest.TestCase):
         validate_manifest(copy.deepcopy(self.payload))
 
     def test_release_rejects_planned_fixtures(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["fixtures"][0]["status"] = "planned"
+
         with self.assertRaisesRegex(ManifestError, "cannot enter a stable release"):
-            validate_manifest(copy.deepcopy(self.payload), release=True)
+            validate_manifest(payload, release=True)
+
+    def test_release_manifest_is_fully_implemented(self) -> None:
+        validate_manifest(copy.deepcopy(self.payload), release=True)
 
     def test_backend_omission_is_rejected(self) -> None:
         payload = copy.deepcopy(self.payload)
@@ -39,6 +45,22 @@ class ValidateManifestTests(unittest.TestCase):
         payload["releasePolicy"]["requireZeroFunctionalDifferences"] = False
 
         with self.assertRaisesRegex(ManifestError, "zero functional differences"):
+            validate_manifest(payload)
+
+    def test_vscode_distribution_digest_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["vscode"]["archiveSHA256"] = "not-a-digest"
+
+        with self.assertRaisesRegex(ManifestError, "archiveSHA256"):
+            validate_manifest(payload)
+
+    def test_vscode_embedded_cli_version_matches_direct_oracle(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["vscode"]["devContainersExtension"][
+            "embeddedCliVersion"
+        ] = "different"
+
+        with self.assertRaisesRegex(ManifestError, "same Dev Containers CLI version"):
             validate_manifest(payload)
 
 

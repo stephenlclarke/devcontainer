@@ -6,7 +6,9 @@ Containers extension, `@devcontainers/cli`, macOS, Apple container, and the
 optional Compose provider.
 
 The parity manifest binds every scenario to Docker-oracle, stock-Apple, and
-Compose-provider lanes. Release validation rejects planned or missing evidence.
+Compose-provider lanes. Runtime and VS Code jobs use separate provenance-bound
+runner labels so a lane never replaces another lane's live runtime
+distribution. Release validation rejects incomplete or missing evidence.
 
 See the maintained repositories in the
 [Dev Containers organization](https://github.com/devcontainers), especially

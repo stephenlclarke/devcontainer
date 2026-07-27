@@ -7,7 +7,7 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, DocC Pages workflow, deterministic package/SBOM tooling, and Homebrew
 formula validation described below. At this development-candidate snapshot,
-75 Swift tests pass with 90.48% first-party line coverage. Full isolated stock
+75 Swift tests pass with 90.50% first-party line coverage. Full isolated stock
 Apple runtime and live VS Code release evidence remains outstanding, so these
 implemented gates are not yet a stable-support claim.
 
@@ -65,7 +65,7 @@ The gate initially applies to all implemented first-party source, even while the
 
 ## Test and parity gate
 
-[`TESTING.md`](TESTING.md) defines unit, Docker wire contract, hosted integration, Docker oracle, stock Apple, `container-compose`, fault/concurrency, and VS Code E2E suites. Quality automation will enforce these additional rules:
+[`TESTING.md`](TESTING.md) defines unit, Docker wire contract, hosted integration, Docker oracle, stock Apple, `container-compose`, fault/concurrency, and VS Code E2E suites. Quality automation enforces these additional rules:
 
 - Every test workflow verifies that at least one expected test executed; an empty filter is a failure.
 - Quarantine, skip, expected-failure, and retry annotations are machine-inventoried and prohibited in release scope.
@@ -92,7 +92,10 @@ fail immediately while the large router/runtime types are split in subsequent
 quality work. The baseline is technical-debt evidence, not a claim that the
 repository has zero existing findings.
 
-The actual Swift version will come from the checked-in toolchain pin when implementation begins; `6.2` is the bootstrap target, not permission to float the compiler silently. SwiftLint and SwiftFormat versions will also be pinned. Generated and vendored directories may be excluded explicitly, but new production directories are included by default.
+Swift 6.2 is the checked-in language and toolchain target; it is not permission
+to float the compiler silently. SwiftLint and SwiftFormat are validated by the
+hosted quality workflow. Generated and vendored directories may be excluded
+explicitly, but new production directories are included by default.
 
 The package will use Swift 6 language mode and strict concurrency where dependencies permit. Compiler warnings are treated as failures in CI. New use of `@unchecked Sendable`, `nonisolated(unsafe)`, force casts, force tries, or fatal termination in library paths requires a narrow review and a test that demonstrates the invariant.
 
@@ -100,9 +103,9 @@ Public API additions require DocC documentation and tests. Error messages expose
 
 ## Memory and concurrency gates
 
-Swift AddressSanitizer and ThreadSanitizer will use the same full-log retry harness interface currently used by `container-compose`: `Tools/ci/run-swift-test.sh`, `SWIFT_TEST_RESULT_LOG`, `SWIFT_TEST_ATTEMPTS`, `SWIFT_TEST_TAIL_LINES`, and `SWIFT_TEST_ACCEPT_SIGNAL_13`.
+Swift AddressSanitizer and ThreadSanitizer use the same full-log retry harness interface currently used by `container-compose`: `Tools/ci/run-swift-test.sh`, `SWIFT_TEST_RESULT_LOG`, `SWIFT_TEST_ATTEMPTS`, `SWIFT_TEST_TAIL_LINES`, and `SWIFT_TEST_ACCEPT_SIGNAL_13`.
 
-The planned ASan invocation is:
+The implemented ASan invocation is:
 
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
@@ -110,7 +113,7 @@ SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
 ```
 
-The planned TSan invocation is:
+The implemented TSan invocation is:
 
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
@@ -128,7 +131,10 @@ Any sanitizer diagnostic fails the job. Suppressions require a pinned upstream i
 
 ### CodeQL
 
-The planned `.github/workflows/codeql.yml` will analyze Swift on `macos-26` using CodeQL's manual build mode so the database observes the actual SwiftPM build. It runs on source-changing pull requests, protected-main pushes, a schedule, and manual dispatch. Workflow actions are pinned by full commit SHA.
+The implemented `.github/workflows/codeql.yml` analyzes Swift on `macos-26`
+using CodeQL's manual build mode so the database observes the actual SwiftPM
+build. It runs on protected-main pushes, a schedule, and manual dispatch.
+Workflow actions are pinned by full commit SHA.
 
 The CodeQL job will:
 
@@ -142,7 +148,9 @@ A new high or critical CodeQL alert is release blocking. Lower-severity findings
 
 ### SonarCloud
 
-The planned `ci.yml` will submit sources, tests, Swift test results, and the generic coverage XML to SonarCloud. The quality gate for new code requires:
+The implemented `sonar.yml` submits sources, tests, and generic coverage XML to
+SonarCloud after the repository-owned 90% gate passes. The quality gate for new
+code requires:
 
 - at least 90% line coverage;
 - at most 3% duplicated lines;
@@ -174,19 +182,19 @@ Scorecard is a trend and hardening signal, not a substitute for a concrete gate.
 
 ## Workflow architecture
 
-The planned workflow split keeps fast feedback separate from privileged live validation:
+The implemented workflow split keeps fast feedback separate from privileged
+live validation:
 
 | Workflow | Environment | Responsibility |
 | --- | --- | --- |
-| `ci.yml` | Hosted `macos-26` and Ubuntu | Build, unit, contract, hosted integration, 90% coverage gates, package validation, Sonar |
+| `ci.yml` | Hosted `macos-26` | Build, unit, contract, hosted integration, 90% coverage gates, and package validation |
 | `quality.yml` | Hosted `macos-26` | SwiftLint, SwiftFormat, ASan, scheduled/dispatch TSan |
 | `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL |
-| `dependency-review.yml` | Hosted Ubuntu | Dependency, action pin, vulnerability, and license review |
-| `scorecard.yml` | Hosted Ubuntu | Weekly OpenSSF Scorecard and SARIF |
-| `runtime-parity.yml` | Dedicated physical Apple-silicon runner | Docker oracle, stock Apple stable/main, Compose stable/main |
-| `vscode-e2e.yml` | Dedicated physical Apple-silicon runner | Pinned stable VS Code/extension E2E; optional Insiders nightly |
+| `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
+| `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
+| `parity.yml` | Three dedicated physical Apple-silicon runners | CLI and pinned VS Code parity for Docker, stock Apple, and Apple Compose |
 | `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
-| `release.yml` | Hosted release builder | Immutable archives, checksums, SBOM, attestations, release publication |
+| `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted validation plus physical install smoke | Formula update, audit, install, meaningful test, live smoke |
 
 All workflows use explicit least-privilege `permissions`, pinned action SHAs, concurrency groups, timeouts, deterministic tool pins, dependency caching keyed by lockfiles/toolchains, and artifact names containing the candidate SHA. Scripts contain the substantial logic so it can be run and tested locally.
@@ -197,7 +205,12 @@ Path filtering is an optimization, not authority. Changes to workflow policy, de
 
 Hosted `macos-26` is appropriate for compilation, SwiftPM tests, coverage, style, CodeQL, and sanitizers. It is an ARM64 hosted virtual machine with limited memory and no supported nested Apple container runtime, so a green hosted job does not prove live compatibility.
 
-Real Apple runtime and VS Code tests use a dedicated physical Apple-silicon macOS 26 runner labeled `self-hosted`, `macOS`, `ARM64`, `macos-26`, and `devcontainer-live`. Live jobs are serialized with a single concurrency group and `max-parallel: 1`, use isolated application roots and runtime namespaces, and prove cleanup.
+Real runtime and VS Code tests use three provenance-specific physical
+Apple-silicon runner labels: `devcontainer-docker`,
+`devcontainer-apple-stock`, and `devcontainer-apple-compose`, in addition to
+`self-hosted`, `macOS`, and `ARM64`. This prevents a job from replacing the
+runtime distribution beneath another session. Jobs use isolated application
+roots and runtime namespaces and prove cleanup.
 
 Untrusted fork pull requests never execute on the self-hosted runner. A dispatcher may enqueue only an exact commit from protected `main`, a scheduled protected ref, or a maintainer-approved manual input that already passed hosted checks. The live workflow checks the commit's repository and ancestry again before checkout. Test jobs do not receive release or tap credentials.
 

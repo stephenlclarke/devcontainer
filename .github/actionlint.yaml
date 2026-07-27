@@ -1,6 +1,9 @@
 self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
+    - devcontainer-apple-compose
+    - devcontainer-apple-stock
+    - devcontainer-docker
     - devcontainer-release
 
 # Configuration variables in array of strings defined in your repository or
