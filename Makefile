@@ -26,7 +26,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
 .PHONY: parity-apple-compose parity parity-vscode parity-release runtime-check
-.PHONY: package package-release homebrew-formula release-check sonar sonar-scan clean
+.PHONY: package package-release homebrew-formula release-version
+.PHONY: prepare-release release-check sonar sonar-scan clean
 
 all: workflow
 
@@ -185,6 +186,25 @@ package:
 	scripts/package.sh
 
 package-release: release-check package
+
+release-version:
+	@test -n "$(VERSION_SELECTOR)" || { \
+		printf 'VERSION_SELECTOR is required, for example: make release-version VERSION_SELECTOR=--+\n' >&2; \
+		exit 2; \
+	}
+	$(PYTHON) Tools/release/release-version.py \
+		--repository "$(CURDIR)" \
+		--selector="$(VERSION_SELECTOR)"
+
+prepare-release:
+	@test -n "$(VERSION_SELECTOR)" || { \
+		printf 'VERSION_SELECTOR is required, for example: make prepare-release VERSION_SELECTOR=--+\n' >&2; \
+		exit 2; \
+	}
+	$(PYTHON) Tools/release/release-version.py \
+		--repository "$(CURDIR)" \
+		--selector="$(VERSION_SELECTOR)" \
+		--write
 
 homebrew-formula: package
 	@mkdir -p "$(DIST_DIR)"

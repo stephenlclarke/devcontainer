@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: design only. This repository has no implementation, workflows, release scripts, tags, packages, GitHub Releases, Homebrew formulae, signing identity, notarization profile, or registered release runner yet. Every command, file, workflow, check, and asset described below is a required implementation contract, not a claim about current availability.
+> Status: implementation in progress. The authoritative version, selector resolver, Current version formatter, deterministic package, checksums, SBOM, formula renderer, hosted CI, quality, CodeQL, Homebrew, SonarQube, and DocC workflows are implemented. Stable/Current publication, signing, notarization, tap promotion, and the trusted release runner remain release blockers; later sections distinguish the implemented foundation from those required publication controls.
 
 This document defines how `devcontainer` will validate and publish an arm64 macOS command-line tool for Apple's stock `container` runtime. Docker is the behavioral oracle, stock Apple `container` is the required runtime, and `container-compose` is an optional provider tested in a separate, explicitly identified parity lane.
 
@@ -42,20 +42,17 @@ DEVCONTAINER_VERSION ?= 0.1.0
 
 Source code must not contain a second editable copy. Build and package targets will read `DEVCONTAINER_VERSION` and generate an untracked build-info resource. The executable's `version` command will read that generated resource, with an explicit `development` fallback for an unpackaged local build.
 
-The planned helper layout is:
+The helper layout is being implemented as:
 
 ```text
 Makefile
 Tools/release/current-formula-version.py
 Tools/release/devcontainer.rb.in
-Tools/release/publish-github-release.sh
 Tools/release/release-version.py
-Tools/release/update-homebrew-formula.py
 Tools/release/write-build-info.py
-scripts/DEVCONTAINER_RELEASE.sh
 ```
 
-`Tools/release/release-version.py` will be the reusable implementation of selector parsing and validation. It will:
+`Tools/release/release-version.py` is the reusable implementation of selector parsing and validation. It:
 
 - Read `DEVCONTAINER_VERSION` from `Makefile`.
 - List only tags matching `[0-9]+\.[0-9]+\.[0-9]+`.
@@ -74,7 +71,19 @@ Selectors retain `container-compose` semantics:
 | `+--` | Major | `2.0.0` |
 | `2.1.0` | Explicit semantic version | `2.1.0` |
 
-The stable release entry point will be:
+Version resolution is read-only:
+
+```sh
+make release-version VERSION_SELECTOR=-+-
+```
+
+Stable release preparation is the only version target that mutates the Makefile:
+
+```sh
+make prepare-release VERSION_SELECTOR=-+-
+```
+
+The final stable release orchestration entry point will be:
 
 ```sh
 DEVCONTAINER_RELEASE_INTENT=milestone make release VERSION_SELECTOR=-+-
@@ -402,7 +411,7 @@ The formula must not:
 
 Tap updates are serialized and use a dedicated token. Automation verifies the tap push remote, commits only the intended formula, pushes one Conventional Commit, waits for tap CI, installs the formula, runs `brew test`, and compares the installed binary's build info with the selected commit.
 
-## Planned Make Targets
+## Make Target Roadmap
 
 ```text
 all
@@ -440,17 +449,19 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 
 ## Implementation Readiness Checklist
 
-- [ ] Add `DEVCONTAINER_VERSION` to `Makefile` as the sole tracked version.
-- [ ] Implement and test exact selector behavior.
-- [ ] Implement generated build-info and `version --format json`.
+- [x] Add `DEVCONTAINER_VERSION` to `Makefile` as the sole tracked version.
+- [x] Implement and test exact selector behavior.
+- [x] Implement and test monotonic Current formula versions.
+- [x] Implement generated build-info and `version --format json`.
 - [ ] Add Current and stable package naming.
-- [ ] Add exact-commit CI and CodeQL authority.
+- [x] Add exact-commit CI and CodeQL workflows.
 - [ ] Add the trusted three-lane bare-metal parity runner and strict preflight.
-- [ ] Add DocC build and Pages deployment.
+- [x] Add DocC build and Pages deployment.
 - [ ] Add Developer ID signing and notarization.
-- [ ] Add pinned SBOM generation and package validation.
-- [ ] Add checksums and GitHub artifact attestation.
-- [ ] Add formula template, renderer, and tap verification.
+- [x] Add deterministic SPDX SBOM generation and package checksums.
+- [ ] Add GitHub artifact attestation.
+- [x] Add formula template, local renderer, syntax validation, and style validation.
+- [ ] Add immutable Current/stable release publication and serialized tap promotion.
 - [ ] Protect `main` with signed commits and stable required contexts.
 - [ ] Enable Dependabot, secret scanning, push protection, and private vulnerability reporting.
 - [ ] Publish the first Current build.
