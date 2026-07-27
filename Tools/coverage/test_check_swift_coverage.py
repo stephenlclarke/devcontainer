@@ -25,6 +25,10 @@ class CoverageTests(unittest.TestCase):
                     "files": [
                         {
                             "filename": "/repo/Sources/Core/A.swift",
+                            "segments": [
+                                [3, 1, 2, True, True, False],
+                                [7, 1, 0, True, True, False],
+                            ],
                             "summary": {"lines": {"count": 10, "covered": 9}},
                         },
                         {
@@ -39,8 +43,31 @@ class CoverageTests(unittest.TestCase):
             path = Path(directory) / "coverage.json"
             path.write_text(json.dumps(report), encoding="utf-8")
             covered, count, files = MODULE.coverage(path)
-        self.assertEqual((covered, count), (9, 10))
+        self.assertEqual((covered, count), (1, 2))
         self.assertEqual(len(files), 1)
+
+    def test_merges_repeated_executable_line_segments(self) -> None:
+        report = {
+            "data": [
+                {
+                    "files": [
+                        {
+                            "filename": "/repo/Sources/Core/A.swift",
+                            "segments": [
+                                [3, 1, 0, True, True, False],
+                                [3, 8, 4, True, True, False],
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "coverage.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            covered, count, files = MODULE.coverage(path)
+        self.assertEqual((covered, count), (1, 1))
+        self.assertEqual(files[0][1], 100.0)
 
     def test_writes_sonar_generic_coverage_for_executable_source_lines(self) -> None:
         report = {

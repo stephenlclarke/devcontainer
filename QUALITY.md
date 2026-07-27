@@ -7,9 +7,9 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, DocC Pages workflow, deterministic package/SBOM tooling, and Homebrew
 formula validation described below. At this development-candidate snapshot,
-75 Swift tests pass with 90.58% first-party line coverage. Full isolated stock
-Apple runtime and live VS Code release evidence remains outstanding, so these
-implemented gates are not yet a stable-support claim.
+90 Swift tests pass with 90.05% first-party executable-line coverage. Full
+isolated stock Apple runtime and live VS Code release evidence remains
+outstanding, so these implemented gates are not yet a stable-support claim.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -64,6 +64,11 @@ runtime, `container-compose`, VS Code, and extension code never count toward
 the product percentage. Real parity and VS Code runs may add profiles when
 instrumented execution is reliable, but their behavioral gates remain
 independent of coverage.
+
+The gate derives its numerator and denominator from the same unique executable
+source-line segments written to SonarQube generic coverage XML. It does not use
+LLVM's aggregate summary, which can count multiple executable regions on one
+source line and therefore does not match Sonar's line metric.
 
 Sonar coverage excludes only
 `Sources/DevContainerCLI/DevContainerCommand.swift` and

@@ -700,12 +700,12 @@ func `advanced container exec archive and stream routes are compatible`() async 
         ).status == 409
     )
     #expect(
-        await router.respond(
-            to: DockerHTTPRequest(
-                method: .post,
-                target: "/exec/\(execID)/resize?w=120&h=40"
-            )
-        ).status == 409
+        try await awaitExecResizeStatus(
+            router: router,
+            execID: ExecID(rawValue: execID),
+            width: 120,
+            height: 40
+        ) == 409
     )
     #expect(
         await router.respond(

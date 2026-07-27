@@ -18,24 +18,33 @@ def is_first_party_source(filename: str) -> bool:
 
 
 def coverage(path: Path) -> tuple[int, int, list[tuple[str, float]]]:
+    """Count unique executable source lines using the Sonar export semantics."""
+
     document = json.loads(path.read_text(encoding="utf-8"))
-    covered = 0
-    count = 0
-    files: list[tuple[str, float]] = []
+    execution_by_file: dict[str, dict[int, int]] = {}
     for datum in document.get("data", []):
         for item in datum.get("files", []):
             filename = item.get("filename", "")
+            if not isinstance(filename, str):
+                continue
             normalized = filename.replace("\\", "/")
             if not is_first_party_source(normalized):
                 continue
-            lines = item.get("summary", {}).get("lines", {})
-            file_count = int(lines.get("count", 0))
-            file_covered = int(lines.get("covered", 0))
-            if file_count == 0:
-                continue
-            covered += file_covered
-            count += file_count
-            files.append((normalized, file_covered * 100.0 / file_count))
+            target = execution_by_file.setdefault(normalized, {})
+            for line, execution_count in sonar_lines(item).items():
+                target[line] = max(target.get(line, 0), execution_count)
+
+    covered = 0
+    count = 0
+    files: list[tuple[str, float]] = []
+    for filename, lines in execution_by_file.items():
+        if not lines:
+            continue
+        file_count = len(lines)
+        file_covered = sum(execution_count > 0 for execution_count in lines.values())
+        covered += file_covered
+        count += file_count
+        files.append((filename, file_covered * 100.0 / file_count))
     return covered, count, sorted(files, key=lambda value: value[1])
 
 
