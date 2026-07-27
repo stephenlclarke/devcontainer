@@ -20,6 +20,7 @@ PARITY_EVIDENCE_DIR ?= .build/parity
 DEVCONTAINER_CLI_VERSION ?= 0.88.0
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
+DEVCONTAINER_SIGNING_REQUIRED ?= 0
 SONAR_SCAN_ATTEMPTS ?= 3
 SONAR_QUALITYGATE_WAIT ?= true
 
@@ -152,8 +153,8 @@ lint:
 	$(SWIFTLINT) lint --strict --quiet \
 		--baseline .build/swiftlint-baseline.json Sources Tests
 	$(SWIFTFORMAT) Sources Tests --lint
-	bash -n Tools/ci/*.sh scripts/*.sh
-	shellcheck Tools/ci/*.sh scripts/*.sh
+	bash -n Tools/ci/*.sh Tools/release/*.sh scripts/*.sh
+	shellcheck Tools/ci/*.sh Tools/release/*.sh scripts/*.sh
 	$(ACTIONLINT)
 
 format:
@@ -188,9 +189,13 @@ runtime-check: test-integration test-asan test-tsan parity-release
 package:
 	DEVCONTAINER_PACKAGE_LANE="$(DEVCONTAINER_PACKAGE_LANE)" \
 	DEVCONTAINER_PACKAGE_RUN_NUMBER="$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+	DEVCONTAINER_SIGNING_REQUIRED="$(DEVCONTAINER_SIGNING_REQUIRED)" \
 		scripts/package.sh
 
-package-release: release-check package
+package-release: release-check
+	$(MAKE) package \
+		DEVCONTAINER_PACKAGE_LANE=stable \
+		DEVCONTAINER_SIGNING_REQUIRED=1
 
 release-version:
 	@test -n "$(VERSION_SELECTOR)" || { \

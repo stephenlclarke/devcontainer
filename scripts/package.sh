@@ -73,6 +73,12 @@ python3 Tools/release/write-sbom.py \
   --version "$version" \
   --output "$stage/share/devcontainer/devcontainer.spdx.json"
 
+if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
+  Tools/release/sign-and-notarize.sh \
+    "$stage" \
+    "$stage/share/devcontainer/notarization.json"
+fi
+
 tar -C "$dist/stage" -czf "$archive" "devcontainer-$version"
 shasum -a 256 "$archive" >"$archive.sha256"
 printf '%s\n' "$archive"

@@ -51,7 +51,9 @@ Tools/release/devcontainer.rb.in
 Tools/release/package-context.py
 Tools/release/release-version.py
 Tools/release/render-homebrew-formula.py
+Tools/release/sign-and-notarize.sh
 Tools/release/write-build-info.py
+Tools/release/write-notarization-evidence.py
 ```
 
 `Tools/release/release-version.py` is the reusable implementation of selector parsing and validation. It:
@@ -459,7 +461,8 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Add exact-commit CI and CodeQL workflows.
 - [ ] Add the trusted three-lane bare-metal parity runner and strict preflight.
 - [x] Add DocC build and Pages deployment.
-- [ ] Add Developer ID signing and notarization.
+- [x] Add strict Developer ID signing, notarization, and sanitized evidence tooling.
+- [ ] Provision the release identity/profile and record an accepted package submission.
 - [x] Add deterministic SPDX SBOM generation and package checksums.
 - [ ] Add GitHub artifact attestation.
 - [x] Add formula template, local renderer, syntax validation, and style validation.

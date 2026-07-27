@@ -150,7 +150,7 @@ gh attestation verify devcontainer-release-arm64.tar.gz --repo stephenlclarke/de
 tar -tzf devcontainer-release-arm64.tar.gz
 ```
 
-The executable will be Developer ID signed and submitted to Apple's notary service before the archive checksum is calculated. Verify the extracted binary:
+Release packaging has a strict mode that Developer ID signs every installed executable, verifies each signature, submits a ZIP containing the exact staged payload through a keychain profile, requires an `Accepted` response, and writes only the submission ID, status, and archive digest into the final package. The production identity/profile and first accepted package evidence are not yet provisioned. Once published, verify the extracted binary:
 
 ```sh
 codesign --verify --strict --verbose=2 devcontainer/bin/devcontainer
