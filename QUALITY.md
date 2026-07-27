@@ -7,7 +7,7 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, DocC Pages workflow, deterministic package/SBOM tooling, and Homebrew
 formula validation described below. At this development-candidate snapshot,
-75 Swift tests pass with 90.50% first-party line coverage. Full isolated stock
+75 Swift tests pass with 90.58% first-party line coverage. Full isolated stock
 Apple runtime and live VS Code release evidence remains outstanding, so these
 implemented gates are not yet a stable-support claim.
 
@@ -52,7 +52,26 @@ The required coverage gates are:
 
 The report includes first-party production libraries, executables, service code, provider adapters, migrations, diagnostics, and cleanup paths. Generated code, test support, fixtures, and third-party source may be excluded through a reviewed path list. A file is not excluded because it lowers the result.
 
-Unit tests provide most deterministic branch and error-path execution. Docker contract and hosted integration suites run instrumented product binaries and merge their profiles with unit-test profiles using `llvm-profdata merge -sparse`; `llvm-cov` then exports the combined first-party line coverage. External Docker, Apple runtime, `container-compose`, VS Code, and extension code never count toward the product percentage. Real parity and VS Code runs may add profiles when instrumented execution is reliable, but their behavioral gates remain independent of coverage.
+Unit tests provide most deterministic branch and error-path execution. Docker
+contract and hosted integration suites run instrumented product binaries and
+merge their profiles with unit-test profiles using `llvm-profdata merge
+-sparse`; `llvm-cov` then exports the combined first-party line coverage. The
+hosted CLI coverage harness also runs the instrumented `devcontainer` and
+`devcontainer-compose` products through version, context, configuration,
+backend-state, doctor, Docker-provider, and container-compose-provider success
+and failure paths using deterministic local fakes. External Docker, Apple
+runtime, `container-compose`, VS Code, and extension code never count toward
+the product percentage. Real parity and VS Code runs may add profiles when
+instrumented execution is reliable, but their behavioral gates remain
+independent of coverage.
+
+Sonar coverage excludes only
+`Sources/DevContainerCLI/DevContainerCommand.swift` and
+`Sources/DevContainerCore/DevContainerProject.swift`: these files contain
+compile-time command registration and immutable build-info forwarding but no
+LLVM executable coverage regions. All command implementations and both CLI
+products remain instrumented. The repository-owned gate and Sonar therefore
+measure the same executable source rather than granting a broad CLI exclusion.
 
 The coverage job currently produces a human-readable summary and SonarQube
 generic coverage XML and fails on missing binaries, profiles, source paths, or
@@ -157,6 +176,11 @@ code requires:
 - no blocker or critical reliability, security, or maintainability issue;
 - every security hotspot reviewed;
 - no unresolved analysis failure or missing coverage import.
+
+The SonarCloud project uses `main` as its real main branch and a project-level
+30-day new-code definition. The workflow validates both remote invariants
+before scanning so a newly created project cannot silently publish
+`Not Computed` badges.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A passing Sonar gate cannot override an independent coverage, compiler, CodeQL, sanitizer, or parity failure.
 

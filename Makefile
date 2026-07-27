@@ -72,14 +72,28 @@ swift-test:
 
 coverage:
 	@mkdir -p .build
+	@find .build/coverage -type f \
+		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \
+		-delete 2>/dev/null || true
 	@SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) \
 		--scratch-path .build/coverage --enable-code-coverage --no-parallel
-	@$(SWIFT) test --scratch-path .build/coverage \
-		--show-codecov-path > .build/codecov-path
+	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		--scratch-path .build/coverage --enable-code-coverage \
+		--product devcontainer
+	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		--scratch-path .build/coverage --enable-code-coverage \
+		--product devcontainer-compose
+	@Tools/coverage/run-cli-coverage.sh \
+		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+			--scratch-path .build/coverage --show-bin-path)"
+	@Tools/coverage/export-swift-coverage.sh \
+		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+			--scratch-path .build/coverage --show-bin-path)" \
+		> .build/codecov-path
 
 coverage-check: coverage
 	$(PYTHON) Tools/coverage/check-swift-coverage.py \
@@ -155,8 +169,10 @@ lint:
 	$(SWIFTLINT) lint --strict --quiet \
 		--baseline .build/swiftlint-baseline.json Sources Tests
 	$(SWIFTFORMAT) Sources Tests --lint
-	bash -n Tools/ci/*.sh Tools/parity/*.sh Tools/release/*.sh scripts/*.sh
-	shellcheck Tools/ci/*.sh Tools/parity/*.sh Tools/release/*.sh scripts/*.sh
+	bash -n Tools/ci/*.sh Tools/coverage/*.sh Tools/parity/*.sh \
+		Tools/release/*.sh scripts/*.sh
+	shellcheck Tools/ci/*.sh Tools/coverage/*.sh Tools/parity/*.sh \
+		Tools/release/*.sh scripts/*.sh
 	$(ACTIONLINT)
 
 format:

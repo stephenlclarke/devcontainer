@@ -120,12 +120,26 @@ jobs:
               --user "${SONAR_TOKEN}:" \
               "https://sonarcloud.io/api/project_branches/list?project=stephenlclarke_devcontainer"
           )"
+          new_code="$(
+            curl --fail --silent --show-error \
+              --user "${SONAR_TOKEN}:" \
+              "https://sonarcloud.io/api/settings/values?component=stephenlclarke_devcontainer&keys=sonar.leak.period,sonar.leak.period.type"
+          )"
           jq -e '
             any(
               .branches[];
               .name == "main" and .isMain == true
             )
           ' <<< "${branches}" >/dev/null
+          jq -e '
+            (
+              [.settings[] | select(.key == "sonar.leak.period") | .value]
+              == ["30"]
+            ) and (
+              [.settings[] | select(.key == "sonar.leak.period.type") | .value]
+              == ["days"]
+            )
+          ' <<< "${new_code}" >/dev/null
 
       - name: SonarQube scan
         if: steps.sonar_credentials.outputs.configured == 'true'
