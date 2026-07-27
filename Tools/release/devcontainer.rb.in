@@ -1,13 +1,15 @@
-class Devcontainer < Formula
+class @FORMULA_CLASS@ < Formula
   desc "VS Code Dev Containers compatibility for Apple container"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/v@VERSION@/devcontainer-@VERSION@-macos-arm64.tar.gz"
+  url "@URL@"
+  version "@FORMULA_VERSION@"
   sha256 "@SHA256@"
   license "Apache-2.0"
 
   depends_on arch: :arm64
   depends_on macos: :tahoe
   depends_on "docker" => :recommended
+  conflicts_with "@CONFLICTS_WITH@", because: "both install devcontainer commands"
 
   def install
     bin.install "bin/devcontainer"
@@ -42,7 +44,7 @@ class Devcontainer < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/devcontainer version")
+    assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
   end
 end

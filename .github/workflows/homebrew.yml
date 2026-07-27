@@ -18,7 +18,10 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Create package and formula
-        run: make homebrew-formula
+        run: |
+          make homebrew-formula
+          make homebrew-formula-current \
+            DEVCONTAINER_PACKAGE_RUN_NUMBER="${GITHUB_RUN_NUMBER}"
       - name: Validate formula
         run: |
           set -euo pipefail
@@ -31,7 +34,10 @@ jobs:
           brew tap-new --no-git "${tap_name}"
           tap_root="$(brew --repository "${tap_name}")"
           cp dist/devcontainer.rb "${tap_root}/Formula/devcontainer.rb"
+          cp dist/devcontainer-current.rb \
+            "${tap_root}/Formula/devcontainer-current.rb"
           brew style --formula "${tap_name}/devcontainer"
+          brew style --formula "${tap_name}/devcontainer-current"
       - name: Upload package evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

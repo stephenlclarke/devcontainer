@@ -12,6 +12,8 @@ from types import ModuleType
 
 
 TOOLS = Path(__file__).resolve().parent
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
 
 
 def load_module(filename: str, name: str) -> ModuleType:

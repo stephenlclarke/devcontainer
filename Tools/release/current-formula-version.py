@@ -4,23 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import re
 from typing import Sequence
 
-
-SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
-
-
-def current_formula_version(run_number: str, commit: str) -> str:
-    """Create a Current version from an Actions run number and source SHA."""
-
-    if not run_number.isdecimal() or int(run_number) <= 0:
-        raise ValueError(
-            f"workflow run number must be a positive integer: {run_number}"
-        )
-    if not SHA_PATTERN.fullmatch(commit):
-        raise ValueError(f"git commit must be a 40-character hexadecimal SHA: {commit}")
-    return f"current.{int(run_number)}.{commit[:12].lower()}"
+from versioning import current_formula_version
 
 
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:

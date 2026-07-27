@@ -23,6 +23,10 @@ func `build info uses makefile owned version`() throws {
     #expect(BuildInfo.current.version == "0.1.0")
     #expect(BuildInfo.current.source == "stephenlclarke/devcontainer")
     #expect(!BuildInfo.current.lane.isEmpty)
+    #expect(BuildInfo.current.buildType == "development")
+    #expect(BuildInfo.current.architecture == "arm64")
+    #expect(BuildInfo.current.containerDistribution == "apple")
+    #expect(BuildInfo.current.provider == "none")
     let encoded = try JSONEncoder().encode(BuildInfo.current)
     #expect(try JSONDecoder().decode(BuildInfo.self, from: encoded) == BuildInfo.current)
 }

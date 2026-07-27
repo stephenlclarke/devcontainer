@@ -23,22 +23,49 @@ public struct BuildInfo: Codable, Equatable, Sendable {
     public let source: String
     public let commit: String
     public let lane: String
+    public let buildType: String
+    public let architecture: String
+    public let containerDistribution: String
+    public let provider: String
 
     public init(
         version: String,
         source: String = "stephenlclarke/devcontainer",
         commit: String,
-        lane: String
+        lane: String,
+        buildType: String,
+        architecture: String,
+        containerDistribution: String = "apple",
+        provider: String = "none"
     ) {
         self.version = version
         self.source = source
         self.commit = commit
         self.lane = lane
+        self.buildType = buildType
+        self.architecture = architecture
+        self.containerDistribution = containerDistribution
+        self.provider = provider
     }
 
-    public static let current = BuildInfo(
-        version: String(cString: devcontainer_version()),
-        commit: String(cString: devcontainer_source_commit()),
-        lane: String(cString: devcontainer_build_lane())
-    )
+    public static let current: BuildInfo = {
+        let lane = String(cString: devcontainer_build_lane())
+        return BuildInfo(
+            version: String(cString: devcontainer_version()),
+            commit: String(cString: devcontainer_source_commit()),
+            lane: lane,
+            buildType: lane == "development" ? "development" : "release",
+            architecture: compiledArchitecture
+        )
+    }()
+
+    private static var compiledArchitecture: String {
+        #if arch(arm64)
+            "arm64"
+        #elseif arch(x86_64)
+            "x86_64"
+        #else
+            "unknown"
+        #endif
+    }
 }

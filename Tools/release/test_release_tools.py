@@ -33,16 +33,27 @@ class ReleaseToolTests(unittest.TestCase):
                 "--version",
                 "1.2.3",
                 "--commit",
-                "abc123",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--lane",
+                "stable",
+                "--architecture",
+                "arm64",
                 "--output",
                 str(output),
             )
 
             value = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(value["version"], "1.2.3")
-            self.assertEqual(value["commit"], "abc123")
+            self.assertEqual(
+                value["commit"],
+                "0123456789abcdef0123456789abcdef01234567",
+            )
             self.assertEqual(value["source"], "stephenlclarke/devcontainer")
             self.assertEqual(value["lane"], "stable")
+            self.assertEqual(value["buildType"], "release")
+            self.assertEqual(value["architecture"], "arm64")
+            self.assertEqual(value["containerDistribution"], "apple")
+            self.assertEqual(value["provider"], "none")
 
     def test_sbom_contains_the_root_and_every_resolved_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -75,14 +86,31 @@ class ReleaseToolTests(unittest.TestCase):
             output = temporary_root / "devcontainer.rb"
             archive.write_bytes(b"release-archive")
             template.write_text(
-                'version = "@VERSION@"\nsha256 = "@SHA256@"\n',
+                "class @FORMULA_CLASS@\n"
+                'url "@URL@"\n'
+                'version "@FORMULA_VERSION@"\n'
+                'product "@PRODUCT_VERSION@"\n'
+                'conflict "@CONFLICTS_WITH@"\n'
+                'sha256 "@SHA256@"\n',
                 encoding="utf-8",
             )
 
             self.run_tool(
                 "render-homebrew-formula.py",
-                "--version",
+                "--product-version",
                 "1.2.3",
+                "--formula-version",
+                "current.418.0123456789ab",
+                "--formula-class",
+                "DevcontainerCurrent",
+                "--url",
+                (
+                    "https://github.com/stephenlclarke/devcontainer/releases/"
+                    "download/current/"
+                    "devcontainer-current-0123456789ab-arm64.tar.gz"
+                ),
+                "--conflicts-with",
+                "devcontainer",
                 "--archive",
                 str(archive),
                 "--template",
@@ -92,11 +120,56 @@ class ReleaseToolTests(unittest.TestCase):
             )
 
             rendered = output.read_text(encoding="utf-8")
-            self.assertIn('version = "1.2.3"', rendered)
+            self.assertIn("class DevcontainerCurrent", rendered)
             self.assertIn(
-                f'sha256 = "{hashlib.sha256(archive.read_bytes()).hexdigest()}"',
+                (
+                    'url "https://github.com/stephenlclarke/devcontainer/'
+                    "releases/download/current/"
+                    'devcontainer-current-0123456789ab-arm64.tar.gz"'
+                ),
                 rendered,
             )
+            self.assertIn('version "current.418.0123456789ab"', rendered)
+            self.assertIn('product "1.2.3"', rendered)
+            self.assertIn('conflict "devcontainer"', rendered)
+            self.assertIn(
+                f'sha256 "{hashlib.sha256(archive.read_bytes()).hexdigest()}"',
+                rendered,
+            )
+
+    def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            archive = temporary_root / "devcontainer.tar.gz"
+            template = temporary_root / "formula.rb.in"
+            output = temporary_root / "devcontainer.rb"
+            archive.write_bytes(b"release-archive")
+            template.write_text("@FORMULA_CLASS@\n", encoding="utf-8")
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_tool(
+                    "render-homebrew-formula.py",
+                    "--product-version",
+                    "1.2.3",
+                    "--formula-version",
+                    "current.418.0123456789ab",
+                    "--formula-class",
+                    "Devcontainer",
+                    "--url",
+                    (
+                        "https://github.com/stephenlclarke/devcontainer/"
+                        "releases/download/current/"
+                        "devcontainer-current-0123456789ab-arm64.tar.gz"
+                    ),
+                    "--conflicts-with",
+                    "devcontainer-current",
+                    "--archive",
+                    str(archive),
+                    "--template",
+                    str(template),
+                    "--output",
+                    str(output),
+                )
 
 
 if __name__ == "__main__":

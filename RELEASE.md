@@ -48,7 +48,9 @@ The helper layout is being implemented as:
 Makefile
 Tools/release/current-formula-version.py
 Tools/release/devcontainer.rb.in
+Tools/release/package-context.py
 Tools/release/release-version.py
+Tools/release/render-homebrew-formula.py
 Tools/release/write-build-info.py
 ```
 
@@ -453,7 +455,7 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Implement and test exact selector behavior.
 - [x] Implement and test monotonic Current formula versions.
 - [x] Implement generated build-info and `version --format json`.
-- [ ] Add Current and stable package naming.
+- [x] Add immutable Current and stable package naming.
 - [x] Add exact-commit CI and CodeQL workflows.
 - [ ] Add the trusted three-lane bare-metal parity runner and strict preflight.
 - [x] Add DocC build and Pages deployment.

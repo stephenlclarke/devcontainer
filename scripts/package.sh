@@ -15,6 +15,8 @@ fi
 if ! commit="$(git rev-parse --verify HEAD 2>/dev/null)"; then
   commit="unspecified"
 fi
+lane="${DEVCONTAINER_PACKAGE_LANE:-development}"
+run_number="${DEVCONTAINER_PACKAGE_RUN_NUMBER:-}"
 architecture="$(uname -m)"
 if [[ "$architecture" != "arm64" ]]; then
   printf 'release packages require arm64; found %s\n' "$architecture" >&2
@@ -22,8 +24,24 @@ if [[ "$architecture" != "arm64" ]]; then
 fi
 
 dist="$repository_root/dist"
+context="$dist/package-context.json"
+mkdir -p "$dist"
+context_arguments=(
+  --product-version "$version"
+  --lane "$lane"
+  --commit "$commit"
+)
+if [[ -n "$run_number" ]]; then
+  context_arguments+=(--run-number "$run_number")
+fi
+python3 Tools/release/package-context.py "${context_arguments[@]}" >"$context"
+archive_name="$(
+  python3 -c \
+    'import json,sys; from pathlib import Path; print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["asset"])' \
+    "$context"
+)"
 stage="$dist/stage/devcontainer-$version"
-archive="$dist/devcontainer-$version-macos-arm64.tar.gz"
+archive="$dist/$archive_name"
 python3 Tools/ci/safe-package-path.py "$stage" "$dist"
 
 rm -rf "$dist/stage"
@@ -32,7 +50,7 @@ mkdir -p \
   "$stage/libexec/container/plugins/devcontainer" \
   "$stage/share/devcontainer"
 
-GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE=release \
+GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
   swift build --disable-automatic-resolution -c release
 
 install -m 0755 .build/release/devcontainer "$stage/bin/devcontainer"
@@ -48,6 +66,8 @@ install -m 0644 Packaging/com.github.stephenlclarke.devcontainer.plist.in \
 python3 Tools/release/write-build-info.py \
   --version "$version" \
   --commit "$commit" \
+  --lane "$lane" \
+  --architecture "$architecture" \
   --output "$stage/share/devcontainer/build-info.json"
 python3 Tools/release/write-sbom.py \
   --version "$version" \

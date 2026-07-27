@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: not yet available. This repository currently has no implementation, source package, signed binary, notarized archive, GitHub Release, or Homebrew formula. The commands and layouts below define the intended installation contract and must not be presented as working until the corresponding artifacts and verification workflows exist.
+> Status: development packaging is implemented, but no supported installation is published yet. Source builds produce lane-identified archives, checksums, SPDX metadata, and validated stable/Current formula candidates. A signed and notarized GitHub Release, live tap formula, and trusted release-runner evidence are still required before the installation commands below become available.
 
 `devcontainer` will provide Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe. It will install as a standalone command and will not install, replace, relink, start, stop, or modify a container runtime.
 
@@ -93,17 +93,18 @@ brew install --formula stephenlclarke/tap/devcontainer-current
 
 Neither formula may declare a dependency on a custom `container` runtime or `container-compose`.
 
-## Planned Package Layout
+## Package Layout
 
-The release archive will contain:
+The release archive contains:
 
 ```text
-devcontainer/
-devcontainer/bin/
-devcontainer/bin/devcontainer
-devcontainer/resources/
-devcontainer/resources/build-info.json
-devcontainer/resources/devcontainer-sbom.spdx.json
+devcontainer-MAJOR.MINOR.PATCH/
+devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer
+devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-compose
+devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
+devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/container-devcontainer
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
 ```
 
 Homebrew will install only the package payload under its own prefix and expose `bin/devcontainer`. It will not write under Apple's package prefix or `/usr/local/libexec/container-plugins`.
@@ -201,7 +202,7 @@ When a Dev Container configuration requires Compose and no explicit provider is 
 
 ## Source Builds
 
-Source-build instructions will be added after the Swift package and Make targets exist. The intended entry points are:
+The implemented source-build entry points are:
 
 ```sh
 make check
@@ -210,7 +211,7 @@ make build-release
 make package-release
 ```
 
-A source build must not require a custom runtime unless the developer explicitly invokes the optional Compose-provider parity target.
+A source build does not require a custom runtime unless the developer explicitly invokes the optional Compose-provider parity target.
 
 Local development binaries will report lane `development`. They must not impersonate stable or Current packages.
 

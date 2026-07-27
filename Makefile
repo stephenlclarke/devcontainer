@@ -18,6 +18,8 @@ SWIFT_RESOLVED_FLAGS ?= --disable-automatic-resolution
 DIST_DIR ?= dist
 PARITY_EVIDENCE_DIR ?= .build/parity
 DEVCONTAINER_CLI_VERSION ?= 0.88.0
+DEVCONTAINER_PACKAGE_LANE ?= development
+DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 SONAR_SCAN_ATTEMPTS ?= 3
 SONAR_QUALITYGATE_WAIT ?= true
 
@@ -26,7 +28,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
 .PHONY: parity-apple-compose parity parity-vscode parity-release runtime-check
-.PHONY: package package-release homebrew-formula release-version
+.PHONY: package package-release homebrew-formula homebrew-formula-current
+.PHONY: release-version
 .PHONY: prepare-release release-check sonar sonar-scan clean
 
 all: workflow
@@ -183,7 +186,9 @@ parity-release: parity parity-vscode
 runtime-check: test-integration test-asan test-tsan parity-release
 
 package:
-	scripts/package.sh
+	DEVCONTAINER_PACKAGE_LANE="$(DEVCONTAINER_PACKAGE_LANE)" \
+	DEVCONTAINER_PACKAGE_RUN_NUMBER="$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+		scripts/package.sh
 
 package-release: release-check package
 
@@ -206,15 +211,51 @@ prepare-release:
 		--selector="$(VERSION_SELECTOR)" \
 		--write
 
+homebrew-formula: DEVCONTAINER_PACKAGE_LANE = stable
 homebrew-formula: package
 	@mkdir -p "$(DIST_DIR)"
 	$(PYTHON) Tools/release/render-homebrew-formula.py \
-		--version "$(DEVCONTAINER_VERSION)" \
-		--archive "$(DIST_DIR)/devcontainer-$(DEVCONTAINER_VERSION)-macos-arm64.tar.gz" \
+		--product-version "$(DEVCONTAINER_VERSION)" \
+		--formula-class Devcontainer \
+		--url "https://github.com/stephenlclarke/devcontainer/releases/download/$(DEVCONTAINER_VERSION)/devcontainer-release-arm64.tar.gz" \
+		--conflicts-with devcontainer-current \
+		--archive "$(DIST_DIR)/devcontainer-release-arm64.tar.gz" \
 		--template Tools/release/devcontainer.rb.in \
 		--output "$(DIST_DIR)/devcontainer.rb"
 	ruby -c "$(DIST_DIR)/devcontainer.rb"
 
+homebrew-formula-current: DEVCONTAINER_PACKAGE_LANE = current
+homebrew-formula-current: package
+	@test -n "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" || { \
+		printf 'DEVCONTAINER_PACKAGE_RUN_NUMBER is required for a Current formula\n' >&2; \
+		exit 2; \
+	}
+	@formula_version="$$( \
+		$(PYTHON) Tools/release/package-context.py \
+			--product-version "$(DEVCONTAINER_VERSION)" \
+			--lane current \
+			--commit "$$(git rev-parse --verify HEAD)" \
+			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+			--field formulaVersion \
+	)"; \
+	asset="$$( \
+		$(PYTHON) Tools/release/package-context.py \
+			--product-version "$(DEVCONTAINER_VERSION)" \
+			--lane current \
+			--commit "$$(git rev-parse --verify HEAD)" \
+			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+			--field asset \
+	)"; \
+	$(PYTHON) Tools/release/render-homebrew-formula.py \
+		--product-version "$(DEVCONTAINER_VERSION)" \
+		--formula-version "$$formula_version" \
+		--formula-class DevcontainerCurrent \
+		--url "https://github.com/stephenlclarke/devcontainer/releases/download/current/$$asset" \
+		--conflicts-with devcontainer \
+		--archive "$(DIST_DIR)/$$asset" \
+		--template Tools/release/devcontainer.rb.in \
+		--output "$(DIST_DIR)/devcontainer-current.rb"
+	ruby -c "$(DIST_DIR)/devcontainer-current.rb"
 release-check: check test-asan test-tsan parity-release homebrew-formula
 
 docs:
