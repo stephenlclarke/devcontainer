@@ -76,17 +76,27 @@ jobs:
           release_output=""
           set +e
           release_output="$(
-            gh api --silent \
+            gh api \
               "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1
           )"
           release_status="$?"
           set -e
           if (( release_status == 0 )); then
-            printf 'stable release %s already exists and is immutable\n' \
-              "${RELEASE_TAG}" >&2
-            exit 1
+            if ! jq -e \
+              --arg tag "${RELEASE_TAG}" \
+              '
+                .tag_name == $tag and
+                .draft == false and
+                .prerelease == true
+              ' <<<"${release_output}" >/dev/null; then
+              printf 'final stable release %s already exists and is immutable\n' \
+                "${RELEASE_TAG}" >&2
+              exit 1
+            fi
+            printf 'resuming staged stable prerelease %s\n' "${RELEASE_TAG}"
           fi
-          if [[ "${release_output}" != *"HTTP 404"* ]]; then
+          if (( release_status != 0 )) &&
+             [[ "${release_output}" != *"HTTP 404"* ]]; then
             printf 'could not determine stable release state:\n%s\n' \
               "${release_output}" >&2
             exit 1

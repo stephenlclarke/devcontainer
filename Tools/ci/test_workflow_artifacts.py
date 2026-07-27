@@ -110,6 +110,26 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertLess(initialize, recompile)
         self.assertLess(recompile, analyze)
 
+    def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
+        contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        stage = contents.index("- name: Stage GitHub release assets")
+        render = contents.index("- name: Render and validate tap formula")
+        commit = contents.index("- name: Commit candidate tap state locally")
+        install = contents.index("- name: Install and test tap formula")
+        push = contents.index("- name: Push tested tap state")
+        finalize = contents.index("- name: Finalize release after tap promotion")
+
+        self.assertLess(stage, render)
+        self.assertLess(render, commit)
+        self.assertLess(commit, install)
+        self.assertLess(install, push)
+        self.assertLess(push, finalize)
+        self.assertIn("mode=stable-stage", contents)
+        self.assertIn("mode=stable-finalize", contents)
+        self.assertIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
+
     def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         package = (ROOT / "scripts" / "package.sh").read_text(encoding="utf-8")

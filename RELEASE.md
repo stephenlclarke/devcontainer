@@ -378,6 +378,14 @@ provenance, or normalized-archive-metadata drift.
 
 Checksums are calculated only after signing and notarization, because those bytes are the distributed identity. Formula rendering downloads the published archive and checksum again, verifies both, checks required archive entries, and derives the Homebrew SHA from that verified archive.
 
+Publication is a retryable two-phase transaction. The workflow first uploads
+the candidate as a public prerelease, commits the candidate tap state locally,
+and installs and tests that exact local commit. It then pushes the tested tap
+commit and only afterward finalizes a stable release. Failed stable attempts
+may replace assets only while the release remains a prerelease; a finalized
+stable release is immutable. Current remains a prerelease and moves its
+deliberately mutable source tag only after the tap promotion succeeds.
+
 ## Homebrew Design
 
 The producer repository owns the formula template and renderer. The tap owns the generated live formula.

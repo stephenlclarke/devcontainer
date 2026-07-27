@@ -28,6 +28,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
         root: Path,
         *,
         release_exists: bool,
+        prerelease: bool = True,
     ) -> tuple[dict[str, str], Path, Path]:
         fake_bin = root / "bin"
         fake_bin.mkdir()
@@ -39,7 +40,10 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 'printf "%s\\n" "$*" >> "$GH_TRACE"\n'
                 'if [[ "${1:-}" == api ]]; then\n'
                 f"  if [[ {'1' if release_exists else '0'} == 1 ]]; then\n"
-                "    printf '{}\\n'\n"
+                "    printf "
+                f"'{{\"tag_name\":\"%s\",\"draft\":false,\"prerelease\":"
+                f"{'true' if prerelease else 'false'}}}\\n' "
+                '"$RELEASE_TAG"\n'
                 "    exit 0\n"
                 "  fi\n"
                 "  printf 'HTTP 404: Not Found\\n' >&2\n"
@@ -124,29 +128,75 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn("release edit current", gh_trace.read_text(encoding="utf-8"))
             self.assertIn("push --force origin", git_trace.read_text(encoding="utf-8"))
 
-    def test_existing_stable_release_is_immutable(self) -> None:
+    def test_existing_final_stable_release_is_immutable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment, gh_trace, git_trace = self.fixture(
                 Path(temporary_directory),
                 release_exists=True,
+                prerelease=False,
             )
-            result = self.run_publisher(environment, "stable", "1.2.3")
+            result = self.run_publisher(
+                environment,
+                "stable-stage",
+                "1.2.3",
+            )
             self.assertEqual(result.returncode, 1)
-            self.assertIn("immutable", result.stderr)
+            self.assertIn("not a staged prerelease", result.stderr)
             self.assertNotIn("release create", gh_trace.read_text(encoding="utf-8"))
             self.assertFalse(git_trace.exists())
 
-    def test_new_stable_release_uses_existing_verified_tag(self) -> None:
+    def test_new_stable_stage_uses_verified_tag_and_prerelease(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment, gh_trace, git_trace = self.fixture(
                 Path(temporary_directory),
                 release_exists=False,
             )
-            result = self.run_publisher(environment, "stable", "1.2.3")
+            result = self.run_publisher(
+                environment,
+                "stable-stage",
+                "1.2.3",
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             trace = gh_trace.read_text(encoding="utf-8")
             self.assertIn("release create 1.2.3", trace)
             self.assertIn("--verify-tag", trace)
+            self.assertIn("--prerelease", trace)
+            self.assertIn("--latest=false", trace)
+            self.assertFalse(git_trace.exists())
+
+    def test_existing_stable_stage_replaces_only_staged_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment, gh_trace, git_trace = self.fixture(
+                Path(temporary_directory),
+                release_exists=True,
+            )
+            result = self.run_publisher(
+                environment,
+                "stable-stage",
+                "1.2.3",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = gh_trace.read_text(encoding="utf-8")
+            self.assertIn("release upload 1.2.3", trace)
+            self.assertIn("--clobber", trace)
+            self.assertFalse(git_trace.exists())
+
+    def test_stable_finalize_promotes_staged_prerelease(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment, gh_trace, git_trace = self.fixture(
+                Path(temporary_directory),
+                release_exists=True,
+            )
+            result = self.run_publisher(
+                environment,
+                "stable-finalize",
+                "1.2.3",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = gh_trace.read_text(encoding="utf-8")
+            self.assertIn("release edit 1.2.3", trace)
+            self.assertIn("--prerelease=false", trace)
+            self.assertIn("--latest", trace)
             self.assertFalse(git_trace.exists())
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # USAGE:
-#   publish-github-release.sh current-stage|current-finalize|stable
+#   publish-github-release.sh current-stage|current-finalize|stable-stage|stable-finalize
 #
-# Publish immutable stable assets or stage/finalize the mutable Current channel.
+# Stage/finalize immutable stable assets or the mutable Current channel.
 
 #===----------------------------------------------------------------------===#
 # Copyright 2026 devcontainer project authors.
@@ -30,7 +30,9 @@ readonly GIT="${GIT:-git}"
 
 # Print the command-line interface.
 usage() {
-  printf 'usage: %s current-stage|current-finalize|stable\n' "$SCRIPT_NAME"
+  printf \
+    'usage: %s current-stage|current-finalize|stable-stage|stable-finalize\n' \
+    "$SCRIPT_NAME"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -49,6 +51,7 @@ readonly PUBLISH_SHA="${PUBLISH_SHA:-}"
 readonly TITLE="${RELEASE_TITLE:-}"
 readonly NOTES_FILE="${RELEASE_NOTES_FILE:-}"
 readonly ASSETS_FILE="${RELEASE_ASSETS_FILE:-}"
+RELEASE_DOCUMENT=""
 
 for variable_name in REPOSITORY TAG PUBLISH_SHA TITLE NOTES_FILE ASSETS_FILE; do
   if [[ -z "${!variable_name}" ]]; then
@@ -91,6 +94,7 @@ release_exists() {
   status="$?"
   set -e
   if (( status == 0 )); then
+    RELEASE_DOCUMENT="$output"
     return 0
   fi
   if [[ "$output" == *"HTTP 404"* ]]; then
@@ -98,6 +102,20 @@ release_exists() {
   fi
   printf 'could not determine release state for %s:\n%s\n' "$TAG" "$output" >&2
   exit "$status"
+}
+
+# Require an existing public prerelease for the selected channel.
+require_staged_release() {
+  if ! jq -e \
+    --arg tag "$TAG" \
+    '
+      .tag_name == $tag and
+      .draft == false and
+      .prerelease == true
+    ' <<<"$RELEASE_DOCUMENT" >/dev/null; then
+    printf 'release %s exists but is not a staged prerelease\n' "$TAG" >&2
+    exit 1
+  fi
 }
 
 # Move the deliberately mutable Current source pointer.
@@ -113,6 +131,7 @@ case "$MODE" in
       exit 2
     fi
     if release_exists; then
+      require_staged_release
       "$GH" release upload "$TAG" "${ASSETS[@]}" \
         --repo "$REPOSITORY" \
         --clobber
@@ -136,6 +155,7 @@ case "$MODE" in
       printf 'Current release must be staged before finalization\n' >&2
       exit 1
     fi
+    require_staged_release
     move_current_tag
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
@@ -145,20 +165,41 @@ case "$MODE" in
       --prerelease \
       --latest=false
     ;;
-  stable)
+  stable-stage)
     if [[ ! "$TAG" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
       printf 'stable release tag must be MAJOR.MINOR.PATCH\n' >&2
       exit 2
     fi
     if release_exists; then
-      printf 'stable release %s already exists and is immutable\n' "$TAG" >&2
+      require_staged_release
+      "$GH" release upload "$TAG" "${ASSETS[@]}" \
+        --repo "$REPOSITORY" \
+        --clobber
+    else
+      "$GH" release create "$TAG" "${ASSETS[@]}" \
+        --repo "$REPOSITORY" \
+        --verify-tag \
+        --title "$TITLE" \
+        --notes-file "$NOTES_FILE" \
+        --prerelease \
+        --latest=false
+    fi
+    ;;
+  stable-finalize)
+    if [[ ! "$TAG" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+      printf 'stable release tag must be MAJOR.MINOR.PATCH\n' >&2
+      exit 2
+    fi
+    if ! release_exists; then
+      printf 'stable release must be staged before finalization\n' >&2
       exit 1
     fi
-    "$GH" release create "$TAG" "${ASSETS[@]}" \
+    require_staged_release
+    "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
-      --verify-tag \
       --title "$TITLE" \
       --notes-file "$NOTES_FILE" \
+      --prerelease=false \
       --latest
     ;;
   *)

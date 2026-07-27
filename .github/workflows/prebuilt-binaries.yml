@@ -340,7 +340,7 @@ jobs:
         with:
           name: devcontainer-${{ needs.resolve.outputs.lane }}-${{ needs.resolve.outputs.sha }}
           path: ${{ steps.package.outputs.assets }}
-      - name: Stage or publish GitHub release
+      - name: Stage GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
@@ -352,7 +352,7 @@ jobs:
         working-directory: devcontainer
         run: |
           set -euo pipefail
-          mode=stable
+          mode=stable-stage
           if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
             mode=current-stage
           fi
@@ -394,10 +394,32 @@ jobs:
             git -C homebrew-tap diff --name-only \
               | sort
           )"
-          expected="$(printf 'Formula/%s\nREADME.md\n' "${formula}" | sort)"
-          if [[ "${changed}" != "${expected}" ]]; then
+          unexpected="$(
+            comm -23 \
+              <(printf '%s\n' "${changed}" | sed '/^$/d') \
+              <(printf 'Formula/%s\nREADME.md\n' "${formula}" | sort)
+          )"
+          if [[ -n "${unexpected}" ]]; then
             printf 'unexpected tap changes:\n%s\n' "${changed}" >&2
             exit 1
+          fi
+          test -s "homebrew-tap/Formula/${formula}"
+          test -s homebrew-tap/README.md
+      - name: Commit candidate tap state locally
+        env:
+          LANE: ${{ needs.resolve.outputs.lane }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C homebrew-tap config user.name "devcontainer release"
+          git -C homebrew-tap config user.email \
+            "devcontainer-release@users.noreply.github.com"
+          git -C homebrew-tap add README.md Formula/devcontainer*.rb
+          if git -C homebrew-tap diff --cached --quiet; then
+            printf 'tap already contains the candidate %s state\n' "${LANE}"
+          else
+            git -C homebrew-tap commit \
+              -m "chore(devcontainer): update ${LANE} formula"
           fi
       - name: Install and test tap formula
         env:
@@ -409,43 +431,52 @@ jobs:
           if [[ "${LANE}" == current ]]; then
             formula=devcontainer-current
           fi
-          brew tap stephenlclarke/tap "${PWD}/homebrew-tap"
-          brew trust --tap stephenlclarke/tap
+          tap=stephenlclarke/tap
+          cleanup() {
+            for candidate in devcontainer devcontainer-current; do
+              if brew list --formula | grep -Fxq "${candidate}"; then
+                brew uninstall --force "${candidate}" >/dev/null
+              fi
+            done
+            brew untap "${tap}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          brew tap "${tap}" "${PWD}/homebrew-tap"
+          brew trust --tap "${tap}"
           brew audit --formula --strict --online \
-            "stephenlclarke/tap/${formula}"
-          brew fetch --formula --force "stephenlclarke/tap/${formula}"
-          brew install --formula "stephenlclarke/tap/${formula}"
-          brew test "stephenlclarke/tap/${formula}"
+            "${tap}/${formula}"
+          brew fetch --formula --force "${tap}/${formula}"
+          brew install --formula "${tap}/${formula}"
+          brew test "${tap}/${formula}"
           installed="$(
-            brew --prefix "stephenlclarke/tap/${formula}"
+            brew --prefix "${tap}/${formula}"
           )/bin/devcontainer"
           "${installed}" version --format json \
             | jq -e \
               --arg commit "${{ needs.resolve.outputs.sha }}" \
               --arg lane "${LANE}" \
               '.commit == $commit and .lane == $lane'
-      - name: Commit and push tap
-        env:
-          LANE: ${{ needs.resolve.outputs.lane }}
+      - name: Push tested tap state
         shell: bash
         run: |
           set -euo pipefail
-          git -C homebrew-tap config user.name "devcontainer release"
-          git -C homebrew-tap config user.email \
-            "devcontainer-release@users.noreply.github.com"
-          git -C homebrew-tap add README.md Formula/devcontainer*.rb
-          git -C homebrew-tap commit \
-            -m "chore(devcontainer): update ${LANE} formula"
+          test -z "$(git -C homebrew-tap status --short)"
           git -C homebrew-tap push origin main
-      - name: Finalize Current source pointer
-        if: needs.resolve.outputs.lane == 'current'
+      - name: Finalize release after tap promotion
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: current
-          RELEASE_TITLE: Current build
+          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
         working-directory: devcontainer
-        run: Tools/release/publish-github-release.sh current-finalize
+        run: |
+          set -euo pipefail
+          mode=stable-finalize
+          if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
+            mode=current-finalize
+          fi
+          Tools/release/publish-github-release.sh "${mode}"
