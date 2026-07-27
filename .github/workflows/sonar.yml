@@ -109,6 +109,24 @@ jobs:
           test -x "${scanner_bin}/sonar-scanner"
           printf '%s\n' "${scanner_bin}" >> "${GITHUB_PATH}"
 
+      - name: Validate SonarQube project identity
+        if: steps.sonar_credentials.outputs.configured == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          branches="$(
+            curl --fail --silent --show-error \
+              --user "${SONAR_TOKEN}:" \
+              "https://sonarcloud.io/api/project_branches/list?project=stephenlclarke_devcontainer"
+          )"
+          jq -e '
+            any(
+              .branches[];
+              .name == "main" and .isMain == true
+            )
+          ' <<< "${branches}" >/dev/null
+
       - name: SonarQube scan
         if: steps.sonar_credentials.outputs.configured == 'true'
         env:

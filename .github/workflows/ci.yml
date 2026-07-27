@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test and coverage
@@ -34,7 +38,10 @@ jobs:
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer context --format value | grep '^unix://'
-          .build/debug/devcontainer-compose version >/dev/null
+          DEVCONTAINER_DOCKER_BIN="$PWD/Tools/ci/docker-compose-smoke-fixture.sh" \
+            DEVCONTAINER_STATE="${RUNNER_TEMP}/devcontainer-smoke-state.sqlite" \
+            .build/debug/devcontainer-compose version \
+            | jq -e '.Version == "fixture"'
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
