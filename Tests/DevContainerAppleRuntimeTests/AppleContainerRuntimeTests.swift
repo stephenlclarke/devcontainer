@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -58,6 +59,22 @@ struct AppleContainerRuntimeTests {
             )
         )
         #expect(!AppleContainerRuntime.requiresNativeVolume(name: "user-cache"))
+    }
+
+    @Test
+    func `native states events and file modes map to Docker values`() {
+        #expect(AppleContainerRuntime.eventAction(for: .running) == .start)
+        #expect(AppleContainerRuntime.eventAction(for: .stopped) == .stop)
+        #expect(AppleContainerRuntime.eventAction(for: .unknown) == nil)
+        #expect(AppleContainerRuntime.containerState(
+            "stopped",
+            createdByThisEngine: true,
+            wasStarted: false
+        ) == .created)
+        #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFDIR) == 1 << 31)
+        #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFLNK) == 1 << 27)
+        #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFREG) == 0)
+        #expect(AppleContainerRuntime.dockerModeBit(S_ISUID, mask: S_ISUID, bit: 8) == 8)
     }
 
     @Test
