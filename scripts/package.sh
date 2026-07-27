@@ -82,7 +82,22 @@ if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
     "$stage/share/devcontainer/notarization.json"
 fi
 
-tar -C "$dist/stage" -czf "$archive" "devcontainer-$version"
+source_date_epoch="${SOURCE_DATE_EPOCH:-}"
+if [[ -z "$source_date_epoch" ]]; then
+  if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+    source_date_epoch="$(git show -s --format=%ct "$commit")"
+  else
+    source_date_epoch=0
+  fi
+fi
+if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
+  printf 'SOURCE_DATE_EPOCH must be a non-negative integer\n' >&2
+  exit 1
+fi
+python3 Tools/release/create-reproducible-archive.py \
+  --source "$stage" \
+  --output "$archive" \
+  --epoch "$source_date_epoch"
 archive_digest="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
 printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" >"$archive.sha256"
 verification_arguments=(

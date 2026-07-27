@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +56,79 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertEqual(value["architecture"], "arm64")
             self.assertEqual(value["containerDistribution"], "apple")
             self.assertEqual(value["provider"], "none")
+
+    def test_archive_is_byte_reproducible_and_metadata_is_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "devcontainer-1.2.3"
+            executable = source / "bin" / "devcontainer"
+            metadata = source / "share" / "devcontainer" / "build-info.json"
+            executable.parent.mkdir(parents=True)
+            metadata.parent.mkdir(parents=True)
+            executable.write_bytes(b"executable")
+            metadata.write_text('{"version":"1.2.3"}\n', encoding="utf-8")
+            executable.chmod(0o755)
+            metadata.chmod(0o644)
+            first = root / "first.tar.gz"
+            second = root / "second.tar.gz"
+            epoch = "1785100000"
+
+            self.run_tool(
+                "create-reproducible-archive.py",
+                "--source",
+                str(source),
+                "--output",
+                str(first),
+                "--epoch",
+                epoch,
+            )
+            os.utime(executable, (1_000_000_000, 1_000_000_000))
+            os.utime(metadata, (1_100_000_000, 1_100_000_000))
+            self.run_tool(
+                "create-reproducible-archive.py",
+                "--source",
+                str(source),
+                "--output",
+                str(second),
+                "--epoch",
+                epoch,
+            )
+
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            with tarfile.open(first, "r:gz") as archive:
+                members = archive.getmembers()
+                self.assertEqual(
+                    [member.name for member in members],
+                    sorted(member.name for member in members),
+                )
+                self.assertTrue(
+                    all(member.mtime == int(epoch) for member in members)
+                )
+                self.assertTrue(all(member.uid == 0 for member in members))
+                self.assertTrue(all(member.gid == 0 for member in members))
+                executable_member = archive.getmember(
+                    "devcontainer-1.2.3/bin/devcontainer"
+                )
+                self.assertEqual(executable_member.mode, 0o755)
+
+    def test_archive_rejects_symbolic_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "devcontainer-1.2.3"
+            source.mkdir()
+            (source / "target").write_text("value", encoding="utf-8")
+            (source / "link").symlink_to("target")
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_tool(
+                    "create-reproducible-archive.py",
+                    "--source",
+                    str(source),
+                    "--output",
+                    str(root / "archive.tar.gz"),
+                    "--epoch",
+                    "1",
+                )
 
     def test_sbom_contains_the_root_and_every_resolved_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
