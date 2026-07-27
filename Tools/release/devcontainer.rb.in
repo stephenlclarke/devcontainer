@@ -7,9 +7,9 @@ class @FORMULA_CLASS@ < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on macos: :tahoe
   depends_on "docker"
   depends_on "docker-compose"
+  depends_on macos: :tahoe
   conflicts_with "@CONFLICTS_WITH@", because: "both install devcontainer commands"
 
   def install

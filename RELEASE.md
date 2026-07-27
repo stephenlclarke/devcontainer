@@ -402,9 +402,9 @@ class Devcontainer < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on macos: :tahoe
   depends_on "docker"
   depends_on "docker-compose"
+  depends_on macos: :tahoe
 
   def install
     bin.install "bin/devcontainer"
