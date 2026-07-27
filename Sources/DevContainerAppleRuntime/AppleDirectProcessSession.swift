@@ -22,6 +22,36 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+private struct DirectProcessStreams: @unchecked Sendable {
+    let standardInput: Pipe?
+    let standardOutput: Pipe?
+    let standardError: Pipe?
+    let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
+    let frameContinuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    let outputEnd: AsyncStream<Void>
+    let outputEndContinuation: AsyncStream<Void>.Continuation
+    let errorEnd: AsyncStream<Void>
+    let errorEndContinuation: AsyncStream<Void>.Continuation
+    let drainState: PipeDrainState
+
+    init(
+        standardInput: Pipe?,
+        standardOutput: Pipe?,
+        standardError: Pipe?
+    ) {
+        self.standardInput = standardInput
+        self.standardOutput = standardOutput
+        self.standardError = standardError
+        (frames, frameContinuation) = AsyncThrowingStream.makeStream()
+        (outputEnd, outputEndContinuation) = AsyncStream.makeStream()
+        (errorEnd, errorEndContinuation) = AsyncStream.makeStream()
+        drainState = PipeDrainState(
+            outputFinished: standardOutput == nil,
+            errorFinished: standardError == nil
+        )
+    }
+}
+
 /// A Docker-style process session backed directly by Apple's public container
 /// API client. Direct process handles are necessary for lossless duplex I/O and
 /// terminal resizing; the `container exec` command does not expose its process
@@ -43,86 +73,85 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
     ) {
         self.process = process
         self.standardInput = standardInput
-
-        let (stream, continuation) =
-            AsyncThrowingStream<RuntimeIOFrame, any Error>.makeStream()
-        let (outputEnd, outputEndContinuation) = AsyncStream<Void>.makeStream()
-        let (errorEnd, errorEndContinuation) = AsyncStream<Void>.makeStream()
-        let drainState = PipeDrainState(
-            outputFinished: standardOutput == nil,
-            errorFinished: standardError == nil
+        let streams = DirectProcessStreams(
+            standardInput: standardInput,
+            standardOutput: standardOutput,
+            standardError: standardError
         )
-        frames = stream
+        frames = streams.frames
+        Self.monitor(streams.standardOutput, channel: .standardOutput, streams: streams)
+        Self.monitor(streams.standardError, channel: .standardError, streams: streams)
+        completion = Self.completionTask(process: process, streams: streams)
+    }
 
-        if let standardOutput {
-            standardOutput.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    handle.readabilityHandler = nil
-                    drainState.finishOutput()
+    private static func monitor(
+        _ pipe: Pipe?,
+        channel: RuntimeIOChannel,
+        streams: DirectProcessStreams
+    ) {
+        guard let pipe else {
+            if channel == .standardOutput {
+                streams.outputEndContinuation.finish()
+            } else {
+                streams.errorEndContinuation.finish()
+            }
+            return
+        }
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                if channel == .standardOutput {
+                    streams.drainState.finishOutput()
                     Self.trace("stdout EOF")
-                    outputEndContinuation.finish()
+                    streams.outputEndContinuation.finish()
                 } else {
-                    drainState.markActivity()
-                    continuation.yield(
-                        RuntimeIOFrame(channel: .standardOutput, data: data)
-                    )
-                }
-            }
-        } else {
-            outputEndContinuation.finish()
-        }
-
-        if let standardError {
-            standardError.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    handle.readabilityHandler = nil
-                    drainState.finishError()
+                    streams.drainState.finishError()
                     Self.trace("stderr EOF")
-                    errorEndContinuation.finish()
-                } else {
-                    drainState.markActivity()
-                    continuation.yield(
-                        RuntimeIOFrame(channel: .standardError, data: data)
-                    )
+                    streams.errorEndContinuation.finish()
                 }
+            } else {
+                streams.drainState.markActivity()
+                streams.frameContinuation.yield(RuntimeIOFrame(channel: channel, data: data))
             }
-        } else {
-            errorEndContinuation.finish()
         }
+    }
 
-        completion = Task {
+    private static func completionTask(
+        process: any ClientProcess,
+        streams: DirectProcessStreams
+    ) -> Task<Int32, any Error> {
+        Task {
             do {
                 Self.trace("starting process \(process.id)")
                 try await process.start()
                 Self.trace("started process \(process.id)")
-                try? standardInput?.fileHandleForReading.close()
-                try? standardOutput?.fileHandleForWriting.close()
-                try? standardError?.fileHandleForWriting.close()
+                try? streams.standardInput?.fileHandleForReading.close()
+                try? streams.standardOutput?.fileHandleForWriting.close()
+                try? streams.standardError?.fileHandleForWriting.close()
                 let exitCode = try await process.wait()
                 Self.trace("wait completed for \(process.id) with \(exitCode)")
-                drainState.markActivity()
+                streams.drainState.markActivity()
                 let deadline = ContinuousClock.now + .seconds(30)
-                while !drainState.isDrained(idleNanoseconds: 250_000_000),
+                while !streams.drainState.isDrained(idleNanoseconds: 250_000_000),
                       ContinuousClock.now < deadline
                 {
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                standardOutput?.fileHandleForReading.readabilityHandler = nil
-                standardError?.fileHandleForReading.readabilityHandler = nil
-                try? standardOutput?.fileHandleForReading.close()
-                try? standardError?.fileHandleForReading.close()
-                outputEndContinuation.finish()
-                errorEndContinuation.finish()
-                for await _ in outputEnd { /* Completion latch for stdout. */ }
-                for await _ in errorEnd { /* Completion latch for stderr. */ }
+                streams.standardOutput?.fileHandleForReading.readabilityHandler = nil
+                streams.standardError?.fileHandleForReading.readabilityHandler = nil
+                try? streams.standardOutput?.fileHandleForReading.close()
+                try? streams.standardError?.fileHandleForReading.close()
+                streams.outputEndContinuation.finish()
+                streams.errorEndContinuation.finish()
+                for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
+                for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
                 Self.trace("I/O drained for \(process.id)")
-                continuation.finish()
+                streams.frameContinuation.finish()
                 return exitCode
             } catch {
                 Self.trace("process \(process.id) failed: \(error)")
-                continuation.finish(throwing: error)
+                streams.frameContinuation.finish(throwing: error)
                 throw error
             }
         }

@@ -45,49 +45,17 @@ actor PortForwarding {
         var resolvedBindings: [PortBinding] = []
         do {
             for binding in bindings {
-                let proxyAddress = try SocketAddress(
-                    ipAddress: binding.hostAddress,
-                    port: Int(binding.hostPort ?? 0)
+                let (result, resolved) = try await open(
+                    binding: binding,
+                    targetHost: targetHost
                 )
-                let serverAddress = try SocketAddress(
-                    ipAddress: targetHost,
-                    port: Int(binding.containerPort)
-                )
-                let forwarder: any SocketForwarder
-                switch binding.protocolName.lowercased() {
-                case "tcp":
-                    forwarder = try TCPForwarder(
-                        proxyAddress: proxyAddress,
-                        serverAddress: serverAddress,
-                        eventLoopGroup: NIOSingletons.posixEventLoopGroup
-                    )
-                case "udp":
-                    forwarder = try UDPForwarder(
-                        proxyAddress: proxyAddress,
-                        serverAddress: serverAddress,
-                        eventLoopGroup: NIOSingletons.posixEventLoopGroup
-                    )
-                default:
-                    throw DevContainerError(
-                        .unsupportedCapability,
-                        message: "unsupported published-port protocol \(binding.protocolName)"
-                    )
-                }
-                let result = try await forwarder.run().get()
                 opened.append(result)
-                var resolved = binding
-                if let port = result.proxyAddress?.port {
-                    resolved.hostPort = UInt16(port)
-                }
                 resolvedBindings.append(resolved)
             }
             listeners[containerID] = opened
             return resolvedBindings
         } catch {
-            for listener in opened {
-                listener.close()
-                try? await listener.wait()
-            }
+            await close(opened)
             throw DevContainerError(
                 .conflict,
                 message: "port forwarding for container \(containerID) failed: \(error)"
@@ -95,12 +63,55 @@ actor PortForwarding {
         }
     }
 
-    func stop(containerID: String) async {
-        let channels = listeners.removeValue(forKey: containerID) ?? []
+    private func open(
+        binding: PortBinding,
+        targetHost: String
+    ) async throws -> (SocketForwarderResult, PortBinding) {
+        let proxyAddress = try SocketAddress(
+            ipAddress: binding.hostAddress,
+            port: Int(binding.hostPort ?? 0)
+        )
+        let serverAddress = try SocketAddress(
+            ipAddress: targetHost,
+            port: Int(binding.containerPort)
+        )
+        let forwarder: any SocketForwarder
+        switch binding.protocolName.lowercased() {
+        case "tcp":
+            forwarder = try TCPForwarder(
+                proxyAddress: proxyAddress,
+                serverAddress: serverAddress,
+                eventLoopGroup: NIOSingletons.posixEventLoopGroup
+            )
+        case "udp":
+            forwarder = try UDPForwarder(
+                proxyAddress: proxyAddress,
+                serverAddress: serverAddress,
+                eventLoopGroup: NIOSingletons.posixEventLoopGroup
+            )
+        default:
+            throw DevContainerError(
+                .unsupportedCapability,
+                message: "unsupported published-port protocol \(binding.protocolName)"
+            )
+        }
+        let result = try await forwarder.run().get()
+        var resolved = binding
+        if let port = result.proxyAddress?.port {
+            resolved.hostPort = UInt16(port)
+        }
+        return (result, resolved)
+    }
+
+    private func close(_ channels: [SocketForwarderResult]) async {
         for channel in channels {
             channel.close()
             try? await channel.wait()
         }
+    }
+
+    func stop(containerID: String) async {
+        await close(listeners.removeValue(forKey: containerID) ?? [])
     }
 
     func stopAll() async {

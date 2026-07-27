@@ -18,6 +18,37 @@ import Darwin
 import DevContainerModel
 import Foundation
 
+private struct ParsedComposeArguments {
+    var command: String?
+    var projectName: String?
+    var projectDirectory: String?
+    var files: [String] = []
+
+    mutating func consumeValueOption(_ option: String, value: String) {
+        switch option {
+        case "-p", "--project-name":
+            projectName = value
+        case "--project-directory":
+            projectDirectory = value
+        default:
+            files.append(value)
+        }
+    }
+
+    mutating func consumeInlineOption(_ argument: String) -> Bool {
+        if argument.hasPrefix("--project-name=") {
+            projectName = String(argument.dropFirst("--project-name=".count))
+        } else if argument.hasPrefix("--project-directory=") {
+            projectDirectory = String(argument.dropFirst("--project-directory=".count))
+        } else if argument.hasPrefix("--file=") {
+            files.append(String(argument.dropFirst("--file=".count)))
+        } else {
+            return false
+        }
+        return true
+    }
+}
+
 public struct ComposeCommandEnvelope: Equatable, Sendable {
     public var command: String?
     public var projectName: String?
@@ -26,17 +57,30 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
     public var mutating: Bool
 
     public init(arguments: [String]) throws {
-        var commandValue: String?
-        var projectNameValue: String?
-        var projectDirectoryValue: String?
-        var fileValues: [String] = []
+        let parsed = try Self.parse(arguments)
+        command = parsed.command
+        projectName = parsed.projectName
+        projectDirectory = parsed.projectDirectory
+        files = parsed.files
+        mutating = Self.mutatingCommands.contains(parsed.command ?? "")
+    }
+
+    public func projectKey(userID: uid_t = getuid()) -> ProjectKey? {
+        guard let projectName, !projectName.isEmpty else {
+            return nil
+        }
+        return ProjectKey(rawValue: "\(userID):\(projectName.lowercased())")
+    }
+
+    private static func parse(_ arguments: [String]) throws -> ParsedComposeArguments {
+        var parsed = ParsedComposeArguments()
         var index = 0
         var optionsEnded = false
 
         while index < arguments.count {
             let argument = arguments[index]
             if optionsEnded {
-                commandValue = commandValue ?? argument
+                parsed.command = parsed.command ?? argument
                 index += 1
                 continue
             }
@@ -53,29 +97,11 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                     )
                 }
                 let value = arguments[index + 1]
-                switch argument {
-                case "-p", "--project-name":
-                    projectNameValue = value
-                case "--project-directory":
-                    projectDirectoryValue = value
-                default:
-                    fileValues.append(value)
-                }
+                parsed.consumeValueOption(argument, value: value)
                 index += 2
                 continue
             }
-            if argument.hasPrefix("--project-name=") {
-                projectNameValue = String(argument.dropFirst("--project-name=".count))
-                index += 1
-                continue
-            }
-            if argument.hasPrefix("--project-directory=") {
-                projectDirectoryValue = String(argument.dropFirst("--project-directory=".count))
-                index += 1
-                continue
-            }
-            if argument.hasPrefix("--file=") {
-                fileValues.append(String(argument.dropFirst("--file=".count)))
+            if parsed.consumeInlineOption(argument) {
                 index += 1
                 continue
             }
@@ -83,22 +109,10 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                 index += 1
                 continue
             }
-            commandValue = argument
+            parsed.command = argument
             break
         }
-
-        command = commandValue
-        projectName = projectNameValue
-        projectDirectory = projectDirectoryValue
-        files = fileValues
-        mutating = Self.mutatingCommands.contains(commandValue ?? "")
-    }
-
-    public func projectKey(userID: uid_t = getuid()) -> ProjectKey? {
-        guard let projectName, !projectName.isEmpty else {
-            return nil
-        }
-        return ProjectKey(rawValue: "\(userID):\(projectName.lowercased())")
+        return parsed
     }
 
     private static let mutatingCommands: Set<String> = [

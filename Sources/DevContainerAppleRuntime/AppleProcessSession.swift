@@ -18,6 +18,34 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+private struct ProcessLaunchConfiguration {
+    let executable: URL
+    let arguments: [String]
+    let environment: [String: String]
+    let workingDirectory: URL?
+}
+
+private struct ProcessSessionIO: @unchecked Sendable {
+    let standardInput = Pipe()
+    let standardOutput = Pipe()
+    let standardError = Pipe()
+    let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
+    let frameContinuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    let termination: AsyncStream<Int32>
+    let terminationContinuation: AsyncStream<Int32>.Continuation
+    let outputEnd: AsyncStream<Void>
+    let outputEndContinuation: AsyncStream<Void>.Continuation
+    let errorEnd: AsyncStream<Void>
+    let errorEndContinuation: AsyncStream<Void>.Continuation
+
+    init() {
+        (frames, frameContinuation) = AsyncThrowingStream.makeStream()
+        (termination, terminationContinuation) = AsyncStream.makeStream()
+        (outputEnd, outputEndContinuation) = AsyncStream.makeStream()
+        (errorEnd, errorEndContinuation) = AsyncStream.makeStream()
+    }
+}
+
 final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
 
@@ -33,106 +61,102 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         input: Data? = nil
     ) throws {
         let process = Process()
-        let standardInput = Pipe()
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        var continuationValue: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation?
-        let stream = AsyncThrowingStream<RuntimeIOFrame, any Error> { continuation in
-            continuationValue = continuation
+        let streams = ProcessSessionIO()
+        Self.configure(
+            process,
+            configuration: ProcessLaunchConfiguration(
+                executable: executable,
+                arguments: arguments,
+                environment: environment,
+                workingDirectory: workingDirectory
+            ),
+            streams: streams
+        )
+        try Self.start(process, streams: streams)
+        if let input {
+            streams.standardInput.fileHandleForWriting.write(input)
+            try? streams.standardInput.fileHandleForWriting.close()
         }
-        var terminationContinuationValue: AsyncStream<Int32>.Continuation?
-        let termination = AsyncStream<Int32> { continuation in
-            terminationContinuationValue = continuation
-        }
-        var outputEndContinuationValue: AsyncStream<Void>.Continuation?
-        let outputEnd = AsyncStream<Void> { continuation in
-            outputEndContinuationValue = continuation
-        }
-        var errorEndContinuationValue: AsyncStream<Void>.Continuation?
-        let errorEnd = AsyncStream<Void> { continuation in
-            errorEndContinuationValue = continuation
-        }
-        guard let continuation = continuationValue else {
-            preconditionFailure("process output continuation was not created")
-        }
-        guard let terminationContinuation = terminationContinuationValue else {
-            preconditionFailure("process termination continuation was not created")
-        }
-        guard
-            let outputEndContinuation = outputEndContinuationValue,
-            let errorEndContinuation = errorEndContinuationValue
-        else {
-            preconditionFailure("process pipe continuations were not created")
-        }
+        completion = Self.completionTask(streams)
+        self.process = process
+        standardInput = streams.standardInput
+        frames = streams.frames
+    }
 
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = workingDirectory
-        process.standardInput = standardInput
-        process.standardOutput = standardOutput
-        process.standardError = standardError
+    private static func configure(
+        _ process: Process,
+        configuration: ProcessLaunchConfiguration,
+        streams: ProcessSessionIO
+    ) {
+        process.executableURL = configuration.executable
+        process.arguments = configuration.arguments
+        process.environment = configuration.environment
+        process.currentDirectoryURL = configuration.workingDirectory
+        process.standardInput = streams.standardInput
+        process.standardOutput = streams.standardOutput
+        process.standardError = streams.standardError
         process.terminationHandler = { process in
-            terminationContinuation.yield(process.terminationStatus)
-            terminationContinuation.finish()
+            streams.terminationContinuation.yield(process.terminationStatus)
+            streams.terminationContinuation.finish()
             Task {
                 try? await Task.sleep(for: .milliseconds(250))
-                standardOutput.fileHandleForReading.readabilityHandler = nil
-                standardError.fileHandleForReading.readabilityHandler = nil
-                outputEndContinuation.finish()
-                errorEndContinuation.finish()
+                streams.standardOutput.fileHandleForReading.readabilityHandler = nil
+                streams.standardError.fileHandleForReading.readabilityHandler = nil
+                streams.outputEndContinuation.finish()
+                streams.errorEndContinuation.finish()
             }
         }
-        standardOutput.fileHandleForReading.readabilityHandler = { handle in
+        streams.standardOutput.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
-                outputEndContinuation.finish()
+                streams.outputEndContinuation.finish()
             } else {
-                continuation.yield(RuntimeIOFrame(channel: .standardOutput, data: data))
+                streams.frameContinuation.yield(RuntimeIOFrame(channel: .standardOutput, data: data))
             }
         }
-        standardError.fileHandleForReading.readabilityHandler = { handle in
+        streams.standardError.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
-                errorEndContinuation.finish()
+                streams.errorEndContinuation.finish()
             } else {
-                continuation.yield(RuntimeIOFrame(channel: .standardError, data: data))
+                streams.frameContinuation.yield(RuntimeIOFrame(channel: .standardError, data: data))
             }
         }
+    }
 
+    private static func start(
+        _ process: Process,
+        streams: ProcessSessionIO
+    ) throws {
         do {
             try process.run()
         } catch {
-            standardOutput.fileHandleForReading.readabilityHandler = nil
-            standardError.fileHandleForReading.readabilityHandler = nil
-            continuation.finish(throwing: error)
-            terminationContinuation.finish()
-            outputEndContinuation.finish()
-            errorEndContinuation.finish()
+            streams.standardOutput.fileHandleForReading.readabilityHandler = nil
+            streams.standardError.fileHandleForReading.readabilityHandler = nil
+            streams.frameContinuation.finish(throwing: error)
+            streams.terminationContinuation.finish()
+            streams.outputEndContinuation.finish()
+            streams.errorEndContinuation.finish()
             throw error
         }
+    }
 
-        if let input {
-            standardInput.fileHandleForWriting.write(input)
-            try? standardInput.fileHandleForWriting.close()
-        }
-
-        completion = Task.detached {
+    private static func completionTask(
+        _ streams: ProcessSessionIO
+    ) -> Task<Int32, any Error> {
+        Task.detached {
             var exitCode: Int32 = 255
-            for await status in termination {
+            for await status in streams.termination {
                 exitCode = status
                 break
             }
-            for await _ in outputEnd { /* Completion latch for stdout. */ }
-            for await _ in errorEnd { /* Completion latch for stderr. */ }
-            continuation.finish()
+            for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
+            for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
+            streams.frameContinuation.finish()
             return exitCode
         }
-        self.process = process
-        self.standardInput = standardInput
-        frames = stream
     }
 
     func write(_ data: Data) throws {
@@ -401,7 +425,15 @@ final class ApplePollingLogSession: RuntimeProcessSession, @unchecked Sendable {
             RuntimeIOFrame,
             any Error
         >.makeStream()
-        completion = Task {
+        completion = Self.pollingTask(poll: poll, continuation: continuation)
+        frames = stream
+    }
+
+    private static func pollingTask(
+        poll: @escaping @Sendable () async throws -> AppleLogPoll,
+        continuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    ) -> Task<Int32, any Error> {
+        Task {
             var outputOffset = 0
             var errorOffset = 0
             do {
@@ -447,7 +479,6 @@ final class ApplePollingLogSession: RuntimeProcessSession, @unchecked Sendable {
                 throw error
             }
         }
-        frames = stream
     }
 
     func write(_: Data) throws {

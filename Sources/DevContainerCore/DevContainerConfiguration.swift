@@ -51,6 +51,13 @@ public enum DevContainerConfigurationStore {
             return DevContainerConfiguration(socket: defaultSocket)
         }
         let text = try String(contentsOf: url, encoding: .utf8)
+        return try configuration(
+            values: parse(text),
+            defaultSocket: defaultSocket
+        )
+    }
+
+    private static func parse(_ text: String) throws -> [String: String] {
         var values: [String: String] = [:]
         var section = ""
         for (lineNumber, rawLine) in text.split(
@@ -79,7 +86,13 @@ public enum DevContainerConfigurationStore {
             }
             values[section.isEmpty ? key : "\(section).\(key)"] = value
         }
+        return values
+    }
 
+    private static func configuration(
+        values: [String: String],
+        defaultSocket: String
+    ) throws -> DevContainerConfiguration {
         let backendText = values["backend"] ?? BackendProvider.stock.rawValue
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")

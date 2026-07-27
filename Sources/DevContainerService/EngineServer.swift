@@ -49,9 +49,29 @@ final class EngineServer: @unchecked Sendable {
             releaseInstanceLock()
             throw error
         }
+        let bootstrap = makeBootstrap()
+
+        do {
+            channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
+            ownsSocket = true
+        } catch {
+            releaseInstanceLock()
+            throw error
+        }
+        guard chmod(socketPath, S_IRUSR | S_IWUSR) == 0 else {
+            try? await channel?.close()
+            try? removeOwnedSocket()
+            ownsSocket = false
+            releaseInstanceLock()
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        logger.info("Engine API listening", metadata: ["socket": .string(socketPath)])
+    }
+
+    private func makeBootstrap() -> ServerBootstrap {
         let router = router
         let logger = logger
-        let bootstrap = ServerBootstrap(group: group)
+        return ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
@@ -78,22 +98,6 @@ final class EngineServer: @unchecked Sendable {
             .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
-
-        do {
-            channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
-            ownsSocket = true
-        } catch {
-            releaseInstanceLock()
-            throw error
-        }
-        guard chmod(socketPath, S_IRUSR | S_IWUSR) == 0 else {
-            try? await channel?.close()
-            try? removeOwnedSocket()
-            ownsSocket = false
-            releaseInstanceLock()
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        logger.info("Engine API listening", metadata: ["socket": .string(socketPath)])
     }
 
     func wait() async throws {
@@ -330,92 +334,123 @@ private final class DockerHTTPHandler:
         let status = HTTPResponseStatus(statusCode: response.status)
         switch response.body {
         case let .bytes(data):
-            headers.replaceOrAdd(name: "Content-Length", value: String(data.count))
-            context.write(
-                wrapOutboundOut(
-                    .head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))
-                ),
-                promise: nil
-            )
-            if !data.isEmpty {
-                var buffer = context.channel.allocator.buffer(capacity: data.count)
-                buffer.writeBytes(data)
-                context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-            }
-            context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+            writeBytes(data, headers: &headers, status: status, context: context)
         case let .stream(stream):
-            headers.replaceOrAdd(name: "Transfer-Encoding", value: "chunked")
-            context.writeAndFlush(
-                wrapOutboundOut(
-                    .head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))
-                ),
-                promise: nil
-            )
-            streamBody(stream, context: context)
+            writeStream(stream, headers: &headers, status: status, context: context)
         case let .hijack(session, terminal):
-            let requestedUpgrade = requestHead?.headers.contains(name: "Upgrade") ?? false
-            logger.debug(
-                "Engine connection takeover requested",
-                metadata: [
-                    "request-target": .string(requestHead?.uri ?? "unknown"),
-                    "upgrade": .stringConvertible(requestedUpgrade)
-                ]
-            )
-            if !requestedUpgrade {
-                headers.replaceOrAdd(name: "Connection", value: "close")
-                headers.remove(name: "Upgrade")
-                // HTTP/1.0 below makes the connection close delimit the raw
-                // Docker multiplex bytes. An HTTP/1.1 encoder would otherwise
-                // select chunked framing before it is removed from the
-                // pipeline for connection takeover.
-                headers.remove(name: "Transfer-Encoding")
-                headers.remove(name: "Content-Length")
-            }
-            let hijackStatus: HTTPResponseStatus = requestedUpgrade ? .switchingProtocols : .ok
-            let headPromise = context.eventLoop.makePromise(of: Void.self)
-            context.writeAndFlush(
-                wrapOutboundOut(
-                    .head(
-                        HTTPResponseHead(
-                            version: requestedUpgrade ? .http1_1 : .http1_0,
-                            status: hijackStatus,
-                            headers: headers
-                        )
-                    )
-                ),
-                promise: headPromise
-            )
-            let rawHandler = DockerRawStreamHandler(
+            writeHijack(
                 session: session,
                 terminal: terminal,
-                logger: logger
+                headers: &headers,
+                context: context
             )
-            let sendableContext = SendableChannelHandlerContext(context)
-            headPromise.futureResult.whenComplete { result in
-                let context = sendableContext.value
-                switch result {
-                case .success:
-                    do {
-                        try context.pipeline.syncOperations.addHandler(rawHandler)
-                        context.pipeline.syncOperations.removeHandler(self.requestDecoder, promise: nil)
-                        context.pipeline.syncOperations.removeHandler(self.responseEncoder, promise: nil)
-                        context.pipeline.syncOperations.removeHandler(self, promise: nil)
-                        rawHandler.start(channel: context.channel)
-                    } catch {
-                        self.logger.error(
-                            "Engine connection takeover failed",
-                            metadata: ["error": .string(String(describing: error))]
-                        )
-                        context.close(promise: nil)
-                    }
-                case let .failure(error):
-                    self.logger.error(
-                        "Engine connection takeover failed",
-                        metadata: ["error": .string(String(describing: error))]
+        }
+    }
+
+    private func writeBytes(
+        _ data: Data,
+        headers: inout HTTPHeaders,
+        status: HTTPResponseStatus,
+        context: ChannelHandlerContext
+    ) {
+        headers.replaceOrAdd(name: "Content-Length", value: String(data.count))
+        context.write(
+            wrapOutboundOut(
+                .head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))
+            ),
+            promise: nil
+        )
+        if !data.isEmpty {
+            var buffer = context.channel.allocator.buffer(capacity: data.count)
+            buffer.writeBytes(data)
+            context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+        }
+        context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+    }
+
+    private func writeStream(
+        _ stream: AsyncThrowingStream<Data, any Error>,
+        headers: inout HTTPHeaders,
+        status: HTTPResponseStatus,
+        context: ChannelHandlerContext
+    ) {
+        headers.replaceOrAdd(name: "Transfer-Encoding", value: "chunked")
+        context.writeAndFlush(
+            wrapOutboundOut(
+                .head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))
+            ),
+            promise: nil
+        )
+        streamBody(stream, context: context)
+    }
+
+    private func writeHijack(
+        session: any RuntimeProcessSession,
+        terminal: Bool,
+        headers: inout HTTPHeaders,
+        context: ChannelHandlerContext
+    ) {
+        let requestedUpgrade = requestHead?.headers.contains(name: "Upgrade") ?? false
+        logger.debug(
+            "Engine connection takeover requested",
+            metadata: [
+                "request-target": .string(requestHead?.uri ?? "unknown"),
+                "upgrade": .stringConvertible(requestedUpgrade)
+            ]
+        )
+        if !requestedUpgrade {
+            headers.replaceOrAdd(name: "Connection", value: "close")
+            headers.remove(name: "Upgrade")
+            // HTTP/1.0 makes connection close delimit the raw Docker bytes.
+            headers.remove(name: "Transfer-Encoding")
+            headers.remove(name: "Content-Length")
+        }
+        let headPromise = context.eventLoop.makePromise(of: Void.self)
+        context.writeAndFlush(
+            wrapOutboundOut(
+                .head(
+                    HTTPResponseHead(
+                        version: requestedUpgrade ? .http1_1 : .http1_0,
+                        status: requestedUpgrade ? .switchingProtocols : .ok,
+                        headers: headers
                     )
-                    context.close(promise: nil)
-                }
-            }
+                )
+            ),
+            promise: headPromise
+        )
+        let rawHandler = DockerRawStreamHandler(
+            session: session,
+            terminal: terminal,
+            logger: logger
+        )
+        let sendableContext = SendableChannelHandlerContext(context)
+        headPromise.futureResult.whenComplete { result in
+            self.completeHijack(
+                result,
+                handler: rawHandler,
+                context: sendableContext.value
+            )
+        }
+    }
+
+    private func completeHijack(
+        _ result: Result<Void, any Error>,
+        handler: DockerRawStreamHandler,
+        context: ChannelHandlerContext
+    ) {
+        do {
+            try result.get()
+            try context.pipeline.syncOperations.addHandler(handler)
+            context.pipeline.syncOperations.removeHandler(requestDecoder, promise: nil)
+            context.pipeline.syncOperations.removeHandler(responseEncoder, promise: nil)
+            context.pipeline.syncOperations.removeHandler(self, promise: nil)
+            handler.start(channel: context.channel)
+        } catch {
+            logger.error(
+                "Engine connection takeover failed",
+                metadata: ["error": .string(String(describing: error))]
+            )
+            context.close(promise: nil)
         }
     }
 

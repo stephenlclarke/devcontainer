@@ -39,12 +39,26 @@ struct DoctorCommand: AsyncParsableCommand {
     var format = "pretty"
 
     mutating func run() async throws {
+        let checks = await checks()
+        let report = DoctorReport(
+            build: DevContainerProject.buildInfo,
+            checks: checks,
+            ready: checks.allSatisfy { $0.status != .fail }
+        )
+        try write(report)
+        if !report.ready {
+            throw ExitCode.failure
+        }
+    }
+
+    private func checks() async -> [DoctorCheck] {
         var checks: [DoctorCheck] = []
+        let architecture = machineArchitecture()
         checks.append(
             DoctorCheck(
                 name: "architecture",
-                status: machineArchitecture() == "arm64" ? .pass : .fail,
-                detail: machineArchitecture()
+                status: architecture == "arm64" ? .pass : .fail,
+                detail: architecture
             )
         )
 
@@ -80,12 +94,10 @@ struct DoctorCommand: AsyncParsableCommand {
                 arguments: ["version", "--format", "json"]
             ))
         }
+        return checks
+    }
 
-        let report = DoctorReport(
-            build: DevContainerProject.buildInfo,
-            checks: checks,
-            ready: checks.allSatisfy { $0.status != .fail }
-        )
+    private func write(_ report: DoctorReport) throws {
         switch format {
         case "pretty":
             for check in report.checks {
@@ -97,9 +109,6 @@ struct DoctorCommand: AsyncParsableCommand {
             FileHandle.standardOutput.write(Data("\n".utf8))
         default:
             throw ValidationError("unsupported format \(format); expected pretty or json")
-        }
-        if !report.ready {
-            throw ExitCode.failure
         }
     }
 

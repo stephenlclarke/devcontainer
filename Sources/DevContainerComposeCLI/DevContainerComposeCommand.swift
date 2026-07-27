@@ -54,43 +54,78 @@ enum DevContainerComposeCommand {
         let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
         let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
         let store = try SQLiteStateStore(path: paths.state)
-
-        if envelope.mutating {
-            _ = try await store.claimProject(
-                key: projectKey,
-                provider: backend,
-                composeProject: projectName,
-                projectDirectory: envelope.projectDirectory
-                    ?? FileManager.default.currentDirectoryPath,
-                configurationHash: nil
-            )
-        }
-
-        var childEnvironment = Self.safeChildEnvironment(environment)
-        let executable: URL
-        var childArguments: [String]
-        switch provider {
-        case .docker:
-            executable = paths.docker
-            childArguments = ["compose"] + arguments
-            childEnvironment["DOCKER_HOST"] = "unix://\(configuration.socket)"
-        case .containerCompose:
-            executable = paths.containerCompose
-            childArguments = arguments
-        }
-        if childArguments.isEmpty {
-            childArguments = ["help"]
-        }
+        try await claimIfNeeded(
+            envelope: envelope,
+            projectKey: projectKey,
+            projectName: projectName,
+            backend: backend,
+            store: store
+        )
+        let child = childCommand(
+            provider: provider,
+            arguments: arguments,
+            paths: paths,
+            environment: environment,
+            socket: configuration.socket
+        )
 
         let result = try await execute(
-            executable: executable,
-            arguments: childArguments,
-            environment: childEnvironment
+            executable: child.executable,
+            arguments: child.arguments,
+            environment: child.environment
         )
         if result == 0, envelope.command == "down" {
             try await store.releaseProject(key: projectKey)
         }
         return result
+    }
+
+    private static func claimIfNeeded(
+        envelope: ComposeCommandEnvelope,
+        projectKey: ProjectKey,
+        projectName: String,
+        backend: BackendProvider,
+        store: SQLiteStateStore
+    ) async throws {
+        guard envelope.mutating else {
+            return
+        }
+        _ = try await store.claimProject(
+            key: projectKey,
+            provider: backend,
+            composeProject: projectName,
+            projectDirectory: envelope.projectDirectory
+                ?? FileManager.default.currentDirectoryPath,
+            configurationHash: nil
+        )
+    }
+
+    private static func childCommand(
+        provider: ComposeProviderKind,
+        arguments: [String],
+        paths: Paths,
+        environment: [String: String],
+        socket: String
+    ) -> ComposeChildCommand {
+        var childEnvironment = safeChildEnvironment(environment)
+        var childArguments = arguments
+        let executable: URL
+        switch provider {
+        case .docker:
+            executable = paths.docker
+            childArguments = ["compose"] + arguments
+            childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
+        case .containerCompose:
+            executable = paths.containerCompose
+        }
+        if childArguments.isEmpty {
+            childArguments = ["help"]
+        }
+        return ComposeChildCommand(
+            executable: executable,
+            arguments: childArguments,
+            environment: childEnvironment
+        )
     }
 
     private static func execute(
@@ -146,6 +181,12 @@ enum DevContainerComposeCommand {
                 && key != "ENV"
         }
     }
+}
+
+private struct ComposeChildCommand {
+    let executable: URL
+    let arguments: [String]
+    let environment: [String: String]
 }
 
 private struct Paths {

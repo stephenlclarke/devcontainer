@@ -17,6 +17,23 @@
 import DevContainerModel
 import Foundation
 
+private struct TarValidationState {
+    var offset = 0
+    var entries = 0
+    var expandedSize: UInt64 = 0
+    var pendingPath: String?
+    var pendingLinkPath: String?
+    var pax: [String: String] = [:]
+}
+
+private struct ParsedTarEntry {
+    let size: UInt64
+    let type: UInt8
+    let headerName: String
+    let body: Data
+    let nextOffset: Int
+}
+
 public enum TarArchiveValidator {
     public static let maximumEntries = 100_000
     public static let maximumExpandedSize: UInt64 = 2_147_483_648
@@ -27,78 +44,98 @@ public enum TarArchiveValidator {
             throw invalid("tar archive is not aligned to 512-byte records")
         }
 
-        var offset = 0
-        var entries = 0
-        var expandedSize: UInt64 = 0
-        var pendingPath: String?
-        var pendingLinkPath: String?
-        var pax: [String: String] = [:]
+        var state = TarValidationState()
 
-        while offset + 512 <= archive.count {
-            let header = archive.subdata(in: offset ..< offset + 512)
+        while state.offset + 512 <= archive.count {
+            let header = archive.subdata(in: state.offset ..< state.offset + 512)
             if header.allSatisfy({ $0 == 0 }) {
-                return entries
+                return state.entries
             }
-            try validateChecksum(header)
-
-            let size = try number(header, range: 124 ..< 136, field: "size")
-            let type = header[156]
-            let headerName = try joinedName(header)
-            let bodyStart = offset + 512
-            guard
-                size <= UInt64(Int.max),
-                bodyStart <= archive.count,
-                Int(size) <= archive.count - bodyStart
-            else {
-                throw invalid("tar entry body exceeds the archive")
-            }
-            let bodyEnd = bodyStart + Int(size)
-            let body = archive.subdata(in: bodyStart ..< bodyEnd)
-
-            switch type {
-            case 0, 48, 49, 50, 53:
-                let path = pax["path"] ?? pendingPath ?? headerName
-                let linkPath = try pax["linkpath"] ?? pendingLinkPath
-                    ?? string(header, range: 157 ..< 257)
-                try validatePath(path, field: "entry path")
-                if type == 50 {
-                    try validateSymbolicLink(linkPath, from: path)
-                } else if type == 49 {
-                    try validatePath(linkPath, field: "hard-link target")
-                }
-                entries += 1
-                expandedSize = try adding(expandedSize, size)
-                guard entries <= maximumEntries else {
-                    throw invalid("tar archive exceeds \(maximumEntries) entries")
-                }
-                guard expandedSize <= maximumExpandedSize else {
-                    throw invalid("tar archive expands beyond \(maximumExpandedSize) bytes")
-                }
-                pendingPath = nil
-                pendingLinkPath = nil
-                pax = [:]
-            case 103:
-                _ = try parsePAX(body)
-            case 120:
-                pax = try parsePAX(body)
-            case 76:
-                pendingPath = try nulTerminated(body)
-            case 75:
-                pendingLinkPath = try nulTerminated(body)
-            case 51, 52, 54:
-                throw invalid("tar device and FIFO entries are not allowed")
-            default:
-                throw invalid("unsupported tar entry type \(type)")
-            }
-
-            let paddedSize = (Int(size) + 511) & ~511
-            guard paddedSize <= archive.count - bodyStart else {
-                throw invalid("tar entry padding exceeds the archive")
-            }
-            offset = bodyStart + paddedSize
+            let entry = try parseEntry(header, from: archive, offset: state.offset)
+            try consume(entry, header: header, state: &state)
+            state.offset = entry.nextOffset
         }
 
         throw invalid("tar archive has no terminating zero record")
+    }
+
+    private static func parseEntry(
+        _ header: Data,
+        from archive: Data,
+        offset: Int
+    ) throws -> ParsedTarEntry {
+        try validateChecksum(header)
+        let size = try number(header, range: 124 ..< 136, field: "size")
+        let bodyStart = offset + 512
+        guard
+            size <= UInt64(Int.max),
+            bodyStart <= archive.count,
+            Int(size) <= archive.count - bodyStart
+        else {
+            throw invalid("tar entry body exceeds the archive")
+        }
+        let bodyEnd = bodyStart + Int(size)
+        let paddedSize = (Int(size) + 511) & ~511
+        guard paddedSize <= archive.count - bodyStart else {
+            throw invalid("tar entry padding exceeds the archive")
+        }
+        return try ParsedTarEntry(
+            size: size,
+            type: header[156],
+            headerName: joinedName(header),
+            body: archive.subdata(in: bodyStart ..< bodyEnd),
+            nextOffset: bodyStart + paddedSize
+        )
+    }
+
+    private static func consume(
+        _ entry: ParsedTarEntry,
+        header: Data,
+        state: inout TarValidationState
+    ) throws {
+        switch entry.type {
+        case 0, 48, 49, 50, 53:
+            try consumeContent(entry, header: header, state: &state)
+        case 103:
+            _ = try parsePAX(entry.body)
+        case 120:
+            state.pax = try parsePAX(entry.body)
+        case 76:
+            state.pendingPath = try nulTerminated(entry.body)
+        case 75:
+            state.pendingLinkPath = try nulTerminated(entry.body)
+        case 51, 52, 54:
+            throw invalid("tar device and FIFO entries are not allowed")
+        default:
+            throw invalid("unsupported tar entry type \(entry.type)")
+        }
+    }
+
+    private static func consumeContent(
+        _ entry: ParsedTarEntry,
+        header: Data,
+        state: inout TarValidationState
+    ) throws {
+        let path = state.pax["path"] ?? state.pendingPath ?? entry.headerName
+        let linkPath = try state.pax["linkpath"] ?? state.pendingLinkPath
+            ?? string(header, range: 157 ..< 257)
+        try validatePath(path, field: "entry path")
+        if entry.type == 50 {
+            try validateSymbolicLink(linkPath, from: path)
+        } else if entry.type == 49 {
+            try validatePath(linkPath, field: "hard-link target")
+        }
+        state.entries += 1
+        state.expandedSize = try adding(state.expandedSize, entry.size)
+        guard state.entries <= maximumEntries else {
+            throw invalid("tar archive exceeds \(maximumEntries) entries")
+        }
+        guard state.expandedSize <= maximumExpandedSize else {
+            throw invalid("tar archive expands beyond \(maximumExpandedSize) bytes")
+        }
+        state.pendingPath = nil
+        state.pendingLinkPath = nil
+        state.pax = [:]
     }
 
     private static func validateChecksum(_ header: Data) throws {
