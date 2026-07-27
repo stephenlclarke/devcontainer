@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import Foundation
@@ -32,6 +33,13 @@ struct ManagedVolumeStoreTests {
             let created = try store.create(spec: spec)
             #expect(created.spec == spec)
             #expect(created.mountpoint.hasSuffix("/cache.v1/_data"))
+            var metadataStatus = stat()
+            let metadataPath = URL(fileURLWithPath: created.mountpoint)
+                .deletingLastPathComponent()
+                .appendingPathComponent("metadata.json")
+                .path
+            #expect(lstat(metadataPath, &metadataStatus) == 0)
+            #expect(metadataStatus.st_mode & 0o777 == 0o600)
             try Data("shared".utf8).write(
                 to: URL(fileURLWithPath: created.mountpoint)
                     .appendingPathComponent("value")
@@ -83,6 +91,55 @@ struct ManagedVolumeStoreTests {
                 )
             }
         }
+    }
+
+    @Test
+    func `metadata identity mismatch is rejected`() throws {
+        try withStore { store in
+            let created = try store.create(spec: VolumeSpec(name: "cache"))
+            let metadataURL = URL(fileURLWithPath: created.mountpoint)
+                .deletingLastPathComponent()
+                .appendingPathComponent("metadata.json")
+            let data = try Data(contentsOf: metadataURL)
+            var document = try #require(
+                JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            var spec = try #require(document["spec"] as? [String: Any])
+            spec["name"] = "different"
+            document["spec"] = spec
+            try JSONSerialization.data(withJSONObject: document)
+                .write(to: metadataURL)
+
+            #expect(throws: DevContainerError.self) {
+                _ = try store.inspect(name: "cache")
+            }
+        }
+    }
+
+    @Test
+    func `metadata permission failure rolls back the volume`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "devcontainer-volume-store-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try ManagedVolumeStore(
+            root: root,
+            setMetadataMode: { _, _ in
+                errno = EACCES
+                return -1
+            }
+        )
+
+        #expect(throws: POSIXError.self) {
+            _ = try store.create(spec: VolumeSpec(name: "cache"))
+        }
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("cache").path
+            )
+        )
     }
 
     private func withStore(

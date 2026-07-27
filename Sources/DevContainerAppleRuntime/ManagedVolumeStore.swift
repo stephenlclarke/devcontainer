@@ -30,9 +30,16 @@ struct ManagedVolumeStore {
     }
 
     let root: URL
+    private let setMetadataMode: @Sendable (String, mode_t) -> Int32
 
-    init(root: URL) throws {
+    init(
+        root: URL,
+        setMetadataMode: @escaping @Sendable (String, mode_t) -> Int32 = {
+            chmod($0, $1)
+        }
+    ) throws {
         self.root = root.standardizedFileURL
+        self.setMetadataMode = setMetadataMode
         try Self.createPrivateDirectoryIfNeeded(at: self.root)
     }
 
@@ -114,10 +121,14 @@ struct ManagedVolumeStore {
             let metadata = Metadata(spec: spec, createdAt: Date())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
+            let metadataURL = directory.appendingPathComponent("metadata.json")
             try encoder.encode(metadata).write(
-                to: directory.appendingPathComponent("metadata.json"),
-                options: [.atomic, .completeFileProtection]
+                to: metadataURL,
+                options: .atomic
             )
+            guard setMetadataMode(metadataURL.path, S_IRUSR | S_IWUSR) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
             return try inspect(name: spec.name)
         } catch {
             try? FileManager.default.removeItem(at: directory)

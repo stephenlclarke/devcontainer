@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Install quality tools
         run: brew install actionlint markdownlint-cli shellcheck swiftformat swiftlint
       - name: Resolve exact dependencies
@@ -31,6 +33,8 @@ jobs:
       - name: Validate source
         run: make format-check lint parity-manifest
       - name: Test and enforce coverage
+        env:
+          SWIFT_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: make coverage-check
       - name: Build
         run: make build
@@ -50,6 +54,8 @@ jobs:
           path: |
             .build/*.log
             .build/codecov-path
+            coverage.lcov
+            coverage.xml
           include-hidden-files: true
           if-no-files-found: ignore
 

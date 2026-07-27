@@ -10,6 +10,9 @@ SWIFTLINT ?= swiftlint
 SWIFTFORMAT ?= swiftformat
 ACTIONLINT ?= actionlint
 SWIFT_COVERAGE_MIN ?= 90
+SWIFT_COVERAGE_CHANGED_MIN ?= 90
+SWIFT_COVERAGE_BASE ?=
+SWIFT_COVERAGE_HEAD ?= HEAD
 SWIFT_TEST_RESULT_LOG ?= .build/swift-test.log
 SWIFT_TEST_ATTEMPTS ?= 2
 DOCS_OUTPUT_DIR ?= _site
@@ -96,10 +99,22 @@ coverage:
 		> .build/codecov-path
 
 coverage-check: coverage
-	$(PYTHON) Tools/coverage/check-swift-coverage.py \
+	@coverage_args=( \
 		--minimum "$(SWIFT_COVERAGE_MIN)" \
+		--changed-minimum "$(SWIFT_COVERAGE_CHANGED_MIN)" \
+		--lcov-output coverage.lcov \
 		--sonar-output coverage.xml \
 		--source-root "$(CURDIR)" \
+		--repository "$(CURDIR)" \
+	); \
+	if [[ -n "$(SWIFT_COVERAGE_BASE)" ]]; then \
+		coverage_args+=( \
+			--changed-since "$(SWIFT_COVERAGE_BASE)" \
+			--head-ref "$(SWIFT_COVERAGE_HEAD)" \
+		); \
+	fi; \
+	$(PYTHON) Tools/coverage/check-swift-coverage.py \
+		"$${coverage_args[@]}" \
 		"$$(cat .build/codecov-path)"
 
 sonar: coverage-check sonar-scan

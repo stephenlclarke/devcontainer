@@ -147,7 +147,21 @@ jobs:
       - name: Install quality tools
         run: brew install actionlint markdownlint-cli shellcheck swiftformat swiftlint
       - name: Run hosted release gate
-        run: make release-gate-hosted
+        env:
+          RELEASE_TAG: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          previous="$(
+            git tag --merged HEAD --sort=-v:refname \
+              | grep -E '^[0-9]+[.][0-9]+[.][0-9]+$' \
+              | grep -Fvx "${RELEASE_TAG}" \
+              | head -n 1 \
+              || true
+          )"
+          if [[ -z "${previous}" ]]; then
+            previous="HEAD^"
+          fi
+          SWIFT_COVERAGE_BASE="${previous}" make release-gate-hosted
 
   authority:
     name: Record stable authority

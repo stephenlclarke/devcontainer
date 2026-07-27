@@ -24,6 +24,8 @@ class CoveragePipelineTests(unittest.TestCase):
         self.assertIn("--product devcontainer-compose\n", makefile)
         self.assertIn("Tools/coverage/run-cli-coverage.sh", makefile)
         self.assertIn("Tools/coverage/export-swift-coverage.sh", makefile)
+        self.assertIn("--lcov-output coverage.lcov", makefile)
+        self.assertIn('--changed-since "$(SWIFT_COVERAGE_BASE)"', makefile)
 
     def test_sonar_excludes_only_non_executable_registration_files(self) -> None:
         properties = (

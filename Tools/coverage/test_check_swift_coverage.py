@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -112,6 +113,158 @@ class CoverageTests(unittest.TestCase):
                 {"lineNumber": "7", "covered": "false"},
             ],
         )
+
+    def test_writes_lcov_with_the_same_unique_line_semantics(self) -> None:
+        report = {
+            "data": [
+                {
+                    "files": [
+                        {
+                            "filename": "/repo/Sources/Core/A.swift",
+                            "segments": [
+                                [3, 1, 0, True, True, False],
+                                [3, 8, 4, True, True, False],
+                                [7, 1, 0, True, True, False],
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "coverage.json"
+            output_path = Path(directory) / "coverage.lcov"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            MODULE.write_lcov_report(report_path, output_path, Path("/repo"))
+            output = output_path.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            output,
+            "\n".join(
+                [
+                    "TN:devcontainer",
+                    "SF:Sources/Core/A.swift",
+                    "DA:3,4",
+                    "DA:7,0",
+                    "LF:2",
+                    "LH:1",
+                    "end_of_record",
+                    "",
+                ]
+            ),
+        )
+
+    def test_parses_added_lines_from_zero_context_diff(self) -> None:
+        diff = """\
+diff --git a/Sources/Core/A.swift b/Sources/Core/A.swift
+--- a/Sources/Core/A.swift
++++ b/Sources/Core/A.swift
+@@ -2,0 +3,2 @@
++first
++second
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-before
++after
+"""
+        self.assertEqual(
+            MODULE.diff_changed_lines(diff),
+            {"Sources/Core/A.swift": {3, 4}},
+        )
+
+    def test_changed_coverage_intersects_diff_with_executable_lines(self) -> None:
+        report = {
+            "data": [
+                {
+                    "files": [
+                        {
+                            "filename": "/repo/Sources/Core/A.swift",
+                            "segments": [
+                                [3, 1, 4, True, True, False],
+                                [4, 1, 0, True, True, False],
+                                [5, 1, 0, False, False, False],
+                            ],
+                        },
+                        {
+                            "filename": "/repo/Sources/Core/Declarations.swift",
+                            "segments": [],
+                        },
+                    ]
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "coverage.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            result = MODULE.changed_coverage(
+                report_path,
+                Path("/repo"),
+                {
+                    "Sources/Core/A.swift": {3, 4, 5},
+                    "Sources/Core/Declarations.swift": {1},
+                },
+            )
+
+        self.assertEqual(
+            result,
+            (1, 2, [("Sources/Core/A.swift", 4)], []),
+        )
+
+    def test_changed_coverage_fails_closed_for_unreported_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "coverage.json"
+            report_path.write_text('{"data": []}', encoding="utf-8")
+            result = MODULE.changed_coverage(
+                report_path,
+                Path("/repo"),
+                {"Sources/Core/Missing.swift": {1}},
+            )
+
+        self.assertEqual(result, (0, 0, [], ["Sources/Core/Missing.swift"]))
+
+    def test_git_changed_lines_uses_merge_base_and_source_hunks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            subprocess.run(["git", "init", "-q", repository], check=True)
+            subprocess.run(
+                ["git", "-C", repository, "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repository, "config", "user.name", "Coverage Test"],
+                check=True,
+            )
+            source = repository / "Sources" / "Core" / "A.swift"
+            source.parent.mkdir(parents=True)
+            source.write_text("let first = 1\n", encoding="utf-8")
+            subprocess.run(["git", "-C", repository, "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", repository, "commit", "-qm", "base"],
+                check=True,
+            )
+            base = subprocess.run(
+                ["git", "-C", repository, "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            source.write_text("let first = 1\nlet second = 2\n", encoding="utf-8")
+            subprocess.run(["git", "-C", repository, "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", repository, "commit", "-qm", "change"],
+                check=True,
+            )
+
+            merge_base, changed = MODULE.git_changed_lines(
+                repository,
+                base,
+                "HEAD",
+            )
+
+        self.assertEqual(merge_base, base)
+        self.assertEqual(changed, {"Sources/Core/A.swift": {2}})
 
 
 if __name__ == "__main__":

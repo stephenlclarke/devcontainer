@@ -24,6 +24,8 @@ jobs:
           fetch-depth: 0
 
       - name: Generate and enforce Swift coverage
+        env:
+          SWIFT_COVERAGE_BASE: ${{ github.event.before }}
         run: make coverage-check
 
       - name: Detect SonarQube credentials
@@ -155,6 +157,7 @@ jobs:
           name: sonar-coverage-${{ github.sha }}
           path: |
             coverage.xml
+            coverage.lcov
             .build/codecov-path
             .build/swift-coverage.log
           include-hidden-files: true
