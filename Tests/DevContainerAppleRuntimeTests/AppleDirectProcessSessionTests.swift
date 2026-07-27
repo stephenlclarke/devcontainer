@@ -16,12 +16,116 @@
 
 import ContainerAPIClient
 import ContainerizationOS
+import ContainerResource
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import Foundation
 import Testing
 
 struct AppleDirectProcessSessionTests {
+    @Test
+    func `XPC transfer copies cannot close reused descriptors`() throws {
+        let pipe = Pipe()
+        var copies: [FileHandle?]? = try AppleXPCFileHandleTransfer.copies(
+            of: [pipe.fileHandleForReading, nil]
+        )
+        let copiedDescriptor = try #require(copies?[0]?.fileDescriptor)
+        #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
+        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+
+        Darwin.close(copiedDescriptor)
+        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
+        #expect(nullDescriptor >= 0)
+        if nullDescriptor != copiedDescriptor {
+            #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
+            Darwin.close(nullDescriptor)
+        }
+
+        copies = nil
+        #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
+        Darwin.close(copiedDescriptor)
+        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+    }
+
+    @Test
+    func `XPC transfer closes earlier copies when a later descriptor is invalid`() throws {
+        let valid = Pipe()
+        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
+        #expect(nullDescriptor >= 0)
+        let invalidDescriptor = fcntl(nullDescriptor, F_DUPFD_CLOEXEC, 1024)
+        #expect(invalidDescriptor >= 0)
+        Darwin.close(nullDescriptor)
+        let invalid = FileHandle(
+            fileDescriptor: invalidDescriptor,
+            closeOnDealloc: false
+        )
+        Darwin.close(invalidDescriptor)
+
+        #expect(throws: POSIXError.self) {
+            _ = try AppleXPCFileHandleTransfer.copies(
+                of: [
+                    valid.fileHandleForReading,
+                    invalid
+                ]
+            )
+        }
+        #expect(fcntl(valid.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+    }
+
+    @Test
+    func `direct process creation applies exec overrides and standard IO`() async throws {
+        let inherited = ProcessConfiguration(
+            executable: "/bin/inherited",
+            arguments: ["old"],
+            environment: ["A=old", "Z=last"],
+            workingDirectory: "/inherited",
+            terminal: false,
+            user: .id(uid: 501, gid: 20)
+        )
+        let capture = DirectProcessCreationCapture()
+        let process = MockClientProcess(exitCode: 0)
+
+        let session = try await AppleDirectProcessSession.create(
+            containerID: "example",
+            spec: ExecSpec(
+                command: ["/bin/echo", "hello"],
+                environment: ["A": "new", "B": "second"],
+                workingDirectory: "/workspace",
+                user: "1000:1000",
+                terminal: false,
+                attachStandardInput: true,
+                attachStandardOutput: true,
+                attachStandardError: true
+            ),
+            inheritedConfiguration: inherited
+        ) { containerID, processID, configuration, standardIO in
+            await capture.record(
+                containerID: containerID,
+                processID: processID,
+                configuration: configuration,
+                standardIO: standardIO
+            )
+            for case let handle? in standardIO {
+                Darwin.close(handle.fileDescriptor)
+            }
+            return process
+        }
+
+        try await session.closeStandardInput()
+        #expect(try await session.wait() == 0)
+        let created = await capture.value
+        #expect(created?.containerID == "example")
+        #expect(created?.processID.count == 36)
+        #expect(created?.configuration.executable == "/bin/echo")
+        #expect(created?.configuration.arguments == ["hello"])
+        #expect(created?.configuration.environment == ["A=new", "B=second", "Z=last"])
+        #expect(created?.configuration.workingDirectory == "/workspace")
+        #expect(created?.configuration.user == .raw(userString: "1000:1000"))
+        #expect(created?.configuration.terminal == false)
+        #expect(created?.standardIO == [true, true, true])
+    }
+
     @Test
     func `direct session preserves duplex streams exit and terminal resize`() async throws {
         let input = Pipe()
@@ -40,9 +144,9 @@ struct AppleDirectProcessSessionTests {
             standardError: error
         )
 
-        try session.write(Data("request".utf8))
-        try session.closeStandardInput()
-        try session.closeStandardInput()
+        try await session.write(Data("request".utf8))
+        try await session.closeStandardInput()
+        try await session.closeStandardInput()
         try await session.resize(width: 132, height: 48)
 
         var standardOutput = Data()
@@ -64,8 +168,8 @@ struct AppleDirectProcessSessionTests {
         #expect(process.input == Data("request".utf8))
         #expect(process.lastSize?.width == 132)
         #expect(process.lastSize?.height == 48)
-        #expect(throws: DevContainerError.self) {
-            try session.write(Data("late".utf8))
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
         }
     }
 
@@ -79,10 +183,10 @@ struct AppleDirectProcessSessionTests {
             standardError: nil
         )
 
-        #expect(throws: DevContainerError.self) {
-            try session.write(Data("not-attached".utf8))
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("not-attached".utf8))
         }
-        try session.closeStandardInput()
+        try await session.closeStandardInput()
         await session.cancel()
         #expect(process.killedSignal == SIGKILL)
     }
@@ -135,12 +239,37 @@ private enum DirectProcessTestError: Error {
     case startFailed
 }
 
+private struct CapturedDirectProcess: Sendable {
+    let containerID: String
+    let processID: String
+    let configuration: ProcessConfiguration
+    let standardIO: [Bool]
+}
+
+private actor DirectProcessCreationCapture {
+    private(set) var value: CapturedDirectProcess?
+
+    func record(
+        containerID: String,
+        processID: String,
+        configuration: ProcessConfiguration,
+        standardIO: [FileHandle?]
+    ) {
+        value = CapturedDirectProcess(
+            containerID: containerID,
+            processID: processID,
+            configuration: configuration,
+            standardIO: standardIO.map { $0 != nil }
+        )
+    }
+}
+
 private final class MockClientProcess: ClientProcess, @unchecked Sendable {
     let id = "mock-process"
 
     private let output: Pipe?
     private let error: Pipe?
-    private let standardInput: Pipe?
+    private let inputReader: FileHandle?
     private let exitCode: Int32
     private let startError: (any Error)?
     private let lock = NSLock()
@@ -155,7 +284,12 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
         exitCode: Int32,
         startError: (any Error)? = nil
     ) {
-        standardInput = input
+        inputReader = input.map {
+            FileHandle(
+                fileDescriptor: Darwin.dup($0.fileHandleForReading.fileDescriptor),
+                closeOnDealloc: true
+            )
+        }
         self.output = output
         self.error = error
         self.exitCode = exitCode
@@ -182,10 +316,6 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
         try error?.fileHandleForWriting.write(contentsOf: Data("stderr".utf8))
         try output?.fileHandleForWriting.close()
         try error?.fileHandleForWriting.close()
-        let value = try standardInput?.fileHandleForReading.readToEnd() ?? Data()
-        lock.withLock {
-            recordedInput = value
-        }
     }
 
     func resize(_ size: Terminal.Size) async throws {
@@ -201,6 +331,13 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
     }
 
     func wait() async throws -> Int32 {
-        exitCode
+        let inputReader = inputReader
+        let value = try await Task.detached {
+            try inputReader?.readToEnd() ?? Data()
+        }.value
+        lock.withLock {
+            recordedInput = value
+        }
+        return exitCode
     }
 }

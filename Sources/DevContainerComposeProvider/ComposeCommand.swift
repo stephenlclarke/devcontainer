@@ -132,3 +132,24 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
         "up"
     ]
 }
+
+/// Resolves an upstream Docker Compose invocation without depending on a
+/// user's Docker CLI plug-in configuration.
+public struct DockerComposeCommand: Equatable, Sendable {
+    public let executable: URL
+    public let arguments: [String]
+
+    public init(
+        arguments: [String],
+        docker: URL,
+        standaloneCompose: URL?
+    ) {
+        if let standaloneCompose {
+            executable = standaloneCompose
+            self.arguments = arguments
+        } else {
+            executable = docker
+            self.arguments = ["compose"] + arguments
+        }
+    }
+}

@@ -51,7 +51,7 @@ public extension AppleContainerRuntime {
             )
             return
         }
-        let process = try await ContainerClient().bootstrap(
+        let process = try await apiClient.bootstrap(
             id: id,
             stdio: [nil, nil, nil]
         )
@@ -398,15 +398,21 @@ public extension AppleContainerRuntime {
         arguments += exec.spec.command
         exec.running = true
         execs[id] = exec
-        let session: any RuntimeProcessSession =
-            if useDirectProcessAPI, exec.spec.terminal {
-                try await AppleDirectProcessSession.create(
-                    containerID: exec.containerID.rawValue,
-                    spec: exec.spec
-                )
-            } else {
-                try process(arguments)
-            }
+        let session: any RuntimeProcessSession
+        do {
+            session =
+                if useDirectProcessAPI {
+                    try await startDirectProcess(
+                        containerID: exec.containerID.rawValue,
+                        spec: exec.spec
+                    )
+                } else {
+                    try process(arguments)
+                }
+        } catch {
+            finishExec(id: id, exitCode: 255)
+            throw error
+        }
         Task {
             do {
                 let exitCode = try await session.wait()
@@ -416,6 +422,26 @@ public extension AppleContainerRuntime {
             }
         }
         return session
+    }
+
+    private func startDirectProcess(
+        containerID: String,
+        spec: ExecSpec
+    ) async throws -> AppleDirectProcessSession {
+        let previous = directProcessLaunchTail
+        let client = apiClient
+        let launch = Task {
+            await previous?.value
+            return try await AppleDirectProcessSession.create(
+                containerID: containerID,
+                spec: spec,
+                client: client
+            )
+        }
+        directProcessLaunchTail = Task {
+            _ = try? await launch.value
+        }
+        return try await launch.value
     }
 
     func inspectExec(

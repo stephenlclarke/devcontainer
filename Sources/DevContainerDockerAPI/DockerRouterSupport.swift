@@ -268,12 +268,17 @@ extension DockerRouter {
                         where acceptedActions.isEmpty || acceptedActions.contains(event.action.rawValue)
                     {
                         let nanoseconds = Int64(event.timestamp.timeIntervalSince1970 * 1_000_000_000)
-                        let message = DockerEventMessage(
+                        let message = try DockerEventMessage(
                             status: event.action.rawValue,
                             id: event.resourceID,
                             type: event.resourceType,
                             action: event.action.rawValue,
-                            actor: DockerEventActor(id: event.resourceID, attributes: event.attributes),
+                            actor: DockerEventActor(
+                                id: event.resourceID,
+                                attributes: RuntimeLabels.projectComposeLabels(
+                                    event.attributes
+                                )
+                            ),
                             time: Int64(event.timestamp.timeIntervalSince1970),
                             timeNano: nanoseconds
                         )

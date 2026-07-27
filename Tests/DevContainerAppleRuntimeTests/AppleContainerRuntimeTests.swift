@@ -205,6 +205,41 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `native compose containers receive stable Docker identities`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("recreated")
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store)
+
+        let first = try #require(
+            try await runtime.listContainers(
+                all: true,
+                labels: [:],
+                context: RuntimeRequestContext()
+            ).first
+        )
+        let second = try #require(
+            try await runtime.listContainers(
+                all: true,
+                labels: [:],
+                context: RuntimeRequestContext()
+            ).first
+        )
+
+        #expect(first.dockerID == second.dockerID)
+        #expect(first.dockerID.rawValue.count == 64)
+        #expect(
+            first.dockerID.rawValue.allSatisfy {
+                $0.isNumber || ("a" ... "f").contains(String($0))
+            }
+        )
+        #expect(
+            await store.containerMetadata(id: "fixture")?.dockerID
+                == first.dockerID
+        )
+    }
+
+    @Test
     func `metadata for externally removed native containers is pruned`() async throws {
         let fixture = try FakeAppleCLI()
         let store = TestMetadataStore()
@@ -451,6 +486,25 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `direct exec launch failure completes its snapshot`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime(useDirectProcessAPI: true)
+        let context = RuntimeRequestContext()
+        let exec = try await runtime.createExec(
+            containerID: "fixture",
+            spec: ExecSpec(command: []),
+            context: context
+        )
+
+        await #expect(throws: DevContainerError.self) {
+            _ = try await runtime.startExec(id: exec.id, context: context)
+        }
+        let completed = try await runtime.inspectExec(id: exec.id, context: context)
+        #expect(!completed.running)
+        #expect(completed.exitCode == 255)
+    }
+
+    @Test
     func `network volume image and archive mutations delegate safely`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()
@@ -583,12 +637,13 @@ struct FakeAppleCLI {
     }
 
     func runtime(
-        metadataStore: (any RuntimeMetadataStore)? = nil
+        metadataStore: (any RuntimeMetadataStore)? = nil,
+        useDirectProcessAPI: Bool = false
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
             executable: executable,
             environment: [:],
-            useDirectProcessAPI: false,
+            useDirectProcessAPI: useDirectProcessAPI,
             metadataStore: metadataStore,
             volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
         )

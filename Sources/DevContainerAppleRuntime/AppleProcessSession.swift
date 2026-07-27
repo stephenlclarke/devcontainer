@@ -98,30 +98,38 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         process.terminationHandler = { process in
             streams.terminationContinuation.yield(process.terminationStatus)
             streams.terminationContinuation.finish()
-            Task {
-                try? await Task.sleep(for: .milliseconds(250))
-                streams.standardOutput.fileHandleForReading.readabilityHandler = nil
-                streams.standardError.fileHandleForReading.readabilityHandler = nil
-                streams.outputEndContinuation.finish()
-                streams.errorEndContinuation.finish()
-            }
         }
-        streams.standardOutput.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                streams.outputEndContinuation.finish()
-            } else {
-                streams.frameContinuation.yield(RuntimeIOFrame(channel: .standardOutput, data: data))
-            }
-        }
-        streams.standardError.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                streams.errorEndContinuation.finish()
-            } else {
-                streams.frameContinuation.yield(RuntimeIOFrame(channel: .standardError, data: data))
+        drain(
+            streams.standardOutput,
+            channel: .standardOutput,
+            end: streams.outputEndContinuation,
+            frames: streams.frameContinuation
+        )
+        drain(
+            streams.standardError,
+            channel: .standardError,
+            end: streams.errorEndContinuation,
+            frames: streams.frameContinuation
+        )
+    }
+
+    private static func drain(
+        _ pipe: Pipe,
+        channel: RuntimeIOChannel,
+        end: AsyncStream<Void>.Continuation,
+        frames: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    ) {
+        let handle = pipe.fileHandleForReading
+        Task.detached {
+            defer { end.finish() }
+            do {
+                while let data = try handle.read(upToCount: 64 * 1024),
+                      !data.isEmpty
+                {
+                    frames.yield(RuntimeIOFrame(channel: channel, data: data))
+                }
+            } catch {
+                frames.finish(throwing: error)
             }
         }
     }
@@ -132,9 +140,14 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     ) throws {
         do {
             try process.run()
+            try? streams.standardInput.fileHandleForReading.close()
+            try? streams.standardOutput.fileHandleForWriting.close()
+            try? streams.standardError.fileHandleForWriting.close()
         } catch {
-            streams.standardOutput.fileHandleForReading.readabilityHandler = nil
-            streams.standardError.fileHandleForReading.readabilityHandler = nil
+            try? streams.standardInput.fileHandleForReading.close()
+            try? streams.standardInput.fileHandleForWriting.close()
+            try? streams.standardOutput.fileHandleForWriting.close()
+            try? streams.standardError.fileHandleForWriting.close()
             streams.frameContinuation.finish(throwing: error)
             streams.terminationContinuation.finish()
             streams.outputEndContinuation.finish()

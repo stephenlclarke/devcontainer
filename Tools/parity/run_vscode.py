@@ -253,6 +253,9 @@ def vscode_settings(
 VSCODE_ENVIRONMENT_KEYS = frozenset(
     {
         "DEVELOPER_DIR",
+        "DEVCONTAINER_CONFIG",
+        "DEVCONTAINER_SOCKET",
+        "DEVCONTAINER_STATE",
         "DOCKER_CERT_PATH",
         "DOCKER_CONFIG",
         "DOCKER_CONTEXT",
@@ -717,6 +720,7 @@ class VSCodeLane:
         environment.update(
             {
                 "DEVCONTAINER_VSCODE_DRIVER_BACKEND": self.lane,
+                "DEVCONTAINER_VSCODE_DRIVER_DOCKER": self.runtime.docker,
                 "DEVCONTAINER_VSCODE_DRIVER_PORT": "8123",
                 "DEVCONTAINER_VSCODE_DRIVER_RESULT": str(driver_result),
                 "DEVCONTAINER_VSCODE_DRIVER_STATE": str(driver_state),

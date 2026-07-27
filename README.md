@@ -10,6 +10,7 @@
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Duplicated Lines (%)" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=duplicated_lines_density" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Lines of Code" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=ncloc" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Reliability Rating" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=reliability_rating" /></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Security Hotspots" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=security_hotspots" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Security Rating" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=security_rating" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Technical Debt" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=sqale_index" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Maintainability Rating" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=sqale_rating" /></a>
@@ -31,11 +32,11 @@ Run VS Code-compatible Development Containers on Apple silicon through stock [`a
 > This repository contains a functional development candidate, not a stable
 > release. The Docker Engine bridge, stock Apple runtime adapter, optional
 > `container-compose` provider, package builder, Homebrew formula generator,
-> DocC site, and automated quality gates are implemented. Real Docker and the
-> custom Apple Compose lane pass the checked-in CLI fixture matrix locally.
-> The pinned real VS Code/Dev Containers end-to-end fixture also passes against
-> the Docker oracle. Isolated stock-Apple and Apple-Compose VS Code recordings
-> are still required before any combination is called supported.
+> DocC site, and automated quality gates are implemented. Real Docker, stock
+> Apple `container`, and the custom Apple Compose lane pass all 18 checked-in
+> CLI parity fixtures locally with zero normalized differences. The pinned real
+> VS Code/Dev Containers attach, rebuild, reopen, lifecycle, terminal, extension,
+> port-forwarding, and cleanup fixture also passes in all three lanes.
 
 ## Design promise
 
@@ -93,6 +94,10 @@ Requirements are Xcode 26, Swift 6.2 or newer, Python 3, and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,
 stock Apple `container`, real Docker, the pinned Dev Container CLI, and the
 selected Compose provider.
+
+The stock multi-service path uses the upstream `docker-compose` client over
+this project's compatibility socket. The separately selected
+`container-compose` provider remains optional and independently installed.
 
 ```console
 make check

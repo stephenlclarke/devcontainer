@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerAPIClient
 import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -41,6 +42,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     public let executable: URL
     let environment: [String: String]
     let useDirectProcessAPI: Bool
+    let apiClient = ContainerClient()
     let metadataStore: (any RuntimeMetadataStore)?
     let managedVolumes: ManagedVolumeStore
     let portForwarding = PortForwarding()
@@ -50,6 +52,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerStartedAt: [String: Date] = [:]
     var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
     var containerExits: [String: ContainerExit] = [:]
+    var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
 
     public init(
@@ -160,25 +163,48 @@ public extension AppleContainerRuntime {
             snapshot.exitCode = exit.code
             snapshot.finishedAt = exit.finishedAt
         }
-        guard let metadataStore,
-              let metadata = try await metadataStore.containerMetadata(
-                  id: snapshot.runtimeID.rawValue
-              )
-        else {
+        guard let metadataStore else {
             return snapshot
         }
-        guard Self.sameContainerIncarnation(
-            metadataCreatedAt: metadata.createdAt,
-            observedCreatedAt: snapshot.createdAt
-        ) else {
+        if let metadata = try await metadataStore.containerMetadata(
+            id: snapshot.runtimeID.rawValue
+        ) {
+            if Self.sameContainerIncarnation(
+                metadataCreatedAt: metadata.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) {
+                return apply(metadata: metadata, to: snapshot)
+            }
             // Native Compose may recreate a stable name. Never project the
             // previous Docker identity onto that new native container.
             try await metadataStore.removeContainerMetadata(
                 id: snapshot.runtimeID.rawValue
             )
+        }
+        if snapshot.spec.labels[Self.dockerIDLabel] != nil {
             return snapshot
         }
+        let metadata = RuntimeContainerMetadata(
+            runtimeID: snapshot.runtimeID,
+            dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+            spec: snapshot.spec,
+            createdAt: snapshot.createdAt,
+            startedAt: snapshot.startedAt
+        )
+        try await metadataStore.recordContainerMetadata(metadata)
         return apply(metadata: metadata, to: snapshot)
+    }
+
+    private static func syntheticDockerIdentifier() -> String {
+        let first = UUID().uuidString.replacingOccurrences(
+            of: "-",
+            with: ""
+        ).lowercased()
+        let second = UUID().uuidString.replacingOccurrences(
+            of: "-",
+            with: ""
+        ).lowercased()
+        return first + second
     }
 
     private func removeOrphanedContainerMetadata(

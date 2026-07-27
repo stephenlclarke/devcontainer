@@ -13,7 +13,7 @@ case "$phase" in
     count="$(cat "$state/post-create-count.txt" 2>/dev/null || printf '0')"
     count="$((count + 1))"
     printf '%s\n' "$count" >"$state/post-create-count.txt"
-    hostname >"$state/container-id.txt"
+    hostname >"$state/guest-hostname.txt"
     ;;
   attach)
     count="$(cat "$state/post-attach-count.txt" 2>/dev/null || printf '0')"

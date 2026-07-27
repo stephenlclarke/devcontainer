@@ -202,6 +202,9 @@ class VSCodeParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             environment = vscode_environment(
                 {
+                    "DEVCONTAINER_CONFIG": "/private/tmp/config.toml",
+                    "DEVCONTAINER_SOCKET": "/private/tmp/devcontainer.sock",
+                    "DEVCONTAINER_STATE": "/private/tmp/state.sqlite",
                     "DOCKER_HOST": "unix:///private/tmp/docker.sock",
                     "GITHUB_TOKEN": "must-not-leak",
                     "HOME": "/Users/operator",
@@ -213,6 +216,18 @@ class VSCodeParityTests(unittest.TestCase):
             self.assertEqual(
                 environment["DOCKER_HOST"],
                 "unix:///private/tmp/docker.sock",
+            )
+            self.assertEqual(
+                environment["DEVCONTAINER_CONFIG"],
+                "/private/tmp/config.toml",
+            )
+            self.assertEqual(
+                environment["DEVCONTAINER_SOCKET"],
+                "/private/tmp/devcontainer.sock",
+            )
+            self.assertEqual(
+                environment["DEVCONTAINER_STATE"],
+                "/private/tmp/state.sqlite",
             )
             self.assertEqual(environment["HOME"], f"{temporary}/home")
             self.assertEqual(environment["LOGNAME"], "devcontainer-runner")

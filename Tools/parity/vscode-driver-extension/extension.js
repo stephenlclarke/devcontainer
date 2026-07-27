@@ -7,9 +7,12 @@ const fs = require("node:fs/promises");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const vscode = require("vscode");
 
 const REQUIRED_ENVIRONMENT = [
+  "DEVCONTAINER_VSCODE_DRIVER_DOCKER",
   "DEVCONTAINER_VSCODE_DRIVER_RESULT",
   "DEVCONTAINER_VSCODE_DRIVER_STATE",
   "DEVCONTAINER_VSCODE_DRIVER_WORKSPACE",
@@ -20,6 +23,7 @@ const POLL_INTERVAL_MS = 250;
 
 let activated = false;
 let output;
+const execFileAsync = promisify(execFile);
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -173,6 +177,45 @@ async function activateDevContainersExtension() {
   });
 }
 
+async function developmentContainerID() {
+  return waitFor("one exact development container identity", async () => {
+    const workspace = process.env.DEVCONTAINER_VSCODE_DRIVER_WORKSPACE;
+    const configuration = path.join(
+      workspace,
+      ".devcontainer",
+      "devcontainer.json",
+    );
+    const { stdout } = await execFileAsync(
+      process.env.DEVCONTAINER_VSCODE_DRIVER_DOCKER,
+      [
+        "ps",
+        "-aq",
+        "--no-trunc",
+        "--filter",
+        `label=devcontainer.local_folder=${workspace}`,
+        "--filter",
+        `label=devcontainer.config_file=${configuration}`,
+      ],
+      {
+        env: process.env,
+        maxBuffer: 1024 * 1024,
+        timeout: 10000,
+      },
+    );
+    const identifiers = stdout
+      .split(/\r?\n/u)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (identifiers.length !== 1) {
+      return undefined;
+    }
+    if (!/^[0-9a-f]{64}$/u.test(identifiers[0])) {
+      throw new Error(`unexpected development container ID ${identifiers[0]}`);
+    }
+    return identifiers[0];
+  });
+}
+
 async function fail(error) {
   const message = error?.stack || error?.message || String(error);
   output.appendLine(message);
@@ -281,7 +324,7 @@ async function handleFirstAttach() {
   await waitForMarker("post-attach-count.txt", "1");
   await runIntegratedTerminal();
   const externalURI = await verifyForwardedPort();
-  const firstContainerID = await readWorkspaceText("container-id.txt");
+  const firstContainerID = await developmentContainerID();
   await updateState((state) => {
     state.firstContainerID = firstContainerID;
     state.forwardedURI = externalURI;
@@ -303,7 +346,7 @@ async function handleRebuild() {
   }
   await waitForMarker("post-create-count.txt", "2");
   await waitForMarker("post-attach-count.txt", "2");
-  const secondContainerID = await readWorkspaceText("container-id.txt");
+  const secondContainerID = await developmentContainerID();
   const state = await readJSON(process.env.DEVCONTAINER_VSCODE_DRIVER_STATE);
   if (!state.firstContainerID || secondContainerID === state.firstContainerID) {
     throw new Error("rebuild did not replace the development container");

@@ -12,7 +12,9 @@ The supported installation must preserve these boundaries:
 
 - Apple's stock `container` runtime is installed separately from Apple.
 - `devcontainer` uses the `container` executable selected by explicit configuration or `PATH`.
-- Docker is optional and used for compatibility comparison or a separately selected backend.
+- The Docker CLI and upstream Docker Compose client are protocol clients for
+  VS Code and the stock multi-service path; they do not install or select a
+  Docker engine.
 - `container-compose` is optional and used only when the user explicitly selects or enables its provider.
 - Installing `devcontainer` never installs `stephenlclarke/container`.
 - Installing `devcontainer` never removes or replaces Apple's `container`.
@@ -27,11 +29,13 @@ The planned prebuilt and Homebrew packages will require:
 - Apple silicon (`arm64`).
 - macOS Tahoe.
 - Apple's stock `container` runtime for the Apple backend.
+- The Docker CLI and upstream Docker Compose client used by VS Code.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
 Optional integrations:
 
-- Docker engine and the supported Docker Compose version for Docker comparison or Docker-backed execution.
+- A Docker engine for Docker-oracle comparison or separately selected
+  Docker-backed execution.
 - An explicitly installed `container-compose` executable for multi-service provider experiments.
 
 The release notes and `devcontainer version --format json` will identify the exact versions used for release validation.
@@ -198,6 +202,9 @@ devcontainer doctor \
 
 DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
   devcontainer-compose up
+
+DEVCONTAINER_DOCKER_COMPOSE_BIN=/absolute/path/to/docker-compose \
+  devcontainer-compose up
 ```
 
 The Compose dispatcher applies this implemented precedence:
@@ -205,6 +212,10 @@ The Compose dispatcher applies this implemented precedence:
 1. `DEVCONTAINER_COMPOSE_PROVIDER`.
 2. User configuration written by `devcontainer configure`.
 3. The safe default, upstream Docker Compose over the compatibility socket.
+
+For that default, the dispatcher prefers the standalone `docker-compose`
+executable so it does not depend on per-user Docker CLI plug-in discovery. It
+falls back to `docker compose` when no standalone executable is installed.
 
 Project ownership is then recorded in the state database. `devcontainer
 backend set`, `show`, and `reset` provide explicit project-scoped control and

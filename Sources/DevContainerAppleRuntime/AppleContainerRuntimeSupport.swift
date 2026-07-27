@@ -579,7 +579,7 @@ extension AppleContainerRuntime {
     }
 
     func exactContainerLog(id: String) async throws -> Data {
-        let handles = try await ContainerClient().logs(id: id)
+        let handles = try await apiClient.logs(id: id)
         defer {
             for handle in handles {
                 try? handle.close()

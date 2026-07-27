@@ -187,7 +187,11 @@ func `archives logs events and docker filter maps are streamed`() async throws {
         spec: ContainerSpec(
             name: "archive",
             image: "alpine:test",
-            labels: ["project": "demo"]
+            labels: [
+                "project": "demo",
+                "com.apple.container.compose.project": "workspace",
+                "com.apple.container.compose.service": "app"
+            ]
         ),
         context: RuntimeRequestContext()
     )

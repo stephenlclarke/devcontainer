@@ -21,6 +21,8 @@ class SafeEnvironmentTests(unittest.TestCase):
         environment = safe_environment(
             {
                 "BASH_ENV": "/tmp/host-shell-hook",
+                "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
+                "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "GITHUB_TOKEN": "must-not-leak",
@@ -34,6 +36,8 @@ class SafeEnvironmentTests(unittest.TestCase):
         self.assertEqual(
             environment,
             {
+                "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
+                "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",

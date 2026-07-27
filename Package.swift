@@ -211,6 +211,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 .product(name: "ContainerAPIClient", package: "container"),
+                .product(name: "ContainerResource", package: "container"),
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

@@ -112,8 +112,13 @@ enum DevContainerComposeCommand {
         let executable: URL
         switch provider {
         case .docker:
-            executable = paths.docker
-            childArguments = ["compose"] + arguments
+            let command = DockerComposeCommand(
+                arguments: arguments,
+                docker: paths.docker,
+                standaloneCompose: paths.dockerCompose
+            )
+            executable = command.executable
+            childArguments = command.arguments
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
         case .containerCompose:
             executable = paths.containerCompose
@@ -198,6 +203,7 @@ private struct Paths {
     let state: URL
     let socket: String
     let docker: URL
+    let dockerCompose: URL?
     let containerCompose: URL
 
     init(environment: [String: String]) {
@@ -234,6 +240,16 @@ private struct Paths {
             fileURLWithPath: environment["DEVCONTAINER_DOCKER_BIN"]
                 ?? Self.firstExecutable(["/opt/homebrew/bin/docker", "/usr/local/bin/docker"])
         )
+        if let configured = environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] {
+            dockerCompose = configured.isEmpty
+                ? nil
+                : URL(fileURLWithPath: configured)
+        } else {
+            dockerCompose = Self.firstExecutableURL([
+                "/opt/homebrew/bin/docker-compose",
+                "/usr/local/bin/docker-compose"
+            ])
+        }
         containerCompose = URL(
             fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]
                 ?? Self.firstExecutable([
@@ -246,5 +262,10 @@ private struct Paths {
     private static func firstExecutable(_ candidates: [String]) -> String {
         candidates.first(where: FileManager.default.isExecutableFile(atPath:))
             ?? candidates[0]
+    }
+
+    private static func firstExecutableURL(_ candidates: [String]) -> URL? {
+        candidates.first(where: FileManager.default.isExecutableFile(atPath:))
+            .map(URL.init(fileURLWithPath:))
     }
 }

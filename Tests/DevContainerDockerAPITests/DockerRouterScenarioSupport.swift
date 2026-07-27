@@ -351,9 +351,20 @@ func assertArchiveLogAndEventStreams(
             target: "/events?filters=%7B%22label%22:%7B%22project=demo%22:true%7D%7D"
         )
     )
+    let eventText = try await String(
+        data: streamBytes(events),
+        encoding: .utf8
+    )
+    #expect(eventText?.contains("\"Action\":\"create\"") == true)
     #expect(
-        try await String(data: streamBytes(events), encoding: .utf8)?
-            .contains("\"Action\":\"create\"") == true
+        eventText?.contains(
+            "\"com.docker.compose.project\":\"workspace\""
+        ) == true
+    )
+    #expect(
+        eventText?.contains(
+            "\"com.docker.compose.service\":\"app\""
+        ) == true
     )
 }
 
