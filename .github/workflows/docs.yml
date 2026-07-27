@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: documentation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Documentation
+    name: Build DocC site
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -19,14 +23,52 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build DocC site
         run: make docs
+
+      # upload-pages-artifact requires GNU tar, which is unavailable on the
+      # macOS runner needed to build this Swift package.
+      - name: Archive DocC site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stephenlclarke/devcontainer'
+        run: tar -czf api-docs.tgz -C _site .
+
+      - name: Save DocC site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stephenlclarke/devcontainer'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: api-docs
+          path: api-docs.tgz
+          retention-days: 1
+
+  upload-pages-artifact:
+    name: Upload GitHub Pages artifact
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stephenlclarke/devcontainer'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+
+      - name: Download DocC site
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: api-docs
+
+      - name: Extract DocC site
+        run: |
+          set -euo pipefail
+          mkdir _site
+          tar -xzf api-docs.tgz -C _site
+
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@9dbfcf7300c884d1b1ec0a7f6768a2e558baeb70 # v4
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: _site
 
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    name: Deploy GitHub Pages
+    needs: upload-pages-artifact
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stephenlclarke/devcontainer'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -37,4 +79,4 @@ jobs:
     steps:
       - name: Deploy Pages
         id: deployment
-        uses: actions/deploy-pages@f81ad71d2e78487340fb3a94726f2a6050466efd # v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
