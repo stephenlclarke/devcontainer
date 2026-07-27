@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "create_state": "created",
+    "exit_status": 7,
+    "idempotent_cleanup": true,
+    "wait_status": 7
+  }
+}

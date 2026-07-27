@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "env_file": "compose-env-file",
+    "named_volume": "volume-data",
+    "network_alias": true,
+    "network_peer": true
+  }
+}

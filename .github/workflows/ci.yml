@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and coverage
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install quality tools
+        run: brew install actionlint markdownlint-cli shellcheck swiftformat swiftlint
+      - name: Resolve exact dependencies
+        run: |
+          cp Package.resolved /tmp/devcontainer-Package.resolved
+          swift package resolve
+          cmp /tmp/devcontainer-Package.resolved Package.resolved
+      - name: Validate source
+        run: make format-check lint parity-manifest
+      - name: Test and enforce coverage
+        run: make coverage-check
+      - name: Build
+        run: make build
+      - name: CLI smoke
+        run: |
+          .build/debug/devcontainer version --format json | jq -e '.version'
+          .build/debug/devcontainer context --format value | grep '^unix://'
+          .build/debug/devcontainer-compose version >/dev/null
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-evidence
+          path: |
+            .build/*.log
+            .build/codecov-path
+          if-no-files-found: ignore
+
+  validate:
+    name: Validate
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful validation
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: test "$RESULT" = success

@@ -1,0 +1,64 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Debug devcontainer",
+            "target": "devcontainer",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug devcontainer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Release devcontainer",
+            "target": "devcontainer",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release devcontainer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Debug devcontainer-engine",
+            "target": "devcontainer-engine",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug devcontainer-engine"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Release devcontainer-engine",
+            "target": "devcontainer-engine",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release devcontainer-engine"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Debug devcontainer-compose",
+            "target": "devcontainer-compose",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug devcontainer-compose"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Release devcontainer-compose",
+            "target": "devcontainer-compose",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release devcontainer-compose"
+        }
+    ]
+}

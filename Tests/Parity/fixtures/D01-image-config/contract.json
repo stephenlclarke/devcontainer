@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "environment": "image-config",
+    "post_create": "post-create",
+    "uid": "0",
+    "workspace": "/workspaces/devcontainer-parity"
+  }
+}

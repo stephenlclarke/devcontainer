@@ -1,0 +1,19 @@
+{
+  "MD013": false,
+  "MD033": {
+    "allowed_elements": [
+      "a",
+      "code",
+      "img",
+      "p",
+      "strong",
+      "span",
+      "table",
+      "tbody",
+      "td",
+      "th",
+      "thead",
+      "tr"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+services:
+  app:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -c
+      - while sleep 1; do :; done
+    environment:
+      COMPOSE_VALUE: compose-service
+    volumes:
+      - .:/workspaces/devcontainer-parity

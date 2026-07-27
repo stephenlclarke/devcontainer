@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "bounded_events": true,
+    "concurrent_start": true,
+    "missing_backend_error": true,
+    "remove_race": true,
+    "signal_exit": true
+  }
+}

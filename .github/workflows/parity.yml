@@ -1,0 +1,39 @@
+name: Runtime parity
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devcontainer-runtime-parity
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+    timeout-minutes: 240
+    steps:
+      - name: Check out exact trusted commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate runner provenance
+        run: Tools/parity/runner-preflight.sh
+      - name: Run real Docker and Apple parity
+        run: make parity
+      - name: Run VS Code parity
+        env:
+          DEVCONTAINER_VSCODE_LIVE: "1"
+        run: make parity-vscode
+      - name: Validate release evidence
+        run: make parity-release
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parity-evidence
+          path: .build/parity
+          if-no-files-found: error

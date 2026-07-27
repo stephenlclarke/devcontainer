@@ -1,0 +1,128 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: SonarQube analysis
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Generate and enforce Swift coverage
+        run: make coverage-check
+
+      - name: Detect SonarQube credentials
+        id: sonar_credentials
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${SONAR_TOKEN}" ]]; then
+            printf 'configured=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'configured=false\n' >> "${GITHUB_OUTPUT}"
+            {
+              printf '## SonarQube analysis not configured\n\n'
+              printf 'Add the repository secret SONAR_TOKEN to enable the '
+              printf 'quality-gate scan. The repository-owned 90%% coverage '
+              printf 'gate still ran and passed.\n'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Cache SonarQube packages
+        if: steps.sonar_credentials.outputs.configured == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-sonar
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-sonar
+
+      - name: Install verified Sonar Scanner CLI
+        if: steps.sonar_credentials.outputs.configured == 'true'
+        env:
+          SONAR_SCANNER_GPG_FINGERPRINT: 679F1EE92B19609DE816FDE81DB198F93525EC1A
+          SONAR_SCANNER_VERSION: 8.1.0.6389
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64)
+              scanner_flavor="macosx-aarch64"
+              ;;
+            x86_64)
+              scanner_flavor="macosx-x64"
+              ;;
+            *)
+              printf 'Unsupported macOS architecture: %s\n' "$(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          scanner_name="sonar-scanner-cli-${SONAR_SCANNER_VERSION}-${scanner_flavor}"
+          scanner_url="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/${scanner_name}.zip"
+          scanner_zip="${RUNNER_TEMP}/${scanner_name}.zip"
+          scanner_signature="${scanner_zip}.asc"
+          scanner_root="${RUNNER_TEMP}/sonar-scanner-cli"
+          gpg_home="${RUNNER_TEMP}/sonar-scanner-gpg"
+
+          rm -rf "${scanner_root}" "${gpg_home}"
+          mkdir -p "${scanner_root}" "${gpg_home}"
+          chmod 700 "${gpg_home}"
+
+          curl --fail --location --silent --show-error \
+            "${scanner_url}" --output "${scanner_zip}"
+          curl --fail --location --silent --show-error \
+            "${scanner_url}.asc" --output "${scanner_signature}"
+          gpg --homedir "${gpg_home}" --batch \
+            --keyserver hkps://keys.openpgp.org \
+            --recv-keys "${SONAR_SCANNER_GPG_FINGERPRINT}"
+          actual_fingerprint="$(
+            gpg --homedir "${gpg_home}" --batch --with-colons \
+              --fingerprint "${SONAR_SCANNER_GPG_FINGERPRINT}" \
+              | awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "${actual_fingerprint}" != "${SONAR_SCANNER_GPG_FINGERPRINT}" ]]; then
+            printf 'Unexpected Sonar Scanner signing key: %s\n' \
+              "${actual_fingerprint}" >&2
+            exit 1
+          fi
+          gpg --homedir "${gpg_home}" --batch \
+            --verify "${scanner_signature}" "${scanner_zip}"
+          unzip -q "${scanner_zip}" -d "${scanner_root}"
+
+          scanner_bin="${scanner_root}/sonar-scanner-${SONAR_SCANNER_VERSION}-${scanner_flavor}/bin"
+          test -x "${scanner_bin}/sonar-scanner"
+          printf '%s\n' "${scanner_bin}" >> "${GITHUB_PATH}"
+
+      - name: SonarQube scan
+        if: steps.sonar_credentials.outputs.configured == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_QUALITYGATE_WAIT: "true"
+        run: make sonar-scan
+
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sonar-coverage-${{ github.sha }}
+          path: |
+            coverage.xml
+            .build/codecov-path
+            .build/swift-coverage.log
+          if-no-files-found: error

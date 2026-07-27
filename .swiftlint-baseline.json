@@ -1,0 +1,1562 @@
+[
+  {
+    "text": "public actor AppleContainerRuntime: DevContainerRuntime {",
+    "violation": {
+      "location": {
+        "character": 8,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 23
+      },
+      "reason": "Actor body should span 900 lines or less excluding comments and whitespace: currently spans 1753 lines",
+      "ruleDescription": "Type bodies should not span too many lines",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func createContainer(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 165
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 22",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func createContainer(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 165
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 100 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func events(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1040
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 15",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func events(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1040
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 90 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func synchronizeNetworkHosts(",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1169
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 76 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            let error = String(decoding: result.standardError.prefix(4096), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 25,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1362
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func containerSnapshot(_ value: [String: Any]) throws -> ContainerSnapshot {",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1378
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 100 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            network -> NetworkAttachment? in",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1396
+      },
+      "reason": "Closure parameters should be on the same line as opening brace",
+      "ruleDescription": "Closure parameters should be on the same line as opening brace",
+      "ruleIdentifier": "closure_parameter_position",
+      "ruleName": "Closure Parameter Position",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private static func dockerFileMode(_ mode: mode_t) -> UInt32 {",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1694
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 11",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "}",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "line": 1939
+      },
+      "reason": "File should contain 1200 lines or less: currently contains 1939",
+      "ruleDescription": "Files should not span too many lines.",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    init(",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleDirectProcessSession.swift",
+        "line": 38
+      },
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 81 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    init(",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleProcessSession.swift",
+        "line": 28
+      },
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 97 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    init(",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleProcessSession.swift",
+        "line": 397
+      },
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func start(",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/PortForwarding.swift",
+        "line": 28
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 62 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public static func validate(_ archive: Data) throws -> Int {",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 25
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 16",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public static func validate(_ archive: Data) throws -> Int {",
+    "violation": {
+      "location": {
+        "character": 19,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 25
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        let value = String(decoding: bytes, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 21,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 130
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        return String(decoding: data[..<end], as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 16,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 147
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            let lengthText = String(decoding: body[offset ..< space], as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 30,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 158
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            let record = String(decoding: body[valueStart ..< recordEnd - 1], as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 26,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/TarArchiveValidator.swift",
+        "line": 167
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    mutating func run() async throws {",
+    "violation": {
+      "location": {
+        "character": 14,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCLI/DoctorCommand.swift",
+        "line": 41
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "                let output = String(decoding: result.standardOutput.prefix(1024), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 30,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCLI/DoctorCommand.swift",
+        "line": 117
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            let error = String(decoding: result.standardError.prefix(1024), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 25,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCLI/DoctorCommand.swift",
+        "line": 125
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    ) async throws -> (standardOutput: Data, standardError: Data, status: Int32) {",
+    "violation": {
+      "location": {
+        "character": 23,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCLI/DoctorCommand.swift",
+        "line": 166
+      },
+      "reason": "Tuples should have at most 2 members",
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    static func run(arguments: [String]) async throws -> Int32 {",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift",
+        "line": 36
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 54 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public init(arguments: [String]) throws {",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerComposeProvider/ComposeCommand.swift",
+        "line": 28
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 12",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public init(arguments: [String]) throws {",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerComposeProvider/ComposeCommand.swift",
+        "line": 28
+      },
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 64 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        let text = String(decoding: data.prefix(4096), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 20,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerComposeProvider/ExecutableComposeProvider.swift",
+        "line": 174
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public static func load(",
+    "violation": {
+      "location": {
+        "character": 19,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCore/DevContainerConfiguration.swift",
+        "line": 46
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 57 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func withMutation<Result: Sendable>(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCore/ProjectCoordinator.swift",
+        "line": 53
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    public func withMutation<Result: Sendable>(",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCore/ProjectCoordinator.swift",
+        "line": 53
+      },
+      "reason": "Function should have 5 parameters or less: it currently has 6",
+      "ruleDescription": "Number of function parameters should be low.",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    let os = \"linux\"",
+    "violation": {
+      "location": {
+        "character": 9,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 32
+      },
+      "reason": "Variable name 'os' should be between 3 and 40 characters long",
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        enum CodingKeys: String, CodingKey {",
+    "violation": {
+      "location": {
+        "character": 9,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 40
+      },
+      "reason": "Types should be nested at most 1 level deep",
+      "ruleDescription": "Types should be nested at most 1 level deep, and functions should be nested at most 2 levels deep.",
+      "ruleIdentifier": "nesting",
+      "ruleName": "Nesting",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        enum CodingKeys: String, CodingKey {",
+    "violation": {
+      "location": {
+        "character": 9,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 50
+      },
+      "reason": "Types should be nested at most 1 level deep",
+      "ruleDescription": "Types should be nested at most 1 level deep, and functions should be nested at most 2 levels deep.",
+      "ruleIdentifier": "nesting",
+      "ruleName": "Nesting",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        case os = \"Os\"",
+    "violation": {
+      "location": {
+        "character": 14,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 66
+      },
+      "reason": "Enum element name 'os' should be between 3 and 40 characters long",
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    let ip: String",
+    "violation": {
+      "location": {
+        "character": 9,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 306
+      },
+      "reason": "Variable name 'ip' should be between 3 and 40 characters long",
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        case ip = \"IP\"",
+    "violation": {
+      "location": {
+        "character": 14,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
+        "line": 312
+      },
+      "reason": "Enum element name 'ip' should be between 3 and 40 characters long",
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "public struct DockerRouter: Sendable {",
+    "violation": {
+      "location": {
+        "character": 8,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 22
+      },
+      "reason": "Struct body should span 900 lines or less excluding comments and whitespace: currently spans 1245 lines",
+      "ruleDescription": "Type bodies should not span too many lines",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func route(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 49
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 58",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func route(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 49
+      },
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 498 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "                        let text = String(decoding: data, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 36,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 786
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func containerSpec(",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 836
+      },
+      "reason": "Function should have complexity 10 or less; currently complexity is 12",
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func containerSpec(",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 836
+      },
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 123 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func containerInspect(",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 1001
+      },
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 101 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func containerHealth(",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 1108
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func record(",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 1394
+      },
+      "reason": "Function should have 5 parameters or less: it currently has 6",
+      "ruleDescription": "Number of function parameters should be low.",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "}",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
+        "line": 1527
+      },
+      "reason": "File should contain 1200 lines or less: currently contains 1527",
+      "ruleDescription": "Files should not span too many lines.",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func start() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerService/EngineServer.swift",
+        "line": 43
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private func write(_ response: DockerHTTPResponse, context: ChannelHandlerContext) {",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerService/EngineServer.swift",
+        "line": 328
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 87 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {",
+    "violation": {
+      "location": {
+        "character": 8,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerState/SQLiteStateStore.swift",
+        "line": 23
+      },
+      "reason": "Actor body should span 700 lines or less excluding comments and whitespace: currently spans 715 lines",
+      "ruleDescription": "Type bodies should not span too many lines",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    private static func migrate(_ database: OpaquePointer) throws {",
+    "violation": {
+      "location": {
+        "character": 20,
+        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerState/SQLiteStateStore.swift",
+        "line": 518
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 99 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func `descriptor and inventory decode stock Apple records`() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 64
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 82 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func `container lifecycle encodes every supported Apple CLI option`() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 270
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 90 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func `exec logs attach pull and build stream process output`() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 367
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 78 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(logFrames.contains { $0.channel == .standardOutput && String(decoding: $0.data, as: UTF8.self) == \"log-output\\n\" })",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 383
+      },
+      "reason": "Line should be 120 characters or less; currently it has 131 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(logFrames.contains { $0.channel == .standardOutput && String(decoding: $0.data, as: UTF8.self) == \"log-output\\n\" })",
+    "violation": {
+      "location": {
+        "character": 71,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 383
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(logFrames.contains { $0.channel == .standardError && String(decoding: $0.data, as: UTF8.self) == \"log-error\\n\" })",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 384
+      },
+      "reason": "Line should be 120 characters or less; currently it has 129 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(logFrames.contains { $0.channel == .standardError && String(decoding: $0.data, as: UTF8.self) == \"log-error\\n\" })",
+    "violation": {
+      "location": {
+        "character": 70,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 384
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: execOutput, as: UTF8.self) == \"exec-output\\n\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 414
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: pulled, as: UTF8.self) == \"pull-progress\\n\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 426
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: loaded, as: UTF8.self) == \"load-progress\\n\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 438
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: built, as: UTF8.self) == \"build-progress\\n\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 451
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func `network volume image and archive mutations delegate safely`() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 455
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: standardOutput, as: UTF8.self) == \"input\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 671
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: standardError, as: UTF8.self) == \"session-error\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 672
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: echoed, as: UTF8.self) == \"interactive\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 690
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            printf '%s\\\\n' '[{\"appName\":\"container\",\"version\":\"1.1.0\",\"commit\":\"fixture-commit\",\"distribution\":\"apple\"}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 820
+      },
+      "reason": "Line should be 120 characters or less; currently it has 121 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "              printf '%s\\\\n' '[{\"id\":\"fixture\",\"configuration\":{\"image\":{\"reference\":\"fixture:latest\"},\"initProcess\":{\"executable\":\"/bin/sleep\",\"arguments\":[\"infinity\"],\"environment\":[],\"workingDirectory\":\"/workspace\",\"terminal\":false},\"labels\":{\"com.apple.container.compose.oneoff\":\"false\"},\"mounts\":[],\"publishedPorts\":[],\"creationDate\":\"2027-07-26T12:34:56.123Z\"},\"status\":{\"state\":\"running\"}}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 828
+      },
+      "reason": "Line should be 200 characters or less; currently it has 398 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            printf '%s\\\\n' '[{\"id\":\"fixture\",\"configuration\":{\"image\":{\"reference\":\"fixture:latest\"},\"initProcess\":{\"executable\":\"/bin/sleep\",\"arguments\":[\"infinity\"],\"environment\":[\"A=1\",\"EMPTY=\"],\"workingDirectory\":\"/workspace\",\"terminal\":true,\"user\":{\"id\":{\"uid\":501,\"gid\":20}},\"noNewPrivileges\":true,\"privileged\":true},\"labels\":{\"fixture\":\"yes\",\"io.github.stephenlclarke.devcontainer.docker-id\":\"docker-fixture\"},\"mounts\":[{\"destination\":\"/bind\",\"source\":\"/host\",\"type\":{\"virtiofs\":{}},\"options\":[\"ro\"]},{\"destination\":\"/volume\",\"source\":\"cache\",\"type\":{\"volume\":{}}},{\"destination\":\"/run\",\"type\":{\"tmpfs\":{}}},{\"source\":\"invalid\"}],\"publishedPorts\":[{\"containerPort\":\"8080\",\"hostPort\":18080,\"protocol\":\"tcp\",\"hostAddress\":\"0.0.0.0\"}],\"creationDate\":\"2026-07-26T12:34:56.123Z\",\"hostname\":\"fixture-host\",\"useInit\":true,\"capAdd\":[\"SYS_PTRACE\"],\"capDrop\":[\"NET_RAW\"],\"unconfinedSystemPaths\":true},\"status\":{\"state\":\"'\"$cstate\"'\",\"exitCode\":17,\"networks\":[{\"network\":\"bridge\",\"ipv4Address\":\"192.0.2.10/24\"}]}}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 836
+      },
+      "reason": "Line should be 200 characters or less; currently it has 1011 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            printf '%s\\\\n' '[{\"id\":\"abc123\",\"configuration\":{\"name\":\"fixture:latest\",\"creationDate\":\"2026-07-26T12:34:56Z\"},\"variants\":[{\"platform\":{\"architecture\":\"amd64\",\"os\":\"linux\"},\"size\":1},{\"platform\":{\"architecture\":\"arm64\",\"os\":\"linux\"},\"size\":12345,\"config\":{\"config\":{\"User\":\"vscode\",\"Env\":[\"A=1\"],\"Entrypoint\":[\"/bin/sh\"],\"Cmd\":[\"sleep\",\"infinity\"],\"Labels\":{\"fixture\":\"yes\"}}}}]}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 839
+      },
+      "reason": "Line should be 200 characters or less; currently it has 394 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            printf '%s\\\\n' '[{\"id\":\"network-id\",\"configuration\":{\"name\":\"fixture-network\",\"labels\":{\"fixture\":\"yes\"},\"plugin\":\"bridge\",\"mode\":\"isolated\",\"creationDate\":\"2026-07-26T12:34:56Z\"}}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 842
+      },
+      "reason": "Line should be 120 characters or less; currently it has 194 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            printf '%s\\\\n' '[{\"configuration\":{\"name\":\"fixture-volume\",\"labels\":{\"fixture\":\"yes\"},\"driver\":\"local\",\"source\":\"/var/lib/fixture\",\"creationDate\":\"2026-07-26T12:34:56Z\"}},{\"configuration\":{\"name\":\"buildx_buildkit_fixture_state\",\"labels\":{\"buildx\":\"yes\"},\"driver\":\"local\",\"source\":\"/native/buildkit\",\"creationDate\":\"2026-07-26T12:34:57Z\"}}]'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
+        "line": 845
+      },
+      "reason": "Line should be 200 characters or less; currently it has 352 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: standardOutput, as: UTF8.self) == \"stdout\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleDirectProcessSessionTests.swift",
+        "line": 62
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: standardError, as: UTF8.self) == \"stderr\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleDirectProcessSessionTests.swift",
+        "line": 63
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: output, as: UTF8.self) == \"deferred-output\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleProcessSessionSupportTests.swift",
+        "line": 41
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: output, as: UTF8.self) == \"abc\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleProcessSessionSupportTests.swift",
+        "line": 91
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        #expect(String(decoding: error, as: UTF8.self) == \"ewarn\")",
+    "violation": {
+      "location": {
+        "character": 17,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleProcessSessionSupportTests.swift",
+        "line": 92
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            recorded.append(.write(String(decoding: data, as: UTF8.self)))",
+    "violation": {
+      "location": {
+        "character": 36,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleProcessSessionSupportTests.swift",
+        "line": 152
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    #expect(String(decoding: result.standardOutput, as: UTF8.self).contains(\"fixture\"))",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerComposeProviderTests/ComposeCommandTests.swift",
+        "line": 119
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    #expect(String(decoding: result.standardError, as: UTF8.self) == \"compose-warning\")",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerComposeProviderTests/ComposeCommandTests.swift",
+        "line": 120
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "              printf '%s\\\\n' '{\"version\":\"0.10.0\",\"source\":\"stephenlclarke/container-compose\",\"commit\":\"fixture-commit\",\"containerDistribution\":\"custom\"}'",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerComposeProviderTests/ComposeCommandTests.swift",
+        "line": 183
+      },
+      "reason": "Line should be 120 characters or less; currently it has 154 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `container lifecycle and inspection use docker shapes`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 56
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 82 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            target: \"/containers/json?all=true&filters=%7B%22label%22:%5B%22devcontainer.local_folder=/workspace%22%5D%7D\"",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 118
+      },
+      "reason": "Line should be 120 characters or less; currently it has 122 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `container create distinguishes bind named and anonymous volumes`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 146
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 67 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `image endpoints cover pull inspect tag build and delete`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 277
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        try await String(decoding: streamBytes(pull), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 19,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 289
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        try await String(decoding: streamBytes(load), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 19,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 327
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `network and volume endpoints follow docker shapes`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 343
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 67 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    #expect(String(decoding: eventData, as: UTF8.self).contains(\"\\\"Action\\\":\\\"create\\\"\"))",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 468
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `advanced container exec archive and stream routes are compatible`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 545
+      },
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 182 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `network connections anonymous volumes filters and event actions are exercised`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 756
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 89 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            target: \"/events?since=0&until=2999-01-01T00%3A00%3A00Z&filters=%7B%22event%22:%7B%22create%22:true,%22start%22:false%7D,%22label%22:%5B%22project=demo%22%5D%7D\"",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 843
+      },
+      "reason": "Line should be 120 characters or less; currently it has 173 characters",
+      "ruleDescription": "Lines should not span too many characters.",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    let eventText = try await String(decoding: streamBytes(events), as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 31,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 846
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `in memory runtime negative paths and process controls are deterministic`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 852
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `health checks are decoded executed and projected through inspect`() async throws {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 926
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "func `health registry observes intervals retries start periods and resets`() async {",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 989
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 91 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "}",
+    "violation": {
+      "location": {
+        "character": 1,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
+        "line": 1100
+      },
+      "reason": "File should contain 1000 lines or less: currently contains 1100",
+      "ruleDescription": "Files should not span too many lines.",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "struct DevContainerServiceCommandIntegrationTests {",
+    "violation": {
+      "location": {
+        "character": 8,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
+        "line": 22
+      },
+      "reason": "Type name 'DevContainerServiceCommandIntegrationTests' should be between 3 and 40 characters long",
+      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
+      "ruleIdentifier": "type_name",
+      "ruleName": "Type Name",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "            String(decoding: diagnostic, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 13,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
+        "line": 165
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    return String(decoding: data, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 12,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
+        "line": 168
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "    func `server exposes byte stream and hijacked Docker responses`() async throws {",
+    "violation": {
+      "location": {
+        "character": 5,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/EngineServerTests.swift",
+        "line": 28
+      },
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines",
+      "ruleDescription": "Function bodies should not span too many lines",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "                    + String(decoding: standardError, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 23,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/EngineServerTests.swift",
+        "line": 201
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  },
+  {
+    "text": "        let value = String(decoding: standardOutput, as: UTF8.self)",
+    "violation": {
+      "location": {
+        "character": 21,
+        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/EngineServerTests.swift",
+        "line": 204
+      },
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "severity": "error"
+    }
+  }
+]

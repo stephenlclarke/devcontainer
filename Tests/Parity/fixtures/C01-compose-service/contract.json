@@ -1,0 +1,7 @@
+{
+  "expected": {
+    "compose_env": "compose-service",
+    "post_create": "compose-post-create",
+    "workspace": "/workspaces/devcontainer-parity"
+  }
+}

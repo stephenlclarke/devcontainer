@@ -1,0 +1,13 @@
+{
+  "name": "devcontainer-parity-reuse",
+  "image": "alpine:3.22",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "mounts": [
+    "source=dcparity-d07-reuse,target=/cache,type=volume"
+  ],
+  "postCreateCommand": "value=$(cat /cache/create-count 2>/dev/null || printf 0); printf '%s\\n' \"$((value + 1))\" > /cache/create-count",
+  "postStartCommand": "value=$(cat /cache/start-count 2>/dev/null || printf 0); printf '%s\\n' \"$((value + 1))\" > /cache/start-count"
+}

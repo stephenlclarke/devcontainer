@@ -1,0 +1,7 @@
+{
+  "expected": {
+    "dependency_dns": true,
+    "dependency_health": "healthy",
+    "run_service": true
+  }
+}

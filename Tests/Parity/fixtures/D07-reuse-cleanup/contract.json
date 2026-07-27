@@ -1,0 +1,10 @@
+{
+  "expected": {
+    "cleanup": true,
+    "create_count": 2,
+    "hooks_idempotent_on_reuse": true,
+    "rebuilt": true,
+    "reused": true,
+    "start_count": 2
+  }
+}

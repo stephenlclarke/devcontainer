@@ -1,0 +1,20 @@
+{
+  "name": "devcontainer-parity-ports",
+  "image": "python:3.13-alpine",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "appPort": [
+    "127.0.0.1:49277:8123"
+  ],
+  "forwardPorts": [
+    8123
+  ],
+  "portsAttributes": {
+    "8123": {
+      "label": "Parity HTTP"
+    }
+  },
+  "postCreateCommand": "mkdir -p /tmp/parity-http && printf 'devcontainer-port\\n' > /tmp/parity-http/index.html && nohup python3 -m http.server 8123 --directory /tmp/parity-http >/tmp/parity-http.log 2>&1 &"
+}

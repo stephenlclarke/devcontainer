@@ -1,0 +1,20 @@
+{
+  "name": "devcontainer-parity-users",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": false,
+  "containerEnv": {
+    "CONTAINER_VALUE": "container-value"
+  },
+  "remoteEnv": {
+    "REMOTE_VALUE": "remote-value",
+    "EXPANDED_VALUE": "${containerEnv:CONTAINER_VALUE}"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "postCreateCommand": "printf 'user-post-create\\n' > /tmp/devcontainer-user-hook"
+}

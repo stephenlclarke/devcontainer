@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "build_arg": "from-devcontainer",
+    "build_target": "development",
+    "post_create": "dockerfile-post-create",
+    "workspace": "/workspaces/devcontainer-parity"
+  }
+}

@@ -1,0 +1,28 @@
+services:
+  app:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    env_file:
+      - fixture.env
+    volumes:
+      - parity-cache:/cache
+      - .:/workspaces/devcontainer-parity
+    networks:
+      parity:
+        aliases:
+          - parity-app
+  peer:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    networks:
+      - parity
+
+volumes:
+  parity-cache:
+    labels:
+      devcontainer.parity: C03
+
+networks:
+  parity:
+    labels:
+      devcontainer.parity: C03

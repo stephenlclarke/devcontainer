@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "content": true,
+    "large_file": true,
+    "long_path": true,
+    "mode": "0o750",
+    "symlink": true
+  }
+}

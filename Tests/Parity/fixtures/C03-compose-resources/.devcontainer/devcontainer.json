@@ -1,0 +1,13 @@
+{
+  "name": "devcontainer-parity-compose-resources",
+  "dockerComposeFile": "../compose.yaml",
+  "service": "app",
+  "runServices": [
+    "app",
+    "peer"
+  ],
+  "shutdownAction": "stopCompose",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceFolder": "/workspaces/devcontainer-parity"
+}

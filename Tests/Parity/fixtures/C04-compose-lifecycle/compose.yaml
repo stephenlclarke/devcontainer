@@ -1,0 +1,16 @@
+services:
+  app:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        trap 'printf term > /state/signal; exit 0' TERM;
+        while sleep 1; do :; done
+    stop_signal: SIGTERM
+    volumes:
+      - lifecycle-state:/state
+      - .:/workspaces/devcontainer-parity
+
+volumes:
+  lifecycle-state: {}

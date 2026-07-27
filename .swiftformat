@@ -1,0 +1,8 @@
+--swiftversion 6.2
+--indent 4
+--linebreaks lf
+--wraparguments before-first
+--wrapcollections before-first
+--wrapparameters before-first
+--commas inline
+--self remove

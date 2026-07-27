@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "api_prefix": true,
+    "error_envelope": true,
+    "head_ping": true,
+    "malformed_request": true,
+    "ping": true
+  }
+}

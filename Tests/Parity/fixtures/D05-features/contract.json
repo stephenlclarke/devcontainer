@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "feature_git": true,
+    "feature_jq": true,
+    "frozen_lock": true,
+    "lockfile": true
+  }
+}

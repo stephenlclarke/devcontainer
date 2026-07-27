@@ -1,0 +1,6 @@
+{
+  "expected": {
+    "host_hook": "initialize",
+    "order": "onCreate,updateContent,postCreate,postStart,postAttach"
+  }
+}

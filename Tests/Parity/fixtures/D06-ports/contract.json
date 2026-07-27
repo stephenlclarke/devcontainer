@@ -1,0 +1,8 @@
+{
+  "expected": {
+    "collision_rejected": true,
+    "forward_metadata": true,
+    "host_connectivity": true,
+    "inside_connectivity": true
+  }
+}

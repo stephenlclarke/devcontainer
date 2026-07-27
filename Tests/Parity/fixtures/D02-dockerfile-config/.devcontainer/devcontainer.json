@@ -1,0 +1,16 @@
+{
+  "name": "devcontainer-parity-dockerfile",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "target": "development",
+    "args": {
+      "PARITY_BUILD_ARG": "from-devcontainer"
+    }
+  },
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "postCreateCommand": "printf 'dockerfile-post-create\\n' > /tmp/devcontainer-post-create"
+}

@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+_serve/
+_site/
+__pycache__/
+coverage.json
+coverage.lcov
+coverage.xml
+dist/
+tmp/
+*.pyc
+*.profdata
+*.profraw

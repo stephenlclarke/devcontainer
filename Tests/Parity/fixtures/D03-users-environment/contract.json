@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "container_env": "container-value",
+    "expanded_env": "container-value",
+    "home": "/home/vscode",
+    "post_create": "user-post-create",
+    "remote_env": "remote-value",
+    "uid": "1000",
+    "user": "vscode"
+  }
+}

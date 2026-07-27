@@ -1,0 +1,20 @@
+{
+  "name": "devcontainer-parity-features",
+  "image": "ubuntu:24.04",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "upgradePackages": false,
+      "username": "root"
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "os-provided",
+      "ppa": false
+    }
+  }
+}

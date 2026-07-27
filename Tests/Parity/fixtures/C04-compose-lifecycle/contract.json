@@ -1,0 +1,10 @@
+{
+  "expected": {
+    "primary": "app",
+    "primary_label": true,
+    "recreated": true,
+    "restart_signal": "term",
+    "restarted": true,
+    "shutdown": true
+  }
+}

@@ -1,0 +1,48 @@
+class Devcontainer < Formula
+  desc "VS Code Dev Containers compatibility for Apple container"
+  homepage "https://github.com/stephenlclarke/devcontainer"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/v@VERSION@/devcontainer-@VERSION@-macos-arm64.tar.gz"
+  sha256 "@SHA256@"
+  license "Apache-2.0"
+
+  depends_on arch: :arm64
+  depends_on macos: :tahoe
+  depends_on "docker" => :recommended
+
+  def install
+    bin.install "bin/devcontainer"
+    bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-compose"
+    libexec.install "libexec/container"
+    pkgshare.install "share/devcontainer"
+  end
+
+  service do
+    run [opt_bin/"devcontainer-engine"]
+    keep_alive true
+    process_type :interactive
+    log_path var/"log/devcontainer.log"
+    error_log_path var/"log/devcontainer-error.log"
+  end
+
+  def caveats
+    <<~EOS
+      Install either the stock Apple container package or a compatible
+      container distribution before starting the service.
+
+      Start the compatibility engine:
+        brew services start devcontainer
+
+      Use it without changing your default Docker context:
+        eval "$(devcontainer context)"
+
+      Configure VS Code's Dev Containers extension to use:
+        #{opt_bin}/devcontainer-compose
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/devcontainer version")
+    assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+  end
+end

@@ -1,0 +1,10 @@
+{
+  "expected": {
+    "bind_read_only": true,
+    "network_dns": true,
+    "network_inspect": true,
+    "tmpfs": true,
+    "volume_inspect": true,
+    "volume_persistence": true
+  }
+}

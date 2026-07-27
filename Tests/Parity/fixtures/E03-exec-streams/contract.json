@@ -1,0 +1,10 @@
+{
+  "expected": {
+    "binary_duplex": true,
+    "environment": true,
+    "exact_exit": true,
+    "stderr": true,
+    "stdout": true,
+    "tty": true
+  }
+}

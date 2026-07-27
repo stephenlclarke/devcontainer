@@ -1,0 +1,14 @@
+{
+  "name": "devcontainer-parity-compose-dependencies",
+  "dockerComposeFile": "../compose.yaml",
+  "service": "app",
+  "runServices": [
+    "app",
+    "database",
+    "helper"
+  ],
+  "shutdownAction": "stopCompose",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceFolder": "/workspaces/devcontainer-parity"
+}

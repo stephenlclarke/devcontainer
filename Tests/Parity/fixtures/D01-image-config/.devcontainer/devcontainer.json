@@ -1,0 +1,12 @@
+{
+  "name": "devcontainer-parity-image",
+  "image": "alpine:3.22",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "containerEnv": {
+    "DEVCONTAINER_PARITY": "image-config"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "postCreateCommand": "printf 'post-create\\n' > /tmp/devcontainer-post-create"
+}

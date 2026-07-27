@@ -1,0 +1,14 @@
+{
+  "name": "devcontainer-parity-lifecycle",
+  "image": "alpine:3.22",
+  "overrideCommand": true,
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",
+  "workspaceFolder": "/workspaces/devcontainer-parity",
+  "initializeCommand": "printf 'initialize\\n' > .lifecycle-host",
+  "onCreateCommand": "printf 'onCreate\\n' > /tmp/devcontainer-lifecycle",
+  "updateContentCommand": "printf 'updateContent\\n' >> /tmp/devcontainer-lifecycle",
+  "postCreateCommand": "printf 'postCreate\\n' >> /tmp/devcontainer-lifecycle",
+  "postStartCommand": "printf 'postStart\\n' >> /tmp/devcontainer-lifecycle",
+  "postAttachCommand": "printf 'postAttach\\n' >> /tmp/devcontainer-lifecycle"
+}

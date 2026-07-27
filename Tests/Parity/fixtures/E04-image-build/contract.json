@@ -1,0 +1,7 @@
+{
+  "expected": {
+    "build_progress": true,
+    "failed_build": true,
+    "inspect_label": true
+  }
+}

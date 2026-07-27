@@ -1,0 +1,27 @@
+services:
+  database:
+    image: python:3.13-alpine
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        sleep 1;
+        mkdir -p /www;
+        printf 'healthy\n' > /www/ready;
+        exec python3 -m http.server 8080 --directory /www
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/ready"]
+      interval: 1s
+      timeout: 1s
+      retries: 20
+  helper:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+  app:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - .:/workspaces/devcontainer-parity

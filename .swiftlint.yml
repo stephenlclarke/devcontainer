@@ -1,0 +1,22 @@
+disabled_rules:
+  - comment_spacing
+  - opening_brace
+  - trailing_comma
+
+line_length:
+  warning: 120
+  error: 200
+  ignores_function_declarations: true
+  ignores_interpolated_strings: true
+
+identifier_name:
+  excluded:
+    - id
+
+file_length:
+  warning: 1000
+  error: 1200
+
+type_body_length:
+  warning: 700
+  error: 900
