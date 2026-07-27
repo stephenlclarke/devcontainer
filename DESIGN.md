@@ -336,7 +336,11 @@ refuses to replace a foreign file, directory, or link. Registration can
 therefore be tested independently against an official Apple package and
 Stephen's Homebrew runtime.
 
-Stable formulae use immutable semantic release assets. A future `devcontainer-current` formula is optional and will be added only when there is demonstrated demand.
+Stable formulae use immutable semantic release assets. The generated
+`devcontainer-current` formula uses a monotonically increasing
+`current.RUN.SHA12` version and a commit-identified asset; publication remains
+fail-closed until the trusted release runner, signing, notarization, and tap
+promotion controls described in [RELEASE.md](RELEASE.md) are provisioned.
 
 ## Delivery phases
 
