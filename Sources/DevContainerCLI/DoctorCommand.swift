@@ -114,16 +114,22 @@ struct DoctorCommand: AsyncParsableCommand {
         do {
             let result = try await runProcess(executable: executable, arguments: arguments)
             if result.status == 0 {
-                let output = String(decoding: result.standardOutput.prefix(1024), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let output = String(
+                    bytes: result.standardOutput.prefix(1024),
+                    encoding: .utf8
+                )?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? "non-UTF-8 output"
                 return DoctorCheck(
                     name: name,
                     status: .pass,
                     detail: output.isEmpty ? "command completed" : output
                 )
             }
-            let error = String(decoding: result.standardError.prefix(1024), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let error = String(
+                bytes: result.standardError.prefix(1024),
+                encoding: .utf8
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? "non-UTF-8 diagnostic output"
             return DoctorCheck(
                 name: name,
                 status: .fail,

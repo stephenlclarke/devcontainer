@@ -162,10 +162,12 @@ private func runCurl(socket: String, path: String) throws -> String {
     let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
     guard process.terminationStatus == 0 else {
         throw ServiceIntegrationError(
-            String(decoding: diagnostic, as: UTF8.self)
+            String(data: diagnostic, encoding: .utf8)
+                ?? "non-UTF-8 service diagnostic"
         )
     }
-    return String(decoding: data, as: UTF8.self)
+    return String(data: data, encoding: .utf8)
+        ?? "non-UTF-8 service response"
 }
 
 private let fakeContainerCLI = """

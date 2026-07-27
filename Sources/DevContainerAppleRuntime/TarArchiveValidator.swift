@@ -43,7 +43,7 @@ public enum TarArchiveValidator {
 
             let size = try number(header, range: 124 ..< 136, field: "size")
             let type = header[156]
-            let headerName = joinedName(header)
+            let headerName = try joinedName(header)
             let bodyStart = offset + 512
             guard
                 size <= UInt64(Int.max),
@@ -58,7 +58,7 @@ public enum TarArchiveValidator {
             switch type {
             case 0, 48, 49, 50, 53:
                 let path = pax["path"] ?? pendingPath ?? headerName
-                let linkPath = pax["linkpath"] ?? pendingLinkPath
+                let linkPath = try pax["linkpath"] ?? pendingLinkPath
                     ?? string(header, range: 157 ..< 257)
                 try validatePath(path, field: "entry path")
                 if type == 50 {
@@ -82,9 +82,9 @@ public enum TarArchiveValidator {
             case 120:
                 pax = try parsePAX(body)
             case 76:
-                pendingPath = nulTerminated(body)
+                pendingPath = try nulTerminated(body)
             case 75:
-                pendingLinkPath = nulTerminated(body)
+                pendingLinkPath = try nulTerminated(body)
             case 51, 52, 54:
                 throw invalid("tar device and FIFO entries are not allowed")
             default:
@@ -112,9 +112,9 @@ public enum TarArchiveValidator {
         }
     }
 
-    private static func joinedName(_ header: Data) -> String {
-        let name = string(header, range: 0 ..< 100)
-        let prefix = string(header, range: 345 ..< 500)
+    private static func joinedName(_ header: Data) throws -> String {
+        let name = try string(header, range: 0 ..< 100)
+        let prefix = try string(header, range: 345 ..< 500)
         return prefix.isEmpty ? name : "\(prefix)/\(name)"
     }
 
@@ -127,8 +127,12 @@ public enum TarArchiveValidator {
         guard bytes.first.map({ $0 & 0x80 == 0 }) ?? false else {
             throw invalid("base-256 tar \(field) is not supported")
         }
-        let value = String(decoding: bytes, as: UTF8.self)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\0 "))
+        guard let decoded = String(bytes: bytes, encoding: .utf8) else {
+            throw invalid("tar \(field) is not valid UTF-8")
+        }
+        let value = decoded.trimmingCharacters(
+            in: CharacterSet(charactersIn: "\0 ")
+        )
         if value.isEmpty {
             return 0
         }
@@ -138,14 +142,19 @@ public enum TarArchiveValidator {
         return result
     }
 
-    private static func string(_ data: Data, range: Range<Int>) -> String {
-        nulTerminated(data.subdata(in: range))
+    private static func string(
+        _ data: Data,
+        range: Range<Int>
+    ) throws -> String {
+        try nulTerminated(data.subdata(in: range))
     }
 
-    private static func nulTerminated(_ data: Data) -> String {
+    private static func nulTerminated(_ data: Data) throws -> String {
         let end = data.firstIndex(of: 0) ?? data.endIndex
-        return String(decoding: data[..<end], as: UTF8.self)
-            .trimmingCharacters(in: .newlines)
+        guard let value = String(bytes: data[..<end], encoding: .utf8) else {
+            throw invalid("tar text field is not valid UTF-8")
+        }
+        return value.trimmingCharacters(in: .newlines)
     }
 
     private static func parsePAX(_ body: Data) throws -> [String: String] {
@@ -155,8 +164,15 @@ public enum TarArchiveValidator {
             guard let space = body[offset...].firstIndex(of: 32) else {
                 throw invalid("PAX record has no length delimiter")
             }
-            let lengthText = String(decoding: body[offset ..< space], as: UTF8.self)
-            guard let length = Int(lengthText), length > 0, length <= body.count - offset else {
+            guard
+                let lengthText = String(
+                    bytes: body[offset ..< space],
+                    encoding: .utf8
+                ),
+                let length = Int(lengthText),
+                length > 0,
+                length <= body.count - offset
+            else {
                 throw invalid("PAX record has an invalid length")
             }
             let recordEnd = offset + length
@@ -164,7 +180,12 @@ public enum TarArchiveValidator {
                 throw invalid("PAX record is not newline terminated")
             }
             let valueStart = space + 1
-            let record = String(decoding: body[valueStart ..< recordEnd - 1], as: UTF8.self)
+            guard let record = String(
+                bytes: body[valueStart ..< recordEnd - 1],
+                encoding: .utf8
+            ) else {
+                throw invalid("PAX record is not valid UTF-8")
+            }
             guard let equals = record.firstIndex(of: "=") else {
                 throw invalid("PAX record has no key/value delimiter")
             }

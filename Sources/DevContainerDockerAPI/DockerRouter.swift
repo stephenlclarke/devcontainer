@@ -83,6 +83,7 @@ public struct DockerRouter: Sendable {
                     apiVersion: descriptor.dockerAPIMaximum,
                     minAPIVersion: descriptor.dockerAPIMinimum,
                     gitCommit: descriptor.providerCommit,
+                    operatingSystem: "linux",
                     buildTime: ISO8601DateFormatter().string(from: Date())
                 )
             )
@@ -783,7 +784,8 @@ public struct DockerRouter: Sendable {
             let task = Task {
                 do {
                     for try await data in stream {
-                        let text = String(decoding: data, as: UTF8.self)
+                        let text = String(data: data, encoding: .utf8)
+                            ?? "non-UTF-8 progress output"
                         let object: [String: String] = status.map {
                             ["status": $0, "progress": text]
                         } ?? ["stream": text]
@@ -987,7 +989,7 @@ public struct DockerRouter: Sendable {
             status: snapshot.state.rawValue,
             ports: snapshot.spec.ports.map {
                 DockerPortSummary(
-                    ip: $0.hostAddress,
+                    address: $0.hostAddress,
                     privatePort: $0.containerPort,
                     publicPort: $0.hostPort,
                     type: $0.protocolName

@@ -29,6 +29,7 @@ func `docker server container and exec response defaults encode`() throws {
                 apiVersion: "1.53",
                 minAPIVersion: "1.41",
                 gitCommit: "fixture",
+                operatingSystem: "linux",
                 buildTime: "2026-01-01T00:00:00Z"
             )
         ),

@@ -380,8 +380,14 @@ struct AppleContainerRuntimeTests {
         for try await frame in logs {
             logFrames.append(frame)
         }
-        #expect(logFrames.contains { $0.channel == .standardOutput && String(decoding: $0.data, as: UTF8.self) == "log-output\n" })
-        #expect(logFrames.contains { $0.channel == .standardError && String(decoding: $0.data, as: UTF8.self) == "log-error\n" })
+        #expect(logFrames.contains {
+            $0.channel == .standardOutput
+                && String(data: $0.data, encoding: .utf8) == "log-output\n"
+        })
+        #expect(logFrames.contains {
+            $0.channel == .standardError
+                && String(data: $0.data, encoding: .utf8) == "log-error\n"
+        })
 
         try await runtime.startContainer(id: "fixture", context: context)
         try fixture.setState("stopped")
@@ -411,7 +417,7 @@ struct AppleContainerRuntimeTests {
             execOutput.append(frame.data)
         }
         #expect(try await session.wait() == 0)
-        #expect(String(decoding: execOutput, as: UTF8.self) == "exec-output\n")
+        #expect(String(data: execOutput, encoding: .utf8) == "exec-output\n")
         let completed = try await waitForExec(runtime, id: exec.id, context: context)
         #expect(!completed.running)
         #expect(completed.exitCode == 0)
@@ -423,7 +429,7 @@ struct AppleContainerRuntimeTests {
         for try await chunk in try await runtime.pullImage(reference: "fixture:latest", context: context) {
             pulled.append(chunk)
         }
-        #expect(String(decoding: pulled, as: UTF8.self) == "pull-progress\n")
+        #expect(String(data: pulled, encoding: .utf8) == "pull-progress\n")
         #expect(try fixture.log().contains(
             "image pull --progress plain --platform linux/arm64 fixture:latest"
         ))
@@ -435,7 +441,7 @@ struct AppleContainerRuntimeTests {
         ) {
             loaded.append(chunk)
         }
-        #expect(String(decoding: loaded, as: UTF8.self) == "load-progress\n")
+        #expect(String(data: loaded, encoding: .utf8) == "load-progress\n")
 
         let request = ImageBuildRequest(
             context: minimalTar(),
@@ -448,7 +454,7 @@ struct AppleContainerRuntimeTests {
         for try await chunk in try await runtime.buildImage(request: request, context: context) {
             built.append(chunk)
         }
-        #expect(String(decoding: built, as: UTF8.self) == "build-progress\n")
+        #expect(String(data: built, encoding: .utf8) == "build-progress\n")
     }
 
     @Test
@@ -668,8 +674,8 @@ struct AppleContainerRuntimeTests {
             }
         }
         #expect(try await session.wait() == 0)
-        #expect(String(decoding: standardOutput, as: UTF8.self) == "input")
-        #expect(String(decoding: standardError, as: UTF8.self) == "session-error")
+        #expect(String(data: standardOutput, encoding: .utf8) == "input")
+        #expect(String(data: standardError, encoding: .utf8) == "session-error")
         #expect(throws: DevContainerError.self) {
             try session.write(Data())
         }
@@ -687,7 +693,7 @@ struct AppleContainerRuntimeTests {
             echoed.append(frame.data)
         }
         #expect(try await interactive.wait() == 0)
-        #expect(String(decoding: echoed, as: UTF8.self) == "interactive")
+        #expect(String(data: echoed, encoding: .utf8) == "interactive")
 
         let cancellable = try AppleProcessSession(
             executable: fixture.executable,
@@ -817,7 +823,12 @@ private struct FakeAppleCLI {
         state=$(cat "$STATE")
         case "$1 ${2-}" in
           "system version")
-            printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture-commit","distribution":"apple"}]'
+            printf '%s\\n' '[{
+              "appName":"container",
+              "version":"1.1.0",
+              "commit":"fixture-commit",
+              "distribution":"apple"
+            }]'
             ;;
           "list --all"|"list --format")
             if [ "$state" = missing ]; then
@@ -825,7 +836,24 @@ private struct FakeAppleCLI {
               exit 0
             fi
             if [ "$mode" = recreated ]; then
-              printf '%s\\n' '[{"id":"fixture","configuration":{"image":{"reference":"fixture:latest"},"initProcess":{"executable":"/bin/sleep","arguments":["infinity"],"environment":[],"workingDirectory":"/workspace","terminal":false},"labels":{"com.apple.container.compose.oneoff":"false"},"mounts":[],"publishedPorts":[],"creationDate":"2027-07-26T12:34:56.123Z"},"status":{"state":"running"}}]'
+              printf '%s\\n' '[{
+                "id":"fixture",
+                "configuration":{
+                  "image":{"reference":"fixture:latest"},
+                  "initProcess":{
+                    "executable":"/bin/sleep",
+                    "arguments":["infinity"],
+                    "environment":[],
+                    "workingDirectory":"/workspace",
+                    "terminal":false
+                  },
+                  "labels":{"com.apple.container.compose.oneoff":"false"},
+                  "mounts":[],
+                  "publishedPorts":[],
+                  "creationDate":"2027-07-26T12:34:56.123Z"
+                },
+                "status":{"state":"running"}
+              }]'
               exit 0
             fi
             if [ "$state" = stopped ] || [ "$state" = created ]; then
@@ -833,16 +861,117 @@ private struct FakeAppleCLI {
             else
               cstate=running
             fi
-            printf '%s\\n' '[{"id":"fixture","configuration":{"image":{"reference":"fixture:latest"},"initProcess":{"executable":"/bin/sleep","arguments":["infinity"],"environment":["A=1","EMPTY="],"workingDirectory":"/workspace","terminal":true,"user":{"id":{"uid":501,"gid":20}},"noNewPrivileges":true,"privileged":true},"labels":{"fixture":"yes","io.github.stephenlclarke.devcontainer.docker-id":"docker-fixture"},"mounts":[{"destination":"/bind","source":"/host","type":{"virtiofs":{}},"options":["ro"]},{"destination":"/volume","source":"cache","type":{"volume":{}}},{"destination":"/run","type":{"tmpfs":{}}},{"source":"invalid"}],"publishedPorts":[{"containerPort":"8080","hostPort":18080,"protocol":"tcp","hostAddress":"0.0.0.0"}],"creationDate":"2026-07-26T12:34:56.123Z","hostname":"fixture-host","useInit":true,"capAdd":["SYS_PTRACE"],"capDrop":["NET_RAW"],"unconfinedSystemPaths":true},"status":{"state":"'"$cstate"'","exitCode":17,"networks":[{"network":"bridge","ipv4Address":"192.0.2.10/24"}]}}]'
+            printf '%s\\n' '[{
+              "id":"fixture",
+              "configuration":{
+                "image":{"reference":"fixture:latest"},
+                "initProcess":{
+                  "executable":"/bin/sleep",
+                  "arguments":["infinity"],
+                  "environment":["A=1","EMPTY="],
+                  "workingDirectory":"/workspace",
+                  "terminal":true,
+                  "user":{"id":{"uid":501,"gid":20}},
+                  "noNewPrivileges":true,
+                  "privileged":true
+                },
+                "labels":{
+                  "fixture":"yes",
+                  "io.github.stephenlclarke.devcontainer.docker-id":"docker-fixture"
+                },
+                "mounts":[
+                  {
+                    "destination":"/bind",
+                    "source":"/host",
+                    "type":{"virtiofs":{}},
+                    "options":["ro"]
+                  },
+                  {
+                    "destination":"/volume",
+                    "source":"cache",
+                    "type":{"volume":{}}
+                  },
+                  {"destination":"/run","type":{"tmpfs":{}}},
+                  {"source":"invalid"}
+                ],
+                "publishedPorts":[{
+                  "containerPort":"8080",
+                  "hostPort":18080,
+                  "protocol":"tcp",
+                  "hostAddress":"0.0.0.0"
+                }],
+                "creationDate":"2026-07-26T12:34:56.123Z",
+                "hostname":"fixture-host",
+                "useInit":true,
+                "capAdd":["SYS_PTRACE"],
+                "capDrop":["NET_RAW"],
+                "unconfinedSystemPaths":true
+              },
+              "status":{
+                "state":"'"$cstate"'",
+                "exitCode":17,
+                "networks":[{
+                  "network":"bridge",
+                  "ipv4Address":"192.0.2.10/24"
+                }]
+              }
+            }]'
             ;;
           "image list")
-            printf '%s\\n' '[{"id":"abc123","configuration":{"name":"fixture:latest","creationDate":"2026-07-26T12:34:56Z"},"variants":[{"platform":{"architecture":"amd64","os":"linux"},"size":1},{"platform":{"architecture":"arm64","os":"linux"},"size":12345,"config":{"config":{"User":"vscode","Env":["A=1"],"Entrypoint":["/bin/sh"],"Cmd":["sleep","infinity"],"Labels":{"fixture":"yes"}}}}]}]'
+            printf '%s\\n' '[{
+              "id":"abc123",
+              "configuration":{
+                "name":"fixture:latest",
+                "creationDate":"2026-07-26T12:34:56Z"
+              },
+              "variants":[
+                {
+                  "platform":{"architecture":"amd64","os":"linux"},
+                  "size":1
+                },
+                {
+                  "platform":{"architecture":"arm64","os":"linux"},
+                  "size":12345,
+                  "config":{"config":{
+                    "User":"vscode",
+                    "Env":["A=1"],
+                    "Entrypoint":["/bin/sh"],
+                    "Cmd":["sleep","infinity"],
+                    "Labels":{"fixture":"yes"}
+                  }}
+                }
+              ]
+            }]'
             ;;
           "network list")
-            printf '%s\\n' '[{"id":"network-id","configuration":{"name":"fixture-network","labels":{"fixture":"yes"},"plugin":"bridge","mode":"isolated","creationDate":"2026-07-26T12:34:56Z"}}]'
+            printf '%s\\n' '[{
+              "id":"network-id",
+              "configuration":{
+                "name":"fixture-network",
+                "labels":{"fixture":"yes"},
+                "plugin":"bridge",
+                "mode":"isolated",
+                "creationDate":"2026-07-26T12:34:56Z"
+              }
+            }]'
             ;;
           "volume list")
-            printf '%s\\n' '[{"configuration":{"name":"fixture-volume","labels":{"fixture":"yes"},"driver":"local","source":"/var/lib/fixture","creationDate":"2026-07-26T12:34:56Z"}},{"configuration":{"name":"buildx_buildkit_fixture_state","labels":{"buildx":"yes"},"driver":"local","source":"/native/buildkit","creationDate":"2026-07-26T12:34:57Z"}}]'
+            printf '%s\\n' '[
+              {"configuration":{
+                "name":"fixture-volume",
+                "labels":{"fixture":"yes"},
+                "driver":"local",
+                "source":"/var/lib/fixture",
+                "creationDate":"2026-07-26T12:34:56Z"
+              }},
+              {"configuration":{
+                "name":"buildx_buildkit_fixture_state",
+                "labels":{"buildx":"yes"},
+                "driver":"local",
+                "source":"/native/buildkit",
+                "creationDate":"2026-07-26T12:34:57Z"
+              }}
+            ]'
             ;;
           "logs "*)
             printf '%s\\n' 'log-output'

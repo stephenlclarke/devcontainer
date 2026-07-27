@@ -1359,8 +1359,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         operation: String
     ) throws {
         guard result.exitCode == 0 else {
-            let error = String(decoding: result.standardError.prefix(4096), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let error = String(
+                bytes: result.standardError.prefix(4096),
+                encoding: .utf8
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? "non-UTF-8 diagnostic output"
             throw DevContainerError(
                 .runtimeUnavailable,
                 message: "\(operation) failed with exit \(result.exitCode): \(error.isEmpty ? "no diagnostic output" : error)"

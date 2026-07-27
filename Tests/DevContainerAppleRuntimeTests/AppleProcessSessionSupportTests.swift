@@ -38,7 +38,7 @@ struct AppleProcessSessionSupportTests {
             output.append(frame.data)
         }
         #expect(try await deferred.wait() == 9)
-        #expect(String(decoding: output, as: UTF8.self) == "deferred-output")
+        #expect(String(data: output, encoding: .utf8) == "deferred-output")
         #expect(
             launched.operations == [
                 .write("before"),
@@ -88,8 +88,8 @@ struct AppleProcessSessionSupportTests {
             }
         }
         #expect(try await session.wait() == 5)
-        #expect(String(decoding: output, as: UTF8.self) == "abc")
-        #expect(String(decoding: error, as: UTF8.self) == "ewarn")
+        #expect(String(data: output, encoding: .utf8) == "abc")
+        #expect(String(data: error, encoding: .utf8) == "ewarn")
     }
 
     @Test
@@ -149,7 +149,9 @@ private final class RecordingRuntimeSession: RuntimeProcessSession, @unchecked S
 
     func write(_ data: Data) async {
         lock.withLock {
-            recorded.append(.write(String(decoding: data, as: UTF8.self)))
+            recorded.append(
+                .write(String(data: data, encoding: .utf8) ?? "non-UTF-8 input")
+            )
         }
     }
 

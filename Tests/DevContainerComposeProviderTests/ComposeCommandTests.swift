@@ -116,8 +116,14 @@ func `provider probes and invokes a compatible executable`() async throws {
         context: context
     )
     #expect(result.exitCode == 0)
-    #expect(String(decoding: result.standardOutput, as: UTF8.self).contains("fixture"))
-    #expect(String(decoding: result.standardError, as: UTF8.self) == "compose-warning")
+    #expect(
+        String(data: result.standardOutput, encoding: .utf8)?
+            .contains("fixture") == true
+    )
+    #expect(
+        String(data: result.standardError, encoding: .utf8)
+            == "compose-warning"
+    )
     let environment = try fixture.environmentLog()
     #expect(environment.contains("SAFE_BASE=yes"))
     #expect(environment.contains("COMPOSE_PROJECT_NAME=fixture"))
@@ -180,7 +186,12 @@ private struct FakeComposeExecutable {
         if [ "${1-}" = version ]; then
           case '\(mode.rawValue)' in
             valid)
-              printf '%s\\n' '{"version":"0.10.0","source":"stephenlclarke/container-compose","commit":"fixture-commit","containerDistribution":"custom"}'
+              printf '%s\\n' '{
+                "version":"0.10.0",
+                "source":"stephenlclarke/container-compose",
+                "commit":"fixture-commit",
+                "containerDistribution":"custom"
+              }'
               ;;
             wrongSource)
               printf '%s\\n' '{"version":"1","source":"someone/else"}'

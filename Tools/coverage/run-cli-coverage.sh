@@ -22,6 +22,7 @@ readonly STATE_DATABASE="$TEMPORARY_DIRECTORY/state.sqlite"
 readonly FAKE_CONTAINER="$TEMPORARY_DIRECTORY/container"
 readonly FAKE_DOCKER="$TEMPORARY_DIRECTORY/docker"
 readonly FAKE_COMPOSE="$TEMPORARY_DIRECTORY/container-compose"
+readonly INVALID_UTF8_MARKER="$TEMPORARY_DIRECTORY/invalid-utf8"
 
 for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
@@ -61,7 +62,13 @@ printf '%s\n' \
   'set -euo pipefail' \
   'case "$*" in' \
   '  "system version --format json") printf "%s\n" '\''{"version":"fixture"}'\'' ;;' \
-  '  "system status") printf "%s\n" "running" ;;' \
+  '  "system status")' \
+  "    if [[ -f '$INVALID_UTF8_MARKER' ]]; then" \
+  '      printf "\377" >&2' \
+  '      exit 23' \
+  '    fi' \
+  '    printf "%s\n" "running"' \
+  '    ;;' \
   '  *) exit 64 ;;' \
   'esac' >"$FAKE_CONTAINER"
 
@@ -142,6 +149,10 @@ run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER" --format invalid
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$TEMPORARY_DIRECTORY/missing-container"
+touch "$INVALID_UTF8_MARKER"
+run_failure env "${COMMON_ENV[@]}" \
+  "$DEVCONTAINER" doctor \
+  --container "$FAKE_CONTAINER"
 
 run_success env "${COMMON_ENV[@]}" \
   DEVCONTAINER_COMPOSE_PROVIDER=docker \

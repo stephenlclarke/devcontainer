@@ -115,11 +115,17 @@ func `container lifecycle and inspection use docker shapes`() async throws {
     let list = await router.respond(
         to: DockerHTTPRequest(
             method: .get,
-            target: "/containers/json?all=true&filters=%7B%22label%22:%5B%22devcontainer.local_folder=/workspace%22%5D%7D"
+            target: "/containers/json?all=true&filters="
+                + "%7B%22label%22:%5B%22devcontainer.local_folder="
+                + "/workspace%22%5D%7D"
         )
     )
     #expect(list.status == 200)
-    #expect(try (JSONSerialization.jsonObject(with: bytes(list)) as? [[String: Any]])?.count == 1)
+    #expect(
+        try (JSONSerialization.jsonObject(
+            with: bytes(list)
+        ) as? [[String: Any]])?.count == 1
+    )
     let projectedList = await router.respond(
         to: DockerHTTPRequest(
             method: .get,
@@ -286,8 +292,8 @@ func `image endpoints cover pull inspect tag build and delete`() async throws {
     )
     #expect(pull.status == 200)
     #expect(
-        try await String(decoding: streamBytes(pull), as: UTF8.self)
-            .contains("\"status\"")
+        try await String(data: streamBytes(pull), encoding: .utf8)?
+            .contains("\"status\"") == true
     )
 
     let inspect = await router.respond(
@@ -324,8 +330,8 @@ func `image endpoints cover pull inspect tag build and delete`() async throws {
     )
     #expect(load.status == 200)
     #expect(
-        try await String(decoding: streamBytes(load), as: UTF8.self)
-            .contains("Loaded image")
+        try await String(data: streamBytes(load), encoding: .utf8)?
+            .contains("Loaded image") == true
     )
     #expect(
         await router.respond(
@@ -465,7 +471,10 @@ func `archives logs events and docker filter maps are streamed`() async throws {
         )
     )
     let eventData = try await streamBytes(events)
-    #expect(String(decoding: eventData, as: UTF8.self).contains("\"Action\":\"create\""))
+    #expect(
+        String(data: eventData, encoding: .utf8)?
+            .contains("\"Action\":\"create\"") == true
+    )
 }
 
 @Test
@@ -840,10 +849,16 @@ func `network connections anonymous volumes filters and event actions are exerci
     let events = await router.respond(
         to: DockerHTTPRequest(
             method: .get,
-            target: "/events?since=0&until=2999-01-01T00%3A00%3A00Z&filters=%7B%22event%22:%7B%22create%22:true,%22start%22:false%7D,%22label%22:%5B%22project=demo%22%5D%7D"
+            target: "/events?since=0&until=2999-01-01T00%3A00%3A00Z"
+                + "&filters=%7B%22event%22:%7B%22create%22:true,"
+                + "%22start%22:false%7D,%22label%22:"
+                + "%5B%22project=demo%22%5D%7D"
         )
     )
-    let eventText = try await String(decoding: streamBytes(events), as: UTF8.self)
+    let eventText = try await String(
+        data: streamBytes(events),
+        encoding: .utf8
+    ) ?? "non-UTF-8 event stream"
     #expect(eventText.contains("\"Action\":\"create\""))
     #expect(!eventText.contains("\"Action\":\"start\""))
 }

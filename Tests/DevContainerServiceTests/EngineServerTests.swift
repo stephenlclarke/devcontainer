@@ -198,10 +198,14 @@ private struct ServerFixture {
         guard process.terminationStatus == 0 else {
             throw CurlError(
                 "\(method) \(path): "
-                    + String(decoding: standardError, as: UTF8.self)
+                    + (
+                        String(data: standardError, encoding: .utf8)
+                            ?? "non-UTF-8 curl diagnostic"
+                    )
             )
         }
-        let value = String(decoding: standardOutput, as: UTF8.self)
+        let value = String(data: standardOutput, encoding: .utf8)
+            ?? "non-UTF-8 curl response"
         let components = value.split(
             separator: "\n",
             omittingEmptySubsequences: false

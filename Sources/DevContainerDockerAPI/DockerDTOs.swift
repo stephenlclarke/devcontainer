@@ -29,7 +29,7 @@ struct DockerVersionResponse: Encodable {
     let minAPIVersion: String
     let gitCommit: String
     let goVersion = ""
-    let os = "linux"
+    let operatingSystem: String
     let arch = "arm64"
     let kernelVersion = ""
     let buildTime: String
@@ -63,7 +63,7 @@ struct DockerVersionResponse: Encodable {
         case goVersion = "GoVersion"
         case kernelVersion = "KernelVersion"
         case minAPIVersion = "MinAPIVersion"
-        case os = "Os"
+        case operatingSystem = "Os"
         case platform = "Platform"
         case version = "Version"
     }
@@ -303,13 +303,13 @@ struct DockerContainerSummary: Encodable {
 }
 
 struct DockerPortSummary: Encodable {
-    let ip: String
+    let address: String
     let privatePort: UInt16
     let publicPort: UInt16?
     let type: String
 
     enum CodingKeys: String, CodingKey {
-        case ip = "IP"
+        case address = "IP"
         case privatePort = "PrivatePort"
         case publicPort = "PublicPort"
         case type = "Type"

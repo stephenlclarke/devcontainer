@@ -59,8 +59,8 @@ struct AppleDirectProcessSessionTests {
         }
 
         #expect(try await session.wait() == 23)
-        #expect(String(decoding: standardOutput, as: UTF8.self) == "stdout")
-        #expect(String(decoding: standardError, as: UTF8.self) == "stderr")
+        #expect(String(data: standardOutput, encoding: .utf8) == "stdout")
+        #expect(String(data: standardError, encoding: .utf8) == "stderr")
         #expect(process.input == Data("request".utf8))
         #expect(process.lastSize?.width == 132)
         #expect(process.lastSize?.height == 48)

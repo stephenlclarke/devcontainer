@@ -64,6 +64,59 @@ struct TarArchiveValidatorTests {
     }
 
     @Test
+    func `rejects non UTF8 header text`() {
+        var archive = tar([Entry(name: "file")])
+        archive[0] = 0xFF
+        for index in 148 ..< 156 {
+            archive[index] = 32
+        }
+        let checksum = archive[..<512].reduce(0) { $0 + UInt64($1) }
+        write(
+            String(format: "%06o", checksum),
+            into: &archive,
+            range: 148 ..< 154
+        )
+        archive[154] = 0
+        archive[155] = 32
+
+        #expect(throws: DevContainerError.self) {
+            try TarArchiveValidator.validate(archive)
+        }
+    }
+
+    @Test
+    func `rejects non UTF8 numeric and PAX fields`() {
+        var archive = tar([Entry(name: "file")])
+        archive[125] = 0xFF
+        for index in 148 ..< 156 {
+            archive[index] = 32
+        }
+        let checksum = archive[..<512].reduce(0) { $0 + UInt64($1) }
+        write(
+            String(format: "%06o", checksum),
+            into: &archive,
+            range: 148 ..< 154
+        )
+        archive[154] = 0
+        archive[155] = 32
+        #expect(throws: DevContainerError.self) {
+            try TarArchiveValidator.validate(archive)
+        }
+
+        #expect(throws: DevContainerError.self) {
+            try TarArchiveValidator.validate(
+                tar([
+                    Entry(
+                        name: "PaxHeader",
+                        body: Data([52, 32, 0xFF, 10]),
+                        type: 120
+                    )
+                ])
+            )
+        }
+    }
+
+    @Test
     func `accepts pax gnu long names and hard links`() throws {
         let archive = tar([
             Entry(

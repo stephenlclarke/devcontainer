@@ -171,7 +171,8 @@ public struct ExecutableComposeProvider: ComposeProvider {
     }
 
     private static func boundedError(_ data: Data) -> String {
-        let text = String(decoding: data.prefix(4096), as: UTF8.self)
+        let text = String(bytes: data.prefix(4096), encoding: .utf8)
+            ?? "non-UTF-8 diagnostic output"
         return text.isEmpty ? "no diagnostic output" : text
     }
 }
