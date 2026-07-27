@@ -171,6 +171,9 @@ let package = Package(
             name: "DevContainerCLITests",
             dependencies: [
                 "DevContainerCLI",
+                "DevContainerCore",
+                "DevContainerModel",
+                "DevContainerState",
             ]
         ),
         .testTarget(

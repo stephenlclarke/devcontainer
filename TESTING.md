@@ -5,8 +5,8 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite currently contains 113 Swift tests and records
-90.52% first-party line coverage. All 18 CLI fixtures and the V01 real VS Code
+driver. The hosted-safe suite currently contains 120 Swift tests and records
+90.68% first-party line coverage. All 18 CLI fixtures and the V01 real VS Code
 fixture pass against the real Docker oracle, signed stock Apple `container`
 1.1.0, and Stephen's separately identified matched Apple Compose stack with
 zero normalized differences. Stable release authority still requires

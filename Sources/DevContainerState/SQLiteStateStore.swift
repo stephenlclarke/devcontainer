@@ -377,26 +377,54 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
             try bind(Int64(limit), at: 2, to: statement)
             var events: [RuntimeEvent] = []
             while sqlite3_step(statement) == SQLITE_ROW {
-                guard
-                    let action = RuntimeEventAction(rawValue: text(statement, 4)),
-                    let attributesData = blob(statement, 5)
-                else {
-                    throw DevContainerError(.stateCorruption, message: "invalid event record")
-                }
-                let attributes = try JSONDecoder().decode([String: String].self, from: attributesData)
-                events.append(
-                    RuntimeEvent(
-                        sequence: sqlite3_column_int64(statement, 0),
-                        timestamp: Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 1)),
-                        resourceID: text(statement, 2),
-                        resourceType: text(statement, 3),
-                        action: action,
-                        attributes: attributes
-                    )
-                )
+                try events.append(decodeEvent(statement))
             }
             return events
         }
+    }
+
+    public func recentEvents(limit: Int) throws -> [RuntimeEvent] {
+        guard (1 ... 10000).contains(limit) else {
+            throw DevContainerError(.invalidRequest, message: "event limit must be between 1 and 10000")
+        }
+        let sql = """
+        SELECT seq, time, resource, resource_type, action, attributes_json
+        FROM events ORDER BY seq DESC LIMIT ?
+        """
+        return try withStatement(sql) { statement in
+            try bind(Int64(limit), at: 1, to: statement)
+            var events: [RuntimeEvent] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                try events.append(decodeEvent(statement))
+            }
+            return events.reversed()
+        }
+    }
+
+    private func decodeEvent(_ statement: OpaquePointer) throws -> RuntimeEvent {
+        guard
+            let action = RuntimeEventAction(rawValue: text(statement, 4)),
+            let attributesData = blob(statement, 5)
+        else {
+            throw DevContainerError(.stateCorruption, message: "invalid event record")
+        }
+        let attributes = try JSONDecoder().decode(
+            [String: String].self,
+            from: attributesData
+        )
+        return RuntimeEvent(
+            sequence: sqlite3_column_int64(statement, 0),
+            timestamp: Date(
+                timeIntervalSinceReferenceDate: sqlite3_column_double(
+                    statement,
+                    1
+                )
+            ),
+            resourceID: text(statement, 2),
+            resourceType: text(statement, 3),
+            action: action,
+            attributes: attributes
+        )
     }
 
     public func recordContainerMetadata(

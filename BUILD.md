@@ -183,6 +183,8 @@ export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
   --socket "$DEVCONTAINER_SOCKET"
 .build/debug/devcontainer context --format shell
 .build/debug/devcontainer doctor --format json
+.build/debug/devcontainer diagnostics \
+  --output "$PWD/.build/manual/devcontainer-diagnostics.tar.gz"
 ```
 
 The `context` command prints an explicit `DOCKER_HOST`; it does not change the

@@ -107,6 +107,10 @@ make serve-docs
 DEVCONTAINER_VSCODE_LIVE=1 make parity-vscode-docker
 ```
 
+Use `devcontainer diagnostics --output devcontainer-diagnostics.tar.gz` to
+create a bounded, privacy-redacted support archive whose JSON manifest is
+printed before the archive is written.
+
 Live runtime tests are deliberately not run on public pull-request code or GitHub-hosted macOS. They execute on an isolated physical runner only after a trusted exact commit has passed hosted checks.
 
 ## Documentation

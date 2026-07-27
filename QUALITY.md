@@ -7,8 +7,8 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
-below. At this development-candidate snapshot, 113 Swift tests pass with
-90.52% first-party executable-line coverage. All 18 CLI parity fixtures and
+below. At this development-candidate snapshot, 120 Swift tests pass with
+90.68% first-party executable-line coverage. All 18 CLI parity fixtures and
 the pinned real VS Code fixture pass through real Docker, signed stock Apple
 `container` 1.1.0, and the separately identified Apple Compose lane with zero
 normalized differences. Candidate-bound trusted-runner evidence, signing,
@@ -62,12 +62,12 @@ merge their profiles with unit-test profiles using `llvm-profdata merge
 -sparse`; `llvm-cov` then exports the combined first-party line coverage. The
 hosted CLI coverage harness also runs the instrumented `devcontainer` and
 `devcontainer-compose` products through version, context, configuration,
-backend-state, doctor, Docker-provider, and container-compose-provider success
-and failure paths using deterministic local fakes. External Docker, Apple
-runtime, `container-compose`, VS Code, and extension code never count toward
-the product percentage. Real parity and VS Code runs may add profiles when
-instrumented execution is reliable, but their behavioral gates remain
-independent of coverage.
+backend-state, doctor, diagnostics archive, Docker-provider, and
+container-compose-provider success and failure paths using deterministic local
+fakes. External Docker, Apple runtime, `container-compose`, VS Code, and
+extension code never count toward the product percentage. Real parity and VS
+Code runs may add profiles when instrumented execution is reliable, but their
+behavioral gates remain independent of coverage.
 
 The gate derives its numerator and denominator from the same unique executable
 source-line segments written to SonarQube generic coverage XML. It does not use

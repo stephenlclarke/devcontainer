@@ -25,6 +25,8 @@ readonly FAKE_COMPOSE="$TEMPORARY_DIRECTORY/container-compose"
 readonly INVALID_UTF8_MARKER="$TEMPORARY_DIRECTORY/invalid-utf8"
 readonly PLUGIN_PAYLOAD="$TEMPORARY_DIRECTORY/plugin-payload"
 readonly CONTAINER_INSTALL_ROOT="$TEMPORARY_DIRECTORY/container-root"
+readonly DIAGNOSTIC_LOG="$TEMPORARY_DIRECTORY/devcontainer.log"
+readonly DIAGNOSTIC_ARCHIVE="$TEMPORARY_DIRECTORY/diagnostics.tar.gz"
 
 for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
@@ -74,6 +76,11 @@ printf '%s\n' \
   '    fi' \
   '    printf "%s\n" "running"' \
   '    ;;' \
+  '  "create --help") printf "%s\n" "Usage: container create" ;;' \
+  '  "list --all --format json") printf "%s\n" "[]" ;;' \
+  '  "image list --format json") printf "%s\n" "[]" ;;' \
+  '  "network list --format json") printf "%s\n" "[]" ;;' \
+  '  "volume list --format json") printf "%s\n" "[]" ;;' \
   '  *) exit 64 ;;' \
   'esac' >"$FAKE_CONTAINER"
 
@@ -101,6 +108,7 @@ chmod 700 "$FAKE_CONTAINER" "$FAKE_COMPOSE" "$FAKE_DOCKER"
 mkdir -p "$PLUGIN_PAYLOAD/bin" "$CONTAINER_INSTALL_ROOT"
 printf '%s\n' 'abstract = "coverage fixture"' >"$PLUGIN_PAYLOAD/config.toml"
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$PLUGIN_PAYLOAD/bin/devcontainer"
+printf '%s\n' 'token=coverage-secret' >"$DIAGNOSTIC_LOG"
 chmod 700 "$PLUGIN_PAYLOAD/bin/devcontainer"
 
 readonly COMMON_ENV=(
@@ -164,6 +172,25 @@ run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --socket "$TEMPORARY_DIRECTORY/missing.sock" \
   --compose "$FAKE_COMPOSE" \
   --format json
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --compose "$FAKE_COMPOSE" \
+  --config "$CONFIGURATION" \
+  --state "$STATE_DATABASE" \
+  --socket "$TEMPORARY_DIRECTORY/missing.sock" \
+  --log "$DIAGNOSTIC_LOG" \
+  --event-limit 1 \
+  --output "$DIAGNOSTIC_ARCHIVE"
+[[ -f "$DIAGNOSTIC_ARCHIVE" ]]
+run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --event-limit 0 \
+  --output "$TEMPORARY_DIRECTORY/invalid-diagnostics.tar.gz"
+run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --config "$CONFIGURATION" \
+  --state "$STATE_DATABASE" \
+  --output "$DIAGNOSTIC_ARCHIVE"
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER" --format invalid
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \

@@ -35,6 +35,7 @@ struct DevContainerCommand: AsyncParsableCommand {
             ConfigureCommand.self,
             ContextCommand.self,
             BackendCommand.self,
+            DiagnosticsCommand.self,
             PluginCommand.self
         ]
     }

@@ -175,6 +175,22 @@ The `devcontainer` output should show:
 selected Apple executable, detected runtime version, and optional Compose
 provider probe. Static version output does not start or inspect a runtime.
 
+Create a reviewable, privacy-redacted support archive with:
+
+```sh
+devcontainer diagnostics \
+  --container /absolute/path/to/container \
+  --compose /absolute/path/to/container-compose \
+  --output "$PWD/devcontainer-diagnostics.tar.gz"
+```
+
+The command prints its JSON manifest to standard output before writing the
+archive. The manifest lists every payload file, byte count, SHA-256 digest,
+warning, and build identity. The archive contains bounded runtime probes,
+configuration and state summaries, recent events, and bounded log tails.
+Paths below the current home directory and credential-like values are
+redacted. Inspect the manifest and archive before sharing either one.
+
 ## Verify Release Integrity
 
 Every published channel will include an archive, portable SHA-256 sidecar, SPDX SBOM, build-info file, package-verification result, and GitHub build-provenance attestation. Packaging rejects unsafe archive paths, special or privileged files, missing executables, metadata/SBOM mismatches, checksum errors, and missing required notarization evidence before publication.
@@ -223,7 +239,7 @@ Executable paths are explicit command or environment inputs:
 devcontainer-engine --container /absolute/path/to/container
 devcontainer doctor \
   --container /absolute/path/to/container \
-  --container-compose /absolute/path/to/container-compose
+  --compose /absolute/path/to/container-compose
 
 DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
   devcontainer-compose up
