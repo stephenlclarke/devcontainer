@@ -31,7 +31,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: parity-apple-compose parity parity-vscode parity-release runtime-check
 .PHONY: package package-release homebrew-formula homebrew-formula-current
 .PHONY: release-version
-.PHONY: prepare-release release-check sonar sonar-scan clean
+.PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan clean
 
 all: workflow
 
@@ -262,6 +262,8 @@ homebrew-formula-current: package
 		--output "$(DIST_DIR)/devcontainer-current.rb"
 	ruby -c "$(DIST_DIR)/devcontainer-current.rb"
 release-check: check test-asan test-tsan parity-release homebrew-formula
+
+release-gate-hosted: check homebrew-formula
 
 docs:
 	scripts/make-docs.sh "$(DOCS_OUTPUT_DIR)" "$(DOCS_HOSTING_BASE_PATH)"

@@ -49,9 +49,11 @@ Makefile
 Tools/release/current-formula-version.py
 Tools/release/devcontainer.rb.in
 Tools/release/package-context.py
+Tools/release/publish-github-release.sh
 Tools/release/release-version.py
 Tools/release/render-homebrew-formula.py
 Tools/release/sign-and-notarize.sh
+Tools/release/update-tap-readme.py
 Tools/release/verify-package.py
 Tools/release/write-build-info.py
 Tools/release/write-notarization-evidence.py
@@ -111,6 +113,8 @@ The formula version will use the same validated algorithm as `container-compose`
 ```text
 current.418.0123456789ab
 ```
+
+Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until a repository-scoped runner with the `devcontainer-release` label, a Developer ID Application identity, the configured notary profile, and the tap token are all provisioned. Manual dispatch remains fail-closed against the same prerequisites.
 
 The full source identity remains the lowercase 40-character commit SHA. The 12-character prefix is only a display and asset-name convenience.
 
@@ -465,9 +469,10 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Add strict Developer ID signing, notarization, and sanitized evidence tooling.
 - [ ] Provision the release identity/profile and record an accepted package submission.
 - [x] Add deterministic SPDX SBOM generation, portable checksums, and strict package verification.
-- [ ] Add GitHub artifact attestation.
+- [x] Add GitHub artifact attestation to the trusted publication workflow.
 - [x] Add formula template, local renderer, syntax validation, and style validation.
-- [ ] Add immutable Current/stable release publication and serialized tap promotion.
+- [x] Add immutable stable and staged/finalized Current publication workflows.
+- [x] Add serialized tap formula and managed README promotion.
 - [ ] Protect `main` with signed commits and stable required contexts.
 - [ ] Enable Dependabot, secret scanning, push protection, and private vulnerability reporting.
 - [ ] Publish the first Current build.

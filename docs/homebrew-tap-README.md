@@ -2,15 +2,13 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: proposed documentation for a future `stephenlclarke/homebrew-tap` update. No `devcontainer` formula exists in the tap yet, and the install commands below are not currently available.
-
-This section is intended to be merged into the tap README when the first signed, notarized, attested, and verified `devcontainer` package is published.
+> Status: maintained source for the managed `devcontainer` section in `stephenlclarke/homebrew-tap`. Release automation installs the section with explicit markers when the first signed, notarized, attested, and verified package is published; no installable formula is claimed before then.
 
 ## Dev Containers For Apple container
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe.
 
-The formula installs only the `devcontainer` command. It does not install, remove, replace, relink, start, or stop:
+The formula installs only this project's `devcontainer`, compatibility-engine, and Compose-dispatch commands. It does not install, remove, replace, relink, start, or stop:
 
 - Apple's `container` package.
 - A custom `container` runtime.
@@ -34,8 +32,11 @@ Stable assets use:
 ```text
 devcontainer-release-arm64.tar.gz
 devcontainer-release-arm64.tar.gz.sha256
-devcontainer-sbom.spdx.json
+devcontainer-release-arm64.tar.gz.context.json
+devcontainer-release-arm64.tar.gz.verification.json
 build-info.json
+devcontainer.spdx.json
+notarization.json
 ```
 
 The formula version exactly matches the GitHub release tag.
@@ -116,7 +117,7 @@ Release automation must:
 
 Stable and Current tap updates share one non-cancelling concurrency group so they cannot race.
 
-## Planned Formula Shape
+## Formula Shape
 
 ```ruby
 class Devcontainer < Formula
@@ -129,9 +130,15 @@ class Devcontainer < Formula
 
   depends_on arch: :arm64
   depends_on macos: :tahoe
+  depends_on "docker" => :recommended
+  conflicts_with "devcontainer-current", because: "both install devcontainer commands"
 
   def install
     bin.install "bin/devcontainer"
+    bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-compose"
+    libexec.install "libexec/container"
+    pkgshare.install "share/devcontainer"
   end
 
   def caveats
@@ -143,8 +150,8 @@ class Devcontainer < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/devcontainer version --short")
-    assert_match "Usage", shell_output("#{bin}/devcontainer --help")
+    assert_match "0.1.0", shell_output("#{bin}/devcontainer version --short")
+    assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
   end
 end
 ```

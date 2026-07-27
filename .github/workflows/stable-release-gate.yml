@@ -1,0 +1,189 @@
+name: Stable Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Bare semantic tag to validate"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: stable-release-gate-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve stable candidate
+    if: github.repository == 'stephenlclarke/devcontainer'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - name: Resolve verified immutable tag and exact-commit authorities
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            printf 'stable release ref must be MAJOR.MINOR.PATCH: %s\n' \
+              "${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          tag_ref="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}"
+          )"
+          tag_type="$(jq -r '.object.type' <<<"${tag_ref}")"
+          tag_object="$(jq -r '.object.sha' <<<"${tag_ref}")"
+          if [[ "${tag_type}" != "tag" ]]; then
+            printf 'stable tag must be annotated, got object type %s\n' \
+              "${tag_type}" >&2
+            exit 1
+          fi
+          tag_document="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}"
+          )"
+          verified="$(jq -r '.verification.verified' <<<"${tag_document}")"
+          sha="$(jq -r '.object.sha' <<<"${tag_document}")"
+          if [[ "${verified}" != "true" || ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'stable tag is not GitHub-verified or commit-addressed\n' >&2
+            exit 1
+          fi
+
+          latest="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/" \
+              --jq '.[].ref' \
+              | sed 's#^refs/tags/##' \
+              | python3 -c 'import re,sys
+          versions = [line.strip() for line in sys.stdin if re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", line.strip())]
+          versions.sort(key=lambda value: tuple(int(part) for part in value.split(".")))
+          print(versions[-1] if versions else "")'
+          )"
+          if [[ "${latest}" != "${RELEASE_TAG}" ]]; then
+            printf 'stable tag %s is not newest semantic tag %s\n' \
+              "${RELEASE_TAG}" "${latest:-missing}" >&2
+            exit 1
+          fi
+
+          release_output=""
+          set +e
+          release_output="$(
+            gh api --silent \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1
+          )"
+          release_status="$?"
+          set -e
+          if (( release_status == 0 )); then
+            printf 'stable release %s already exists and is immutable\n' \
+              "${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          if [[ "${release_output}" != *"HTTP 404"* ]]; then
+            printf 'could not determine stable release state:\n%s\n' \
+              "${release_output}" >&2
+            exit 1
+          fi
+
+          required_workflows=(
+            ci.yml
+            codeql.yml
+            docs.yml
+            homebrew.yml
+            parity.yml
+            quality.yml
+            sonar.yml
+          )
+          for workflow in "${required_workflows[@]}"; do
+            conclusion="$(
+              gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow "${workflow}" \
+                --commit "${sha}" \
+                --limit 50 \
+                --json status,conclusion,headBranch,event,createdAt \
+                --jq 'map(select(
+                  .headBranch == "main" and
+                  .event == "push" and
+                  .status == "completed"
+                )) | sort_by(.createdAt) | reverse | .[0].conclusion // empty'
+            )"
+            if [[ "${conclusion}" != "success" ]]; then
+              printf '%s has no successful exact-main run for %s (got %s)\n' \
+                "${workflow}" "${sha}" "${conclusion:-missing}" >&2
+              exit 1
+            fi
+          done
+          printf 'sha=%s\n' "${sha}" >>"${GITHUB_OUTPUT}"
+
+  hosted-gate:
+    name: Hosted stable validation
+    needs: resolve
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Require tag and Makefile versions to agree
+        env:
+          RELEASE_TAG: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          version="$(
+            awk '$1 == "DEVCONTAINER_VERSION" && $2 == "?=" { print $3; exit }' \
+              Makefile
+          )"
+          test "${version}" = "${RELEASE_TAG}"
+      - name: Install quality tools
+        run: brew install actionlint markdownlint-cli shellcheck swiftformat swiftlint
+      - name: Run hosted release gate
+        run: make release-gate-hosted
+
+  authority:
+    name: Record stable authority
+    needs: [resolve, hosted-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - name: Create candidate-bound authority check
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          name="Stable Release Authority (${RELEASE_TAG})"
+          details_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          jq -n \
+            --arg name "${name}" \
+            --arg sha "${CANDIDATE_SHA}" \
+            --arg details_url "${details_url}" \
+            --arg external_id "${GITHUB_RUN_ID}" \
+            '{
+              name: $name,
+              head_sha: $sha,
+              status: "completed",
+              conclusion: "success",
+              details_url: $details_url,
+              external_id: $external_id,
+              output: {
+                title: $name,
+                summary: "Hosted stable validation and exact-commit authorities passed."
+              }
+            }' \
+            | gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/check-runs" \
+                --input -

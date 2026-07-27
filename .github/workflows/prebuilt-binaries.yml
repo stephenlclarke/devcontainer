@@ -1,0 +1,449 @@
+name: Prebuilt Binaries
+run-name: Prebuilt Binaries · ${{ inputs.ref || github.event.workflow_run.head_branch }}
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "main for Current, or a bare semantic tag for stable"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: write
+  checks: read
+  contents: write
+  id-token: write
+
+concurrency:
+  group: devcontainer-package-and-tap
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve publish context
+    if: >
+      github.repository == 'stephenlclarke/devcontainer' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (vars.DEVCONTAINER_CURRENT_PUBLISH_ENABLED == 'true' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      lane: ${{ steps.publish.outputs.lane }}
+      publish: ${{ steps.publish.outputs.publish }}
+      ref_name: ${{ steps.publish.outputs.ref_name }}
+      sha: ${{ steps.publish.outputs.sha }}
+    steps:
+      - name: Resolve trusted source and authorities
+        id: publish
+        env:
+          DISPATCH_REF: ${{ inputs.ref }}
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+          publish=false
+          lane=""
+          ref_name=""
+          sha=""
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            if [[ "${WORKFLOW_HEAD_BRANCH}" != "main" ]]; then
+              printf 'ignoring non-main CI source %s\n' "${WORKFLOW_HEAD_BRANCH}"
+            else
+              lane=current
+              ref_name=main
+              sha="${WORKFLOW_HEAD_SHA}"
+              publish=true
+            fi
+          elif [[ "${DISPATCH_REF}" == "main" ]]; then
+            lane=current
+            ref_name=main
+            sha="$(
+              git ls-remote --heads "${remote}" refs/heads/main \
+                | awk '{ print $1 }' \
+                | tail -n 1
+            )"
+            publish=true
+          elif [[ "${DISPATCH_REF}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            lane=stable
+            ref_name="${DISPATCH_REF}"
+            tag_ref="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ref_name}"
+            )"
+            tag_type="$(jq -r '.object.type' <<<"${tag_ref}")"
+            tag_object="$(jq -r '.object.sha' <<<"${tag_ref}")"
+            if [[ "${tag_type}" != "tag" ]]; then
+              printf 'stable source tag must be annotated\n' >&2
+              exit 1
+            fi
+            tag_document="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}"
+            )"
+            if [[ "$(jq -r '.verification.verified' <<<"${tag_document}")" != "true" ]]; then
+              printf 'stable source tag is not GitHub-verified\n' >&2
+              exit 1
+            fi
+            sha="$(jq -r '.object.sha' <<<"${tag_document}")"
+            authority_name="Stable Release Authority (${ref_name})"
+            authority="$(
+              gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs?per_page=100" \
+                --jq ".check_runs[] | select(
+                  .name == \"${authority_name}\" and
+                  .status == \"completed\" and
+                  .conclusion == \"success\" and
+                  .app.slug == \"github-actions\"
+                ) | .external_id" \
+                | tail -n 1
+            )"
+            if [[ ! "${authority}" =~ ^[0-9]+$ ]]; then
+              printf 'candidate-bound stable authority is missing\n' >&2
+              exit 1
+            fi
+            gate="$(
+              gh run view "${authority}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --json workflowName,event,status,conclusion \
+                --jq 'select(
+                  .workflowName == "Stable Release Gate" and
+                  .event == "workflow_dispatch" and
+                  .status == "completed" and
+                  .conclusion == "success"
+                ) | .conclusion'
+            )"
+            if [[ "${gate}" != "success" ]]; then
+              printf 'stable authority does not resolve to a successful gate\n' >&2
+              exit 1
+            fi
+            publish=true
+          else
+            printf 'unsupported package ref: %s\n' "${DISPATCH_REF}" >&2
+            exit 1
+          fi
+
+          if [[ "${publish}" == "true" && ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'publish source is not a full commit SHA: %s\n' "${sha}" >&2
+            exit 1
+          fi
+          if [[ "${lane}" == "current" ]]; then
+            current_main="$(
+              git ls-remote --heads "${remote}" refs/heads/main \
+                | awk '{ print $1 }' \
+                | tail -n 1
+            )"
+            if [[ "${sha}" != "${current_main}" ]]; then
+              printf 'skipping superseded Current source %s; main is %s\n' \
+                "${sha}" "${current_main}"
+              publish=false
+            fi
+          fi
+          if [[ "${publish}" == "true" && "${lane}" == "current" ]]; then
+            required_workflows=(
+              codeql.yml
+              docs.yml
+              homebrew.yml
+              parity.yml
+              quality.yml
+              sonar.yml
+            )
+            for workflow in "${required_workflows[@]}"; do
+              deadline=$((SECONDS + 4800))
+              while true; do
+                run="$(
+                  gh run list \
+                    --repo "${GITHUB_REPOSITORY}" \
+                    --workflow "${workflow}" \
+                    --commit "${sha}" \
+                    --limit 50 \
+                    --json status,conclusion,headBranch,event,createdAt \
+                    --jq 'map(select(
+                      .headBranch == "main" and
+                      .event == "push"
+                    )) | sort_by(.createdAt) | reverse | .[0] // {}'
+                )"
+                status="$(jq -r '.status // empty' <<<"${run}")"
+                conclusion="$(jq -r '.conclusion // empty' <<<"${run}")"
+                if [[ "${status}" == "completed" && "${conclusion}" == "success" ]]; then
+                  break
+                fi
+                if [[ "${status}" == "completed" ]]; then
+                  printf '%s concluded %s for %s\n' \
+                    "${workflow}" "${conclusion:-missing}" "${sha}" >&2
+                  exit 1
+                fi
+                if (( SECONDS >= deadline )); then
+                  printf 'timed out waiting for %s at %s\n' \
+                    "${workflow}" "${sha}" >&2
+                  exit 1
+                fi
+                printf 'waiting for %s at %s (status=%s)\n' \
+                  "${workflow}" "${sha}" "${status:-missing}"
+                sleep 30
+              done
+            done
+          fi
+          {
+            printf 'lane=%s\n' "${lane}"
+            printf 'publish=%s\n' "${publish}"
+            printf 'ref_name=%s\n' "${ref_name}"
+            printf 'sha=%s\n' "${sha}"
+          } >>"${GITHUB_OUTPUT}"
+
+  package:
+    name: Sign, notarize, publish, and promote tap
+    needs: resolve
+    if: needs.resolve.outputs.publish == 'true'
+    runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+    timeout-minutes: 180
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: devcontainer
+      - name: Require isolated ARM64 release identity
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
+          SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -n "${HOMEBREW_TAP_TOKEN}"
+          test -n "${SIGNING_IDENTITY}"
+          test -n "${NOTARY_PROFILE}"
+          test "$(git -C devcontainer rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
+          test -z "$(git -C devcontainer status --short)"
+      - name: Check out Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: stephenlclarke/homebrew-tap
+          fetch-depth: 0
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Require a clean tap
+        run: |
+          set -euo pipefail
+          test -z "$(git -C homebrew-tap status --short)"
+      - name: Build signed and notarized package
+        id: package
+        env:
+          DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
+          DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
+          LANE: ${{ needs.resolve.outputs.lane }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+        working-directory: devcontainer
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_number=""
+          if [[ "${LANE}" == "current" ]]; then
+            run_number="${GITHUB_RUN_NUMBER}"
+          fi
+          make package \
+            DEVCONTAINER_PACKAGE_LANE="${LANE}" \
+            DEVCONTAINER_PACKAGE_RUN_NUMBER="${run_number}" \
+            DEVCONTAINER_SIGNING_REQUIRED=1
+          version="$(
+            awk '$1 == "DEVCONTAINER_VERSION" && $2 == "?=" { print $3; exit }' \
+              Makefile
+          )"
+          context_args=(
+            --product-version "${version}"
+            --lane "${LANE}"
+            --commit "${PUBLISH_SHA}"
+          )
+          if [[ "${LANE}" == "current" ]]; then
+            context_args+=(--run-number "${GITHUB_RUN_NUMBER}")
+          fi
+          asset="$(
+            python3 Tools/release/package-context.py \
+              "${context_args[@]}" \
+              --field asset
+          )"
+          release_tag="$(
+            python3 Tools/release/package-context.py \
+              "${context_args[@]}" \
+              --field releaseTag
+          )"
+          formula_version="$(
+            python3 Tools/release/package-context.py \
+              "${context_args[@]}" \
+              --field formulaVersion
+          )"
+          archive="${PWD}/dist/${asset}"
+          test -s "${archive}"
+          test -s "${archive}.sha256"
+          test -s "${archive}.context.json"
+          test -s "${archive}.verification.json"
+
+          assets="${RUNNER_TEMP}/devcontainer-release-assets"
+          rm -rf "${assets}"
+          mkdir -p "${assets}"
+          cp "${archive}" "${archive}.sha256" \
+            "${archive}.context.json" "${archive}.verification.json" \
+            "${assets}/"
+          root="devcontainer-${version}/share/devcontainer"
+          tar -xOf "${archive}" "${root}/build-info.json" \
+            >"${assets}/build-info.json"
+          tar -xOf "${archive}" "${root}/devcontainer.spdx.json" \
+            >"${assets}/devcontainer.spdx.json"
+          tar -xOf "${archive}" "${root}/notarization.json" \
+            >"${assets}/notarization.json"
+          find "${assets}" -maxdepth 1 -type f -print | sort \
+            >"${RUNNER_TEMP}/release-assets.txt"
+
+          notes="${RUNNER_TEMP}/release-notes.md"
+          release_heading="${release_tag}"
+          formula_name=devcontainer
+          if [[ "${LANE}" == current ]]; then
+            release_heading="Current build"
+            formula_name=devcontainer-current
+          fi
+          {
+            printf '# %s\n\n' "${release_heading}"
+            printf "Source: \`%s\`\n\n" "${PUBLISH_SHA}"
+            printf "Install through \`stephenlclarke/tap/%s\` after tap promotion.\n" \
+              "${formula_name}"
+          } >"${notes}"
+          {
+            printf 'archive=%s\n' "${assets}/${asset}"
+            printf 'assets=%s\n' "${assets}"
+            printf 'assets_manifest=%s\n' "${RUNNER_TEMP}/release-assets.txt"
+            printf 'asset=%s\n' "${asset}"
+            printf 'formula_version=%s\n' "${formula_version}"
+            printf 'notes=%s\n' "${notes}"
+            printf 'release_tag=%s\n' "${release_tag}"
+            printf 'version=%s\n' "${version}"
+          } >>"${GITHUB_OUTPUT}"
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ steps.package.outputs.assets }}/*
+      - name: Upload signed package evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: devcontainer-${{ needs.resolve.outputs.lane }}-${{ needs.resolve.outputs.sha }}
+          path: ${{ steps.package.outputs.assets }}
+      - name: Stage or publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
+          RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
+        working-directory: devcontainer
+        run: |
+          set -euo pipefail
+          mode=stable
+          if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
+            mode=current-stage
+          fi
+          Tools/release/publish-github-release.sh "${mode}"
+      - name: Render and validate tap formula
+        env:
+          ASSET: ${{ steps.package.outputs.asset }}
+          FORMULA_VERSION: ${{ steps.package.outputs.formula_version }}
+          LANE: ${{ needs.resolve.outputs.lane }}
+          PRODUCT_VERSION: ${{ steps.package.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          class=Devcontainer
+          conflict=devcontainer-current
+          formula=devcontainer.rb
+          tag="${{ steps.package.outputs.release_tag }}"
+          if [[ "${LANE}" == current ]]; then
+            class=DevcontainerCurrent
+            conflict=devcontainer
+            formula=devcontainer-current.rb
+          fi
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${ASSET}"
+          python3 devcontainer/Tools/release/render-homebrew-formula.py \
+            --product-version "${PRODUCT_VERSION}" \
+            --formula-version "${FORMULA_VERSION}" \
+            --formula-class "${class}" \
+            --url "${url}" \
+            --conflicts-with "${conflict}" \
+            --archive "${{ steps.package.outputs.archive }}" \
+            --template devcontainer/Tools/release/devcontainer.rb.in \
+            --output "homebrew-tap/Formula/${formula}"
+          python3 devcontainer/Tools/release/update-tap-readme.py \
+            --readme homebrew-tap/README.md \
+            --source devcontainer/docs/homebrew-tap-README.md
+          ruby -c "homebrew-tap/Formula/${formula}"
+
+          changed="$(
+            git -C homebrew-tap diff --name-only \
+              | sort
+          )"
+          expected="$(printf 'Formula/%s\nREADME.md\n' "${formula}" | sort)"
+          if [[ "${changed}" != "${expected}" ]]; then
+            printf 'unexpected tap changes:\n%s\n' "${changed}" >&2
+            exit 1
+          fi
+      - name: Install and test tap formula
+        env:
+          LANE: ${{ needs.resolve.outputs.lane }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          formula=devcontainer
+          if [[ "${LANE}" == current ]]; then
+            formula=devcontainer-current
+          fi
+          brew tap stephenlclarke/tap "${PWD}/homebrew-tap"
+          brew trust --tap stephenlclarke/tap
+          brew audit --formula --strict --online \
+            "stephenlclarke/tap/${formula}"
+          brew fetch --formula --force "stephenlclarke/tap/${formula}"
+          brew install --formula "stephenlclarke/tap/${formula}"
+          brew test "stephenlclarke/tap/${formula}"
+          installed="$(
+            brew --prefix "stephenlclarke/tap/${formula}"
+          )/bin/devcontainer"
+          "${installed}" version --format json \
+            | jq -e \
+              --arg commit "${{ needs.resolve.outputs.sha }}" \
+              --arg lane "${LANE}" \
+              '.commit == $commit and .lane == $lane'
+      - name: Commit and push tap
+        env:
+          LANE: ${{ needs.resolve.outputs.lane }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C homebrew-tap config user.name "devcontainer release"
+          git -C homebrew-tap config user.email \
+            "devcontainer-release@users.noreply.github.com"
+          git -C homebrew-tap add README.md Formula/devcontainer*.rb
+          git -C homebrew-tap commit \
+            -m "chore(devcontainer): update ${LANE} formula"
+          git -C homebrew-tap push origin main
+      - name: Finalize Current source pointer
+        if: needs.resolve.outputs.lane == 'current'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
+          RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: current
+          RELEASE_TITLE: Current build
+        working-directory: devcontainer
+        run: Tools/release/publish-github-release.sh current-finalize
