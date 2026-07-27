@@ -180,36 +180,33 @@ jobs:
     needs: [resolve, hosted-gate]
     runs-on: ubuntu-latest
     permissions:
-      checks: write
       contents: read
     steps:
-      - name: Create candidate-bound authority check
+      - name: Write candidate-bound authority
         env:
           CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          name="Stable Release Authority (${RELEASE_TAG})"
-          details_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          mkdir -p .build/authority
           jq -n \
-            --arg name "${name}" \
-            --arg sha "${CANDIDATE_SHA}" \
-            --arg details_url "${details_url}" \
-            --arg external_id "${GITHUB_RUN_ID}" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg release_tag "${RELEASE_TAG}" \
+            --arg candidate_sha "${CANDIDATE_SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
             '{
-              name: $name,
-              head_sha: $sha,
-              status: "completed",
-              conclusion: "success",
-              details_url: $details_url,
-              external_id: $external_id,
-              output: {
-                title: $name,
-                summary: "Hosted stable validation and exact-commit authorities passed."
-              }
-            }' \
-            | gh api \
-                --method POST \
-                "repos/${GITHUB_REPOSITORY}/check-runs" \
-                --input -
+              schemaVersion: 1,
+              repository: $repository,
+              releaseTag: $release_tag,
+              candidateSha: $candidate_sha,
+              workflow: "Stable Release Gate",
+              runId: $run_id
+            }' >.build/authority/stable-authority.json
+      - name: Upload candidate-bound authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stable-authority-${{ inputs.ref }}-${{ needs.resolve.outputs.sha }}
+          path: .build/authority/stable-authority.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90

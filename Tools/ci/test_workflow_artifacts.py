@@ -74,7 +74,7 @@ class WorkflowArtifactTests(unittest.TestCase):
                     f"{workflow.name} omits hidden .build evidence",
                 )
 
-        self.assertEqual(checked_blocks, 5)
+        self.assertEqual(checked_blocks, 6)
 
     def test_hosted_workflows_cancel_superseded_runs(self) -> None:
         workflows = (
@@ -109,6 +109,94 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertLess(prime, initialize)
         self.assertLess(initialize, recompile)
         self.assertLess(recompile, analyze)
+
+    def test_write_permissions_are_scoped_to_mutating_jobs(self) -> None:
+        codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
+        codeql_top_level = codeql[:codeql.index("\njobs:\n")]
+        self.assertNotIn("security-events: write", codeql_top_level)
+        self.assertIn(
+            "    permissions:\n"
+            "      contents: read\n"
+            "      security-events: write\n",
+            codeql,
+        )
+
+        prebuilt = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        prebuilt_top_level = prebuilt[:prebuilt.index("\njobs:\n")]
+        self.assertIn("permissions: read-all", prebuilt_top_level)
+        self.assertNotIn("contents: write", prebuilt_top_level)
+        self.assertIn(
+            "    permissions:\n"
+            "      attestations: write\n"
+            "      contents: write\n"
+            "      id-token: write\n",
+            prebuilt,
+        )
+
+        stable = (WORKFLOWS / "stable-release-gate.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("checks: write", stable)
+
+    def test_stable_authority_is_candidate_bound_without_check_write(self) -> None:
+        stable = (WORKFLOWS / "stable-release-gate.yml").read_text(
+            encoding="utf-8"
+        )
+        prebuilt = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+
+        for marker in (
+            "stable-authority-${{ inputs.ref }}-${{ needs.resolve.outputs.sha }}",
+            "candidateSha: $candidate_sha",
+            "workflow: \"Stable Release Gate\"",
+            "retention-days: 90",
+        ):
+            self.assertIn(marker, stable)
+        for marker in (
+            "gh run download",
+            "stable-authority-${ref_name}-${sha}",
+            '.headBranch == "main"',
+            '.candidateSha == $candidate_sha',
+            '.workflow == "Stable Release Gate"',
+            '.runId == $run_id',
+        ):
+            self.assertIn(marker, prebuilt)
+
+    def test_parity_container_images_are_digest_pinned(self) -> None:
+        fixtures = ROOT / "Tests" / "Parity" / "fixtures"
+        references: list[tuple[Path, str]] = []
+        pattern = re.compile(r"^\s*(?:FROM|image:)\s+([^\s]+)", re.MULTILINE)
+
+        for path in fixtures.rglob("*"):
+            if path.name != "Dockerfile" and path.suffix not in {".yaml", ".yml"}:
+                continue
+            contents = path.read_text(encoding="utf-8")
+            references.extend((path, value) for value in pattern.findall(contents))
+
+        self.assertGreaterEqual(len(references), 10)
+        for path, reference in references:
+            self.assertRegex(
+                reference,
+                r"@sha256:[0-9a-f]{64}$",
+                f"{path.relative_to(ROOT)} uses a mutable image reference",
+            )
+
+        dependabot = (ROOT / ".github" / "dependabot.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("package-ecosystem: docker\n", dependabot)
+        self.assertIn("package-ecosystem: docker-compose\n", dependabot)
+        self.assertIn(
+            "/Tests/Parity/fixtures/D02-dockerfile-config",
+            dependabot,
+        )
+        self.assertIn(
+            "/Tests/Parity/fixtures/V01-vscode-end-to-end",
+            dependabot,
+        )
 
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
         contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(

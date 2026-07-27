@@ -13,12 +13,7 @@ on:
         required: true
         type: string
 
-permissions:
-  actions: read
-  attestations: write
-  checks: read
-  contents: write
-  id-token: write
+permissions: read-all
 
 concurrency:
   group: devcontainer-package-and-tap
@@ -95,18 +90,56 @@ jobs:
               exit 1
             fi
             sha="$(jq -r '.object.sha' <<<"${tag_document}")"
-            authority_name="Stable Release Authority (${ref_name})"
-            authority="$(
-              gh api --paginate \
-                "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs?per_page=100" \
-                --jq ".check_runs[] | select(
-                  .name == \"${authority_name}\" and
-                  .status == \"completed\" and
-                  .conclusion == \"success\" and
-                  .app.slug == \"github-actions\"
-                ) | .external_id" \
-                | tail -n 1
+            authority=""
+            authority_name="stable-authority-${ref_name}-${sha}"
+            authority_root="${RUNNER_TEMP}/stable-authority"
+            authority_runs="$(
+              gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow stable-release-gate.yml \
+                --event workflow_dispatch \
+                --limit 100 \
+                --json databaseId,status,conclusion,createdAt,headBranch \
+                --jq 'map(select(
+                  .headBranch == "main" and
+                  .status == "completed" and
+                  .conclusion == "success"
+                )) | sort_by(.createdAt) | reverse | .[].databaseId'
             )"
+            while IFS= read -r run_id; do
+              [[ -n "${run_id}" ]] || continue
+              rm -rf "${authority_root}"
+              mkdir -p "${authority_root}"
+              set +e
+              gh run download "${run_id}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --name "${authority_name}" \
+                --dir "${authority_root}" \
+                >/dev/null 2>&1
+              download_status="$?"
+              set -e
+              if [[ "${download_status}" -ne 0 ]]; then
+                continue
+              fi
+              if jq -e \
+                --arg repository "${GITHUB_REPOSITORY}" \
+                --arg release_tag "${ref_name}" \
+                --arg candidate_sha "${sha}" \
+                --arg run_id "${run_id}" \
+                '(
+                  .schemaVersion == 1 and
+                  .repository == $repository and
+                  .releaseTag == $release_tag and
+                  .candidateSha == $candidate_sha and
+                  .workflow == "Stable Release Gate" and
+                  .runId == $run_id
+                )' \
+                "${authority_root}/stable-authority.json" >/dev/null
+              then
+                authority="${run_id}"
+                break
+              fi
+            done <<<"${authority_runs}"
             if [[ ! "${authority}" =~ ^[0-9]+$ ]]; then
               printf 'candidate-bound stable authority is missing\n' >&2
               exit 1
@@ -114,10 +147,11 @@ jobs:
             gate="$(
               gh run view "${authority}" \
                 --repo "${GITHUB_REPOSITORY}" \
-                --json workflowName,event,status,conclusion \
+                --json workflowName,event,status,conclusion,headBranch \
                 --jq 'select(
                   .workflowName == "Stable Release Gate" and
                   .event == "workflow_dispatch" and
+                  .headBranch == "main" and
                   .status == "completed" and
                   .conclusion == "success"
                 ) | .conclusion'
@@ -208,6 +242,10 @@ jobs:
     if: needs.resolve.outputs.publish == 'true'
     runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
     timeout-minutes: 180
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

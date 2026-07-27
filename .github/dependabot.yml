@@ -11,3 +11,18 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: docker
+    directories:
+      - /Tests/Parity/fixtures/D02-dockerfile-config
+      - /Tests/Parity/fixtures/D03-users-environment
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directories:
+      - /Tests/Parity/fixtures/C01-compose-service
+      - /Tests/Parity/fixtures/C02-compose-dependencies
+      - /Tests/Parity/fixtures/C03-compose-resources
+      - /Tests/Parity/fixtures/C04-compose-lifecycle
+      - /Tests/Parity/fixtures/V01-vscode-end-to-end
+    schedule:
+      interval: weekly

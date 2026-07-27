@@ -1,6 +1,6 @@
 services:
   database:
-    image: python:3.13-alpine
+    image: python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0
     command:
       - /bin/sh
       - -c
@@ -15,10 +15,10 @@ services:
       timeout: 1s
       retries: 20
   helper:
-    image: alpine:3.22
+    image: alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
     command: ["sleep", "infinity"]
   app:
-    image: alpine:3.22
+    image: alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
     command: ["sleep", "infinity"]
     depends_on:
       database:
