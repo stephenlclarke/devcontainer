@@ -125,12 +125,14 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/bin/devcontainer",
                 f"{package_root}/bin/devcontainer-compose",
                 f"{package_root}/bin/devcontainer-engine",
-                (
-                    f"{package_root}/libexec/container/plugins/devcontainer/"
-                    "container-devcontainer"
-                ),
+                f"{package_root}/libexec/container/plugins/devcontainer/bin/devcontainer",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
+            self.add_bytes(
+                archive,
+                f"{package_root}/libexec/container/plugins/devcontainer/config.toml",
+                b'abstract = "fixture"\n',
+            )
             self.add_bytes(
                 archive,
                 f"{metadata_root}/build-info.json",

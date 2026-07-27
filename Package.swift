@@ -168,6 +168,12 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "DevContainerCLITests",
+            dependencies: [
+                "DevContainerCLI",
+            ]
+        ),
+        .testTarget(
             name: "DevContainerModelTests",
             dependencies: ["DevContainerModel"]
         ),

@@ -85,7 +85,7 @@ service and Compose-dispatch executables:
 
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
-| `container-devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, `configure`, `context`, and durable `backend` ownership |
+| `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
 | `devcontainer-engine` | Normal executable | Docker Engine HTTP API on a user-owned Unix socket, stock Apple translation, state reconciliation, and event handling |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
@@ -327,7 +327,14 @@ Structured logs use correlation, project, resource, endpoint, provider, and elap
 
 ## Packaging
 
-The release archive contains both Apple plug-in directories, wrapper executables, build metadata, license, notices, SBOM, configuration schema, and shell completions. The Homebrew formula installs this project without forcing either Apple runtime distribution. Registration is explicit so an official Apple package and Stephen's Homebrew runtime can be tested independently.
+The release archive contains a valid Apple CLI plug-in directory, standalone
+executables, build metadata, license, notices, SBOM, and service definition.
+The Homebrew formula installs this project without forcing either Apple runtime
+distribution. `devcontainer plugin register` creates the one explicit symlink
+under the active runtime's reported installation root; it is idempotent and
+refuses to replace a foreign file, directory, or link. Registration can
+therefore be tested independently against an official Apple package and
+Stephen's Homebrew runtime.
 
 Stable formulae use immutable semantic release assets. A future `devcontainer-current` formula is optional and will be added only when there is demonstrated demand.
 

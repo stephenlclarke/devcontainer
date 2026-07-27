@@ -139,10 +139,16 @@ built with `make homebrew-formula`. The intended stable installation is:
 brew tap stephenlclarke/tap
 brew trust --formula stephenlclarke/tap/devcontainer
 brew install stephenlclarke/tap/devcontainer
+devcontainer plugin register
 container devcontainer doctor
 ```
 
-The stable formula will install only this project. `container-compose` remains an explicit optional installation and provider choice. See [INSTALL.md](INSTALL.md) for the planned registration and migration behavior.
+The stable formula installs this project with upstream Docker CLI and Docker
+Compose protocol-client dependencies; it does not install a container runtime.
+Plug-in registration is an explicit, reversible symlink into the active
+runtime's reported install root, and it never replaces a foreign registration.
+`container-compose` remains an explicit optional installation and provider choice. See
+[INSTALL.md](INSTALL.md) for registration, verification, and migration.
 
 ## Independence and trademarks
 

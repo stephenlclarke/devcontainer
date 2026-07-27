@@ -60,7 +60,7 @@ python3 Tools/ci/safe-package-path.py "$stage" "$dist"
 rm -rf "$dist/stage"
 mkdir -p \
   "$stage/bin" \
-  "$stage/libexec/container/plugins/devcontainer" \
+  "$stage/libexec/container/plugins/devcontainer/bin" \
   "$stage/share/devcontainer"
 
 GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
@@ -72,7 +72,9 @@ install -m 0755 .build/release/devcontainer "$stage/bin/devcontainer"
 install -m 0755 .build/release/devcontainer-engine "$stage/bin/devcontainer-engine"
 install -m 0755 .build/release/devcontainer-compose "$stage/bin/devcontainer-compose"
 install -m 0755 .build/release/devcontainer \
-  "$stage/libexec/container/plugins/devcontainer/container-devcontainer"
+  "$stage/libexec/container/plugins/devcontainer/bin/devcontainer"
+install -m 0644 Packaging/devcontainer-plugin-config.toml \
+  "$stage/libexec/container/plugins/devcontainer/config.toml"
 install -m 0644 LICENSE NOTICE.md README.md \
   "$stage/share/devcontainer/"
 install -m 0644 Packaging/com.github.stephenlclarke.devcontainer.plist.in \

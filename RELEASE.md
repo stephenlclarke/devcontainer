@@ -403,22 +403,32 @@ class Devcontainer < Formula
 
   depends_on arch: :arm64
   depends_on macos: :tahoe
+  depends_on "docker"
+  depends_on "docker-compose"
 
   def install
     bin.install "bin/devcontainer"
+    bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-compose"
+    libexec.install "libexec/container"
+    pkgshare.install "share/devcontainer"
   end
 
   def caveats
     <<~EOS
-      This formula installs only devcontainer.
+      This formula installs devcontainer and requires the upstream Docker CLI
+      and Docker Compose protocol clients.
       Install Apple's stock container runtime separately from Apple.
-      Docker and container-compose are optional comparison/providers and are not installed or replaced.
+      Register the optional Apple CLI plugin explicitly:
+        devcontainer plugin register
     EOS
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/devcontainer version --short")
-    assert_match "Usage", shell_output("#{bin}/devcontainer --help")
+    assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
+    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end
 end
 ```

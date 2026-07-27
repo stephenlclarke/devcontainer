@@ -24,13 +24,18 @@ struct DevContainerCommand: AsyncParsableCommand {
         commandName: "devcontainer",
         abstract: "Dev Containers compatibility for Apple container",
         version: DevContainerProject.buildInfo.version,
-        subcommands: [
+        subcommands: configuredSubcommands(),
+        defaultSubcommand: DoctorCommand.self
+    )
+
+    static func configuredSubcommands() -> [ParsableCommand.Type] {
+        [
             VersionCommand.self,
             DoctorCommand.self,
             ConfigureCommand.self,
             ContextCommand.self,
-            BackendCommand.self
-        ],
-        defaultSubcommand: DoctorCommand.self
-    )
+            BackendCommand.self,
+            PluginCommand.self
+        ]
+    }
 }

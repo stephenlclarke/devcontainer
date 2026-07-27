@@ -23,6 +23,8 @@ readonly FAKE_CONTAINER="$TEMPORARY_DIRECTORY/container"
 readonly FAKE_DOCKER="$TEMPORARY_DIRECTORY/docker"
 readonly FAKE_COMPOSE="$TEMPORARY_DIRECTORY/container-compose"
 readonly INVALID_UTF8_MARKER="$TEMPORARY_DIRECTORY/invalid-utf8"
+readonly PLUGIN_PAYLOAD="$TEMPORARY_DIRECTORY/plugin-payload"
+readonly CONTAINER_INSTALL_ROOT="$TEMPORARY_DIRECTORY/container-root"
 
 for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
@@ -62,6 +64,9 @@ printf '%s\n' \
   'set -euo pipefail' \
   'case "$*" in' \
   '  "system version --format json") printf "%s\n" '\''{"version":"fixture"}'\'' ;;' \
+  '  "system status --format json")' \
+  "    printf '%s\n' '{\"status\":\"running\",\"installRoot\":\"$CONTAINER_INSTALL_ROOT\"}'" \
+  '    ;;' \
   '  "system status")' \
   "    if [[ -f '$INVALID_UTF8_MARKER' ]]; then" \
   '      printf "\377" >&2' \
@@ -93,6 +98,10 @@ printf '%s\n' \
   >"$FAKE_DOCKER"
 
 chmod 700 "$FAKE_CONTAINER" "$FAKE_COMPOSE" "$FAKE_DOCKER"
+mkdir -p "$PLUGIN_PAYLOAD/bin" "$CONTAINER_INSTALL_ROOT"
+printf '%s\n' 'abstract = "coverage fixture"' >"$PLUGIN_PAYLOAD/config.toml"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$PLUGIN_PAYLOAD/bin/devcontainer"
+chmod 700 "$PLUGIN_PAYLOAD/bin/devcontainer"
 
 readonly COMMON_ENV=(
   "DEVCONTAINER_CONFIG=$CONFIGURATION"
@@ -134,6 +143,16 @@ run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" backend show \
   --project fixture --state "$STATE_DATABASE"
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" backend set \
   --project fixture --state "$STATE_DATABASE" invalid
+
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin register \
+  --container "$FAKE_CONTAINER" \
+  --plugin "$PLUGIN_PAYLOAD"
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin status \
+  --install-root "$CONTAINER_INSTALL_ROOT" \
+  --plugin "$PLUGIN_PAYLOAD"
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin unregister \
+  --install-root "$CONTAINER_INSTALL_ROOT" \
+  --plugin "$PLUGIN_PAYLOAD"
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER" \

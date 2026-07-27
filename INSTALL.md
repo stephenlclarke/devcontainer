@@ -20,6 +20,9 @@ The supported installation must preserve these boundaries:
 - Installing `devcontainer` never removes or replaces Apple's `container`.
 - Installing `devcontainer` never installs `container-compose`.
 - Installing `devcontainer` never links a Compose plugin into Apple's install root.
+- The formula does not register itself under Apple's install root. An explicit
+  `devcontainer plugin register` command owns one reversible symlink and refuses
+  to replace a foreign registration.
 - Missing optional providers produce an actionable capability error, not an automatic installation or runtime replacement.
 
 ## Requirements
@@ -107,7 +110,8 @@ devcontainer-MAJOR.MINOR.PATCH/
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-compose
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
-devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/container-devcontainer
+devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/config.toml
+devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
@@ -117,7 +121,26 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 ```
 
-Homebrew will install only the package payload under its own prefix and expose `bin/devcontainer`. It will not write under Apple's package prefix or `/usr/local/libexec/container-plugins`.
+Homebrew installs only the package payload under its own prefix and exposes
+`bin/devcontainer`. It does not write under Apple's package prefix or
+`/usr/local/libexec/container-plugins`. Register the packaged Apple CLI plug-in
+only after selecting and starting the intended runtime:
+
+```sh
+devcontainer plugin register
+container devcontainer version
+container devcontainer doctor
+```
+
+The command obtains `installRoot` from `container system status --format json`.
+Use `--container` to select a container executable or `--install-root` for an
+offline installation. If the runtime root is protected, rerun this single
+registration command with the permissions required for that root. Remove only
+the symlink owned by this package with:
+
+```sh
+devcontainer plugin unregister
+```
 
 ## Verify A Published Installation
 
@@ -128,6 +151,8 @@ command -v devcontainer
 devcontainer version
 devcontainer version --format json
 devcontainer --help
+devcontainer plugin status
+container devcontainer version
 ```
 
 Then verify that the Apple runtime remains the runtime the user installed:

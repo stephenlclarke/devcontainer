@@ -41,11 +41,16 @@ class @FORMULA_CLASS@ < Formula
 
       Configure VS Code's Dev Containers extension to use:
         #{opt_bin}/devcontainer-compose
+
+      Register the optional Apple container CLI plug-in explicitly:
+        devcontainer plugin register
     EOS
   end
 
   test do
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
+    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end
 end

@@ -274,10 +274,7 @@ def verify_archive(
         f"{root}/bin/devcontainer",
         f"{root}/bin/devcontainer-compose",
         f"{root}/bin/devcontainer-engine",
-        (
-            f"{root}/libexec/container/plugins/devcontainer/"
-            "container-devcontainer"
-        ),
+        f"{root}/libexec/container/plugins/devcontainer/bin/devcontainer",
     }
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
@@ -306,6 +303,10 @@ def verify_archive(
                 raise ValueError(
                     f"package executable is missing or not executable: {executable}"
                 )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/container/plugins/devcontainer/config.toml",
+        )
 
         metadata_root = f"{root}/share/devcontainer"
         for legal_file in (
