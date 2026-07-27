@@ -43,6 +43,7 @@ jobs:
           path: |
             .build/*.log
             .build/codecov-path
+          include-hidden-files: true
           if-no-files-found: ignore
 
   validate:

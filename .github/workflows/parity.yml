@@ -51,6 +51,7 @@ jobs:
           path: |
             .build/parity/${{ matrix.lane }}
             .build/parity/vscode/${{ matrix.lane }}
+          include-hidden-files: true
           if-no-files-found: error
 
   compare:
@@ -81,4 +82,5 @@ jobs:
             .build/parity/matrix.md
             .build/parity/vscode/comparison.json
             .build/parity/vscode/matrix.md
+          include-hidden-files: true
           if-no-files-found: error

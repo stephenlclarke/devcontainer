@@ -125,4 +125,5 @@ jobs:
             coverage.xml
             .build/codecov-path
             .build/swift-coverage.log
+          include-hidden-files: true
           if-no-files-found: error

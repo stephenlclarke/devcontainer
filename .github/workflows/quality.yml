@@ -35,4 +35,5 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: .build/swift-*.log
+          include-hidden-files: true
           if-no-files-found: error
