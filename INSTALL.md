@@ -109,6 +109,7 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/NOTICE.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/README.md
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 ```
 

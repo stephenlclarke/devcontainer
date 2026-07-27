@@ -248,9 +248,11 @@ make package
 
 The arm64 archive in `dist` contains all three executables, the
 `container-devcontainer` plug-in entry point, launchd template, Apache license,
-notices, build metadata, and SPDX 2.3 SBOM. The packaging script writes a
-SHA-256 checksum and machine-readable verification result. Archive entries are
-sorted and normalize ownership plus timestamps to the source commit epoch; two
+complete reviewed legal texts for every exact SwiftPM dependency, build
+metadata, and an SPDX 2.3 SBOM. The checked-in dependency-license ledger must
+match `Package.resolved` exactly. The packaging script writes a SHA-256
+checksum and machine-readable verification result. Archive entries are sorted
+and normalize ownership plus timestamps to the source commit epoch; two
 packages from identical staged bytes are byte-for-byte identical.
 
 Render stable and Current formula candidates:

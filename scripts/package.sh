@@ -22,6 +22,18 @@ if [[ "$architecture" != "arm64" ]]; then
   printf 'release packages require arm64; found %s\n' "$architecture" >&2
   exit 1
 fi
+source_date_epoch="${SOURCE_DATE_EPOCH:-}"
+if [[ -z "$source_date_epoch" ]]; then
+  if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+    source_date_epoch="$(git show -s --format=%ct "$commit")"
+  else
+    source_date_epoch=0
+  fi
+fi
+if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
+  printf 'SOURCE_DATE_EPOCH must be a non-negative integer\n' >&2
+  exit 1
+fi
 
 dist="$repository_root/dist"
 context="$dist/package-context.json"
@@ -74,7 +86,12 @@ python3 Tools/release/write-build-info.py \
   --output "$stage/share/devcontainer/build-info.json"
 python3 Tools/release/write-sbom.py \
   --version "$version" \
+  --commit "$commit" \
+  --source-date-epoch "$source_date_epoch" \
   --output "$stage/share/devcontainer/devcontainer.spdx.json"
+python3 Tools/release/write-third-party-notices.py \
+  --checkouts .build/checkouts \
+  --output "$stage/share/devcontainer/THIRD-PARTY-NOTICES.txt"
 
 if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
   Tools/release/sign-and-notarize.sh \
@@ -82,18 +99,6 @@ if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
     "$stage/share/devcontainer/notarization.json"
 fi
 
-source_date_epoch="${SOURCE_DATE_EPOCH:-}"
-if [[ -z "$source_date_epoch" ]]; then
-  if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
-    source_date_epoch="$(git show -s --format=%ct "$commit")"
-  else
-    source_date_epoch=0
-  fi
-fi
-if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
-  printf 'SOURCE_DATE_EPOCH must be a non-negative integer\n' >&2
-  exit 1
-fi
 python3 Tools/release/create-reproducible-archive.py \
   --source "$stage" \
   --output "$archive" \

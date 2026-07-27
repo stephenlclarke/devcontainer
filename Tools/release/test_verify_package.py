@@ -10,10 +10,14 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+
+from dependency_metadata import load_dependencies
 
 
 TOOLS = Path(__file__).resolve().parent
+REPOSITORY_ROOT = TOOLS.parents[1]
 VERIFIER = TOOLS / "verify-package.py"
 VERSION = "1.2.3"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -30,6 +34,11 @@ class PackageVerificationTests(unittest.TestCase):
         member = tarfile.TarInfo(name)
         member.size = len(value)
         member.mode = mode
+        member.uid = 0
+        member.gid = 0
+        member.uname = "root"
+        member.gname = "wheel"
+        member.mtime = 0
         archive.addfile(member, io.BytesIO(value))
 
     def write_fixture(
@@ -39,6 +48,8 @@ class PackageVerificationTests(unittest.TestCase):
         commit: str = COMMIT,
         unsafe: bool = False,
         notarized: bool = True,
+        legal_files: bool = True,
+        valid_notice_metadata: bool = True,
     ) -> tuple[Path, Path]:
         archive_path = root / "devcontainer-release-arm64.tar.gz"
         package_root = f"devcontainer-{VERSION}"
@@ -55,8 +66,60 @@ class PackageVerificationTests(unittest.TestCase):
         }
         sbom = {
             "spdxVersion": "SPDX-2.3",
-            "packages": [{"name": "devcontainer", "versionInfo": VERSION}],
+            "name": f"devcontainer-{VERSION}",
+            "documentNamespace": (
+                "https://github.com/stephenlclarke/devcontainer/sbom/"
+                + hashlib.sha256(
+                    f"devcontainer:{VERSION}:{commit}".encode()
+                ).hexdigest()
+            ),
+            "creationInfo": {
+                "created": datetime.fromtimestamp(
+                    0,
+                    timezone.utc,
+                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "creators": ["Tool: devcontainer-write-sbom"],
+            },
+            "packages": [
+                {
+                    "name": "devcontainer",
+                    "versionInfo": VERSION,
+                    "downloadLocation": (
+                        "https://github.com/stephenlclarke/devcontainer"
+                    ),
+                    "licenseDeclared": "Apache-2.0",
+                    "licenseConcluded": "Apache-2.0",
+                    "sourceInfo": f"Exact Git commit {commit}",
+                }
+            ],
+            "relationships": [],
         }
+        dependencies = load_dependencies(
+            REPOSITORY_ROOT / "Package.resolved",
+            TOOLS / "dependency-licenses.json",
+        )
+        for dependency in dependencies:
+            identifier = "SPDXRef-" + "".join(
+                character if character.isalnum() else "-"
+                for character in dependency.identity
+            )
+            sbom["packages"].append(
+                {
+                    "name": dependency.identity,
+                    "versionInfo": dependency.version,
+                    "downloadLocation": dependency.location,
+                    "licenseDeclared": dependency.license,
+                    "licenseConcluded": dependency.license,
+                    "sourceInfo": f"Exact Git revision {dependency.revision}",
+                }
+            )
+            sbom["relationships"].append(
+                {
+                    "spdxElementId": "SPDXRef-Package-devcontainer",
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": identifier,
+                }
+            )
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
                 f"{package_root}/bin/devcontainer",
@@ -78,6 +141,45 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{metadata_root}/devcontainer.spdx.json",
                 json.dumps(sbom).encode(),
             )
+            if legal_files:
+                for name in (
+                    "LICENSE",
+                    "NOTICE.md",
+                    "README.md",
+                    "com.github.stephenlclarke.devcontainer.plist.in",
+                ):
+                    self.add_bytes(
+                        archive,
+                        f"{metadata_root}/{name}",
+                        f"{name}\n".encode(),
+                    )
+                third_party_notices = [
+                    "devcontainer third-party notices",
+                    "=" * 78,
+                    "",
+                ]
+                for dependency in dependencies:
+                    license_identifier = dependency.license
+                    if (
+                        not valid_notice_metadata
+                        and dependency == dependencies[0]
+                    ):
+                        license_identifier = "MIT"
+                    third_party_notices.extend(
+                        [
+                            f"Dependency: {dependency.identity}",
+                            f"Version: {dependency.version}",
+                            f"Revision: {dependency.revision}",
+                            f"Source: {dependency.location}",
+                            f"Declared license: {license_identifier}",
+                            "x" * 40,
+                        ]
+                    )
+                self.add_bytes(
+                    archive,
+                    f"{metadata_root}/THIRD-PARTY-NOTICES.txt",
+                    ("\n".join(third_party_notices) + "\n").encode(),
+                )
             if notarized:
                 self.add_bytes(
                     archive,
@@ -185,6 +287,26 @@ class PackageVerificationTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("notarization evidence", result.stderr)
+
+    def test_required_legal_files_cannot_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                legal_files=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("archive is missing", result.stderr)
+
+    def test_third_party_notice_metadata_cannot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                valid_notice_metadata=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("third-party notice metadata", result.stderr)
 
 
 if __name__ == "__main__":

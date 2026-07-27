@@ -137,6 +137,10 @@ class ReleaseToolTests(unittest.TestCase):
                 "write-sbom.py",
                 "--version",
                 "1.2.3",
+                "--commit",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--source-date-epoch",
+                "1785100000",
                 "--output",
                 str(output),
             )
@@ -152,6 +156,140 @@ class ReleaseToolTests(unittest.TestCase):
                 {pin["identity"] for pin in pins}.issubset(package_names)
             )
             self.assertEqual(len(document["relationships"]), len(pins))
+            self.assertEqual(
+                document["creationInfo"]["created"],
+                "2026-07-26T21:06:40Z",
+            )
+            self.assertEqual(
+                document["packages"][0]["sourceInfo"],
+                (
+                    "Exact Git commit "
+                    "0123456789abcdef0123456789abcdef01234567"
+                ),
+            )
+            dependency_packages = [
+                package
+                for package in document["packages"]
+                if package["name"] != "devcontainer"
+            ]
+            self.assertTrue(
+                all(
+                    package["licenseDeclared"] != "NOASSERTION"
+                    and package["licenseConcluded"] != "NOASSERTION"
+                    and package["sourceInfo"].startswith("Exact Git revision ")
+                    for package in dependency_packages
+                )
+            )
+
+    def test_third_party_notices_include_exact_reviewed_legal_texts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            resolved = root / "Package.resolved"
+            licenses = root / "dependency-licenses.json"
+            checkouts = root / "checkouts"
+            checkout = checkouts / "fixture"
+            output = root / "THIRD-PARTY-NOTICES.txt"
+            checkout.mkdir(parents=True)
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "fixture",
+                                "location": "https://example.com/fixture.git",
+                                "state": {
+                                    "revision": "a" * 40,
+                                    "version": "1.2.3",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            licenses.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "licenses": {"fixture": "MIT"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (checkout / "LICENSE.txt").write_text(
+                "MIT License\nPermission is hereby granted, free of charge\n",
+                encoding="utf-8",
+            )
+            (checkout / "NOTICE.txt").write_text(
+                "Fixture attribution\n",
+                encoding="utf-8",
+            )
+
+            self.run_tool(
+                "write-third-party-notices.py",
+                "--resolved",
+                str(resolved),
+                "--license-manifest",
+                str(licenses),
+                "--checkouts",
+                str(checkouts),
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            self.assertIn("Dependency: fixture", rendered)
+            self.assertIn("Version: 1.2.3", rendered)
+            self.assertIn("Revision: " + "a" * 40, rendered)
+            self.assertIn("Declared license: MIT", rendered)
+            self.assertIn("----- LICENSE.txt -----", rendered)
+            self.assertIn("----- NOTICE.txt -----", rendered)
+            self.assertIn("Fixture attribution", rendered)
+
+    def test_dependency_license_ledger_must_exactly_match_lockfile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            resolved = root / "Package.resolved"
+            licenses = root / "dependency-licenses.json"
+            output = root / "sbom.json"
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "fixture",
+                                "location": "https://example.com/fixture.git",
+                                "state": {
+                                    "revision": "a" * 40,
+                                    "version": "1.2.3",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            licenses.write_text(
+                '{"schemaVersion":1,"licenses":{}}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_tool(
+                    "write-sbom.py",
+                    "--version",
+                    "1.2.3",
+                    "--commit",
+                    "0123456789abcdef0123456789abcdef01234567",
+                    "--source-date-epoch",
+                    "1785100000",
+                    "--resolved",
+                    str(resolved),
+                    "--license-manifest",
+                    str(licenses),
+                    "--output",
+                    str(output),
+                )
 
     def test_homebrew_formula_embeds_version_and_archive_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

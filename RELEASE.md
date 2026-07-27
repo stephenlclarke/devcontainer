@@ -366,7 +366,13 @@ Every Current and stable package publishes:
 - `build-info.json`
 - Release notes with exact CI, CodeQL, documentation, parity, signing, and notarization links
 
-The SBOM generator and version will be pinned and its download checksum verified before first use. The SBOM must cover the release archive, executable, Swift package dependencies, bundled resources, licenses, and build tool identity. Package validation rejects an empty or unparsable SBOM.
+The repository-owned deterministic SPDX 2.3 generator records the exact source
+commit, source-date epoch, and every pin in `Package.resolved`. A checked-in
+ledger assigns a reviewed Apache-compatible SPDX license to every pin; any
+missing or stale entry fails packaging. Release archives also contain complete
+root license and notice texts for all pins. Package validation rejects
+dependency, version, revision, source, license, relationship, notice,
+provenance, or normalized-archive-metadata drift.
 
 `actions/attest-build-provenance` will attest the final archive, checksum, SBOM, and build-info assets. The release notes will show the `gh attestation verify` command for the published repository.
 

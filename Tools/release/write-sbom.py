@@ -6,46 +6,74 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+
+from dependency_metadata import load_dependencies
+from versioning import require_commit, require_semantic_version
 
 
 def spdx_id(name: str) -> str:
-    return "SPDXRef-" + "".join(character if character.isalnum() else "-" for character in name)
+    """Return a stable SPDX identifier for a package name."""
+
+    normalized = "".join(
+        character if character.isalnum() else "-"
+        for character in name
+    )
+    return "SPDXRef-" + normalized
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--source-date-epoch", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--resolved", type=Path, default=Path("Package.resolved"))
+    parser.add_argument(
+        "--license-manifest",
+        type=Path,
+        default=Path("Tools/release/dependency-licenses.json"),
+    )
     args = parser.parse_args()
-    resolved = json.loads(Path("Package.resolved").read_text(encoding="utf-8"))
-    pins = resolved.get("pins", resolved.get("object", {}).get("pins", []))
+    version = require_semantic_version(args.version)
+    commit = (
+        args.commit
+        if args.commit == "unspecified"
+        else require_commit(args.commit)
+    )
+    if args.source_date_epoch < 0:
+        parser.error("--source-date-epoch must be non-negative")
+    created = datetime.fromtimestamp(
+        args.source_date_epoch,
+        timezone.utc,
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dependencies = load_dependencies(args.resolved, args.license_manifest)
     packages = [
         {
             "SPDXID": "SPDXRef-Package-devcontainer",
             "name": "devcontainer",
-            "versionInfo": args.version,
+            "versionInfo": version,
             "downloadLocation": "https://github.com/stephenlclarke/devcontainer",
             "licenseConcluded": "Apache-2.0",
             "licenseDeclared": "Apache-2.0",
             "filesAnalyzed": False,
+            "sourceInfo": f"Exact Git commit {commit}",
         }
     ]
     relationships = []
-    for pin in sorted(pins, key=lambda value: value.get("identity", "")):
-        name = pin.get("identity", "unknown")
-        state = pin.get("state", {})
-        version = state.get("version") or state.get("revision") or "unspecified"
-        identifier = spdx_id(name)
+    for dependency in dependencies:
+        identifier = spdx_id(dependency.identity)
         packages.append(
             {
                 "SPDXID": identifier,
-                "name": name,
-                "versionInfo": version,
-                "downloadLocation": pin.get("location", "NOASSERTION"),
-                "licenseConcluded": "NOASSERTION",
-                "licenseDeclared": "NOASSERTION",
+                "name": dependency.identity,
+                "versionInfo": dependency.version,
+                "downloadLocation": dependency.location,
+                "licenseConcluded": dependency.license,
+                "licenseDeclared": dependency.license,
                 "filesAnalyzed": False,
+                "sourceInfo": f"Exact Git revision {dependency.revision}",
             }
         )
         relationships.append(
@@ -56,19 +84,19 @@ def main() -> int:
             }
         )
     namespace_hash = hashlib.sha256(
-        f"devcontainer:{args.version}".encode()
+        f"devcontainer:{version}:{commit}".encode()
     ).hexdigest()
     document = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": f"devcontainer-{args.version}",
+        "name": f"devcontainer-{version}",
         "documentNamespace": (
             "https://github.com/stephenlclarke/devcontainer/sbom/"
             + namespace_hash
         ),
         "creationInfo": {
-            "created": "2026-01-01T00:00:00Z",
+            "created": created,
             "creators": ["Tool: devcontainer-write-sbom"],
         },
         "packages": packages,
