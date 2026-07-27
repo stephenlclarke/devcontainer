@@ -575,7 +575,9 @@ public actor InMemoryProcessSession: RuntimeProcessSession {
         input.append(data)
     }
 
-    public func closeStandardInput() {}
+    public func closeStandardInput() {
+        // The in-memory session has no open file descriptor to close.
+    }
 
     public func resize(width: UInt16, height: UInt16) {
         size = (width, height)

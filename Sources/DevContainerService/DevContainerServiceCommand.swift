@@ -76,7 +76,9 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             await runtime.shutdown()
             try await server.shutdown()
             group.cancelAll()
-            while try await group.next() != nil {}
+            while try await group.next() != nil {
+                // Drain cancelled child tasks before leaving the structured scope.
+            }
         }
     }
 

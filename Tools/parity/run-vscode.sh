@@ -40,11 +40,15 @@ validate_lane() {
 
 # Run the authenticated VS Code driver for each explicitly selected lane.
 main() {
-  if (( $# == 1 )) && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+  local argument_count="$#"
+  local first_argument="${1:-}"
+
+  if (( argument_count == 1 )) &&
+    [[ "$first_argument" == "-h" || "$first_argument" == "--help" ]]; then
     usage
     return 0
   fi
-  if (( $# < 1 )); then
+  if (( argument_count < 1 )); then
     usage >&2
     return 2
   fi
@@ -54,7 +58,7 @@ main() {
     return 1
   fi
 
-  local evidence_dir="$1/vscode"
+  local evidence_dir="$first_argument/vscode"
   shift
   local -a lanes=("$@")
   if (( ${#lanes[@]} == 0 )); then

@@ -31,11 +31,13 @@ need() {
 
 # Reject unknown lane names before any runtime probe.
 validate_lane() {
-  case "$1" in
+  local requested="$1"
+
+  case "$requested" in
     docker | apple-stock | apple-compose | all)
       ;;
     *)
-      printf '%s: unsupported lane: %s\n' "$SCRIPT_NAME" "$1" >&2
+      printf '%s: unsupported lane: %s\n' "$SCRIPT_NAME" "$requested" >&2
       return 1
       ;;
   esac
@@ -43,16 +45,20 @@ validate_lane() {
 
 # Verify the exact tools required by one isolated parity lane.
 main() {
-  if (( $# == 1 )) && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+  local argument_count="$#"
+  local first_argument="${1:-}"
+
+  if (( argument_count == 1 )) &&
+    [[ "$first_argument" == "-h" || "$first_argument" == "--help" ]]; then
     usage
     return 0
   fi
-  if (( $# > 1 )); then
+  if (( argument_count > 1 )); then
     usage >&2
     return 2
   fi
 
-  local lane="${1:-all}"
+  local lane="${first_argument:-all}"
   validate_lane "$lane"
   cd "$REPOSITORY_ROOT"
 

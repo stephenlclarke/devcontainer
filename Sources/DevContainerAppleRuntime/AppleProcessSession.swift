@@ -125,8 +125,8 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
                 exitCode = status
                 break
             }
-            for await _ in outputEnd {}
-            for await _ in errorEnd {}
+            for await _ in outputEnd { /* Completion latch for stdout. */ }
+            for await _ in errorEnd { /* Completion latch for stderr. */ }
             continuation.finish()
             return exitCode
         }
@@ -457,7 +457,9 @@ final class ApplePollingLogSession: RuntimeProcessSession, @unchecked Sendable {
         )
     }
 
-    func closeStandardInput() {}
+    func closeStandardInput() {
+        // Attach sessions are output-only because stock container has no stdin API.
+    }
 
     func resize(width _: UInt16, height _: UInt16) throws {
         throw DevContainerError(

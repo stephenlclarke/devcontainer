@@ -146,30 +146,31 @@ class ReleaseToolTests(unittest.TestCase):
             archive.write_bytes(b"release-archive")
             template.write_text("@FORMULA_CLASS@\n", encoding="utf-8")
 
+            arguments = (
+                "render-homebrew-formula.py",
+                "--product-version",
+                "1.2.3",
+                "--formula-version",
+                "current.418.0123456789ab",
+                "--formula-class",
+                "Devcontainer",
+                "--url",
+                (
+                    "https://github.com/stephenlclarke/devcontainer/"
+                    "releases/download/current/"
+                    "devcontainer-current-0123456789ab-arm64.tar.gz"
+                ),
+                "--conflicts-with",
+                "devcontainer-current",
+                "--archive",
+                str(archive),
+                "--template",
+                str(template),
+                "--output",
+                str(output),
+            )
             with self.assertRaises(subprocess.CalledProcessError):
-                self.run_tool(
-                    "render-homebrew-formula.py",
-                    "--product-version",
-                    "1.2.3",
-                    "--formula-version",
-                    "current.418.0123456789ab",
-                    "--formula-class",
-                    "Devcontainer",
-                    "--url",
-                    (
-                        "https://github.com/stephenlclarke/devcontainer/"
-                        "releases/download/current/"
-                        "devcontainer-current-0123456789ab-arm64.tar.gz"
-                    ),
-                    "--conflicts-with",
-                    "devcontainer-current",
-                    "--archive",
-                    str(archive),
-                    "--template",
-                    str(template),
-                    "--output",
-                    str(output),
-                )
+                self.run_tool(*arguments)
 
 
 if __name__ == "__main__":

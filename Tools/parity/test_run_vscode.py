@@ -100,15 +100,16 @@ class VSCodeParityTests(unittest.TestCase):
             parse_code_version("1.2.3\narm64\n")
 
     def test_code_version_rejects_a_different_commit(self) -> None:
+        output = f"1.2.3\n{'c' * 40}\narm64\n"
+        reference_pins = pins()
         with self.assertRaisesRegex(ParityError, "identity differs"):
-            verify_code_version(f"1.2.3\n{'c' * 40}\narm64\n", pins())
+            verify_code_version(output, reference_pins)
 
     def test_signing_identity_rejects_a_different_team(self) -> None:
+        output = "Identifier=com.microsoft.VSCode\nTeamIdentifier=DIFFERENT\n"
+        reference_pins = pins()
         with self.assertRaisesRegex(ParityError, "signing identity differs"):
-            verify_signing_output(
-                "Identifier=com.microsoft.VSCode\nTeamIdentifier=DIFFERENT\n",
-                pins(),
-            )
+            verify_signing_output(output, reference_pins)
 
     def test_gzip_marketplace_response_is_expanded(self) -> None:
         value = vsix_bytes()

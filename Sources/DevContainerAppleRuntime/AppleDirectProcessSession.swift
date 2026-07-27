@@ -115,8 +115,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 try? standardError?.fileHandleForReading.close()
                 outputEndContinuation.finish()
                 errorEndContinuation.finish()
-                for await _ in outputEnd {}
-                for await _ in errorEnd {}
+                for await _ in outputEnd { /* Completion latch for stdout. */ }
+                for await _ in errorEnd { /* Completion latch for stderr. */ }
                 Self.trace("I/O drained for \(process.id)")
                 continuation.finish()
                 return exitCode

@@ -20,7 +20,9 @@ import DevContainerRuntimeSPI
 public actor RuntimeRegistry {
     private var runtimes: [BackendProvider: any DevContainerRuntime] = [:]
 
-    public init() {}
+    public init() {
+        // Runtimes are registered explicitly after construction.
+    }
 
     public func register(_ runtime: any DevContainerRuntime, for provider: BackendProvider) {
         runtimes[provider] = runtime
