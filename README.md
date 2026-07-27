@@ -38,7 +38,7 @@ flowchart LR
     ContainerCompose --> Stock
 ```
 
-The `container-compose` integration is first-class but independently installed. The core does not import `ComposeCore`, and installing this project must never silently replace stock Apple `container` with Stephen's matched fork stack.
+The `container-compose` integration is first-class but independently installed. The core does not import `ComposeCore`, and installing this project must never silently replace stock Apple `container` with my matched fork stack.
 
 ## Compatibility target
 
