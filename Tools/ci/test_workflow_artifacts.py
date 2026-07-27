@@ -15,6 +15,43 @@ SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
 
 
 class WorkflowArtifactTests(unittest.TestCase):
+    def test_all_external_actions_are_immutable_sha_pinned(self) -> None:
+        uses_pattern = re.compile(r"^\s+uses:\s+([^@\s]+)@([^\s#]+)", re.MULTILINE)
+        checked = 0
+
+        for workflow in WORKFLOWS.glob("*.yml"):
+            contents = workflow.read_text(encoding="utf-8")
+            for action, revision in uses_pattern.findall(contents):
+                if action.startswith("./"):
+                    continue
+                checked += 1
+                self.assertRegex(
+                    revision,
+                    r"^[0-9a-f]{40}$",
+                    f"{workflow.name}: {action} is not immutable-SHA pinned",
+                )
+
+        self.assertGreater(checked, 20)
+
+    def test_supply_chain_workflows_are_fail_closed(self) -> None:
+        dependency_review = (
+            WORKFLOWS / "dependency-review.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("fail-on-severity: moderate", dependency_review)
+        self.assertIn(
+            "fail-on-scopes: runtime, development, unknown",
+            dependency_review,
+        )
+        self.assertIn("license-check: true", dependency_review)
+        self.assertNotIn("warn-only: true", dependency_review)
+
+        scorecard = (WORKFLOWS / "scorecard.yml").read_text(encoding="utf-8")
+        self.assertIn("publish_results: true", scorecard)
+        self.assertIn("security-events: write", scorecard)
+        self.assertIn("id-token: write", scorecard)
+        self.assertIn("persist-credentials: false", scorecard)
+        self.assertIn("results_format: sarif", scorecard)
+
     def test_hidden_build_evidence_is_explicitly_included(self) -> None:
         checked_blocks = 0
 
@@ -43,9 +80,11 @@ class WorkflowArtifactTests(unittest.TestCase):
         workflows = (
             "ci.yml",
             "codeql.yml",
+            "dependency-review.yml",
             "docs.yml",
             "homebrew.yml",
             "quality.yml",
+            "scorecard.yml",
             "sonar.yml",
         )
         for name in workflows:

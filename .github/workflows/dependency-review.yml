@@ -1,0 +1,54 @@
+name: Dependency Review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base-ref:
+        description: "Base commit to compare"
+        required: true
+        type: string
+      head-ref:
+        description: "Head commit to compare"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reject vulnerable or incompatible dependencies
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          base-ref: ${{ github.event_name == 'push' && github.event.before || github.event.inputs['base-ref'] }}
+          head-ref: ${{ github.event_name == 'push' && github.sha || github.event.inputs['head-ref'] }}
+          fail-on-severity: moderate
+          fail-on-scopes: runtime, development, unknown
+          allow-licenses: >-
+            Apache-2.0,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            ISC,
+            MIT,
+            Unicode-3.0,
+            Zlib
+          license-check: true
+          vulnerability-check: true
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: 5
+          comment-summary-in-pr: never
