@@ -1395,8 +1395,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let labels = configuration["labels"] as? [String: String] ?? [:]
         let mounts = (configuration["mounts"] as? [[String: Any]] ?? []).compactMap(Self.mount)
         let ports = (configuration["publishedPorts"] as? [[String: Any]] ?? []).compactMap(Self.port)
-        let networks = (configuration["networks"] as? [[String: Any]] ?? []).compactMap {
-            network -> NetworkAttachment? in
+        let rawNetworks = configuration["networks"] as? [[String: Any]] ?? []
+        let networks = rawNetworks.compactMap { network -> NetworkAttachment? in
             guard let name = network["network"] as? String else {
                 return nil
             }

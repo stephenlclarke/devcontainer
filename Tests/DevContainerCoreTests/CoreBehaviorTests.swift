@@ -151,11 +151,13 @@ struct CoreBehaviorTests {
         let coordinator = ProjectCoordinator(store: store)
         let key = ProjectKey(rawValue: "501:coordinator")
         let result = try await coordinator.withMutation(
-            project: key,
-            provider: .stock,
-            configurationHash: "configuration",
-            requestKind: "create",
-            requestHash: "request"
+            request: ProjectMutation(
+                project: key,
+                provider: .stock,
+                configurationHash: "configuration",
+                requestKind: "create",
+                requestHash: "request"
+            )
         ) { context in
             #expect(context.project == key)
             #expect(context.generation == 1)
@@ -167,11 +169,13 @@ struct CoreBehaviorTests {
 
         await #expect(throws: DevContainerError.self) {
             try await coordinator.withMutation(
-                project: key,
-                provider: .stock,
-                configurationHash: "configuration",
-                requestKind: "start",
-                requestHash: "second"
+                request: ProjectMutation(
+                    project: key,
+                    provider: .stock,
+                    configurationHash: "configuration",
+                    requestKind: "start",
+                    requestHash: "second"
+                )
             ) { _ in
                 throw DevContainerError(.conflict, message: "injected failure")
             } as String

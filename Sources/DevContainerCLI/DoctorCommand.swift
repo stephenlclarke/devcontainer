@@ -169,7 +169,7 @@ struct DoctorCommand: AsyncParsableCommand {
     private func runProcess(
         executable: URL,
         arguments: [String]
-    ) async throws -> (standardOutput: Data, standardError: Data, status: Int32) {
+    ) async throws -> DoctorProcessResult {
         let process = Process()
         let standardOutput = Pipe()
         let standardError = Pipe()
@@ -200,8 +200,18 @@ struct DoctorCommand: AsyncParsableCommand {
                 process.terminate()
             }
         }
-        return await (outputTask.value, errorTask.value, exitCode)
+        return await DoctorProcessResult(
+            standardOutput: outputTask.value,
+            standardError: errorTask.value,
+            status: exitCode
+        )
     }
+}
+
+private struct DoctorProcessResult: Sendable {
+    let standardOutput: Data
+    let standardError: Data
+    let status: Int32
 }
 
 private enum DoctorStatus: String, Codable, Sendable {

@@ -67,6 +67,9 @@ public struct DockerRouter: Sendable {
             let descriptor = try await runtime.descriptor(context: context)
             return try .json(
                 DockerVersionResponse(
+                    platform: DockerVersionPlatform(
+                        name: "devcontainer Apple runtime bridge"
+                    ),
                     components: [
                         .init(
                             name: "Engine",
@@ -1172,9 +1175,11 @@ public struct DockerRouter: Sendable {
             id: identifier,
             startedAt: snapshot.startedAt,
             healthcheck: healthcheck,
-            exitCode: exitCode,
-            started: started,
-            ended: Date()
+            observation: ContainerHealthObservation(
+                exitCode: exitCode,
+                started: started,
+                ended: Date()
+            )
         )
     }
 
@@ -1339,6 +1344,12 @@ enum ContainerHealthDecision: Sendable {
     case cached(DockerContainerHealth)
 }
 
+struct ContainerHealthObservation: Sendable {
+    let exitCode: Int32
+    let started: Date
+    let ended: Date
+}
+
 actor ContainerHealthRegistry {
     private struct Entry: Sendable {
         var startedAt: Date?
@@ -1397,9 +1408,7 @@ actor ContainerHealthRegistry {
         id: String,
         startedAt: Date?,
         healthcheck: ContainerHealthcheck,
-        exitCode: Int32,
-        started: Date,
-        ended: Date
+        observation: ContainerHealthObservation
     ) -> DockerContainerHealth {
         var entry = entries[id]
         if entry?.startedAt != startedAt {
@@ -1417,10 +1426,10 @@ actor ContainerHealthRegistry {
             logs: []
         )
         let withinStartPeriod = startedAt.map {
-            started.timeIntervalSince($0) * 1_000_000_000
+            observation.started.timeIntervalSince($0) * 1_000_000_000
                 < Double(healthcheck.startPeriodNanoseconds)
         } ?? false
-        if exitCode == 0 {
+        if observation.exitCode == 0 {
             current.status = "healthy"
             current.failures = 0
         } else if withinStartPeriod {
@@ -1435,14 +1444,14 @@ actor ContainerHealthRegistry {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         current.logs.append(
             DockerHealthLog(
-                start: formatter.string(from: started),
-                end: formatter.string(from: ended),
-                exitCode: exitCode,
+                start: formatter.string(from: observation.started),
+                end: formatter.string(from: observation.ended),
+                exitCode: observation.exitCode,
                 output: ""
             )
         )
         current.logs = Array(current.logs.suffix(5))
-        current.lastCheckedAt = ended
+        current.lastCheckedAt = observation.ended
         entries[id] = current
         return current.value
     }

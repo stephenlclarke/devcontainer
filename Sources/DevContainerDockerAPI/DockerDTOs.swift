@@ -22,8 +22,8 @@ struct DockerErrorEnvelope: Encodable {
 }
 
 struct DockerVersionResponse: Encodable {
-    let platform = Platform(name: "devcontainer Apple runtime bridge")
-    let components: [Component]
+    let platform: DockerVersionPlatform
+    let components: [DockerVersionComponent]
     let version: String
     let apiVersion: String
     let minAPIVersion: String
@@ -33,26 +33,6 @@ struct DockerVersionResponse: Encodable {
     let arch = "arm64"
     let kernelVersion = ""
     let buildTime: String
-
-    struct Platform: Encodable {
-        let name: String
-
-        enum CodingKeys: String, CodingKey {
-            case name = "Name"
-        }
-    }
-
-    struct Component: Encodable {
-        let name: String
-        let version: String
-        let details: [String: String]
-
-        enum CodingKeys: String, CodingKey {
-            case details = "Details"
-            case name = "Name"
-            case version = "Version"
-        }
-    }
 
     enum CodingKeys: String, CodingKey {
         case apiVersion = "ApiVersion"
@@ -65,6 +45,26 @@ struct DockerVersionResponse: Encodable {
         case minAPIVersion = "MinAPIVersion"
         case operatingSystem = "Os"
         case platform = "Platform"
+        case version = "Version"
+    }
+}
+
+struct DockerVersionPlatform: Encodable {
+    let name: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+    }
+}
+
+struct DockerVersionComponent: Encodable {
+    let name: String
+    let version: String
+    let details: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case details = "Details"
+        case name = "Name"
         case version = "Version"
     }
 }

@@ -275,9 +275,11 @@ func `health registry accepts a missing container start time`() async {
         id: "nil-start",
         startedAt: nil,
         healthcheck: check,
-        exitCode: 0,
-        started: now,
-        ended: now
+        observation: ContainerHealthObservation(
+            exitCode: 0,
+            started: now,
+            ended: now
+        )
     )
     #expect(health.status == "healthy")
 }

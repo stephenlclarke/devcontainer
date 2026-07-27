@@ -91,6 +91,9 @@ struct AppleContainerRuntimeTests {
                 hostAddress: "0.0.0.0"
             )
         ])
+        #expect(container.spec.networks == [
+            NetworkAttachment(name: "bridge", aliases: ["workspace"])
+        ])
         #expect(container.spec.securityOptions == [
             "no-new-privileges=true",
             "systempaths=unconfined"
@@ -899,6 +902,10 @@ private struct FakeAppleCLI {
                   "hostPort":18080,
                   "protocol":"tcp",
                   "hostAddress":"0.0.0.0"
+                }],
+                "networks":[{
+                  "network":"bridge",
+                  "options":{"aliases":["workspace"]}
                 }],
                 "creationDate":"2026-07-26T12:34:56.123Z",
                 "hostname":"fixture-host",

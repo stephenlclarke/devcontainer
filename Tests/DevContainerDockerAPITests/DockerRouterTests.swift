@@ -1022,9 +1022,11 @@ func `health registry observes intervals retries start periods and resets`() asy
         id: "fixture",
         startedAt: start,
         healthcheck: check,
-        exitCode: 1,
-        started: start,
-        ended: start.addingTimeInterval(0.1)
+        observation: ContainerHealthObservation(
+            exitCode: 1,
+            started: start,
+            ended: start.addingTimeInterval(0.1)
+        )
     )
     #expect(first.status == "starting")
     #expect(first.failingStreak == 1)
@@ -1051,9 +1053,11 @@ func `health registry observes intervals retries start periods and resets`() asy
         id: "fixture",
         startedAt: start,
         healthcheck: check,
-        exitCode: 1,
-        started: start.addingTimeInterval(1.2),
-        ended: start.addingTimeInterval(1.3)
+        observation: ContainerHealthObservation(
+            exitCode: 1,
+            started: start.addingTimeInterval(1.2),
+            ended: start.addingTimeInterval(1.3)
+        )
     )
     #expect(second.status == "unhealthy")
     #expect(second.failingStreak == 2)
@@ -1061,9 +1065,11 @@ func `health registry observes intervals retries start periods and resets`() asy
         id: "fixture",
         startedAt: start,
         healthcheck: check,
-        exitCode: 0,
-        started: start.addingTimeInterval(2.4),
-        ended: start.addingTimeInterval(2.5)
+        observation: ContainerHealthObservation(
+            exitCode: 0,
+            started: start.addingTimeInterval(2.4),
+            ended: start.addingTimeInterval(2.5)
+        )
     )
     #expect(recovered.status == "healthy")
     #expect(recovered.failingStreak == 0)
@@ -1077,9 +1083,11 @@ func `health registry observes intervals retries start periods and resets`() asy
         id: "grace",
         startedAt: start,
         healthcheck: grace,
-        exitCode: 1,
-        started: start.addingTimeInterval(1),
-        ended: start.addingTimeInterval(1.1)
+        observation: ContainerHealthObservation(
+            exitCode: 1,
+            started: start.addingTimeInterval(1),
+            ended: start.addingTimeInterval(1.1)
+        )
     )
     #expect(warming.status == "starting")
     #expect(warming.failingStreak == 0)

@@ -105,21 +105,6 @@
     }
   },
   {
-    "text": "            network -> NetworkAttachment? in",
-    "violation": {
-      "location": {
-        "character": 13,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
-        "line": 1399
-      },
-      "reason": "Closure parameters should be on the same line as opening brace",
-      "ruleDescription": "Closure parameters should be on the same line as opening brace",
-      "ruleIdentifier": "closure_parameter_position",
-      "ruleName": "Closure Parameter Position",
-      "severity": "error"
-    }
-  },
-  {
     "text": "    private static func dockerFileMode(_ mode: mode_t) -> UInt32 {",
     "violation": {
       "location": {
@@ -255,21 +240,6 @@
     }
   },
   {
-    "text": "    ) async throws -> (standardOutput: Data, standardError: Data, status: Int32) {",
-    "violation": {
-      "location": {
-        "character": 23,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCLI/DoctorCommand.swift",
-        "line": 172
-      },
-      "reason": "Tuples should have at most 2 members",
-      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
-      "ruleIdentifier": "large_tuple",
-      "ruleName": "Large Tuple",
-      "severity": "error"
-    }
-  },
-  {
     "text": "    static func run(arguments: [String]) async throws -> Int32 {",
     "violation": {
       "location": {
@@ -330,66 +300,6 @@
     }
   },
   {
-    "text": "    public func withMutation<Result: Sendable>(",
-    "violation": {
-      "location": {
-        "character": 12,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCore/ProjectCoordinator.swift",
-        "line": 53
-      },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    public func withMutation<Result: Sendable>(",
-    "violation": {
-      "location": {
-        "character": 12,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerCore/ProjectCoordinator.swift",
-        "line": 53
-      },
-      "reason": "Function should have 5 parameters or less: it currently has 6",
-      "ruleDescription": "Number of function parameters should be low.",
-      "ruleIdentifier": "function_parameter_count",
-      "ruleName": "Function Parameter Count",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "        enum CodingKeys: String, CodingKey {",
-    "violation": {
-      "location": {
-        "character": 9,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
-        "line": 40
-      },
-      "reason": "Types should be nested at most 1 level deep",
-      "ruleDescription": "Types should be nested at most 1 level deep, and functions should be nested at most 2 levels deep.",
-      "ruleIdentifier": "nesting",
-      "ruleName": "Nesting",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "        enum CodingKeys: String, CodingKey {",
-    "violation": {
-      "location": {
-        "character": 9,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerDTOs.swift",
-        "line": 50
-      },
-      "reason": "Types should be nested at most 1 level deep",
-      "ruleDescription": "Types should be nested at most 1 level deep, and functions should be nested at most 2 levels deep.",
-      "ruleIdentifier": "nesting",
-      "ruleName": "Nesting",
-      "severity": "error"
-    }
-  },
-  {
     "text": "public struct DockerRouter: Sendable {",
     "violation": {
       "location": {
@@ -397,7 +307,7 @@
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
         "line": 22
       },
-      "reason": "Struct body should span 900 lines or less excluding comments and whitespace: currently spans 1247 lines",
+      "reason": "Struct body should span 900 lines or less excluding comments and whitespace: currently spans 1252 lines",
       "ruleDescription": "Type bodies should not span too many lines",
       "ruleIdentifier": "type_body_length",
       "ruleName": "Type Body Length",
@@ -427,7 +337,7 @@
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
         "line": 49
       },
-      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 499 lines",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 502 lines",
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
@@ -440,7 +350,7 @@
       "location": {
         "character": 13,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 838
+        "line": 841
       },
       "reason": "Function should have complexity 10 or less; currently complexity is 12",
       "ruleDescription": "Complexity of function bodies should be limited.",
@@ -455,7 +365,7 @@
       "location": {
         "character": 13,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 838
+        "line": 841
       },
       "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 123 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -470,7 +380,7 @@
       "location": {
         "character": 13,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1003
+        "line": 1006
       },
       "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 101 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -485,27 +395,12 @@
       "location": {
         "character": 13,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1110
+        "line": 1113
       },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 65 lines",
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    func record(",
-    "violation": {
-      "location": {
-        "character": 5,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1396
-      },
-      "reason": "Function should have 5 parameters or less: it currently has 6",
-      "ruleDescription": "Number of function parameters should be low.",
-      "ruleIdentifier": "function_parameter_count",
-      "ruleName": "Function Parameter Count",
       "severity": "error"
     }
   },
@@ -515,9 +410,9 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1529
+        "line": 1538
       },
-      "reason": "File should contain 1200 lines or less: currently contains 1529",
+      "reason": "File should contain 1200 lines or less: currently contains 1538",
       "ruleDescription": "Files should not span too many lines.",
       "ruleIdentifier": "file_length",
       "ruleName": "File Length",
@@ -592,7 +487,7 @@
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
         "line": 64
       },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 82 lines",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 85 lines",
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
@@ -605,7 +500,7 @@
       "location": {
         "character": 5,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
-        "line": 270
+        "line": 273
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 90 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -620,7 +515,7 @@
       "location": {
         "character": 5,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
-        "line": 367
+        "line": 370
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 84 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -635,7 +530,7 @@
       "location": {
         "character": 5,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
-        "line": 461
+        "line": 464
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -650,9 +545,9 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
-        "line": 1074
+        "line": 1081
       },
-      "reason": "File should contain 1000 lines or less: currently contains 1074",
+      "reason": "File should contain 1000 lines or less: currently contains 1081",
       "ruleDescription": "Files should not span too many lines.",
       "ruleIdentifier": "file_length",
       "ruleName": "File Length",
@@ -802,7 +697,7 @@
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
         "line": 1004
       },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 91 lines",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 99 lines",
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
@@ -815,27 +710,12 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 1115
+        "line": 1123
       },
-      "reason": "File should contain 1000 lines or less: currently contains 1115",
+      "reason": "File should contain 1000 lines or less: currently contains 1123",
       "ruleDescription": "Files should not span too many lines.",
       "ruleIdentifier": "file_length",
       "ruleName": "File Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "struct DevContainerServiceCommandIntegrationTests {",
-    "violation": {
-      "location": {
-        "character": 8,
-        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
-        "line": 22
-      },
-      "reason": "Type name 'DevContainerServiceCommandIntegrationTests' should be between 3 and 40 characters long",
-      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
-      "ruleIdentifier": "type_name",
-      "ruleName": "Type Name",
       "severity": "error"
     }
   },

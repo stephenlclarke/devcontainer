@@ -21,18 +21,21 @@ import Testing
 @Test
 func `docker server container and exec response defaults encode`() throws {
     let encoder = JSONEncoder()
-    let responses: [Data] = try [
-        encoder.encode(
-            DockerVersionResponse(
-                components: [],
-                version: "fixture",
-                apiVersion: "1.53",
-                minAPIVersion: "1.41",
-                gitCommit: "fixture",
-                operatingSystem: "linux",
-                buildTime: "2026-01-01T00:00:00Z"
-            )
+    let version = DockerVersionResponse(
+        platform: DockerVersionPlatform(
+            name: "devcontainer Apple runtime bridge"
         ),
+        components: [],
+        version: "fixture",
+        apiVersion: "1.53",
+        minAPIVersion: "1.41",
+        gitCommit: "fixture",
+        operatingSystem: "linux",
+        buildTime: "2026-01-01T00:00:00Z"
+    )
+    #expect(version.platform.name == "devcontainer Apple runtime bridge")
+    let responses: [Data] = try [
+        encoder.encode(version),
         encoder.encode(
             DockerInfoResponse(
                 containers: 2,

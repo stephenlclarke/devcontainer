@@ -19,7 +19,7 @@ import Foundation
 import Testing
 
 @Suite(.serialized)
-struct DevContainerServiceCommandIntegrationTests {
+struct ServiceCommandIntegrationTests {
     @Test
     func `engine executable starts serves and terminates cleanly`() async throws {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
