@@ -20,15 +20,22 @@ jobs:
   analyze:
     name: CodeQL
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prime resolved SwiftPM dependencies
+        run: swift build --disable-automatic-resolution --arch arm64
       - name: Initialize CodeQL
         uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           languages: swift
-      - name: Build
-        run: make build
+          build-mode: manual
+      - name: Build first-party Swift
+        run: |
+          # Recompile repository sources under CodeQL without re-extracting the
+          # already-built Apple container dependency graph.
+          find Sources -type f -name '*.swift' -exec touch {} +
+          swift build --disable-automatic-resolution --arch arm64
       - name: Analyze
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4

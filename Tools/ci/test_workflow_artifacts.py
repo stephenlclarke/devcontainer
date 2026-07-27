@@ -53,6 +53,24 @@ class WorkflowArtifactTests(unittest.TestCase):
             self.assertIn("\nconcurrency:\n", contents, name)
             self.assertIn("  cancel-in-progress: true\n", contents, name)
 
+    def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
+        contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
+        prime = contents.index("- name: Prime resolved SwiftPM dependencies")
+        initialize = contents.index("- name: Initialize CodeQL")
+        recompile = contents.index("- name: Build first-party Swift")
+        analyze = contents.index("- name: Analyze")
+
+        self.assertIn("timeout-minutes: 90", contents)
+        self.assertIn("build-mode: manual", contents)
+        self.assertEqual(
+            contents.count("swift build --disable-automatic-resolution --arch arm64"),
+            2,
+        )
+        self.assertIn("find Sources -type f -name '*.swift' -exec touch {} +", contents)
+        self.assertLess(prime, initialize)
+        self.assertLess(initialize, recompile)
+        self.assertLess(recompile, analyze)
+
     def test_docker_compose_smoke_fixture_is_strict(self) -> None:
         success = subprocess.run(
             [SMOKE_FIXTURE, "compose", "version"],
