@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: implementation in progress. The authoritative version, selector resolver, Current version formatter, deterministic package, checksums, SBOM, formula renderer, hosted CI, quality, CodeQL, Homebrew, SonarQube, and DocC workflows are implemented. Stable/Current publication, signing, notarization, tap promotion, and the trusted release runner remain release blockers; later sections distinguish the implemented foundation from those required publication controls.
+> Status: implementation in progress. The authoritative version, selector resolver, Current version formatter, deterministic package, checksums, SBOM, formula renderer, hosted CI, quality, CodeQL, dependency review, OpenSSF Scorecard, Homebrew, SonarQube, and DocC workflows are implemented. Stable/Current publication, signing, notarization, tap promotion, and the trusted release runner remain release blockers; later sections distinguish the implemented foundation from those required publication controls.
 
 This document defines how `devcontainer` will validate and publish an arm64 macOS command-line tool for Apple's stock `container` runtime. Docker is the behavioral oracle, stock Apple `container` is the required runtime, and `container-compose` is an optional provider tested in a separate, explicitly identified parity lane.
 
@@ -42,7 +42,7 @@ DEVCONTAINER_VERSION ?= 0.1.0
 
 Source code must not contain a second editable copy. Build and package targets will read `DEVCONTAINER_VERSION` and generate an untracked build-info resource. The executable's `version` command will read that generated resource, with an explicit `development` fallback for an unpackaged local build.
 
-The helper layout is being implemented as:
+The implemented helper layout is:
 
 ```text
 Makefile
@@ -149,7 +149,7 @@ Stable publication requires:
 - GitHub reports the annotated tag signature as verified.
 - `DEVCONTAINER_VERSION` equals the tag.
 - The release object does not already exist, except for an explicit formula-only recovery.
-- Exact-commit CI, CodeQL, documentation, and hosted release checks succeeded.
+- Exact-commit CI, CodeQL, dependency review, Scorecard, documentation, and hosted release checks succeeded.
 - The trusted live parity gate succeeded for the same commit.
 - The candidate-bound `Stable Release Authority (MAJOR.MINOR.PATCH)` check succeeded.
 - Signing, notarization, SBOM generation, package validation, checksum verification, attestation, and Homebrew installation succeeded.
@@ -158,7 +158,7 @@ An existing stable release is immutable. Recovery may recreate only a missing or
 
 ## Generated Build Information
 
-`make package-release` will generate `build-info.json` from the authoritative version and release inputs. The minimum payload is:
+`make package-release` generates `build-info.json` from the authoritative version and release inputs. The minimum payload is:
 
 ```json
 {
@@ -175,16 +175,18 @@ An existing stable release is immutable. Recovery may recreate only a missing or
 
 Current packages use the same product version but set `lane` to `current`. Provider parity evidence records the provider executable, provider version, and underlying runtime distribution separately; it must not rewrite the package's stock-Apple identity.
 
-`devcontainer version --format json` will expose this payload. Release validation will compare its version, lane, commit, architecture, and source with the selected release context.
+`devcontainer version --format json` exposes this payload. Release validation compares its version, lane, commit, architecture, and source with the selected release context.
 
 ## CI And Release Authority
 
-The planned workflow split is:
+The implemented workflow split is:
 
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
 | `ci.yml` | Ubuntu and `macos-26` | Source checks, unit tests, coverage, CLI smoke, package structure, and Sonar |
 | `codeql.yml` | Appropriate hosted runner | Exact-commit CodeQL analysis |
+| `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
+| `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
 | `quality.yml` | Hosted macOS | Sanitizers, style, and scheduled deeper checks |
 | `docs.yml` | `macos-26`, then Ubuntu | Build and publish DocC Pages |
 | `homebrew.yml` | `macos-26` | Render fixture formulae, `ruby -c`, `brew style`, audit, install, and test |
@@ -464,6 +466,7 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Implement generated build-info and `version --format json`.
 - [x] Add immutable Current and stable package naming.
 - [x] Add exact-commit CI and CodeQL workflows.
+- [x] Add exact-range dependency review and OpenSSF Scorecard workflows.
 - [ ] Add the trusted three-lane bare-metal parity runner and strict preflight.
 - [x] Add DocC build and Pages deployment.
 - [x] Add strict Developer ID signing, notarization, and sanitized evidence tooling.
@@ -475,5 +478,6 @@ Actions invoke these targets instead of duplicating release logic in YAML.
 - [x] Add serialized tap formula and managed README promotion.
 - [ ] Protect `main` with signed commits and stable required contexts.
 - [x] Enable Dependabot security updates, vulnerability alerts, secret scanning, push protection, and private vulnerability reporting.
+- [x] Add a private-reporting security policy.
 - [ ] Publish the first Current build.
 - [ ] Soak and promote the first stable release.

@@ -74,8 +74,11 @@ The test plan covers image, Dockerfile, Features, users, environment, lifecycle 
 | [DESIGN.md](DESIGN.md) | Detailed architecture, data flow, runtime boundaries, security, and delivery phases |
 | [TESTING.md](TESTING.md) | Three-lane Docker/Apple/Compose differential test harness |
 | [QUALITY.md](QUALITY.md) | Software-quality analysis, measurable gates, and supply-chain controls |
+| [BUILD.md](BUILD.md) | Current local build, test, coverage, sanitizer, parity, and package commands |
+| [INSTALL.md](INSTALL.md) | Source, prebuilt, Homebrew, provider, and uninstall contract |
 | [RELEASE.md](RELEASE.md) | CI/CD, GitHub Pages, release authority, and Homebrew tap design |
 | [COMPATIBILITY.md](COMPATIBILITY.md) | Compatibility contract and explicit claim policy |
+| [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | `Sources/DevContainerDockerAPI` | Docker Engine API compatibility router |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |

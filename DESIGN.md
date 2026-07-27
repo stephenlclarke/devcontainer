@@ -80,13 +80,14 @@ VS Code never talks directly to an Apple API. Its existing toolchain sees a Dock
 
 ## Deployment units
 
-Apple's plug-in configuration distinguishes CLI plug-ins from service plug-ins, so the package contains separate installation units:
+The archive exposes a CLI plug-in entry point plus independently runnable
+service and Compose-dispatch executables:
 
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
-| `container-devcontainer` | `devcontainer` CLI plug-in | `doctor`, `configure`, `status`, `backend`, `diagnostics`, and explicit cleanup |
-| `container-devcontainer-service` | `devcontainer-service` auxiliary/core service | XPC control API, Docker Engine HTTP API, state reconciliation, event broker |
-| `devcontainer-docker` | Normal executable | Selects the named Docker context or Unix socket without changing the user's global Docker context |
+| `container-devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, `configure`, `context`, and durable `backend` ownership |
+| `devcontainer-engine` | Normal executable | Docker Engine HTTP API on a user-owned Unix socket, stock Apple translation, state reconciliation, and event handling |
+| `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
 | `DevContainerAppleRuntime` | Swift library | Translation to official `ContainerAPIClient` and versioned Apple models |

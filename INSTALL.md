@@ -75,7 +75,8 @@ brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
-These commands are documentation of the intended interface and will fail until the formulae are implemented and published.
+The formula renderer and package validation are implemented in this repository,
+but these commands will fail until the formulae and signed assets are published.
 
 Stable and Current conflict because both install the same `devcontainer` command. Switch channels explicitly rather than mixing files:
 
@@ -105,6 +106,10 @@ devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/container-devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/NOTICE.md
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/README.md
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 ```
 
 Homebrew will install only the package payload under its own prefix and expose `bin/devcontainer`. It will not write under Apple's package prefix or `/usr/local/libexec/container-plugins`.
@@ -134,9 +139,11 @@ The `devcontainer` output should show:
 - Source repository and exact commit.
 - Release build type.
 - `arm64` architecture.
-- Selected backend.
-- Detected Apple runtime version and distribution when an Apple command is executed.
-- Optional Compose provider and its underlying runtime distribution when explicitly selected.
+- Build-time container distribution and provider identity.
+
+`devcontainer doctor --format json` separately reports the configured socket,
+selected Apple executable, detected runtime version, and optional Compose
+provider probe. Static version output does not start or inspect a runtime.
 
 ## Verify Release Integrity
 
@@ -161,22 +168,46 @@ The project must not claim that a standalone executable is stapled. Apple's stap
 
 ## Backend Selection
 
-The command-line interface will require explicit backend selection when more than one backend is available. The exact flags are not implemented yet; the intended behavior is:
+The implemented user configuration uses explicit provider identities:
 
-```text
---backend apple
---backend docker
---compose-provider /absolute/path/to/container-compose
+```sh
+devcontainer configure \
+  --backend stock \
+  --compose-provider docker \
+  --socket "$HOME/.local/state/devcontainer/docker.sock"
+
+devcontainer configure \
+  --backend container-compose \
+  --compose-provider container-compose
 ```
 
-Configuration precedence should be:
+`stock` selects this project's Apple runtime adapter. `container-compose`
+identifies a project whose Compose lifecycle is owned by the separately
+installed provider; it is never described as stock provenance. Docker Compose
+is selected with `--compose-provider docker` and talks to this project's Unix
+socket.
 
-1. Explicit command-line option.
-2. Project configuration.
-3. User configuration.
-4. Safe capability detection.
+Executable paths are explicit command or environment inputs:
 
-Capability detection may select stock Apple only when its provenance is accepted. It must not download software, run Homebrew, change symlinks, edit an Apple install root, or switch a runtime service.
+```sh
+devcontainer-engine --container /absolute/path/to/container
+devcontainer doctor \
+  --container /absolute/path/to/container \
+  --container-compose /absolute/path/to/container-compose
+
+DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
+  devcontainer-compose up
+```
+
+The Compose dispatcher applies this implemented precedence:
+
+1. `DEVCONTAINER_COMPOSE_PROVIDER`.
+2. User configuration written by `devcontainer configure`.
+3. The safe default, upstream Docker Compose over the compatibility socket.
+
+Project ownership is then recorded in the state database. `devcontainer
+backend set`, `show`, and `reset` provide explicit project-scoped control and
+prevent a provider change while owned resources remain.
 
 ## Optional container-compose Provider
 
@@ -184,7 +215,7 @@ Capability detection may select stock Apple only when its provenance is accepted
 
 The current supported `stephenlclarke/tap/container-compose` formula depends on a matched custom runtime. Installing that formula can replace the stock-Apple runtime selected by the shell. `devcontainer` must not suggest or execute that installation as an automatic fix.
 
-Provider discovery will verify:
+Provider discovery verifies the configured executable with:
 
 ```sh
 /explicit/path/to/container-compose version --format json

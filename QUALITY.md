@@ -5,11 +5,12 @@
 This document is the quality policy and delivery scorecard for `devcontainer`.
 The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
-harness, DocC Pages workflow, deterministic package/SBOM tooling, and Homebrew
-formula validation described below. At this development-candidate snapshot,
-90 Swift tests pass with 90.05% first-party executable-line coverage. Full
-isolated stock Apple runtime and live VS Code release evidence remains
-outstanding, so these implemented gates are not yet a stable-support claim.
+harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
+deterministic package/SBOM tooling, and Homebrew formula validation described
+below. At this development-candidate snapshot, 92 Swift tests pass with 90.13%
+first-party executable-line coverage. Full isolated stock Apple runtime and
+live VS Code release evidence remains outstanding, so these implemented gates
+are not yet a stable-support claim.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -78,10 +79,13 @@ LLVM executable coverage regions. All command implementations and both CLI
 products remain instrumented. The repository-owned gate and Sonar therefore
 measure the same executable source rather than granting a broad CLI exclusion.
 
-The coverage job currently produces a human-readable summary and SonarQube
-generic coverage XML and fails on missing binaries, profiles, source paths, or
-test execution. Changed-line annotations and LCOV export remain release-gate
-work. Coverage collection uses two attempts and
+The coverage job produces a human-readable summary, LCOV, and SonarQube
+generic coverage XML from one unique executable-line map. It fails on missing
+binaries, profiles, source paths, or test execution. On pull requests and
+protected-main pushes it resolves the Git merge base, intersects added source
+lines with LLVM executable regions, prints every uncovered changed line, emits
+GitHub source annotations, and independently enforces the 90% changed-line
+threshold. Coverage collection uses two attempts and
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`, because a SwiftPM signal-13 fallback can leave
 incomplete profile data.
 
@@ -147,7 +151,15 @@ SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 
 These are Swift's AddressSanitizer and ThreadSanitizer modes, not custom leak or race parsers. They run serially with separate build/cache fingerprints and retain `.build/swift-asan.log` or `.build/swift-tsan.log`.
 
-The current `container-compose` quality workflow uses ASan for pull requests or manual dispatch and TSan nightly or by manual dispatch. Its harness retries only a logged `swiftpm-testing-helper` signal 13, defaults to two attempts, tails 200 lines on success, and defaults `SWIFT_TEST_ACCEPT_SIGNAL_13` to `1` when passing output exists without detected failure output. This project will reuse that precise retry/log mechanism, but the exact stable candidate sets `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release evidence. ASan will run for relevant pull requests, and TSan will run nightly, manually, and for stable candidates.
+The current `container-compose` quality workflow uses ASan for pull requests or
+manual dispatch and TSan nightly or by manual dispatch. Its harness retries
+only a logged `swiftpm-testing-helper` signal 13, defaults to two attempts,
+tails 200 lines on success, and defaults `SWIFT_TEST_ACCEPT_SIGNAL_13` to `1`
+when passing output exists without detected failure output. This project reuses
+that retry/log mechanism. The exact stable candidate sets
+`SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
+evidence. ASan and TSan both run on protected main, schedules, explicit
+dispatches, and the exact stable candidate.
 
 Any sanitizer diagnostic fails the job. Suppressions require a pinned upstream issue, the narrowest stack match, expiry, and security review; a suppression cannot cover first-party product code for stable release.
 
@@ -160,13 +172,14 @@ using CodeQL's manual build mode so the database observes the actual SwiftPM
 build. It runs on protected-main pushes, a schedule, and manual dispatch.
 Workflow actions are pinned by full commit SHA.
 
-The CodeQL job will:
+The CodeQL job:
 
-1. Initialize the Swift language database.
-2. Resolve dependencies from the lockfile without updating them.
-3. Build all production targets and representative generated paths.
-4. Run the security-and-quality query suites.
-5. Upload SARIF and verify that analysis completed for the candidate commit.
+1. resolves and builds the exact SwiftPM dependency graph before tracing;
+2. initializes the Swift language database in manual-build mode;
+3. touches and rebuilds first-party Swift sources so dependency extraction
+   cannot consume the bounded analysis window;
+4. runs the security-and-quality query suites;
+5. uploads SARIF and verifies that analysis completed for the candidate commit.
 
 A new high or critical CodeQL alert is release blocking. Lower-severity findings require disposition before stable release and may not be dismissed as “used in tests” when the path is reachable from production.
 
@@ -191,21 +204,36 @@ SonarCloud supplements the repository-owned coverage and lint checks. A passing 
 
 ### Dependency and license review
 
-The planned `.github/workflows/dependency-review.yml` will run for pull requests that change `Package.swift`, `Package.resolved`, actions, scripts that install tools, or fixture dependencies. Swift Package Manager lockfiles are supported by GitHub's dependency graph and will remain checked in.
+The implemented `.github/workflows/dependency-review.yml` runs for every pull
+request, protected-main push, and explicit candidate range. Swift Package
+Manager lockfiles are supported by GitHub's dependency graph and remain
+checked in.
 
-The review will:
+The fail-closed review:
 
 - fail additions with moderate, high, or critical known vulnerabilities;
-- deny licenses incompatible with Apache-2.0 distribution;
-- flag git dependencies that are not immutable;
-- verify that GitHub Actions use full commit SHAs;
-- require an updated third-party notice and SBOM mapping when a distributed dependency changes.
+- checks runtime, development, and unknown dependency scopes;
+- allows only the checked-in Apache-compatible SPDX license set;
+- displays dependency OpenSSF scores and warns below level 5;
+- runs with read-only repository permissions and an immutable action SHA.
+
+Repository regression tests separately verify that every external GitHub
+Action reference is a complete commit SHA. Package verification and review
+require an updated notice and SBOM mapping when a distributed dependency
+changes.
 
 Automated advisories are followed by a reproducible build and relevant regression tests. A dependency update does not bypass full parity merely because production source was unchanged.
 
 ### OpenSSF Scorecard
 
-The planned weekly `.github/workflows/scorecard.yml` will publish SARIF with minimal permissions and pinned actions. The project targets an overall score of at least 8.0 and no regression in Branch-Protection, Code-Review, Dangerous-Workflow, Pinned-Dependencies, Token-Permissions, Packaging, and Vulnerabilities checks.
+The implemented weekly and protected-main `.github/workflows/scorecard.yml`
+publishes authenticated Scorecard results, retains SARIF evidence, and uploads
+findings to GitHub code scanning. Its approved action-only job uses read-only
+repository access plus narrowly scoped `id-token: write` and
+`security-events: write`; every action is immutable-SHA pinned. The project
+targets an overall score of at least 8.0 and no regression in
+Branch-Protection, Code-Review, Dangerous-Workflow, Pinned-Dependencies,
+Token-Permissions, Packaging, and Vulnerabilities checks.
 
 Scorecard is a trend and hardening signal, not a substitute for a concrete gate. A score below target creates release-blocking work unless the failing check is objectively inapplicable and that determination is documented.
 
@@ -219,6 +247,8 @@ live validation:
 | `ci.yml` | Hosted `macos-26` | Build, unit, contract, hosted integration, 90% coverage gates, and package validation |
 | `quality.yml` | Hosted `macos-26` | SwiftLint, SwiftFormat, ASan, scheduled/dispatch TSan |
 | `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL |
+| `dependency-review.yml` | Hosted Ubuntu | Vulnerability, scope, license, and dependency Scorecard review |
+| `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
 | `parity.yml` | Three dedicated physical Apple-silicon runners | CLI and pinned VS Code parity for Docker, stock Apple, and Apple Compose |
@@ -306,37 +336,42 @@ The tap workflow will run Ruby syntax, `brew style`, `brew audit`, fetch, instal
 
 The formula update verifies the release attestation, checksum, version, supported architecture, and source repository before opening or merging a tap change. Tap credentials are unavailable to build and test jobs.
 
-## Implementable now and deferred infrastructure
+## Implemented controls and deferred infrastructure
 
-The bootstrap repository can implement immediately:
+The repository now implements:
 
 - strict Swift build/unit checks and non-empty test validation;
 - SwiftLint and SwiftFormat configuration;
 - the `Tools/ci/run-swift-test.sh` retry/log harness;
 - coverage collection, profile merge, LCOV/generic XML export, and both 90% checks;
-- raw-socket contract and fake-runtime integration infrastructure as production code appears;
+- raw-socket contract and fake-runtime integration infrastructure;
 - hosted ASan, TSan, CodeQL, dependency review, Scorecard, documentation, and package validation workflows;
-- deterministic pin, manifest, normalizer, and evidence schemas.
+- deterministic pin, manifest, normalizer, and evidence schemas;
+- signed/notarized package, SBOM, checksum, formula, and publication logic that
+  remains fail-closed until release credentials are provisioned.
 
 The following require infrastructure or credentials and must remain visibly unavailable rather than silently green:
 
 - physical Apple-silicon live parity and VS Code runner registration;
 - Docker/Apple/Compose image and tool caches on that runner;
-- SonarCloud organization/project token and quality-gate configuration;
+- dedicated physical release and parity runners;
 - protected GitHub environments, branch rules, release signing/attestation authority, and tap token;
 - release-retention storage for raw parity and E2E evidence.
 
 Stable release automation remains disabled until those dependencies exist and a dry run proves the trust boundary.
 
-## Adoption sequence
+## Remaining adoption sequence
 
-1. Add hosted build, unit, lint, format, coverage, CodeQL, dependency review, and non-empty-check aggregation.
-2. Add the tested sanitizer harness and ASan/TSan workflows with separate build caches.
-3. Add contract/integration coverage and enforce 90% overall plus changed lines from the first production implementation.
-4. Add exact dependency/pin manifests, parity evidence schemas, and candidate-bound verification.
-5. Provision and harden the physical runner, then enable stock Apple and `container-compose` live lanes.
-6. Add pinned stable VS Code E2E, Homebrew live smoke, and scheduled main/Insiders forward-compatibility checks.
-7. Enable stable tagging and publication only after a full candidate dry run satisfies every gate.
+1. Provision and harden the three physical runner profiles, then record stock
+   Apple and `container-compose` live lanes for the same exact candidate.
+2. Record the pinned stable VS Code scenario on both Apple lanes and retain its
+   cleanup evidence.
+3. Protect `main` with the stable required contexts and review policy.
+4. Provision the Developer ID, notary, release environment, and tap token; run
+   a non-publishing candidate rehearsal.
+5. Publish and soak the first signed Current build.
+6. Enable stable tagging and publication only after a full candidate dry run
+   satisfies every gate.
 
 ## Reference implementations and primary sources
 

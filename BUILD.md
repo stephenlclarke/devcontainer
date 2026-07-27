@@ -1,304 +1,304 @@
-# Build and development design
+# Build and development guide
 
 ## Current status
 
-> [!IMPORTANT]
-> The repository currently contains a bootstrap Swift package and parity
-> manifest, not the planned runtime. There is no Makefile, Docker Engine
-> service, Apple adapter, Compose dispatcher, packaged plug-in, sanitizer
-> workflow, or coverage gate yet. Commands and targets below define the local
-> development contract that implementation must provide.
+The repository contains the implemented Swift package, Docker Engine
+compatibility service, stock Apple runtime adapter, optional external
+`container-compose` provider, command-line tools, tests, parity harness, DocC
+site, and package/Homebrew tooling.
 
-Today, only the bootstrap package and manifest tooling can be invoked directly:
+Hosted-safe development is fully automated. Live runtime parity remains a
+separate trusted-runner activity: building or testing this package never
+starts, stops, installs, or replaces a developer's Apple container runtime.
 
-```console
-swift package resolve
-swift build
-swift test
-python3 Tools/parity/validate_manifest.py
-python3 -m unittest discover -s Tools/parity -p 'test_*.py'
-```
+## Development host
 
-`python3 Tools/parity/validate_manifest.py --release` is expected to fail
-while fixtures remain `planned`.
-
-## Supported development hosts
-
-| Work | Minimum host | Notes |
-| --- | --- | --- |
-| Swift build, unit tests, documentation, manifest checks | macOS 15, Xcode 26, Swift 6.2, Python 3, `make` | The package currently declares macOS 15 as its compilation floor. |
-| ASan and TSan release gates | Apple-silicon macOS with the release Xcode/Swift toolchain | Separate clean build directories and jobs are required. |
-| Apple runtime integration and parity | Physical Apple-silicon Mac, exact macOS 26 build, Xcode 26, Swift 6.2 or newer | Hosted workers and virtualized macOS are not runtime evidence. |
-| VS Code end-to-end parity | Physical Apple-silicon Mac with a logged-in GUI session | Pin the VS Code application and Dev Containers VSIX exactly. |
-
-Runtime hosts need hardware virtualization, a dedicated test user, and enough
-memory/disk for multiple Apple container VMs, images, build contexts, raw
-logs, and retained artifacts. A practical runner baseline is 32 GB RAM and
-100 GB free disk; the measured suite may raise this requirement.
-
-Public pull requests run only hosted, non-runtime checks. Physical runtime
-runners accept trusted exact commits after hosted checks pass and must not
-hold unrelated developer credentials.
-
-## Source and dependency layout
-
-The planned package graph preserves a hard provider boundary:
-
-```text
-DevContainerModel
-  -> DevContainerRuntimeSPI
-  -> DevContainerCore
-     -> DevContainerState
-     -> DevContainerDockerAPI
-     -> DevContainerAppleRuntime
-  -> DevContainerService
-
-DockerComposeDispatcher
-  -> control API client
-  -> pinned upstream Docker Compose executable
-  -> optional external `container compose` process
-
-DevContainerCLI
-  -> control API client
-  -> pinned official @devcontainers/cli launcher
-```
-
-Only `DevContainerAppleRuntime` may import Apple runtime products.
-`container-compose` remains an external executable and must not appear in
-`Package.swift`, `Package.resolved`, linked products, or service startup
-requirements. The runtime-neutral core must not import `ComposeCore`.
-
-For a stock Apple release, the project pins an exact tagged
-`apple/container` revision and accepts the exact `containerization` version
-selected by that release. It must not independently override
-`containerization`. The optional Compose provider records its own executable
-commit and matched fork revisions at probe time. The two dependency graphs
-are never resolved into one Swift build.
-
-If development exposes a defect that must be fixed in
-`stephenlclarke/container`, `stephenlclarke/containerization`, or
-`stephenlclarke/container-compose`, the fix belongs in that owning repository.
-It must include a regression test and be submitted as a focused pull request.
-Only after review does `devcontainer` update its exact pin and provenance
-ledger and rerun the affected parity matrix. Never patch a vendored or copied
-upstream source tree in this repository. No such upstream pull request is part
-of the current bootstrap work.
-
-The complete initial provenance ledger is in
-[`COMPATIBILITY.md`](COMPATIBILITY.md). Release builds must use
-`Package.resolved`, verify that it is unchanged after resolution, and record:
-
-- repository URL, version, commit, and tree or artifact digest;
-- Xcode, Swift, SDK, macOS product, and macOS build versions;
-- target architecture and build configuration;
-- signing identity and notarization result where applicable;
-- Docker, Dev Containers, Compose, Apple runtime, and provider fingerprints.
-
-## Planned Make interface
-
-The Makefile will be an orchestration layer over checked-in scripts. Targets
-must be non-interactive, deterministic, and safe to rerun.
-
-| Target | Planned behavior |
+| Work | Required host |
 | --- | --- |
-| `make bootstrap` | Verify Xcode, Swift, Python, formatting/lint tools, and required local utilities without installing or replacing an Apple runtime. |
-| `make resolve` | Resolve exact Swift dependencies and fail if the lock file changes unexpectedly. |
-| `make build` | Build all first-party libraries and executables in debug mode. |
-| `make build-release` | Build optimized release artifacts with reproducible version/provenance inputs. |
-| `make test` | Run the hosted-safe unit and contract test aggregate. |
-| `make test-unit` | Run Swift and Python unit tests only. |
-| `make test-contract` | Run Docker DTO, HTTP, stream, error, state, provider-boundary, and recorded-traffic contract tests using fakes. |
-| `make test-integration` | Run local host-side integration tests that do not require the Apple VM runtime. |
-| `make test-asan` | Clean, rebuild, and run the sanitizer-eligible Swift suite with Address Sanitizer. |
-| `make test-tsan` | Clean, rebuild, and run the sanitizer-eligible concurrency suite with Thread Sanitizer. |
-| `make coverage` | Run first-party Swift tests with coverage and write machine-readable plus HTML reports. |
-| `make coverage-check` | Fail below 90% first-party Swift line coverage after documented exclusions. |
-| `make format` | Apply the repository's Swift and documentation formatters. |
-| `make format-check` | Verify formatting without modifying files. |
-| `make lint` | Run Swift lint/static analysis, Python checks, Markdown checks, and forbidden-dependency checks. |
-| `make docs` | Build DocC and validate Markdown links and Mermaid blocks. |
-| `make serve-docs` | Serve the local DocC output for review. |
-| `make parity-manifest` | Validate the parity manifest in development mode. |
-| `make parity-docker` | Run the pinned real-Docker oracle lane and capture raw/normalized evidence. |
-| `make parity-apple-stock` | Run the stock Apple lane after exact provenance and clean-host checks. |
-| `make parity-apple-compose` | Run the optional provider lane after exact provider/fork checks. |
-| `make parity` | Compare all three lanes and fail on any semantic difference. |
-| `make parity-vscode` | Run pinned VS Code/VSIX open, attach, terminal, ports, rebuild, reopen, and cleanup flows. |
-| `make parity-release` | Require every manifest fixture to be implemented and all release evidence complete. |
-| `make check` | Hosted-safe aggregate: resolve verification, format check, lint, unit/contract tests, coverage check, docs, and development manifest validation. |
-| `make runtime-check` | Trusted physical-runner aggregate: Apple integration, fault recovery, ASan/TSan where host instrumentation applies, and parity. |
-| `make package` | Assemble signed plug-in/service/CLI artifacts, notices, SBOM, checksums, and provenance without installing them. |
-| `make release-check` | Run `check`, sanitizer gates, runtime/parity gates, packaging verification, and the release manifest validator. |
-| `make clean` | Remove only repository-owned build and report directories after validating their exact paths. |
+| Build, tests, coverage, sanitizers, and DocC | Apple-silicon macOS 15 or later, Xcode 26/Swift 6.2, Python 3, GNU Make |
+| Live stock Apple parity | Physical Apple-silicon macOS 26 host with the pinned stock `container` release |
+| Live Compose parity | Separately managed physical host with the pinned `container-compose` and its declared matched stack |
+| VS Code end-to-end parity | Physical Apple-silicon host with a logged-in GUI session and the pinned VS Code/VSIX artifacts |
 
-`make check` must never require `container compose`, Docker Engine, an Apple
-runtime, privileged access, or network access after dependencies and pinned
-fixtures are available. Provider-specific targets may skip only when invoked
-outside a release aggregate; `make release-check` treats an unavailable
-required provider or runner as a failure.
-
-## Swift build profiles
-
-Use distinct SwiftPM scratch paths so instrumentation and cached objects cannot
-cross-contaminate jobs:
-
-```console
-swift build --scratch-path .build/debug
-swift test --scratch-path .build/test
-swift test --scratch-path .build/asan --sanitize=address
-swift test --scratch-path .build/tsan --sanitize=thread
-swift test --scratch-path .build/coverage --enable-code-coverage
-```
-
-The final scripts may add strict warning and frontend settings after verifying
-them with the pinned Swift compiler. Release artifacts are built separately
-from sanitizer and coverage objects.
-
-Address Sanitizer and Thread Sanitizer are mutually exclusive jobs. A clean
-ASan result does not substitute for TSan, and vice versa. A sanitizer crash,
-race report, leak attributable to first-party code, unexpected test
-termination, or suppression not reviewed into the repository fails the gate.
-
-### Address Sanitizer scope
-
-ASan covers all first-party Swift unit and contract tests, Docker HTTP parsing,
-stream framing, tar/archive validation, state migration, process management,
-and host-side adapter integration that can run under instrumentation.
-Malformed body, archive, label, and multiplexed-stream fuzz/regression corpora
-must run in this job.
-
-Prebuilt Apple services and guest processes cannot be assumed to be
-instrumented. Their live parity tests remain mandatory as a separate physical
-runner gate; the lack of instrumentation inside an upstream binary is not an
-ASan waiver for bridge code.
-
-### Thread Sanitizer scope
-
-TSan covers project and resource actor coordination, lease renewal, event
-broadcast/reconnect, exec cancellation, concurrent HTTP requests, SQLite
-access, process termination, and startup reconciliation. The concurrency
-stress suite must use deterministic barriers where possible and repeat
-contention scenarios sufficiently to expose scheduling-sensitive defects.
-
-Runtime tests that cannot execute reliably under TSan still run normally on
-the physical lane, while their provider-neutral coordinator and recovery
-logic must have an instrumented fake-runtime equivalent. Any race in
-first-party host code blocks release.
-
-## Coverage policy
-
-The minimum is **90% line coverage for aggregate first-party Swift source**.
-Coverage is measured from tests, not preview/example execution.
-
-Included:
-
-- every first-party Swift library and executable target;
-- error and recovery paths;
-- provider selection and no-split-brain enforcement;
-- Docker request/response and stream handling;
-- state schema, migration, reconciliation, and cancellation logic;
-- stock and optional-provider adapters through fakes or recorded contracts.
-
-Excluded:
-
-- generated Swift/protobuf sources;
-- vendored dependencies;
-- generated DocC and packaging output;
-- fixture source intended to compile inside a guest;
-- platform-unreachable defensive traps, but only with a documented
-  source-level exclusion reviewed in the same change.
-
-The coverage script should use `swift test --enable-code-coverage`, discover
-the produced profile with the pinned toolchain, and export LCOV plus an HTML
-report with `llvm-cov`. `make coverage-check` parses the machine-readable
-report and fails when aggregate line coverage is below 90%. New code may not
-reduce the release branch below the threshold. Generated-file filtering and
-every explicit exclusion are checked into source control.
-
-Coverage does not replace semantic parity. Code can meet 90% and still fail a
-Docker, Dev Containers, Compose, recovery, or VS Code release gate.
-
-## Local development flow
-
-Once the planned Make interface exists, a normal source change should use:
+Run the non-mutating prerequisite probe first:
 
 ```console
 make bootstrap
+```
+
+It requires `swift`, `python3`, `make`, and `git`, and reports missing optional
+quality tools. The full local quality aggregate also expects `actionlint`,
+`markdownlint`, `shellcheck`, `swiftformat`, and `swiftlint`.
+
+## Package structure
+
+The package targets enforce the provider boundary described in
+[DESIGN.md](DESIGN.md):
+
+```text
+CDevContainerVersion
+└── DevContainerModel
+    ├── DevContainerRuntimeSPI
+    │   ├── DevContainerState
+    │   │   └── DevContainerCore
+    │   │       └── DevContainerDockerAPI
+    │   ├── DevContainerAppleRuntime
+    │   └── DevContainerComposeProvider
+    └── DevContainerTestSupport
+```
+
+The three executable products are:
+
+| Product | Purpose |
+| --- | --- |
+| `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
+| `devcontainer-engine` | Serve the tested Docker Engine API subset on a user-owned Unix socket and translate it to stock Apple runtime operations |
+| `devcontainer-compose` | Docker Compose-compatible dispatcher that selects upstream Docker Compose or an explicitly configured external `container-compose` executable |
+
+Only `DevContainerAppleRuntime` links Apple runtime products. The Compose
+provider invokes an executable and has no `ComposeCore` or custom Apple-stack
+source dependency.
+
+`Package.resolved` is authoritative. CI copies it, resolves the package, and
+fails if resolution changes the copy. Use:
+
+```console
+make resolve
+git diff --exit-code -- Package.resolved
+```
+
+## Build commands
+
+```console
+make build
+make build-release
+```
+
+`make build` uses exact resolved dependencies. `make build-release` injects the
+current commit and the release build lane into the generated C build-info
+target. `DEVCONTAINER_VERSION` in `Makefile` is the only editable product
+version.
+
+Useful direct commands are:
+
+```console
+swift build --disable-automatic-resolution
+swift run --disable-automatic-resolution devcontainer version --format json
+swift run --disable-automatic-resolution devcontainer-engine --help
+```
+
+## Hosted-safe test workflow
+
+The normal development loop is:
+
+```console
+make format-check
+make lint
+make test
+make coverage-check
+make docs
+make parity-manifest
+```
+
+Or run the aggregate:
+
+```console
 make check
+```
+
+`make check` is deliberately safe for a workstation that is also running
+unrelated Apple containers. It uses in-memory or process fakes and temporary,
+user-owned sockets; it does not invoke a live `container system` operation.
+
+The Swift test harness writes complete output to `.build/swift-test.log`,
+retries only the identified SwiftPM helper signal-13 failure, and refuses that
+fallback during coverage. The current suite covers model, state, core,
+Docker-wire, Apple-adapter, Compose-provider, service-process, fault, and
+concurrency behavior.
+
+Host-process integration tests are opt-in:
+
+```console
+make test-integration
+```
+
+They start only repository-built processes with isolated temporary paths.
+
+## Coverage
+
+```console
+make coverage-check
+```
+
+The coverage pipeline:
+
+1. runs tests in `.build/coverage` with code coverage enabled;
+2. builds and exercises both CLI products as instrumented executables;
+3. merges every non-empty profile with `llvm-profdata`;
+4. exports LLVM JSON;
+5. writes `coverage.lcov` and Sonar generic `coverage.xml` from the same unique
+   executable-line map;
+6. fails below 90% aggregate first-party line coverage.
+
+CI additionally supplies `SWIFT_COVERAGE_BASE`, so the same command fails below
+90% coverage on executable lines changed since the pull-request merge base or
+the protected-main comparison commit:
+
+```console
+make coverage-check SWIFT_COVERAGE_BASE=origin/main
+```
+
+Uncovered changed lines are printed as paths and line numbers and become GitHub
+source annotations. Percentages are compared before display rounding.
+
+## Memory and concurrency checks
+
+The sanitizer interface intentionally matches `container-compose`:
+
+```console
 make test-asan
 make test-tsan
 ```
 
-Changes to runtime translation, provider selection, Compose labels, Docker
-wire behavior, state/recovery, or lifecycle semantics additionally require
-the relevant physical-runner parity fixtures before merge to a release
-branch.
+AddressSanitizer uses `.build/asan`; ThreadSanitizer uses `.build/tsan`. Both
+run the complete Swift suite without test parallelism and retain full logs in
+`.build/swift-asan.log` and `.build/swift-tsan.log`. A sanitizer diagnostic,
+test failure, empty run, or unaccepted helper termination fails the target.
 
-Local runtime work uses a dedicated Docker context or explicit `DOCKER_HOST`
-pointing to the user-owned compatibility socket. Scripts must not replace the
-user's default context, bind a TCP listener, overwrite an existing Docker
-Compose plug-in, or install Stephen's runtime fork implicitly.
+These checks cover first-party host code. They do not claim that an upstream
+Apple service or guest binary was sanitizer-instrumented.
 
-## Physical runner topology
+## CLI development
 
-Use three isolated profiles:
-
-1. **Docker oracle:** pinned real Docker Engine, Docker CLI, Docker Compose,
-   and official Dev Containers CLI.
-2. **Stock Apple:** unmodified tagged `apple/container` with its exact
-   `containerization` resolution; upstream Docker Compose talks to the
-   compatibility socket.
-3. **Apple Compose:** exact `container-compose` executable with its declared
-   Stephen fork commits; the provider is selected explicitly.
-
-Separate hosts are preferred for the two Apple profiles. If hardware is
-shared, jobs are serialized and a signed preparation step must prove:
-
-- no runtime or provider processes from the previous profile;
-- no project-labelled containers, networks, volumes, sockets, or leases;
-- exact binary and source fingerprints for the next profile;
-- a clean user state directory and bounded evidence directory;
-- enough free disk and memory for the complete fixture.
-
-Each job retains raw output before normalization, backend capability reports,
-runtime logs, state/reconciliation diagnostics, resource inventories before
-and after cleanup, sanitizer/coverage reports where applicable, and the exact
-commit under test. A failed cleanup quarantines the runner.
-
-## Parity and release sequence
-
-A trusted release candidate runs:
+Build first, then use an isolated configuration and state root:
 
 ```console
-make check
-make test-asan
-make test-tsan
+export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.json"
+export DEVCONTAINER_STATE="$PWD/.build/manual/state.sqlite"
+export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
+
+.build/debug/devcontainer configure \
+  --backend stock \
+  --compose-provider docker \
+  --socket "$DEVCONTAINER_SOCKET"
+.build/debug/devcontainer context --format shell
+.build/debug/devcontainer doctor --format json
+```
+
+The `context` command prints an explicit `DOCKER_HOST`; it does not change the
+user's default Docker context. `backend show`, `backend set`, and
+`backend reset` operate on a project-scoped durable claim. Reset fails while
+the state database still owns resources.
+
+To test dispatch without a real Compose installation, set
+`DEVCONTAINER_DOCKER_BIN` or `DEVCONTAINER_COMPOSE_BIN` to a deterministic
+fixture executable. The selected external command receives a scrubbed
+environment and an explicit compatibility socket.
+
+## Parity harness
+
+Manifest and harness tests are hosted-safe:
+
+```console
+make parity-manifest
+python3 -m unittest discover Tools/parity
+```
+
+Live lane targets are intentionally explicit:
+
+```console
 make parity-docker
 make parity-apple-stock
 make parity-apple-compose
 make parity
 make parity-vscode
-make package
-make release-check
 ```
 
-The three parity lanes use the same fixture revision and official
-`@devcontainers/cli` pin. Comparison may normalize only the fields allowed by
-[`COMPATIBILITY.md`](COMPATIBILITY.md) and the parity manifest. Required
-differences are never waived.
+Each lane requires its dedicated runner label, exact pin preflight, isolated
+application root, socket, state database, workspace, evidence directory, and
+resource prefix. Do not run a live lane on a host being used by another
+container project unless its owner has reserved the runner for that lane.
 
-Stable artifacts are eligible for publication only when:
+The aggregate stores raw and normalized observations under
+`.build/parity`. Comparison permits only the nondeterminism defined in the
+manifest. Cleanup proof is part of a passing result.
 
-- all parity fixtures are `implemented`;
-- both Apple provider lanes equal the real-Docker oracle within the claimed
-  surface;
-- VS Code end-to-end behavior passes;
-- Swift line coverage is at least 90%;
-- ASan and TSan are clean;
-- failure-injection and restart reconciliation pass;
-- package contents, signatures, notices, SBOM, checksums, and provenance
-  verify from a clean checkout;
-- the release validator accepts the exact evidence manifest.
+`make parity-release` additionally requires every release-scoped fixture and
+recording. It fails when required physical evidence is absent.
 
-Until those conditions are met, all compatibility remains pre-implementation
-or candidate status regardless of successful local experiments.
+## Documentation
+
+```console
+make docs
+make serve-docs
+```
+
+DocC output is written to `_site` with the configured GitHub Pages base path.
+The workflow builds from exact resolved dependencies, uploads the static site,
+and deploys it to
+[stephenlclarke.github.io/devcontainer](https://stephenlclarke.github.io/devcontainer/).
+
+## Packaging and Homebrew
+
+Create and verify an unsigned development archive without installing it:
+
+```console
+make package
+```
+
+The arm64 archive in `dist` contains all three executables, the
+`container-devcontainer` plug-in entry point, launchd template, Apache license,
+notices, build metadata, and SPDX 2.3 SBOM. The packaging script writes a
+SHA-256 checksum and machine-readable verification result.
+
+Render stable and Current formula candidates:
+
+```console
+make homebrew-formula
+make homebrew-formula-current DEVCONTAINER_PACKAGE_RUN_NUMBER=1
+```
+
+Stable packaging requires Developer ID signing and an accepted notarization
+record:
+
+```console
+make package-release
+```
+
+Run `package-release` only on a reserved trusted release host: its prerequisite
+is the complete live parity and sanitizer release gate. The command fails
+closed unless the required runtime evidence, release identity, and notary
+profile are available. It does not install or replace `container` or
+`container-compose`.
+
+## Version changes
+
+The version selectors are shared with the Compose project:
+
+```console
+make release-version VERSION_SELECTOR=--+
+make prepare-release VERSION_SELECTOR=--+
+```
+
+`--+`, `-+-`, and `+--` select patch, minor, and major increments. The first
+command previews; the second updates the authoritative Makefile value.
+
+## Cleaning
+
+```console
+make clean
+```
+
+Cleaning is implemented by `Tools/ci/safe-clean.py`, which accepts only the
+checked-in repository-owned build and report paths. It never removes a home
+directory, runtime application root, external checkout, or live container
+resource.
+
+## Upstream fixes
+
+If live evidence identifies a defect in
+`stephenlclarke/container`, `stephenlclarke/containerization`, or
+`stephenlclarke/container-compose`, fix it in the owning repository with a
+focused regression test and pull request. This repository then updates the
+reviewed pin and reruns every affected lane. Do not vendor or patch a copied
+upstream tree here.

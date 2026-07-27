@@ -5,8 +5,8 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite currently contains 75 Swift tests and records
-90.50% first-party line coverage. All 18 CLI fixtures pass against the real
+driver. The hosted-safe suite currently contains 92 Swift tests and records
+90.13% first-party line coverage. All 18 CLI fixtures pass against the real
 Docker oracle and Stephen's matched Apple Compose stack. The V01 real VS Code
 fixture passes against Docker; isolated stock-Apple and Apple-Compose VS Code
 recordings remain required before a stable compatibility claim.
@@ -73,7 +73,9 @@ Every advertised endpoint will have contract coverage for its success path and i
 
 ### Hosted integration tests
 
-Hosted integration tests will run the compiled service as a separate process with the real Unix socket, state store, logs, and cleanup paths, backed by a scripted fake Apple executor. They will exercise:
+Hosted integration tests run the compiled service as a separate process with
+the real Unix socket, state store, logs, and cleanup paths, backed by a scripted
+fake Apple executor. They exercise:
 
 - Docker CLI black-box commands against a named temporary context;
 - official `@devcontainers/cli` configuration discovery and request sequences where no nested runtime is required;
@@ -292,7 +294,11 @@ The implemented Swift coverage flow is:
 
 The coverage checker will fail closed on a missing test binary, missing profile, unrecognized source path, empty test execution, or source file absent from the report. It will print numerator, denominator, exclusions, merge base, and uncovered changed lines.
 
-The runner harness will use three coverage attempts and `SWIFT_TEST_ACCEPT_SIGNAL_13=0`. Accepting a `swiftpm-testing-helper` signal 13 after apparently passing output can leave incomplete profiles and report false 0% coverage, so it is never accepted during coverage collection.
+The runner harness uses two coverage attempts and
+`SWIFT_TEST_ACCEPT_SIGNAL_13=0`. Accepting a
+`swiftpm-testing-helper` signal 13 after apparently passing output can leave
+incomplete profiles and report false 0% coverage, so it is never accepted
+during coverage collection.
 
 Coverage is evidence of exercised lines, not behavioral parity. Tests will not be weakened, merged, or deleted solely to improve the percentage, and a 90% result cannot override a failed contract, sanitizer, parity, or E2E gate.
 
