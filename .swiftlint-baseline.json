@@ -142,7 +142,7 @@
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
         "line": 22
       },
-      "reason": "Struct body should span 900 lines or less excluding comments and whitespace: currently spans 1252 lines",
+      "reason": "Struct body should span 900 lines or less excluding comments and whitespace: currently spans 1289 lines",
       "ruleDescription": "Type bodies should not span too many lines",
       "ruleIdentifier": "type_body_length",
       "ruleName": "Type Body Length",
@@ -180,107 +180,17 @@
     }
   },
   {
-    "text": "    private func containerSpec(",
-    "violation": {
-      "location": {
-        "character": 13,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 841
-      },
-      "reason": "Function should have complexity 10 or less; currently complexity is 12",
-      "ruleDescription": "Complexity of function bodies should be limited.",
-      "ruleIdentifier": "cyclomatic_complexity",
-      "ruleName": "Cyclomatic Complexity",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    private func containerSpec(",
-    "violation": {
-      "location": {
-        "character": 13,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 841
-      },
-      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 123 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    private func containerInspect(",
-    "violation": {
-      "location": {
-        "character": 13,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1006
-      },
-      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 101 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    private func containerHealth(",
-    "violation": {
-      "location": {
-        "character": 13,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1113
-      },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 65 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
     "text": "}",
     "violation": {
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerDockerAPI/DockerRouter.swift",
-        "line": 1538
+        "line": 1584
       },
-      "reason": "File should contain 1200 lines or less: currently contains 1538",
+      "reason": "File should contain 1200 lines or less: currently contains 1584",
       "ruleDescription": "Files should not span too many lines.",
       "ruleIdentifier": "file_length",
       "ruleName": "File Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {",
-    "violation": {
-      "location": {
-        "character": 8,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerState/SQLiteStateStore.swift",
-        "line": 23
-      },
-      "reason": "Actor body should span 700 lines or less excluding comments and whitespace: currently spans 715 lines",
-      "ruleDescription": "Type bodies should not span too many lines",
-      "ruleIdentifier": "type_body_length",
-      "ruleName": "Type Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    private static func migrate(_ database: OpaquePointer) throws {",
-    "violation": {
-      "location": {
-        "character": 20,
-        "file": "file:///__DEVCONTAINER_ROOT__/Sources/DevContainerState/SQLiteStateStore.swift",
-        "line": 518
-      },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 99 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
       "severity": "error"
     }
   },
@@ -341,21 +251,6 @@
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "}",
-    "violation": {
-      "location": {
-        "character": 1,
-        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeTests.swift",
-        "line": 1081
-      },
-      "reason": "File should contain 1000 lines or less: currently contains 1081",
-      "ruleDescription": "Files should not span too many lines.",
-      "ruleIdentifier": "file_length",
-      "ruleName": "File Length",
       "severity": "error"
     }
   },
@@ -455,7 +350,7 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 765
+        "line": 746
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 95 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -470,7 +365,7 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 867
+        "line": 848
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines",
       "ruleDescription": "Function bodies should not span too many lines",
@@ -485,54 +380,9 @@
       "location": {
         "character": 1,
         "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 941
+        "line": 922
       },
       "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "func `health registry observes intervals retries start periods and resets`() async {",
-    "violation": {
-      "location": {
-        "character": 1,
-        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 1004
-      },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 99 lines",
-      "ruleDescription": "Function bodies should not span too many lines",
-      "ruleIdentifier": "function_body_length",
-      "ruleName": "Function Body Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "}",
-    "violation": {
-      "location": {
-        "character": 1,
-        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerDockerAPITests/DockerRouterTests.swift",
-        "line": 1123
-      },
-      "reason": "File should contain 1000 lines or less: currently contains 1123",
-      "ruleDescription": "Files should not span too many lines.",
-      "ruleIdentifier": "file_length",
-      "ruleName": "File Length",
-      "severity": "error"
-    }
-  },
-  {
-    "text": "    func `server exposes byte stream and hijacked Docker responses`() async throws {",
-    "violation": {
-      "location": {
-        "character": 5,
-        "file": "file:///__DEVCONTAINER_ROOT__/Tests/DevContainerServiceTests/EngineServerTests.swift",
-        "line": 28
-      },
-      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines",
       "ruleDescription": "Function bodies should not span too many lines",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",

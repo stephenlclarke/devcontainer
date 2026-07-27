@@ -16,6 +16,7 @@
 
 @testable import DevContainerDockerAPI
 import DevContainerModel
+import Foundation
 
 func awaitExecResizeStatus(
     router: DockerRouter,
@@ -37,4 +38,22 @@ func awaitExecResizeStatus(
         }
     }
     return status
+}
+
+func bytes(_ response: DockerHTTPResponse) throws -> Data {
+    guard case let .bytes(data) = response.body else {
+        throw DevContainerError(.invalidRequest, message: "expected byte response")
+    }
+    return data
+}
+
+func streamBytes(_ response: DockerHTTPResponse) async throws -> Data {
+    guard case let .stream(stream) = response.body else {
+        throw DevContainerError(.invalidRequest, message: "expected stream response")
+    }
+    var result = Data()
+    for try await data in stream {
+        result.append(data)
+    }
+    return result
 }

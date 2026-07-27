@@ -624,89 +624,6 @@ struct AppleContainerRuntimeTests {
         #expect(actions == [.create, .start, .stop, .destroy])
     }
 
-    @Test
-    func `stream failures and invalid requests surface typed errors`() async throws {
-        let fixture = try FakeAppleCLI()
-        let runtime = try fixture.runtime()
-        let context = RuntimeRequestContext()
-
-        try fixture.setState("stopped")
-        await #expect(throws: DevContainerError.self) {
-            _ = try await runtime.createExec(
-                containerID: "fixture",
-                spec: ExecSpec(command: ["true"]),
-                context: context
-            )
-        }
-
-        try fixture.setMode("failure")
-        let pull = try await runtime.pullImage(reference: "fixture", context: context)
-        await #expect(throws: DevContainerError.self) {
-            for try await _ in pull {}
-        }
-        await #expect(throws: DevContainerError.self) {
-            _ = try await runtime.buildImage(
-                request: ImageBuildRequest(context: Data("not-a-tar".utf8)),
-                context: context
-            )
-        }
-        await #expect(throws: DevContainerError.self) {
-            _ = try await runtime.descriptor(context: context)
-        }
-    }
-
-    @Test
-    func `process session supports input closure cancellation and error output`() async throws {
-        let fixture = try FakeAppleCLI()
-        let session = try AppleProcessSession(
-            executable: fixture.executable,
-            arguments: ["echo-session"],
-            environment: [:],
-            input: Data("input".utf8)
-        )
-        var standardOutput = Data()
-        var standardError = Data()
-        for try await frame in session.frames {
-            switch frame.channel {
-            case .standardOutput:
-                standardOutput.append(frame.data)
-            case .standardError:
-                standardError.append(frame.data)
-            case .standardInput:
-                break
-            }
-        }
-        #expect(try await session.wait() == 0)
-        #expect(String(data: standardOutput, encoding: .utf8) == "input")
-        #expect(String(data: standardError, encoding: .utf8) == "session-error")
-        #expect(throws: DevContainerError.self) {
-            try session.write(Data())
-        }
-        session.cancel()
-
-        let interactive = try AppleProcessSession(
-            executable: fixture.executable,
-            arguments: ["cat-session"],
-            environment: [:]
-        )
-        try interactive.write(Data("interactive".utf8))
-        try interactive.closeStandardInput()
-        var echoed = Data()
-        for try await frame in interactive.frames where frame.channel == .standardOutput {
-            echoed.append(frame.data)
-        }
-        #expect(try await interactive.wait() == 0)
-        #expect(String(data: echoed, encoding: .utf8) == "interactive")
-
-        let cancellable = try AppleProcessSession(
-            executable: fixture.executable,
-            arguments: ["sleep-session"],
-            environment: [:]
-        )
-        cancellable.cancel()
-        #expect(try await cancellable.wait() != 0)
-    }
-
     private func waitForExec(
         _ runtime: AppleContainerRuntime,
         id: ExecID,
@@ -751,7 +668,7 @@ struct AppleContainerRuntimeTests {
     }
 }
 
-private struct FakeAppleCLI {
+struct FakeAppleCLI {
     let root: URL
     let executable: URL
     let logURL: URL

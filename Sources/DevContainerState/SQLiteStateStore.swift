@@ -490,7 +490,9 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
             try stepDone(statement)
         }
     }
+}
 
+extension SQLiteStateStore {
     private static func prepareParentDirectory(for path: URL) throws {
         let directory = path.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -518,75 +520,7 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
     private static func migrate(_ database: OpaquePointer) throws {
         try execute(database, sql: "BEGIN IMMEDIATE")
         do {
-            try execute(
-                database,
-                sql: """
-                CREATE TABLE IF NOT EXISTS schema_meta (
-                    version INTEGER NOT NULL,
-                    bridge_version TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS projects (
-                    project_key TEXT PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    compose_project TEXT,
-                    project_directory TEXT,
-                    config_hash TEXT,
-                    desired_generation INTEGER NOT NULL,
-                    desired_state TEXT NOT NULL,
-                    reconciliation_state TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS resources (
-                    runtime_kind TEXT NOT NULL,
-                    runtime_id TEXT NOT NULL,
-                    docker_id TEXT NOT NULL UNIQUE,
-                    project_key TEXT NOT NULL REFERENCES projects(project_key) ON DELETE RESTRICT,
-                    logical_name TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    spec_hash TEXT NOT NULL,
-                    generation INTEGER NOT NULL,
-                    observed_state TEXT NOT NULL,
-                    labels_hash TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    PRIMARY KEY(runtime_kind, runtime_id),
-                    UNIQUE(project_key, runtime_kind, logical_name)
-                );
-                CREATE TABLE IF NOT EXISTS operations (
-                    operation_id TEXT PRIMARY KEY,
-                    project_key TEXT NOT NULL REFERENCES projects(project_key) ON DELETE RESTRICT,
-                    resource_key TEXT,
-                    request_kind TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    phase TEXT NOT NULL,
-                    retry_class TEXT NOT NULL,
-                    error_code TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS events (
-                    seq INTEGER PRIMARY KEY,
-                    time REAL NOT NULL,
-                    resource TEXT NOT NULL,
-                    resource_type TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    attributes_json BLOB NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS runtime_containers (
-                    runtime_id TEXT PRIMARY KEY,
-                    docker_id TEXT NOT NULL UNIQUE,
-                    specification_json BLOB NOT NULL,
-                    created_at REAL NOT NULL,
-                    started_at REAL
-                );
-                CREATE INDEX IF NOT EXISTS resources_project_idx
-                    ON resources(project_key);
-                CREATE INDEX IF NOT EXISTS operations_phase_idx
-                    ON operations(phase, created_at);
-                """
-            )
+            try execute(database, sql: schemaSQL)
             let count = try scalarInt64(database, "SELECT COUNT(*) FROM schema_meta")
             if count == 0 {
                 let info = BuildInfo.current
@@ -616,6 +550,73 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
             throw error
         }
     }
+
+    private static let schemaSQL = """
+    CREATE TABLE IF NOT EXISTS schema_meta (
+        version INTEGER NOT NULL,
+        bridge_version TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+        project_key TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        compose_project TEXT,
+        project_directory TEXT,
+        config_hash TEXT,
+        desired_generation INTEGER NOT NULL,
+        desired_state TEXT NOT NULL,
+        reconciliation_state TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS resources (
+        runtime_kind TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        docker_id TEXT NOT NULL UNIQUE,
+        project_key TEXT NOT NULL REFERENCES projects(project_key) ON DELETE RESTRICT,
+        logical_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        spec_hash TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        observed_state TEXT NOT NULL,
+        labels_hash TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        PRIMARY KEY(runtime_kind, runtime_id),
+        UNIQUE(project_key, runtime_kind, logical_name)
+    );
+    CREATE TABLE IF NOT EXISTS operations (
+        operation_id TEXT PRIMARY KEY,
+        project_key TEXT NOT NULL REFERENCES projects(project_key) ON DELETE RESTRICT,
+        resource_key TEXT,
+        request_kind TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        retry_class TEXT NOT NULL,
+        error_code TEXT,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS events (
+        seq INTEGER PRIMARY KEY,
+        time REAL NOT NULL,
+        resource TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        action TEXT NOT NULL,
+        attributes_json BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS runtime_containers (
+        runtime_id TEXT PRIMARY KEY,
+        docker_id TEXT NOT NULL UNIQUE,
+        specification_json BLOB NOT NULL,
+        created_at REAL NOT NULL,
+        started_at REAL
+    );
+    CREATE INDEX IF NOT EXISTS resources_project_idx
+        ON resources(project_key);
+    CREATE INDEX IF NOT EXISTS operations_phase_idx
+        ON operations(phase, created_at);
+    """
 
     private func transaction<T>(_ body: () throws -> T) throws -> T {
         try Self.execute(database, sql: "BEGIN IMMEDIATE")

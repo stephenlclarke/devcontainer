@@ -40,53 +40,7 @@ struct EngineServerTests {
         let server = fixture.server(runtime: runtime)
         try await server.start()
         do {
-            let ping = try fixture.curl("/_ping")
-            #expect(ping.status == 200)
-            #expect(ping.body == "OK")
-
-            let version = try fixture.curl("/v1.53/version")
-            #expect(version.status == 200)
-            #expect(version.body.contains("\"ApiVersion\":\"1.53\""))
-
-            let create = try fixture.curl(
-                "/v1.53/containers/create?name=service-fixture",
-                method: "POST",
-                body: """
-                {"Image":"alpine:3.22","Cmd":["printf","hello"]}
-                """
-            )
-            #expect(create.status == 201)
-            let created = try #require(
-                JSONSerialization.jsonObject(
-                    with: Data(create.body.utf8)
-                ) as? [String: Any]
-            )
-            let identifier = try #require(created["Id"] as? String)
-
-            let start = try fixture.curl(
-                "/v1.53/containers/\(identifier)/start",
-                method: "POST"
-            )
-            #expect(start.status == 204)
-
-            let logs = try fixture.curl(
-                "/v1.53/containers/\(identifier)/logs?stdout=1&stderr=1"
-            )
-            #expect(logs.status == 200)
-
-            let events = try fixture.curl("/v1.53/events")
-            #expect(events.status == 200)
-            #expect(events.body.contains("\"Action\":\"create\""))
-
-            let attach = try fixture.curl(
-                "/v1.53/containers/\(identifier)/attach?stream=1&stdout=1&stderr=1",
-                method: "POST"
-            )
-            #expect(attach.status == 200)
-
-            let unsupported = try fixture.curl("/_ping", method: "OPTIONS")
-            #expect(unsupported.status == 405)
-            #expect(unsupported.body.contains("unsupported HTTP method"))
+            try exerciseServer(fixture)
         } catch {
             try? await server.shutdown()
             throw error
@@ -94,6 +48,50 @@ struct EngineServerTests {
         try await server.shutdown()
 
         #expect(!FileManager.default.fileExists(atPath: fixture.socketPath))
+    }
+
+    private func exerciseServer(_ fixture: ServerFixture) throws {
+        let ping = try fixture.curl("/_ping")
+        #expect(ping.status == 200)
+        #expect(ping.body == "OK")
+
+        let version = try fixture.curl("/v1.53/version")
+        #expect(version.status == 200)
+        #expect(version.body.contains("\"ApiVersion\":\"1.53\""))
+
+        let create = try fixture.curl(
+            "/v1.53/containers/create?name=service-fixture",
+            method: "POST",
+            body: """
+            {"Image":"alpine:3.22","Cmd":["printf","hello"]}
+            """
+        )
+        #expect(create.status == 201)
+        let created = try #require(
+            JSONSerialization.jsonObject(
+                with: Data(create.body.utf8)
+            ) as? [String: Any]
+        )
+        let identifier = try #require(created["Id"] as? String)
+
+        #expect(try fixture.curl(
+            "/v1.53/containers/\(identifier)/start",
+            method: "POST"
+        ).status == 204)
+        #expect(try fixture.curl(
+            "/v1.53/containers/\(identifier)/logs?stdout=1&stderr=1"
+        ).status == 200)
+        let events = try fixture.curl("/v1.53/events")
+        #expect(events.status == 200)
+        #expect(events.body.contains("\"Action\":\"create\""))
+        #expect(try fixture.curl(
+            "/v1.53/containers/\(identifier)/attach?stream=1&stdout=1&stderr=1",
+            method: "POST"
+        ).status == 200)
+
+        let unsupported = try fixture.curl("/_ping", method: "OPTIONS")
+        #expect(unsupported.status == 405)
+        #expect(unsupported.body.contains("unsupported HTTP method"))
     }
 
     @Test

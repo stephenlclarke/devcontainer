@@ -842,101 +842,7 @@ public struct DockerRouter: Sendable {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        var mounts: [RuntimeMount] = []
-        for bind in request.hostConfig?.binds ?? [] {
-            let parts = bind.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-            guard parts.count >= 2 else {
-                throw DevContainerError(.invalidRequest, message: "invalid bind mount \(bind)")
-            }
-            mounts.append(
-                RuntimeMount(
-                    type: Self.bindSourceIsHostPath(String(parts[0])) ? .bind : .volume,
-                    source: String(parts[0]),
-                    destination: String(parts[1]),
-                    readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro")
-                )
-            )
-        }
-        let structuredMounts = (request.hostConfig?.mounts ?? []) + (request.mounts ?? [])
-        for mount in structuredMounts {
-            guard let type = RuntimeMountType(rawValue: mount.type) else {
-                throw DevContainerError(
-                    .unsupportedCapability,
-                    message: "unsupported mount type \(mount.type)"
-                )
-            }
-            let source: String
-            let anonymous = type == .volume && (mount.source?.isEmpty ?? true)
-            if anonymous {
-                source = Self.anonymousVolumeName()
-            } else {
-                source = mount.source ?? ""
-            }
-            mounts.append(
-                RuntimeMount(
-                    type: type,
-                    source: source,
-                    destination: mount.target,
-                    readOnly: mount.readOnly ?? false,
-                    anonymous: anonymous
-                )
-            )
-        }
-        let mountedDestinations = Set(mounts.map(\.destination))
-        if let declaredVolumes = request.volumes {
-            for destination in declaredVolumes.keys.sorted()
-                where !mountedDestinations.contains(destination)
-            {
-                mounts.append(
-                    RuntimeMount(
-                        type: .volume,
-                        source: Self.anonymousVolumeName(),
-                        destination: destination,
-                        anonymous: true
-                    )
-                )
-            }
-        }
-
-        var ports: [PortBinding] = []
-        for (containerKey, hostBindings) in request.hostConfig?.portBindings ?? [:] {
-            let keyParts = containerKey.split(separator: "/", maxSplits: 1)
-            guard let containerPort = UInt16(keyParts[0]) else {
-                throw DevContainerError(.invalidRequest, message: "invalid port \(containerKey)")
-            }
-            let protocolName = keyParts.count == 2 ? String(keyParts[1]) : "tcp"
-            if hostBindings.isEmpty {
-                ports.append(PortBinding(containerPort: containerPort, protocolName: protocolName))
-            } else {
-                for hostBinding in hostBindings {
-                    let hostPort = hostBinding.hostPort.flatMap(UInt16.init)
-                    ports.append(
-                        PortBinding(
-                            containerPort: containerPort,
-                            hostPort: hostPort,
-                            protocolName: protocolName,
-                            hostAddress: hostBinding.hostIP.flatMap { $0.isEmpty ? nil : $0 } ?? "127.0.0.1"
-                        )
-                    )
-                }
-            }
-        }
-        var networks = (request.networkingConfig?.endpointsConfig ?? [:]).map {
-            NetworkAttachment(
-                name: $0.key,
-                aliases: ($0.value.aliases ?? []).sorted()
-            )
-        }
-        if networks.isEmpty,
-           let mode = request.hostConfig?.networkMode,
-           !mode.isEmpty,
-           !["bridge", "default"].contains(mode)
-        {
-            networks.append(NetworkAttachment(name: mode))
-        }
-        networks.sort { $0.name < $1.name }
-
-        return try ContainerSpec(
+        try ContainerSpec(
             name: requestedName.isEmpty ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
             command: request.cmd ?? [],
@@ -946,9 +852,9 @@ public struct DockerRouter: Sendable {
             workingDirectory: request.workingDir,
             user: request.user,
             hostname: request.hostname,
-            mounts: mounts,
-            ports: ports,
-            networks: networks,
+            mounts: containerMounts(request),
+            ports: portBindings(request.hostConfig?.portBindings ?? [:]),
+            networks: networkAttachments(request),
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
 
@@ -968,6 +874,107 @@ public struct DockerRouter: Sendable {
                 )
             }
         )
+    }
+
+    private func containerMounts(
+        _ request: DockerCreateContainerRequest
+    ) throws -> [RuntimeMount] {
+        var mounts = try bindMounts(request.hostConfig?.binds ?? [])
+        mounts += try structuredMounts(
+            (request.hostConfig?.mounts ?? []) + (request.mounts ?? [])
+        )
+        let destinations = Set(mounts.map(\.destination))
+        for destination in (request.volumes ?? [:]).keys.sorted()
+            where !destinations.contains(destination)
+        {
+            mounts.append(
+                RuntimeMount(
+                    type: .volume,
+                    source: Self.anonymousVolumeName(),
+                    destination: destination,
+                    anonymous: true
+                )
+            )
+        }
+        return mounts
+    }
+
+    private func bindMounts(_ values: [String]) throws -> [RuntimeMount] {
+        try values.map { bind in
+            let parts = bind.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count >= 2 else {
+                throw DevContainerError(.invalidRequest, message: "invalid bind mount \(bind)")
+            }
+            return RuntimeMount(
+                type: Self.bindSourceIsHostPath(String(parts[0])) ? .bind : .volume,
+                source: String(parts[0]),
+                destination: String(parts[1]),
+                readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro")
+            )
+        }
+    }
+
+    private func structuredMounts(
+        _ values: [DockerMountRequest]
+    ) throws -> [RuntimeMount] {
+        try values.map { mount in
+            guard let type = RuntimeMountType(rawValue: mount.type) else {
+                throw DevContainerError(
+                    .unsupportedCapability,
+                    message: "unsupported mount type \(mount.type)"
+                )
+            }
+            let anonymous = type == .volume && (mount.source?.isEmpty ?? true)
+            return RuntimeMount(
+                type: type,
+                source: anonymous ? Self.anonymousVolumeName() : mount.source ?? "",
+                destination: mount.target,
+                readOnly: mount.readOnly ?? false,
+                anonymous: anonymous
+            )
+        }
+    }
+
+    private func portBindings(
+        _ values: [String: [DockerPortBindingRequest]]
+    ) throws -> [PortBinding] {
+        try values.flatMap { containerKey, hostBindings in
+            let keyParts = containerKey.split(separator: "/", maxSplits: 1)
+            guard let containerPort = UInt16(keyParts[0]) else {
+                throw DevContainerError(.invalidRequest, message: "invalid port \(containerKey)")
+            }
+            let protocolName = keyParts.count == 2 ? String(keyParts[1]) : "tcp"
+            if hostBindings.isEmpty {
+                return [PortBinding(containerPort: containerPort, protocolName: protocolName)]
+            }
+            return hostBindings.map { binding in
+                PortBinding(
+                    containerPort: containerPort,
+                    hostPort: binding.hostPort.flatMap(UInt16.init),
+                    protocolName: protocolName,
+                    hostAddress: binding.hostIP.flatMap { $0.isEmpty ? nil : $0 } ?? "127.0.0.1"
+                )
+            }
+        }
+    }
+
+    private func networkAttachments(
+        _ request: DockerCreateContainerRequest
+    ) -> [NetworkAttachment] {
+        var networks = (request.networkingConfig?.endpointsConfig ?? [:]).map {
+            NetworkAttachment(
+                name: $0.key,
+                aliases: ($0.value.aliases ?? []).sorted()
+            )
+        }
+        if networks.isEmpty,
+           let mode = request.hostConfig?.networkMode,
+           !mode.isEmpty,
+           !["bridge", "default"].contains(mode)
+        {
+            networks.append(NetworkAttachment(name: mode))
+        }
+        return networks.sorted { $0.name < $1.name }
     }
 
     private func environmentDictionary(_ values: [String]) -> [String: String] {
@@ -1010,12 +1017,76 @@ public struct DockerRouter: Sendable {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let running = snapshot.state == .running
-        let env = snapshot.spec.environment.sorted { $0.key < $1.key }.map {
-            "\($0.key)=\($0.value)"
+        let env = environmentList(snapshot.spec.environment)
+        let volumeEntries = volumeEntries(snapshot.spec.mounts)
+        let networkSettings = networkSettings(snapshot)
+        let (executable, args) = containerCommand(snapshot.spec)
+        return try DockerContainerInspect(
+            id: snapshot.dockerID.rawValue,
+            created: formatter.string(from: snapshot.createdAt),
+            path: executable,
+            args: args,
+            name: "/\(snapshot.spec.name)",
+            state: DockerContainerState(
+                status: snapshot.state.rawValue,
+                running: running,
+                pid: running ? 1 : 0,
+                exitCode: snapshot.exitCode ?? 0,
+                startedAt: snapshot.startedAt.map(formatter.string) ?? "",
+                finishedAt: snapshot.finishedAt.map(formatter.string) ?? "",
+                health: health
+            ),
+            image: snapshot.spec.image,
+            config: DockerContainerConfig(
+                hostname: snapshot.spec.hostname ?? snapshot.spec.name,
+                user: snapshot.spec.user ?? "",
+                attachStdin: snapshot.spec.openStandardInput,
+                attachStdout: true,
+                attachStderr: true,
+                tty: snapshot.spec.terminal,
+                openStdin: snapshot.spec.openStandardInput,
+                env: env,
+                cmd: snapshot.spec.command,
+                image: snapshot.spec.image,
+                volumes: volumeEntries,
+                workingDir: snapshot.spec.workingDirectory ?? "",
+                entrypoint: snapshot.spec.entrypoint,
+                labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
+                healthcheck: dockerHealthcheck(snapshot.spec.healthcheck)
+            ),
+            hostConfig: DockerInspectHostConfig(
+                binds: snapshot.spec.mounts.filter { $0.type == .bind }.map {
+                    "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
+                }
+            ),
+            mounts: snapshot.spec.mounts.map(mountSummary),
+            networkSettings: networkSettings
+        )
+    }
+
+    private func dockerHealthcheck(
+        _ value: ContainerHealthcheck?
+    ) -> DockerHealthcheck? {
+        value.map {
+            DockerHealthcheck(
+                test: $0.test,
+                interval: $0.intervalNanoseconds,
+                timeout: $0.timeoutNanoseconds,
+                retries: $0.retries,
+                startPeriod: $0.startPeriodNanoseconds
+            )
         }
-        let volumeEntries = snapshot.spec.mounts.reduce(into: [String: [String: String]]()) {
-            $0[$1.destination] = [:]
-        }
+    }
+
+    private func volumeEntries(
+        _ mounts: [RuntimeMount]
+    ) -> [String: [String: String]] {
+        mounts.reduce(into: [:]) { $0[$1.destination] = [:] }
+    }
+
+    private func networkSettings(
+        _ snapshot: ContainerSnapshot
+    ) -> DockerNetworkSettings {
         let ports: [String: [DockerNetworkPortBinding]?] = Dictionary(
             grouping: snapshot.spec.ports,
             by: { "\($0.containerPort)/\($0.protocolName)" }
@@ -1053,61 +1124,21 @@ public struct DockerRouter: Sendable {
                 )
             }
         )
-        let executable = snapshot.spec.entrypoint.first ?? snapshot.spec.command.first ?? ""
-        let args: [String] = if snapshot.spec.entrypoint.isEmpty {
-            Array(snapshot.spec.command.dropFirst())
+        return DockerNetworkSettings(ports: ports, networks: networks)
+    }
+
+    private func containerCommand(_ spec: ContainerSpec) -> (String, [String]) {
+        let executable = spec.entrypoint.first ?? spec.command.first ?? ""
+        let args: [String] = if spec.entrypoint.isEmpty {
+            Array(spec.command.dropFirst())
         } else {
-            Array(snapshot.spec.entrypoint.dropFirst()) + snapshot.spec.command
+            Array(spec.entrypoint.dropFirst()) + spec.command
         }
-        return try DockerContainerInspect(
-            id: snapshot.dockerID.rawValue,
-            created: formatter.string(from: snapshot.createdAt),
-            path: executable,
-            args: args,
-            name: "/\(snapshot.spec.name)",
-            state: DockerContainerState(
-                status: snapshot.state.rawValue,
-                running: running,
-                pid: running ? 1 : 0,
-                exitCode: snapshot.exitCode ?? 0,
-                startedAt: snapshot.startedAt.map(formatter.string) ?? "",
-                finishedAt: snapshot.finishedAt.map(formatter.string) ?? "",
-                health: health
-            ),
-            image: snapshot.spec.image,
-            config: DockerContainerConfig(
-                hostname: snapshot.spec.hostname ?? snapshot.spec.name,
-                user: snapshot.spec.user ?? "",
-                attachStdin: snapshot.spec.openStandardInput,
-                attachStdout: true,
-                attachStderr: true,
-                tty: snapshot.spec.terminal,
-                openStdin: snapshot.spec.openStandardInput,
-                env: env,
-                cmd: snapshot.spec.command,
-                image: snapshot.spec.image,
-                volumes: volumeEntries,
-                workingDir: snapshot.spec.workingDirectory ?? "",
-                entrypoint: snapshot.spec.entrypoint,
-                labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
-                healthcheck: snapshot.spec.healthcheck.map {
-                    DockerHealthcheck(
-                        test: $0.test,
-                        interval: $0.intervalNanoseconds,
-                        timeout: $0.timeoutNanoseconds,
-                        retries: $0.retries,
-                        startPeriod: $0.startPeriodNanoseconds
-                    )
-                }
-            ),
-            hostConfig: DockerInspectHostConfig(
-                binds: snapshot.spec.mounts.filter { $0.type == .bind }.map {
-                    "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
-                }
-            ),
-            mounts: snapshot.spec.mounts.map(mountSummary),
-            networkSettings: DockerNetworkSettings(ports: ports, networks: networks)
-        )
+        return (executable, args)
+    }
+
+    private func environmentList(_ values: [String: String]) -> [String] {
+        values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
     }
 
     private func containerHealth(
@@ -1134,23 +1165,48 @@ public struct DockerRouter: Sendable {
             return value
         }
 
-        let command: [String] = switch healthcheck.test.first {
+        let exitCode = await executeHealthCheck(
+            containerID: identifier,
+            command: healthCommand(healthcheck.test),
+            timeoutNanoseconds: healthcheck.timeoutNanoseconds,
+            context: context
+        )
+        return await healthChecks.record(
+            id: identifier,
+            startedAt: snapshot.startedAt,
+            healthcheck: healthcheck,
+            observation: ContainerHealthObservation(
+                exitCode: exitCode,
+                started: started,
+                ended: Date()
+            )
+        )
+    }
+
+    private func healthCommand(_ test: [String]) -> [String] {
+        switch test.first {
         case "CMD":
-            Array(healthcheck.test.dropFirst())
+            Array(test.dropFirst())
         case "CMD-SHELL":
             [
                 "/bin/sh",
                 "-c",
-                healthcheck.test.dropFirst().joined(separator: " ")
+                test.dropFirst().joined(separator: " ")
             ]
         default:
-            healthcheck.test
+            test
         }
+    }
 
-        let exitCode: Int32
+    private func executeHealthCheck(
+        containerID: String,
+        command: [String],
+        timeoutNanoseconds: Int64,
+        context: RuntimeRequestContext
+    ) async -> Int32 {
         do {
             let exec = try await runtime.createExec(
-                containerID: identifier,
+                containerID: containerID,
                 spec: ExecSpec(
                     command: command,
                     attachStandardInput: false,
@@ -1164,23 +1220,13 @@ public struct DockerRouter: Sendable {
                 context: context
             )
             try await session.closeStandardInput()
-            exitCode = try await waitForHealthSession(
+            return try await waitForHealthSession(
                 session,
-                timeoutNanoseconds: healthcheck.timeoutNanoseconds
+                timeoutNanoseconds: timeoutNanoseconds
             )
         } catch {
-            exitCode = -1
+            return -1
         }
-        return await healthChecks.record(
-            id: identifier,
-            startedAt: snapshot.startedAt,
-            healthcheck: healthcheck,
-            observation: ContainerHealthObservation(
-                exitCode: exitCode,
-                started: started,
-                ended: Date()
-            )
-        )
     }
 
     private func waitForHealthSession(
