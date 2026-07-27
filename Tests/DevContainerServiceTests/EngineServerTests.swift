@@ -45,6 +45,10 @@ struct EngineServerTests {
             try? await server.shutdown()
             throw error
         }
+        for _ in 0 ..< 100 where server.activeConnectionCount != 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(server.activeConnectionCount == 0)
         try await server.shutdown()
 
         #expect(!FileManager.default.fileExists(atPath: fixture.socketPath))

@@ -461,6 +461,50 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         }
     }
 
+    public func listContainerMetadata() throws -> [RuntimeContainerMetadata] {
+        let sql = """
+        SELECT runtime_id, docker_id, specification_json, created_at, started_at
+        FROM runtime_containers
+        ORDER BY runtime_id
+        """
+        return try withStatement(sql) { statement in
+            var values: [RuntimeContainerMetadata] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let specification = blob(statement, 2) else {
+                    throw DevContainerError(
+                        .stateCorruption,
+                        message: "runtime container specification is missing"
+                    )
+                }
+                try values.append(
+                    RuntimeContainerMetadata(
+                        runtimeID: RuntimeID(rawValue: text(statement, 0)),
+                        dockerID: DockerID(rawValue: text(statement, 1)),
+                        spec: JSONDecoder().decode(
+                            ContainerSpec.self,
+                            from: specification
+                        ),
+                        createdAt: Date(
+                            timeIntervalSinceReferenceDate: sqlite3_column_double(
+                                statement,
+                                3
+                            )
+                        ),
+                        startedAt: sqlite3_column_type(statement, 4) == SQLITE_NULL
+                            ? nil
+                            : Date(
+                                timeIntervalSinceReferenceDate: sqlite3_column_double(
+                                    statement,
+                                    4
+                                )
+                            )
+                    )
+                )
+            }
+            return values
+        }
+    }
+
     public func markContainerStarted(id: String, at date: Date) throws {
         let sql = """
         UPDATE runtime_containers SET started_at = ?

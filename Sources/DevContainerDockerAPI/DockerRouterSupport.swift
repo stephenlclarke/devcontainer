@@ -20,6 +20,18 @@ import DevContainerRuntimeSPI
 import Foundation
 
 extension DockerRouter {
+    func labelsMatch(
+        _ actualLabels: [String: String],
+        expected expectedLabels: [String: String]
+    ) -> Bool {
+        expectedLabels.allSatisfy { key, expected in
+            guard let actual = actualLabels[key] else {
+                return false
+            }
+            return expected.isEmpty || actual == expected
+        }
+    }
+
     func container(
         _ snapshot: ContainerSnapshot,
         matches expectedLabels: [String: String]
@@ -223,13 +235,15 @@ extension DockerRouter {
             let task = Task {
                 do {
                     for try await data in stream {
-                        let text = String(data: data, encoding: .utf8)
-                            ?? "non-UTF-8 progress output"
-                        let object: [String: String] = if let status {
-                            ["status": status, "progress": text]
-                        } else {
-                            ["stream": text]
-                        }
+                        let text =
+                            String(data: data, encoding: .utf8)
+                                ?? "non-UTF-8 progress output"
+                        let object: [String: String] =
+                            if let status {
+                                ["status": status, "progress": text]
+                            } else {
+                                ["stream": text]
+                            }
                         var encoded = try DockerJSON.encoder.encode(object)
                         encoded.append(0x0A)
                         continuation.yield(encoded)
@@ -281,7 +295,8 @@ extension DockerRouter {
         requestedName: String
     ) throws -> ContainerSpec {
         try ContainerSpec(
-            name: requestedName.isEmpty ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
+            name: requestedName.isEmpty
+                ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
             command: request.cmd ?? [],
             entrypoint: request.entrypoint?.values ?? [],
@@ -393,11 +408,12 @@ extension DockerRouter {
                 continue
             }
             for binding in hostBindings {
-                let hostAddress: String = if let requested = binding.hostIP, !requested.isEmpty {
-                    requested
-                } else {
-                    "127.0.0.1"
-                }
+                let hostAddress: String =
+                    if let requested = binding.hostIP, !requested.isEmpty {
+                        requested
+                    } else {
+                        "127.0.0.1"
+                    }
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
@@ -582,11 +598,12 @@ extension DockerRouter {
 
     func containerCommand(_ spec: ContainerSpec) -> (String, [String]) {
         let executable = spec.entrypoint.first ?? spec.command.first ?? ""
-        let args: [String] = if spec.entrypoint.isEmpty {
-            Array(spec.command.dropFirst())
-        } else {
-            Array(spec.entrypoint.dropFirst()) + spec.command
-        }
+        let args: [String] =
+            if spec.entrypoint.isEmpty {
+                Array(spec.command.dropFirst())
+            } else {
+                Array(spec.entrypoint.dropFirst()) + spec.command
+            }
         return (executable, args)
     }
 
@@ -835,5 +852,56 @@ extension DockerRouter {
 
     static func bindSourceIsHostPath(_ source: String) -> Bool {
         source.hasPrefix("/")
+    }
+}
+
+struct DockerRoute {
+    let request: DockerHTTPRequest
+    let target: ParsedTarget
+    let path: String
+    let segments: [String]
+    let context: RuntimeRequestContext
+}
+
+struct ParsedTarget {
+    let path: String
+    let query: [String: [String]]
+
+    init(_ target: String) throws {
+        guard
+            let components = URLComponents(string: target),
+            !components.path.isEmpty
+        else {
+            throw DevContainerError(.invalidRequest, message: "invalid request target")
+        }
+        path = components.percentEncodedPath
+        query = Dictionary(grouping: components.queryItems ?? [], by: \.name)
+            .mapValues { $0.compactMap(\.value) }
+    }
+
+    func first(_ name: String) -> String? {
+        query[name]?.first
+    }
+}
+
+extension AsyncThrowingStream where Element == RuntimeIOFrame, Failure == any Error {
+    func mapData(
+        _ transform: @escaping @Sendable (RuntimeIOFrame) -> Data
+    ) -> AsyncThrowingStream<Data, any Error> {
+        AsyncThrowingStream<Data, any Error> { continuation in
+            let task = Task {
+                do {
+                    for try await element in self {
+                        continuation.yield(transform(element))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }

@@ -37,16 +37,22 @@ extension AppleContainerRuntimeTests {
         #expect(container.startedAt != nil)
         #expect(container.spec.user == "501:20")
         #expect(container.spec.mounts.map(\.type) == [.bind, .volume, .tmpfs])
-        #expect(container.spec.ports == [
-            PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0")
-        ])
-        #expect(container.spec.networks == [
-            NetworkAttachment(name: "bridge", aliases: ["workspace"])
-        ])
-        #expect(container.spec.securityOptions == [
-            "no-new-privileges=true",
-            "systempaths=unconfined"
-        ])
+        #expect(
+            container.spec.ports == [
+                PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0")
+            ]
+        )
+        #expect(
+            container.spec.networks == [
+                NetworkAttachment(name: "bridge", aliases: ["workspace"])
+            ]
+        )
+        #expect(
+            container.spec.securityOptions == [
+                "no-new-privileges=true",
+                "systempaths=unconfined"
+            ]
+        )
         #expect(container.networkAddresses == ["bridge": "192.0.2.10/24"])
     }
 
@@ -63,6 +69,12 @@ extension AppleContainerRuntimeTests {
         #expect(
             try await runtime.inspectImage(
                 reference: "docker.io/library/fixture:latest",
+                context: context
+            ) == image
+        )
+        #expect(
+            try await runtime.inspectImage(
+                reference: "fixture:latest@sha256:abc123",
                 context: context
             ) == image
         )
@@ -156,19 +168,24 @@ extension AppleContainerRuntimeTests {
     }
 
     func assertLifecycleLog(_ log: String) {
-        #expect(log.contains(
-            "create --name fixture --env A=1 --env B=2 --label a=first --label z=last " +
-                "--workdir /workspace --user 501:20 --hostname fixture-host --tty --interactive " +
-                "--privileged --init --cap-add SYS_PTRACE --cap-drop NET_RAW " +
-                "--security-opt no-new-privileges=true --entrypoint /bin/sh"
-        ))
+        #expect(
+            log.contains(
+                "create --name fixture --env A=1 --env B=2 --label a=first --label z=last "
+                    + "--workdir /workspace --user 501:20 --hostname fixture-host --tty --interactive "
+                    + "--init --privileged --cap-add SYS_PTRACE --cap-drop NET_RAW "
+                    + "--security-opt no-new-privileges=true --entrypoint /bin/sh"
+            )
+        )
+        #expect(!log.contains("--cap-add ALL"))
         #expect(log.contains("--mount type=bind,source=/tmp/source,target=/workspace,readonly"))
         #expect(log.contains("--mount type=bind,source="))
         #expect(log.contains("/volumes/cache/_data,target=/cache"))
         #expect(!log.contains("anonymous-cache"))
-        #expect(log.contains(
-            "--mount type=volume,source=buildx_buildkit_fixture_state,target=/buildkit,readonly"
-        ))
+        #expect(
+            log.contains(
+                "--mount type=volume,source=buildx_buildkit_fixture_state,target=/buildkit,readonly"
+            )
+        )
         #expect(log.contains("--tmpfs /run"))
         #expect(!log.contains("--publish 0.0.0.0:18080:8080/tcp"))
         #expect(!log.contains("--publish 127.0.0.1:0:53/udp"))
@@ -197,15 +214,21 @@ extension AppleContainerRuntimeTests {
         for try await frame in logs {
             frames.append(frame)
         }
-        #expect(frames.contains {
-            $0.channel == .standardOutput && String(data: $0.data, encoding: .utf8) == "log-output\n"
-        })
-        #expect(frames.contains {
-            $0.channel == .standardError && String(data: $0.data, encoding: .utf8) == "log-error\n"
-        })
+        #expect(
+            frames.contains {
+                $0.channel == .standardOutput && String(data: $0.data, encoding: .utf8) == "log-output\n"
+            }
+        )
+        #expect(
+            frames.contains {
+                $0.channel == .standardError && String(data: $0.data, encoding: .utf8) == "log-error\n"
+            }
+        )
         try await runtime.startContainer(id: "fixture", context: context)
         try fixture.setState("stopped")
-        let attached = try await runtime.attachContainer(id: "fixture", terminal: false, context: context)
+        let attached = try await runtime.attachContainer(
+            id: "fixture", terminal: false, context: context
+        )
         #expect(try await attached.wait() == 17)
         try fixture.setState("running")
     }
@@ -247,13 +270,17 @@ extension AppleContainerRuntimeTests {
         context: RuntimeRequestContext
     ) async throws {
         var pulled = Data()
-        for try await chunk in try await runtime.pullImage(reference: "fixture:latest", context: context) {
+        for try await chunk in try await runtime.pullImage(
+            reference: "fixture:latest", context: context
+        ) {
             pulled.append(chunk)
         }
         #expect(String(data: pulled, encoding: .utf8) == "pull-progress\n")
-        #expect(try fixture.log().contains(
-            "image pull --progress plain --platform linux/arm64 fixture:latest"
-        ))
+        #expect(
+            try fixture.log().contains(
+                "image pull --progress plain --platform linux/arm64 fixture:latest"
+            )
+        )
         var loaded = Data()
         for try await chunk in try await runtime.loadImage(
             archive: Data("image-archive".utf8),

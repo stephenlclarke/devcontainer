@@ -148,8 +148,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
         context _: RuntimeRequestContext
     ) -> [ContainerSnapshot] {
         containers.values.filter { snapshot in
-            (all || snapshot.state == .running) &&
-                labels.allSatisfy { key, value in
+            (all || snapshot.state == .running)
+                && labels.allSatisfy { key, value in
                     guard let actual = snapshot.spec.labels[key] else {
                         return false
                     }
@@ -200,7 +200,9 @@ public actor InMemoryRuntime: DevContainerRuntime {
         snapshot.finishedAt = nil
         snapshot.exitCode = nil
         containers[snapshot.runtimeID] = snapshot
-        appendEvent(resourceID: snapshot.dockerID.rawValue, action: .start, attributes: snapshot.spec.labels)
+        appendEvent(
+            resourceID: snapshot.dockerID.rawValue, action: .start, attributes: snapshot.spec.labels
+        )
     }
 
     public func stopContainer(
@@ -213,7 +215,9 @@ public actor InMemoryRuntime: DevContainerRuntime {
         snapshot.finishedAt = Date()
         snapshot.exitCode = 0
         containers[snapshot.runtimeID] = snapshot
-        appendEvent(resourceID: snapshot.dockerID.rawValue, action: .stop, attributes: snapshot.spec.labels)
+        appendEvent(
+            resourceID: snapshot.dockerID.rawValue, action: .stop, attributes: snapshot.spec.labels
+        )
     }
 
     public func killContainer(
@@ -222,6 +226,26 @@ public actor InMemoryRuntime: DevContainerRuntime {
         context: RuntimeRequestContext
     ) throws {
         try stopContainer(id: id, timeout: nil, context: context)
+    }
+
+    public func renameContainer(
+        id: String,
+        name: String,
+        context _: RuntimeRequestContext
+    ) throws {
+        guard !name.isEmpty else {
+            throw DevContainerError(.invalidRequest, message: "container name is empty")
+        }
+        var snapshot = try container(id: id)
+        guard
+            !containers.values.contains(where: {
+                $0.runtimeID != snapshot.runtimeID && $0.spec.name == name
+            })
+        else {
+            throw DevContainerError(.conflict, message: "container name \(name) is already in use")
+        }
+        snapshot.spec.name = name
+        containers[snapshot.runtimeID] = snapshot
     }
 
     public func removeContainer(
@@ -235,7 +259,9 @@ public actor InMemoryRuntime: DevContainerRuntime {
         }
         containers.removeValue(forKey: snapshot.runtimeID)
         dockerToRuntime.removeValue(forKey: snapshot.dockerID)
-        appendEvent(resourceID: snapshot.dockerID.rawValue, action: .destroy, attributes: snapshot.spec.labels)
+        appendEvent(
+            resourceID: snapshot.dockerID.rawValue, action: .destroy, attributes: snapshot.spec.labels
+        )
     }
 
     public func waitContainer(
@@ -299,7 +325,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
             spec: spec
         )
         execs[exec.id] = exec
-        appendEvent(resourceID: container.dockerID.rawValue, action: .execCreate, attributes: container.spec.labels)
+        appendEvent(
+            resourceID: container.dockerID.rawValue, action: .execCreate,
+            attributes: container.spec.labels
+        )
         return exec
     }
 
@@ -469,9 +498,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
         context _: RuntimeRequestContext
     ) -> AsyncThrowingStream<RuntimeEvent, any Error> {
         let filtered = eventValues.filter { event in
-            (since.map { event.timestamp >= $0 } ?? true) &&
-                (until.map { event.timestamp <= $0 } ?? true) &&
-                labels.allSatisfy { event.attributes[$0.key] == $0.value }
+            (since.map { event.timestamp >= $0 } ?? true) && (until.map { event.timestamp <= $0 } ?? true)
+                && labels.allSatisfy { event.attributes[$0.key] == $0.value }
         }
         return AsyncThrowingStream { continuation in
             filtered.forEach { continuation.yield($0) }
@@ -491,9 +519,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
         if let snapshot = containers[RuntimeID(rawValue: id)] {
             return snapshot
         }
-        if
-            let runtimeID = dockerToRuntime[DockerID(rawValue: id)],
-            let snapshot = containers[runtimeID]
+        if let runtimeID = dockerToRuntime[DockerID(rawValue: id)],
+           let snapshot = containers[runtimeID]
         {
             return snapshot
         }
@@ -526,7 +553,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
     }
 
     private static func jsonLine(_ object: [String: String]) -> Data {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        let data =
+            (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         return data + Data("\n".utf8)
     }
 

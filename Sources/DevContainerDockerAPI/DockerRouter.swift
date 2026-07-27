@@ -47,7 +47,7 @@ public struct DockerRouter: Sendable {
     }
 }
 
-private extension DockerRouter {
+extension DockerRouter {
     private func route(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {
         let target = try ParsedTarget(request.target)
         let path = stripAPIVersion(target.path)
@@ -201,6 +201,7 @@ private extension DockerRouter {
     private func networkResponse(_ route: DockerRoute) async throws -> DockerHTTPResponse? {
         if let response = try await networkCollectionResponse(
             request: route.request,
+            target: route.target,
             path: route.path,
             context: route.context
         ) {
@@ -216,6 +217,7 @@ private extension DockerRouter {
     private func volumeResponse(_ route: DockerRoute) async throws -> DockerHTTPResponse? {
         if let response = try await volumeCollectionResponse(
             request: route.request,
+            target: route.target,
             path: route.path,
             context: route.context
         ) {
@@ -343,7 +345,9 @@ private extension DockerRouter {
 
         if request.method == .post, path == "/containers/create" {
             let name = target.first("name") ?? ""
-            let decoded = try DockerJSON.decoder.decode(DockerCreateContainerRequest.self, from: request.body)
+            let decoded = try DockerJSON.decoder.decode(
+                DockerCreateContainerRequest.self, from: request.body
+            )
             var spec = try containerSpec(from: decoded, requestedName: name)
             if spec.labels[RuntimeLabels.dockerID] == nil {
                 spec.labels[RuntimeLabels.dockerID] = Self.dockerIdentifier()
@@ -400,6 +404,12 @@ private extension DockerRouter {
                 signal: target.first("signal") ?? "SIGKILL",
                 context: context
             )
+            return .empty(status: 204)
+        case (.post, "rename"):
+            guard let name = target.first("name"), !name.isEmpty else {
+                throw DevContainerError(.invalidRequest, message: "name is required")
+            }
+            try await runtime.renameContainer(id: id, name: name, context: context)
             return .empty(status: 204)
         default:
             return nil
@@ -669,7 +679,13 @@ private extension DockerRouter {
             guard let source = target.first("fromImage"), !source.isEmpty else {
                 throw DevContainerError(.invalidRequest, message: "fromImage is required")
             }
-            let reference = target.first("tag").map { "\(source):\($0)" } ?? source
+            let reference: String = if let tag = target.first("tag"), !tag.isEmpty {
+                tag.hasPrefix("sha256:")
+                    ? "\(source)@\(tag)"
+                    : "\(source):\(tag)"
+            } else {
+                source
+            }
             let stream = try await runtime.pullImage(reference: reference, context: context)
             return DockerHTTPResponse(
                 status: 200,
@@ -752,16 +768,31 @@ private extension DockerRouter {
 
     private func networkCollectionResponse(
         request: DockerHTTPRequest,
+        target: ParsedTarget,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if request.method == .get, path == "/networks" {
-            return try await .json(
-                runtime.listNetworks(context: context).map(networkInspect)
+            let filters = try parseFilters(target.first("filters"))
+            let labels = try labelFilters(filters["label"] ?? [])
+            let networks = try await runtime.listNetworks(context: context).filter { network in
+                labelsMatch(network.spec.labels, expected: labels)
+                    && (filters["name"]?.contains(where: {
+                        network.spec.name.contains($0)
+                    }) ?? true)
+                    && (filters["id"]?.contains(where: {
+                        network.id.hasPrefix($0)
+                    }) ?? true)
+                    && (filters["driver"]?.contains(network.spec.driver) ?? true)
+            }
+            return try .json(
+                networks.map(networkInspect)
             )
         }
         if request.method == .post, path == "/networks/create" {
-            let decoded = try DockerJSON.decoder.decode(DockerNetworkCreateRequest.self, from: request.body)
+            let decoded = try DockerJSON.decoder.decode(
+                DockerNetworkCreateRequest.self, from: request.body
+            )
             guard decoded.driver == nil || decoded.driver == "" || decoded.driver == "bridge" else {
                 throw DevContainerError(
                     .unsupportedCapability,
@@ -800,7 +831,9 @@ private extension DockerRouter {
                 networkInspect(runtime.inspectNetwork(id: id, context: context))
             )
         case (.post, "connect"):
-            let decoded = try DockerJSON.decoder.decode(DockerNetworkConnectRequest.self, from: request.body)
+            let decoded = try DockerJSON.decoder.decode(
+                DockerNetworkConnectRequest.self, from: request.body
+            )
             try await runtime.connectNetwork(
                 id: id,
                 containerID: decoded.container,
@@ -809,7 +842,9 @@ private extension DockerRouter {
             )
             return .empty(status: 200)
         case (.post, "disconnect"):
-            let decoded = try DockerJSON.decoder.decode(DockerNetworkDisconnectRequest.self, from: request.body)
+            let decoded = try DockerJSON.decoder.decode(
+                DockerNetworkDisconnectRequest.self, from: request.body
+            )
             try await runtime.disconnectNetwork(
                 id: id,
                 containerID: decoded.container,
@@ -827,21 +862,34 @@ private extension DockerRouter {
 
     private func volumeCollectionResponse(
         request: DockerHTTPRequest,
+        target: ParsedTarget,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if request.method == .get, path == "/volumes" {
-            return try await .json(
+            let filters = try parseFilters(target.first("filters"))
+            let labels = try labelFilters(filters["label"] ?? [])
+            let volumes = try await runtime.listVolumes(context: context).filter { volume in
+                labelsMatch(volume.spec.labels, expected: labels)
+                    && (filters["name"]?.contains(where: {
+                        volume.name.contains($0)
+                    }) ?? true)
+                    && (filters["driver"]?.contains(volume.spec.driver) ?? true)
+            }
+            return try .json(
                 DockerVolumeListResponse(
-                    volumes: runtime.listVolumes(context: context).map(volumeInspect),
+                    volumes: volumes.map(volumeInspect),
                     warnings: []
                 )
             )
         }
         if request.method == .post, path == "/volumes/create" {
-            let decoded = try DockerJSON.decoder.decode(DockerVolumeCreateRequest.self, from: request.body)
-            let name = decoded.name.flatMap { $0.isEmpty ? nil : $0 }
-                ?? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())"
+            let decoded = try DockerJSON.decoder.decode(
+                DockerVolumeCreateRequest.self, from: request.body
+            )
+            let name =
+                decoded.name.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())"
             guard decoded.driver == nil || decoded.driver == "local" else {
                 throw DevContainerError(
                     .unsupportedCapability,
@@ -913,76 +961,26 @@ private extension DockerRouter {
     }
 
     private func errorResponse(_ error: DevContainerError) -> DockerHTTPResponse {
-        let status = switch error.code {
-        case .invalidRequest:
-            400
-        case .authentication:
-            401
-        case .notFound:
-            404
-        case .conflict:
-            409
-        case .unsupportedCapability:
-            501
-        case .build:
-            500
-        case .cancelled, .deadlineExceeded:
-            408
-        case .providerProtocolMismatch, .runtimeUnavailable, .stateCorruption:
-            500
-        }
+        let status =
+            switch error.code {
+            case .invalidRequest:
+                400
+            case .authentication:
+                401
+            case .notFound:
+                404
+            case .conflict:
+                409
+            case .unsupportedCapability:
+                501
+            case .build:
+                500
+            case .cancelled, .deadlineExceeded:
+                408
+            case .providerProtocolMismatch, .runtimeUnavailable, .stateCorruption:
+                500
+            }
         return (try? .json(DockerErrorEnvelope(message: error.description), status: status))
             ?? .text(error.description, status: status)
-    }
-}
-
-private struct DockerRoute {
-    let request: DockerHTTPRequest
-    let target: ParsedTarget
-    let path: String
-    let segments: [String]
-    let context: RuntimeRequestContext
-}
-
-private struct ParsedTarget {
-    let path: String
-    let query: [String: [String]]
-
-    init(_ target: String) throws {
-        guard
-            let components = URLComponents(string: target),
-            !components.path.isEmpty
-        else {
-            throw DevContainerError(.invalidRequest, message: "invalid request target")
-        }
-        path = components.percentEncodedPath
-        query = Dictionary(grouping: components.queryItems ?? [], by: \.name)
-            .mapValues { $0.compactMap(\.value) }
-    }
-
-    func first(_ name: String) -> String? {
-        query[name]?.first
-    }
-}
-
-private extension AsyncThrowingStream where Element == RuntimeIOFrame, Failure == any Error {
-    func mapData(
-        _ transform: @escaping @Sendable (RuntimeIOFrame) -> Data
-    ) -> AsyncThrowingStream<Data, any Error> {
-        AsyncThrowingStream<Data, any Error> { continuation in
-            let task = Task {
-                do {
-                    for try await element in self {
-                        continuation.yield(transform(element))
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
     }
 }

@@ -66,15 +66,37 @@ struct AppleContainerRuntimeTests {
         #expect(AppleContainerRuntime.eventAction(for: .running) == .start)
         #expect(AppleContainerRuntime.eventAction(for: .stopped) == .stop)
         #expect(AppleContainerRuntime.eventAction(for: .unknown) == nil)
-        #expect(AppleContainerRuntime.containerState(
-            "stopped",
-            createdByThisEngine: true,
-            wasStarted: false
-        ) == .created)
+        #expect(
+            AppleContainerRuntime.containerState(
+                "stopped",
+                createdByThisEngine: true,
+                wasStarted: false
+            ) == .created
+        )
         #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFDIR) == 1 << 31)
         #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFLNK) == 1 << 27)
         #expect(AppleContainerRuntime.dockerFileTypeMode(S_IFREG) == 0)
         #expect(AppleContainerRuntime.dockerModeBit(S_ISUID, mask: S_ISUID, bit: 8) == 8)
+        #expect(
+            AppleContainerRuntime.isTransientContainerCopyFailure(
+                AppleCommandResult(
+                    standardOutput: Data(),
+                    standardError: Data(
+                        #"internalError: invalidState: "cannot copyOut: container is not running""#.utf8
+                    ),
+                    exitCode: 1
+                )
+            )
+        )
+        #expect(
+            !AppleContainerRuntime.isTransientContainerCopyFailure(
+                AppleCommandResult(
+                    standardOutput: Data(),
+                    standardError: Data("permission denied".utf8),
+                    exitCode: 1
+                )
+            )
+        )
     }
 
     @Test
@@ -93,6 +115,56 @@ struct AppleContainerRuntimeTests {
         try await assertImageInventory(runtime, context: context)
         try await assertNetworkInventory(runtime, context: context)
         try await assertVolumeInventory(runtime, context: context)
+    }
+
+    @Test
+    func `stock create rejects options it cannot enforce and maps privileged to capabilities`() async throws {
+        let fixture = try FakeAppleCLI(enhancedCreateOptions: false)
+        let runtime = try fixture.runtime()
+        let context = RuntimeRequestContext()
+
+        do {
+            _ = try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture",
+                    image: "fixture:latest",
+                    hostname: "requested-host"
+                ),
+                context: context
+            )
+            Issue.record("stock hostname creation unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .unsupportedCapability)
+            #expect(error.message.contains("--hostname"))
+        }
+
+        do {
+            _ = try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture",
+                    image: "fixture:latest",
+                    securityOptions: ["no-new-privileges=true"]
+                ),
+                context: context
+            )
+            Issue.record("stock security option creation unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .unsupportedCapability)
+            #expect(error.message.contains("--security-opt"))
+        }
+
+        _ = try await runtime.createContainer(
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                privileged: true
+            ),
+            context: context
+        )
+        let log = try fixture.log()
+        #expect(log.contains("create --help"))
+        #expect(log.contains("create --name fixture --cap-add ALL fixture:latest"))
+        #expect(!log.contains("--privileged"))
     }
 
     @Test
@@ -133,6 +205,34 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `metadata for externally removed native containers is pruned`() async throws {
+        let fixture = try FakeAppleCLI()
+        let store = TestMetadataStore()
+        await store.recordContainerMetadata(
+            RuntimeContainerMetadata(
+                runtimeID: RuntimeID(rawValue: "externally-removed"),
+                dockerID: DockerID(rawValue: "stale-docker-id"),
+                spec: ContainerSpec(
+                    name: "externally-removed",
+                    image: "fixture:latest"
+                ),
+                createdAt: Date()
+            )
+        )
+        let runtime = try fixture.runtime(metadataStore: store)
+
+        _ = try await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        )
+
+        #expect(
+            await store.containerMetadata(id: "externally-removed") == nil
+        )
+    }
+
+    @Test
     func `stale in-memory request is discarded when native compose reuses a name`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()
@@ -145,6 +245,14 @@ struct AppleContainerRuntimeTests {
             ),
             context: context
         )
+        await runtime.handleContainerExit(
+            AppleContainerRuntime.ContainerExit(
+                code: 99,
+                finishedAt: Date()
+            ),
+            id: "fixture"
+        )
+        #expect(await runtime.containerExits["fixture"]?.code == 99)
 
         try fixture.setMode("recreated")
         let container = try #require(
@@ -158,6 +266,8 @@ struct AppleContainerRuntimeTests {
         #expect(container.spec.labels["com.docker.compose.oneoff"] == nil)
         #expect(container.spec.labels["com.apple.container.compose.oneoff"] == "false")
         #expect(container.createdAt > Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(await runtime.requestedContainers["fixture"] == nil)
+        #expect(await runtime.containerExits["fixture"] == nil)
     }
 
     @Test
@@ -210,6 +320,72 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `metadata failure leaves an Apple container rename unchanged`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime(metadataStore: FailingMetadataStore())
+        let context = RuntimeRequestContext()
+
+        await #expect(throws: MetadataTestError.self) {
+            try await runtime.renameContainer(
+                id: "fixture",
+                name: "renamed",
+                context: context
+            )
+        }
+
+        #expect(
+            try await runtime.inspectContainer(
+                id: "fixture",
+                context: context
+            ).spec.name == "fixture"
+        )
+        await #expect(throws: DevContainerError.self) {
+            _ = try await runtime.inspectContainer(
+                id: "renamed",
+                context: context
+            )
+        }
+    }
+
+    @Test
+    func `automatic removal follows process exit without a wait subscriber`() async throws {
+        let fixture = try FakeAppleCLI()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store)
+        let context = RuntimeRequestContext()
+        let container = try await runtime.createContainer(
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                autoRemove: true
+            ),
+            context: context
+        )
+        try await runtime.startContainer(
+            id: container.runtimeID.rawValue,
+            context: context
+        )
+
+        await runtime.handleContainerExit(
+            AppleContainerRuntime.ContainerExit(
+                code: 23,
+                finishedAt: Date()
+            ),
+            id: container.runtimeID.rawValue
+        )
+        #expect(
+            try await runtime.waitContainer(
+                id: container.runtimeID.rawValue,
+                context: context
+            ) == 23
+        )
+
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(try fixture.log().contains("delete --force fixture"))
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+    }
+
+    @Test
     func `container lifecycle encodes every supported Apple CLI option`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()
@@ -219,7 +395,10 @@ struct AppleContainerRuntimeTests {
         try await runtime.startContainer(id: "fixture", context: context)
         try await runtime.stopContainer(id: "fixture", timeout: .milliseconds(1001), context: context)
         try await runtime.killContainer(id: "fixture", signal: "SIGTERM", context: context)
-        try await runtime.removeContainer(id: "fixture", force: true, context: context)
+        try await runtime.renameContainer(id: "fixture", name: "renamed", context: context)
+        try await runtime.removeContainer(id: "renamed", force: true, context: context)
+        #expect(await runtime.requestedContainers["docker-fixture"] == nil)
+        #expect(await runtime.requestedContainers["renamed"] == nil)
 
         try assertLifecycleLog(fixture.log())
 
@@ -232,9 +411,28 @@ struct AppleContainerRuntimeTests {
             ),
             context: context
         )
-        #expect(try fixture.log().contains(
-            "create --name fixture --entrypoint /bin/sh fixture -c printf ok"
-        ))
+        #expect(
+            try fixture.log().contains(
+                "create --name fixture --entrypoint /bin/sh fixture -c printf ok"
+            )
+        )
+
+        let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
+        let complex = try await runtime.createContainer(
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture",
+                labels: ["devcontainer.metadata": metadata]
+            ),
+            context: context
+        )
+        #expect(complex.spec.labels["devcontainer.metadata"] == metadata)
+        #expect(try !fixture.log().contains("--label devcontainer.metadata="))
+        try await runtime.renameContainer(id: "fixture", name: "renamed", context: context)
+        #expect(
+            try await runtime.inspectContainer(id: "renamed", context: context).spec.name
+                == "renamed"
+        )
     }
 
     @Test
@@ -360,8 +558,10 @@ struct FakeAppleCLI {
     let logURL: URL
     private let stateURL: URL
     private let modeURL: URL
+    private let enhancedCreateOptions: Bool
 
-    init() throws {
+    init(enhancedCreateOptions: Bool = true) throws {
+        self.enhancedCreateOptions = enhancedCreateOptions
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
@@ -410,6 +610,9 @@ struct FakeAppleCLI {
         let log = shellQuote(logURL.path)
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
+        let createHelp = enhancedCreateOptions
+            ? "--hostname\\n--privileged\\n--security-opt"
+            : "--cap-add\\n--cap-drop"
         return """
         #!/bin/sh
         set -eu
@@ -435,6 +638,9 @@ struct FakeAppleCLI {
               "commit":"fixture-commit",
               "distribution":"apple"
             }]'
+            ;;
+          "create --help")
+            printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
             if [ "$state" = missing ]; then
@@ -650,6 +856,11 @@ private actor TestMetadataStore: RuntimeMetadataStore {
         id: String
     ) -> RuntimeContainerMetadata? {
         values[id]
+            ?? values.values.first(where: { $0.dockerID.rawValue == id })
+    }
+
+    func listContainerMetadata() -> [RuntimeContainerMetadata] {
+        Array(values.values)
     }
 
     func markContainerStarted(id: String, at date: Date) {
@@ -676,6 +887,10 @@ private actor FailingMetadataStore: RuntimeMetadataStore {
         id _: String
     ) -> RuntimeContainerMetadata? {
         nil
+    }
+
+    func listContainerMetadata() -> [RuntimeContainerMetadata] {
+        []
     }
 
     func markContainerStarted(id _: String, at _: Date) {}

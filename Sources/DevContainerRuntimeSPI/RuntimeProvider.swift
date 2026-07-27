@@ -58,6 +58,7 @@ public struct RuntimeContainerMetadata: Codable, Equatable, Sendable {
 public protocol RuntimeMetadataStore: Sendable {
     func recordContainerMetadata(_ metadata: RuntimeContainerMetadata) async throws
     func containerMetadata(id: String) async throws -> RuntimeContainerMetadata?
+    func listContainerMetadata() async throws -> [RuntimeContainerMetadata]
     func markContainerStarted(id: String, at date: Date) async throws
     func removeContainerMetadata(id: String) async throws
 }
@@ -65,7 +66,8 @@ public protocol RuntimeMetadataStore: Sendable {
 public protocol ImageRuntime: Sendable {
     func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot]
     func inspectImage(reference: String, context: RuntimeRequestContext) async throws -> ImageSnapshot
-    func pullImage(reference: String, context: RuntimeRequestContext) async throws -> AsyncThrowingStream<Data, any Error>
+    func pullImage(reference: String, context: RuntimeRequestContext) async throws
+        -> AsyncThrowingStream<Data, any Error>
     func loadImage(
         archive: Data,
         context: RuntimeRequestContext
@@ -84,11 +86,14 @@ public protocol ContainerRuntime: Sendable {
         labels: [String: String],
         context: RuntimeRequestContext
     ) async throws -> [ContainerSnapshot]
-    func inspectContainer(id: String, context: RuntimeRequestContext) async throws -> ContainerSnapshot
-    func createContainer(spec: ContainerSpec, context: RuntimeRequestContext) async throws -> ContainerSnapshot
+    func inspectContainer(id: String, context: RuntimeRequestContext) async throws
+        -> ContainerSnapshot
+    func createContainer(spec: ContainerSpec, context: RuntimeRequestContext) async throws
+        -> ContainerSnapshot
     func startContainer(id: String, context: RuntimeRequestContext) async throws
     func stopContainer(id: String, timeout: Duration?, context: RuntimeRequestContext) async throws
     func killContainer(id: String, signal: String, context: RuntimeRequestContext) async throws
+    func renameContainer(id: String, name: String, context: RuntimeRequestContext) async throws
     func removeContainer(id: String, force: Bool, context: RuntimeRequestContext) async throws
     func waitContainer(id: String, context: RuntimeRequestContext) async throws -> Int32
     func containerLogs(
@@ -135,7 +140,8 @@ public protocol ArchiveRuntime: Sendable {
 public protocol NetworkRuntime: Sendable {
     func listNetworks(context: RuntimeRequestContext) async throws -> [NetworkSnapshot]
     func inspectNetwork(id: String, context: RuntimeRequestContext) async throws -> NetworkSnapshot
-    func createNetwork(spec: NetworkSpec, context: RuntimeRequestContext) async throws -> NetworkSnapshot
+    func createNetwork(spec: NetworkSpec, context: RuntimeRequestContext) async throws
+        -> NetworkSnapshot
     func connectNetwork(
         id: String,
         containerID: String,
@@ -175,4 +181,5 @@ public protocol DevContainerRuntime:
     NetworkRuntime,
     ProcessRuntime,
     RuntimeIdentityProvider,
-    VolumeRuntime {}
+    VolumeRuntime
+{}

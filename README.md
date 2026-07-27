@@ -67,6 +67,8 @@ The `container-compose` integration is first-class but independently installed. 
 
 The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md) and [COMPATIBILITY.md](COMPATIBILITY.md).
 
+Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker security-option fields. Requests containing those fields fail before container or mount side effects; they are not silently weakened and are outside the stock 1.1.0 compatibility claim. A separately fingerprinted enhanced runtime may advertise and enforce them through native `--hostname` and `--security-opt` flags.
+
 ## Project layout
 
 | Path | Purpose |

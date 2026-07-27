@@ -10,6 +10,12 @@ Compose-provider lanes. Runtime and VS Code jobs use separate provenance-bound
 runner labels so a lane never replaces another lane's live runtime
 distribution. Release validation rejects incomplete or missing evidence.
 
+Stock Apple `container` 1.1.0 does not transport explicit Docker hostnames or
+security options. The adapter rejects those fields before side effects and
+uses enhanced native flags only when the selected, separately fingerprinted
+runtime advertises them. Unsupported security behavior is never normalized
+into a parity pass.
+
 See the maintained repositories in the
 [Dev Containers organization](https://github.com/devcontainers), especially
 the [specification](https://github.com/devcontainers/spec), the

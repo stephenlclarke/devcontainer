@@ -29,6 +29,7 @@ final class EngineServer: @unchecked Sendable {
     private let router: DockerRouter
     private let socketPath: String
     private let logger: Logger
+    private let connections = EngineConnectionTracker()
     private var channel: Channel?
     private var lockFileDescriptor: Int32 = -1
     private var ownsSocket = false
@@ -71,6 +72,7 @@ final class EngineServer: @unchecked Sendable {
     private func makeBootstrap() -> ServerBootstrap {
         let router = router
         let logger = logger
+        let connections = connections
         return ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -82,6 +84,7 @@ final class EngineServer: @unchecked Sendable {
                 let handler = DockerHTTPHandler(
                     router: router,
                     logger: logger,
+                    connections: connections,
                     responseEncoder: responseEncoder,
                     requestDecoder: requestDecoder
                 )
@@ -105,6 +108,10 @@ final class EngineServer: @unchecked Sendable {
             throw EngineServerError.notStarted
         }
         try await channel.closeFuture.get()
+    }
+
+    var activeConnectionCount: Int {
+        connections.count
     }
 
     func shutdown() async throws {
@@ -245,21 +252,53 @@ private final class DockerHTTPHandler:
 
     private let router: DockerRouter
     private let logger: Logger
+    private let connections: EngineConnectionTracker
     private let responseEncoder: HTTPResponseEncoder
     private let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
+    private var responseInFlight = false
+    private var closeAfterResponse = false
 
     init(
         router: DockerRouter,
         logger: Logger,
+        connections: EngineConnectionTracker,
         responseEncoder: HTTPResponseEncoder,
         requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
     ) {
         self.router = router
         self.logger = logger
+        self.connections = connections
         self.responseEncoder = responseEncoder
         self.requestDecoder = requestDecoder
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        connections.opened()
+        context.fireChannelActive()
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        connections.closed()
+        context.fireChannelInactive()
+    }
+
+    func userInboundEventTriggered(
+        context: ChannelHandlerContext,
+        event: Any
+    ) {
+        if let channelEvent = event as? ChannelEvent,
+           channelEvent == .inputClosed
+        {
+            if responseInFlight {
+                closeAfterResponse = true
+            } else {
+                context.close(promise: nil)
+            }
+            return
+        }
+        context.fireUserInboundEventTriggered(event)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -310,6 +349,7 @@ private final class DockerHTTPHandler:
             body: body
         )
         let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
+        responseInFlight = true
         let sendableContext = SendableChannelHandlerContext(context)
         promise.completeWithTask {
             await self.router.respond(to: request)
@@ -365,7 +405,12 @@ private final class DockerHTTPHandler:
             buffer.writeBytes(data)
             context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
         }
-        context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+        let promise = context.eventLoop.makePromise(of: Void.self)
+        context.writeAndFlush(
+            wrapOutboundOut(.end(nil)),
+            promise: promise
+        )
+        finishResponse(promise.futureResult, context: context)
     }
 
     private func writeStream(
@@ -421,7 +466,8 @@ private final class DockerHTTPHandler:
         let rawHandler = DockerRawStreamHandler(
             session: session,
             terminal: terminal,
-            logger: logger
+            logger: logger,
+            connections: connections
         )
         let sendableContext = SendableChannelHandlerContext(context)
         headPromise.futureResult.whenComplete { result in
@@ -475,7 +521,15 @@ private final class DockerHTTPHandler:
                 }
                 sendableContext.value.eventLoop.execute {
                     let context = sendableContext.value
-                    context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
+                    let promise = context.eventLoop.makePromise(of: Void.self)
+                    context.writeAndFlush(
+                        self.wrapOutboundOut(.end(nil)),
+                        promise: promise
+                    )
+                    self.finishResponse(
+                        promise.futureResult,
+                        context: context
+                    )
                 }
             } catch {
                 self.logger.error(
@@ -508,7 +562,25 @@ private final class DockerHTTPHandler:
         var buffer = context.channel.allocator.buffer(capacity: data.count)
         buffer.writeBytes(data)
         context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-        context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+        let promise = context.eventLoop.makePromise(of: Void.self)
+        context.writeAndFlush(
+            wrapOutboundOut(.end(nil)),
+            promise: promise
+        )
+        finishResponse(promise.futureResult, context: context)
+    }
+
+    private func finishResponse(
+        _ future: EventLoopFuture<Void>,
+        context: ChannelHandlerContext
+    ) {
+        let sendableContext = SendableChannelHandlerContext(context)
+        future.whenComplete { _ in
+            self.responseInFlight = false
+            if self.closeAfterResponse {
+                sendableContext.value.close(promise: nil)
+            }
+        }
     }
 }
 
@@ -518,15 +590,22 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
     private let session: any RuntimeProcessSession
     private let terminal: Bool
     private let logger: Logger
+    private let connections: EngineConnectionTracker
     private let inputPump: OrderedRuntimeInputPump
     private var outputTask: Task<Void, Never>?
     private let stateLock = NSLock()
     private var finishedNormally = false
 
-    init(session: any RuntimeProcessSession, terminal: Bool, logger: Logger) {
+    init(
+        session: any RuntimeProcessSession,
+        terminal: Bool,
+        logger: Logger,
+        connections: EngineConnectionTracker
+    ) {
         self.session = session
         self.terminal = terminal
         self.logger = logger
+        self.connections = connections
         inputPump = OrderedRuntimeInputPump(session: session)
     }
 
@@ -573,6 +652,7 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        connections.closed()
         let shouldCancel = stateLock.withLock {
             !finishedNormally
         }
@@ -583,6 +663,27 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
             inputPump.finish()
         }
         context.fireChannelInactive()
+    }
+}
+
+private final class EngineConnectionTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = 0
+
+    var count: Int {
+        lock.withLock { active }
+    }
+
+    func opened() {
+        lock.withLock {
+            active += 1
+        }
+    }
+
+    func closed() {
+        lock.withLock {
+            active = max(0, active - 1)
+        }
     }
 }
 

@@ -44,7 +44,10 @@ struct ServiceCommandIntegrationTests {
         let state = root.appendingPathComponent("state.sqlite").path
         let executable = try engineExecutable()
         let process = Process()
-        let output = Pipe()
+        let log = root.appendingPathComponent("engine.log")
+        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        let output = try FileHandle(forWritingTo: log)
+        defer { try? output.close() }
         process.executableURL = executable
         process.arguments = [
             "--socket",
@@ -58,13 +61,17 @@ struct ServiceCommandIntegrationTests {
         process.standardOutput = output
         process.standardError = output
         try process.run()
-        defer {
-            if process.isRunning {
-                process.terminate()
-                process.waitUntilExit()
-            }
-        }
 
+        try await exerciseEngineProcess(process, socket: socket, log: log)
+    }
+}
+
+private func exerciseEngineProcess(
+    _ process: Process,
+    socket: String,
+    log: URL
+) async throws {
+    do {
         try await waitForSocket(socket, process: process)
         let ping = try runCurl(socket: socket, path: "/_ping")
         #expect(ping == "OK")
@@ -72,9 +79,35 @@ struct ServiceCommandIntegrationTests {
         #expect(version.contains("\"Version\":\"1.1.0\""))
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
-        process.waitUntilExit()
+        try await waitForExit(process, log: log)
         #expect(process.terminationStatus == 0)
         #expect(!FileManager.default.fileExists(atPath: socket))
+    } catch {
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+            try? await waitForExit(process, log: log, timeout: .seconds(2))
+        }
+        throw error
+    }
+}
+
+private func waitForExit(
+    _ process: Process,
+    log: URL,
+    timeout: Duration = .seconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while process.isRunning, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard !process.isRunning else {
+        let diagnostic =
+            (try? String(contentsOf: log, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? "no engine output"
+        throw ServiceIntegrationError(
+            "devcontainer-engine did not exit within \(timeout): \(diagnostic)"
+        )
     }
 }
 

@@ -130,6 +130,8 @@ The runtime SPI is capability-driven and asynchronous. Its initial protocol grou
 
 Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Unsupported behavior returns a typed `unsupportedCapability` error before resources are created.
 
+The Apple adapter also probes `container create --help` once per selected executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged switches: privileged requests map to the stock capability model, while explicit hostname or security-option requests fail before mount or container side effects. A separately fingerprinted enhanced runtime uses its native switches. Capability discovery is behavioral and never inferred from an install path or attributed across provider lanes.
+
 ## Docker Engine compatibility boundary
 
 The service advertises only the Docker API versions proven by the parity suite. It returns Docker-shaped identifiers, JSON, headers, streams, status codes, and errors for this tested surface:

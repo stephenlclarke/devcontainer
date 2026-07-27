@@ -329,10 +329,14 @@ extension AppleContainerRuntime {
             id: target.runtimeID.rawValue,
             context: context
         ).state)
-        if download.exitCode != 0, observedState != .running {
-            return
+        if download.exitCode != 0 {
+            if observedState != .running
+                || Self.isTransientContainerCopyFailure(download)
+            {
+                return
+            }
+            try requireSuccess(download, operation: "container hosts download")
         }
-        try requireSuccess(download, operation: "container hosts download")
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
         try Data(updated.utf8).write(to: localHosts, options: .atomic)
@@ -341,7 +345,32 @@ extension AppleContainerRuntime {
             localHosts.path,
             "\(target.runtimeID.rawValue):/etc/hosts"
         ])
+        if upload.exitCode != 0 {
+            let observedState = await (try? inspectContainer(
+                id: target.runtimeID.rawValue,
+                context: context
+            ).state)
+            if observedState != .running
+                || Self.isTransientContainerCopyFailure(upload)
+            {
+                return
+            }
+        }
         try requireSuccess(upload, operation: "container hosts upload")
+    }
+
+    static func isTransientContainerCopyFailure(
+        _ result: AppleCommandResult
+    ) -> Bool {
+        guard result.exitCode != 0 else {
+            return false
+        }
+        let diagnostic = String(
+            bytes: result.standardError,
+            encoding: .utf8
+        )?.lowercased() ?? ""
+        return diagnostic.contains("container is not running")
+            || diagnostic.contains("container was not found")
     }
 
     static func managedHosts(

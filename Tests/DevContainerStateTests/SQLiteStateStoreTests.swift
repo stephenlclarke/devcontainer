@@ -152,6 +152,7 @@ struct SQLiteStateStoreTests {
                 try await store.containerMetadata(id: metadata.dockerID.rawValue)
                     == metadata
             )
+            #expect(try await store.listContainerMetadata() == [metadata])
 
             let startedAt = Date(timeIntervalSinceReferenceDate: 2000)
             try await store.markContainerStarted(
@@ -168,6 +169,7 @@ struct SQLiteStateStoreTests {
 
             try await store.removeContainerMetadata(id: metadata.runtimeID.rawValue)
             #expect(try await store.containerMetadata(id: metadata.dockerID.rawValue) == nil)
+            #expect(try await store.listContainerMetadata().isEmpty)
         }
     }
 

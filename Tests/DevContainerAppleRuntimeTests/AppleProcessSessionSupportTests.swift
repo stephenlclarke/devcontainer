@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -90,6 +91,25 @@ struct AppleProcessSessionSupportTests {
         #expect(try await session.wait() == 5)
         #expect(String(data: output, encoding: .utf8) == "abc")
         #expect(String(data: error, encoding: .utf8) == "ewarn")
+    }
+
+    @Test
+    func `log snapshots never wait for an open writer`() throws {
+        var descriptors = [Int32](repeating: -1, count: 2)
+        #expect(pipe(&descriptors) == 0)
+        let reader = FileHandle(fileDescriptor: descriptors[0], closeOnDealloc: true)
+        let writer = FileHandle(fileDescriptor: descriptors[1], closeOnDealloc: true)
+        defer {
+            try? reader.close()
+            try? writer.close()
+        }
+        try writer.write(contentsOf: Data("available".utf8))
+
+        let started = ContinuousClock.now
+        let data = try AppleContainerRuntime.readAvailableLogData(from: reader)
+
+        #expect(String(data: data, encoding: .utf8) == "available")
+        #expect(ContinuousClock.now - started < .milliseconds(100))
     }
 
     @Test

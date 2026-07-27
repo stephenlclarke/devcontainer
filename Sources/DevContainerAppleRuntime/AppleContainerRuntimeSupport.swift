@@ -60,7 +60,11 @@ extension AppleContainerRuntime {
                 metadataCreatedAt: requestedCreatedAt,
                 observedCreatedAt: record.createdAt
             ) {
-                discardContainerState(id: id, dockerID: dockerID)
+                discardContainerState(
+                    id: id,
+                    dockerID: dockerID,
+                    name: request?.spec.name
+                )
                 return nil
             }
         } else if request != nil {
@@ -70,13 +74,28 @@ extension AppleContainerRuntime {
         return request?.spec
     }
 
-    func discardContainerState(id: String, dockerID: String) {
+    func discardContainerState(
+        id: String,
+        dockerID: String,
+        name: String? = nil
+    ) {
         requestedContainers.removeValue(forKey: id)
         requestedContainers.removeValue(forKey: dockerID)
+        if let name {
+            requestedContainers.removeValue(forKey: name)
+        }
         startedContainers.remove(id)
         startedContainers.remove(dockerID)
+        if let name {
+            startedContainers.remove(name)
+        }
         containerStartedAt.removeValue(forKey: id)
         containerStartedAt.removeValue(forKey: dockerID)
+        if let name {
+            containerStartedAt.removeValue(forKey: name)
+        }
+        containerExitTasks.removeValue(forKey: id)?.cancel()
+        containerExits.removeValue(forKey: id)
     }
 
     static func containerState(
@@ -168,9 +187,10 @@ extension AppleContainerRuntime {
         }
         let name = configuration["name"] as? String
         let variants = value["variants"] as? [[String: Any]] ?? []
-        let arm = variants.first(where: {
-            (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
-        }) ?? variants.first
+        let arm =
+            variants.first(where: {
+                (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
+            }) ?? variants.first
         let platform = arm?["platform"] as? [String: Any]
         let imageConfiguration = (arm?["config"] as? [String: Any])?["config"] as? [String: Any] ?? [:]
         return ImageSnapshot(
@@ -249,18 +269,19 @@ extension AppleContainerRuntime {
 
     static func networkAddresses(_ status: [String: Any]?) -> [String: String] {
         let networks = status?["networks"] as? [[String: Any]] ?? []
-        return Dictionary(uniqueKeysWithValues: networks.compactMap { network in
-            guard
-                let name = network["network"] as? String,
-                let address = (
-                    network["ipv4Address"] as? String
-                        ?? network["address"] as? String
-                )
-            else {
-                return nil
+        return Dictionary(
+            uniqueKeysWithValues: networks.compactMap { network in
+                guard
+                    let name = network["network"] as? String,
+                    let address =
+                    (network["ipv4Address"] as? String
+                        ?? network["address"] as? String)
+                else {
+                    return nil
+                }
+                return (name, address)
             }
-            return (name, address)
-        })
+        )
     }
 
     static func number(_ value: Any?) -> Int? {
@@ -301,6 +322,14 @@ extension AppleContainerRuntime {
         normalizedImageReference(lhs) == normalizedImageReference(rhs)
     }
 
+    static func imageDigest(_ reference: String) -> String? {
+        guard let separator = reference.lastIndex(of: "@") else {
+            return nil
+        }
+        let digest = String(reference[reference.index(after: separator)...])
+        return digest.hasPrefix("sha256:") ? digest : nil
+    }
+
     static func normalizedImageReference(_ reference: String) -> String {
         var value = reference.lowercased()
         for prefix in ["docker.io/", "index.docker.io/"] where value.hasPrefix(prefix) {
@@ -335,13 +364,14 @@ extension AppleContainerRuntime {
                 message: "copied archive path is unavailable: \(url.lastPathComponent)"
             )
         }
-        let linkTarget: String = if status.st_mode & S_IFMT == S_IFLNK {
-            try FileManager.default.destinationOfSymbolicLink(
-                atPath: url.path
-            )
-        } else {
-            ""
-        }
+        let linkTarget: String =
+            if status.st_mode & S_IFMT == S_IFLNK {
+                try FileManager.default.destinationOfSymbolicLink(
+                    atPath: url.path
+                )
+            } else {
+                ""
+            }
         return ArchivePathStat(
             name: requestedName,
             size: Int64(status.st_size),
@@ -392,10 +422,11 @@ extension AppleContainerRuntime {
     }
 
     static var transferDirectory: URL {
-        let cache = FileManager.default.urls(
-            for: .cachesDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        let cache =
+            FileManager.default.urls(
+                for: .cachesDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return cache.appendingPathComponent("devcontainer/transfers", isDirectory: true)
     }
 
@@ -408,10 +439,12 @@ extension AppleContainerRuntime {
     }
 
     static func environmentDictionary(_ values: [String]) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: values.map { value in
-            let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            return (String(parts[0]), parts.count == 2 ? String(parts[1]) : "")
-        })
+        Dictionary(
+            uniqueKeysWithValues: values.map { value in
+                let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                return (String(parts[0]), parts.count == 2 ? String(parts[1]) : "")
+            }
+        )
     }
 
     static func securityOptions(_ configuration: [String: Any]) -> [String] {
@@ -441,9 +474,11 @@ extension AppleContainerRuntime {
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME"
         ]
-        return Dictionary(uniqueKeysWithValues: allowed.compactMap { key in
-            values[key].map { (key, $0) }
-        })
+        return Dictionary(
+            uniqueKeysWithValues: allowed.compactMap { key in
+                values[key].map { (key, $0) }
+            }
+        )
     }
 
     static func dataStream(
@@ -494,10 +529,8 @@ extension AppleContainerRuntime {
             let snapshot = try await inspectContainer(id: id, context: context)
             guard
                 snapshot.state == .running
-                || (
-                    snapshot.state == .stopped
-                        && wasStarted(id: id, snapshot: snapshot)
-                )
+                || (snapshot.state == .stopped
+                    && wasStarted(id: id, snapshot: snapshot))
             else {
                 return AppleLogPoll(
                     standardOutput: Data(),
@@ -506,22 +539,12 @@ extension AppleContainerRuntime {
                     exitCode: 0
                 )
             }
-            let result = try await command([
-                "logs",
-                snapshot.runtimeID.rawValue
-            ])
-            if result.exitCode != 0, snapshot.state == .running {
-                return AppleLogPoll(
-                    standardOutput: Data(),
-                    standardError: Data(),
-                    finished: false,
-                    exitCode: 0
-                )
-            }
-            try requireSuccess(result, operation: "container attach logs")
+            let (standardOutput, standardError) = try await attachLogData(
+                snapshot: snapshot
+            )
             return AppleLogPoll(
-                standardOutput: result.standardOutput,
-                standardError: result.standardError,
+                standardOutput: standardOutput,
+                standardError: standardError,
                 finished: snapshot.state == .stopped,
                 exitCode: snapshot.exitCode ?? 0
             )
@@ -532,6 +555,73 @@ extension AppleContainerRuntime {
                 finished: true,
                 exitCode: 0
             )
+        }
+    }
+
+    private func attachLogData(
+        snapshot: ContainerSnapshot
+    ) async throws -> (Data, Data) {
+        if useDirectProcessAPI {
+            return try await (
+                exactContainerLog(id: snapshot.runtimeID.rawValue),
+                Data()
+            )
+        }
+        let result = try await command([
+            "logs",
+            snapshot.runtimeID.rawValue
+        ])
+        if result.exitCode != 0, snapshot.state == .running {
+            return (Data(), Data())
+        }
+        try requireSuccess(result, operation: "container attach logs")
+        return (result.standardOutput, result.standardError)
+    }
+
+    func exactContainerLog(id: String) async throws -> Data {
+        let handles = try await ContainerClient().logs(id: id)
+        defer {
+            for handle in handles {
+                try? handle.close()
+            }
+        }
+        guard let handle = handles.first else {
+            return Data()
+        }
+        return try Self.readAvailableLogData(from: handle)
+    }
+
+    static func readAvailableLogData(from handle: FileHandle) throws -> Data {
+        let descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            _ = fcntl(descriptor, F_SETFL, flags)
+        }
+
+        var result = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            switch count {
+            case let value where value > 0:
+                result.append(contentsOf: buffer.prefix(value))
+            case 0:
+                return result
+            default:
+                switch errno {
+                case EINTR:
+                    continue
+                case EAGAIN, EWOULDBLOCK:
+                    return result
+                default:
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
         }
     }
 

@@ -6,9 +6,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
-from run_lane import safe_environment
+from run_lane import LaneRunner, safe_environment
 
 
 class SafeEnvironmentTests(unittest.TestCase):
@@ -34,6 +39,127 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "HOME": "/Users/operator",
                 "PATH": "/usr/bin:/bin",
             },
+        )
+
+
+class CleanupFixtureTests(unittest.TestCase):
+    def test_failed_compose_down_is_reported_and_all_project_containers_removed(
+        self,
+    ) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/usr/bin/docker"
+        runner.lane = "apple-stock"
+        fixture = SimpleNamespace(directory=Path("/fixtures/C02"))
+        completed = [
+            mock.Mock(returncode=0, stdout="primary\n", stderr=""),
+            mock.Mock(returncode=0, stdout="parity-project\n", stderr=""),
+            mock.Mock(
+                returncode=17,
+                stdout="",
+                stderr="network still has active endpoints\n",
+            ),
+            mock.Mock(returncode=0, stdout="primary\ndependency\n", stderr=""),
+            mock.Mock(
+                returncode=0,
+                stdout="primary\ndependency\n",
+                stderr="",
+            ),
+        ]
+
+        with (
+            mock.patch.object(Path, "is_file", return_value=True),
+            mock.patch.object(
+                Path,
+                "read_text",
+                return_value='{"dockerComposeFile":"../compose.yaml"}',
+            ),
+            mock.patch("run_lane.subprocess.run", side_effect=completed) as run,
+        ):
+            output = runner.cleanup_fixture(fixture)
+
+        self.assertIn("ERROR: compose down exited 17", output)
+        self.assertIn("network still has active endpoints", output)
+        self.assertEqual(
+            run.call_args_list[-1].args[0],
+            ["/usr/bin/docker", "rm", "-f", "primary", "dependency"],
+        )
+
+
+class BuilderCleanupTests(unittest.TestCase):
+    def test_builder_cleanup_reports_and_removes_exact_leaked_container(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = Path("/repository")
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.docker = "/usr/bin/docker"
+            runner.builder_name = "devcontainer-parity-fixture"
+            runner.builder_container_ids = {"builder-container-id"}
+            runner.cleanup_differences = []
+            runner.output = Path(temporary)
+            completed = [
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(
+                    returncode=0,
+                    stdout="builder-container-id\n",
+                    stderr="",
+                ),
+            ]
+
+            with (
+                mock.patch(
+                    "run_lane.subprocess.run",
+                    side_effect=completed,
+                ) as run,
+                mock.patch(
+                    "run_lane.time.monotonic",
+                    side_effect=[0.0, 16.0],
+                ),
+            ):
+                runner.stop_builder()
+
+        self.assertEqual(
+            run.call_args_list[-1].args[0],
+            ["/usr/bin/docker", "rm", "-f", "builder-container-id"],
+        )
+        self.assertEqual(
+            runner.cleanup_differences,
+            [
+                "isolated buildx builder leaked container(s): "
+                "builder-container-id"
+            ],
+        )
+        self.assertIsNone(runner.builder_name)
+        self.assertEqual(runner.builder_container_ids, set())
+
+    def test_runtime_state_cleanup_reports_durable_leaks(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-compose"
+            runner.runtime_root = Path(temporary)
+            runner.cleanup_differences = []
+            state = runner.runtime_root / "state.sqlite"
+            with sqlite3.connect(state) as database:
+                database.execute("CREATE TABLE projects (key TEXT)")
+                database.execute(
+                    "CREATE TABLE runtime_containers (runtime_id TEXT)"
+                )
+                database.execute("INSERT INTO projects VALUES ('fixture')")
+                database.execute(
+                    "INSERT INTO runtime_containers VALUES ('fixture')"
+                )
+
+            runner.check_runtime_state_cleanup()
+
+        self.assertEqual(
+            runner.cleanup_differences,
+            [
+                "lane state leaked 1 project claim(s) and "
+                "1 runtime container record(s)"
+            ],
         )
 
 

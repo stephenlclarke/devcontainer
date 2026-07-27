@@ -82,6 +82,21 @@ func assertLifecycleInspectAndList(
             try (JSONSerialization.jsonObject(with: bytes(response)) as? [[String: Any]])?.count == 1
         )
     }
+
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/containers/\(id)/rename?name=renamed-demo"
+            )
+        ).status == 204
+    )
+    let renamed = await router.respond(
+        to: DockerHTTPRequest(method: .get, target: "/containers/renamed-demo/json")
+    )
+    let renamedObject =
+        try JSONSerialization.jsonObject(with: bytes(renamed)) as? [String: Any]
+    #expect(renamedObject?["Name"] as? String == "/renamed-demo")
 }
 
 func createMountSnapshot(
@@ -163,6 +178,28 @@ func assertImagePullInspectAndTag(_ router: DockerRouter) async throws {
             )
         ).status == 201
     )
+
+    let digest = "sha256:" + String(repeating: "a", count: 64)
+    let digestPull = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/images/create?fromImage=docker.io%2Flibrary%2Falpine"
+                + "&tag=\(digest)"
+        )
+    )
+    #expect(digestPull.status == 200)
+    #expect(
+        try await String(data: streamBytes(digestPull), encoding: .utf8)?
+            .contains("\"status\"") == true
+    )
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .get,
+                target: "/images/docker.io%2Flibrary%2Falpine%40\(digest)/json"
+            )
+        ).status == 200
+    )
 }
 
 func assertImageBuildLoadAndDelete(_ router: DockerRouter) async throws {
@@ -223,6 +260,17 @@ func assertNetworkEndpoints(_ router: DockerRouter) async throws {
             to: DockerHTTPRequest(method: .get, target: "/networks")
         ).status == 200
     )
+    let filtered = await router.respond(
+        to: DockerHTTPRequest(
+            method: .get,
+            target: "/networks?filters="
+                + "%7B%22label%22:%7B%22project=other%22:true%7D%7D"
+        )
+    )
+    #expect(
+        try (JSONSerialization.jsonObject(with: bytes(filtered)) as? [[String: Any]])?
+            .isEmpty == true
+    )
     #expect(
         await router.respond(
             to: DockerHTTPRequest(method: .delete, target: "/networks/\(identifier)")
@@ -250,6 +298,16 @@ func assertVolumeEndpoints(_ router: DockerRouter) async throws {
             ).status == 200
         )
     }
+    let filtered = await router.respond(
+        to: DockerHTTPRequest(
+            method: .get,
+            target: "/volumes?filters="
+                + "%7B%22label%22:%7B%22project=other%22:true%7D%7D"
+        )
+    )
+    let filteredObject =
+        try JSONSerialization.jsonObject(with: bytes(filtered)) as? [String: Any]
+    #expect((filteredObject?["Volumes"] as? [[String: Any]])?.isEmpty == true)
     #expect(
         await router.respond(
             to: DockerHTTPRequest(method: .delete, target: "/volumes/demo-volume")
@@ -593,10 +651,11 @@ func assertFilteredEventActions(_ router: DockerRouter) async throws {
                 + "%5B%22project=demo%22%5D%7D"
         )
     )
-    let text = try await String(
-        data: streamBytes(response),
-        encoding: .utf8
-    ) ?? "non-UTF-8 event stream"
+    let text =
+        try await String(
+            data: streamBytes(response),
+            encoding: .utf8
+        ) ?? "non-UTF-8 event stream"
     #expect(text.contains("\"Action\":\"create\""))
     #expect(!text.contains("\"Action\":\"start\""))
 }
@@ -656,7 +715,9 @@ func assertContainerNegativePaths(
         _ = try await runtime.waitContainer(id: container.dockerID.rawValue, context: context)
     }
     await #expect(throws: DevContainerError.self) {
-        try await runtime.removeContainer(id: container.dockerID.rawValue, force: false, context: context)
+        try await runtime.removeContainer(
+            id: container.dockerID.rawValue, force: false, context: context
+        )
     }
     #expect(
         await runtime.listContainers(

@@ -14,7 +14,6 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import ContainerAPIClient
 import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -24,6 +23,17 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     struct RequestedContainer {
         var spec: ContainerSpec
         var createdAt: Date?
+    }
+
+    struct ContainerExit: Sendable {
+        let code: Int32
+        let finishedAt: Date
+    }
+
+    struct CreateOptionSupport: Sendable {
+        let hostname: Bool
+        let privileged: Bool
+        let securityOptions: Bool
     }
 
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
@@ -38,6 +48,9 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var requestedContainers: [String: RequestedContainer] = [:]
     var startedContainers: Set<String> = []
     var containerStartedAt: [String: Date] = [:]
+    var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
+    var containerExits: [String: ContainerExit] = [:]
+    var createOptionSupport: CreateOptionSupport?
 
     public init(
         executable: URL,
@@ -69,7 +82,9 @@ public extension AppleContainerRuntime {
         try requireSuccess(result, operation: "version probe")
         let records = try JSONDecoder().decode([AppleVersionRecord].self, from: result.standardOutput)
         guard let record = records.first(where: { $0.appName == "container" }) ?? records.first else {
-            throw DevContainerError(.providerProtocolMismatch, message: "Apple container returned no version record")
+            throw DevContainerError(
+                .providerProtocolMismatch, message: "Apple container returned no version record"
+            )
         }
         return ProtocolDescriptor(
             provider: .stock,
@@ -111,38 +126,79 @@ public extension AppleContainerRuntime {
         try requireSuccess(result, operation: "container list")
         let values = try parseJSONObjectArray(result.standardOutput)
         var snapshots: [ContainerSnapshot] = []
+        var observedRuntimeIDs = Set<String>()
         for value in values {
-            var snapshot = try containerSnapshot(value)
-            if let metadataStore,
-               let metadata = try await metadataStore.containerMetadata(
-                   id: snapshot.runtimeID.rawValue
-               )
-            {
-                if Self.sameContainerIncarnation(
-                    metadataCreatedAt: metadata.createdAt,
-                    observedCreatedAt: snapshot.createdAt
-                ) {
-                    snapshot = apply(metadata: metadata, to: snapshot)
-                } else {
-                    // Native providers may delete and recreate a container
-                    // under the same stable Compose name. Old Docker identity
-                    // metadata must not be projected onto that new instance.
-                    try await metadataStore.removeContainerMetadata(
-                        id: snapshot.runtimeID.rawValue
-                    )
-                }
-            }
-            guard labels.allSatisfy({ key, expected in
-                guard let actual = snapshot.spec.labels[key] else {
-                    return false
-                }
-                return expected.isEmpty || actual == expected
-            }) else {
+            let snapshot = try await containerSnapshotWithMetadata(value)
+            observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
+            guard
+                labels.allSatisfy({ key, expected in
+                    guard let actual = snapshot.spec.labels[key] else {
+                        return false
+                    }
+                    return expected.isEmpty || actual == expected
+                })
+            else {
                 continue
             }
             snapshots.append(snapshot)
         }
+        if all {
+            try await removeOrphanedContainerMetadata(
+                observedRuntimeIDs: observedRuntimeIDs
+            )
+        }
         return snapshots
+    }
+
+    private func containerSnapshotWithMetadata(
+        _ value: [String: Any]
+    ) async throws -> ContainerSnapshot {
+        var snapshot = try containerSnapshot(value)
+        if snapshot.state == .stopped,
+           let exit = containerExits[snapshot.runtimeID.rawValue]
+        {
+            snapshot.exitCode = exit.code
+            snapshot.finishedAt = exit.finishedAt
+        }
+        guard let metadataStore,
+              let metadata = try await metadataStore.containerMetadata(
+                  id: snapshot.runtimeID.rawValue
+              )
+        else {
+            return snapshot
+        }
+        guard Self.sameContainerIncarnation(
+            metadataCreatedAt: metadata.createdAt,
+            observedCreatedAt: snapshot.createdAt
+        ) else {
+            // Native Compose may recreate a stable name. Never project the
+            // previous Docker identity onto that new native container.
+            try await metadataStore.removeContainerMetadata(
+                id: snapshot.runtimeID.rawValue
+            )
+            return snapshot
+        }
+        return apply(metadata: metadata, to: snapshot)
+    }
+
+    private func removeOrphanedContainerMetadata(
+        observedRuntimeIDs: Set<String>
+    ) async throws {
+        guard let metadataStore else {
+            return
+        }
+        for metadata in try await metadataStore.listContainerMetadata()
+            where !observedRuntimeIDs.contains(metadata.runtimeID.rawValue)
+        {
+            try await metadataStore.removeContainerMetadata(
+                id: metadata.runtimeID.rawValue
+            )
+            discardContainerState(
+                id: metadata.runtimeID.rawValue,
+                dockerID: metadata.dockerID.rawValue,
+                name: metadata.spec.name
+            )
+        }
     }
 
     func inspectContainer(
@@ -168,6 +224,8 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        containerExitTasks.removeValue(forKey: spec.name)?.cancel()
+        containerExits.removeValue(forKey: spec.name)
         let result = try await command(containerCreateArguments(spec))
         try requireSuccess(result, operation: "container create")
         requestedContainers[spec.name] = RequestedContainer(
@@ -180,7 +238,11 @@ public extension AppleContainerRuntime {
     }
 
     private func containerCreateArguments(_ spec: ContainerSpec) async throws -> [String] {
-        var arguments = containerConfigurationArguments(spec)
+        let optionSupport = try await supportedCreateOptions()
+        var arguments = try containerConfigurationArguments(
+            spec,
+            optionSupport: optionSupport
+        )
         for mount in spec.mounts {
             arguments += try await mountArguments(mount)
         }
@@ -192,22 +254,81 @@ public extension AppleContainerRuntime {
         return arguments
     }
 
-    private func containerConfigurationArguments(_ spec: ContainerSpec) -> [String] {
+    private func supportedCreateOptions() async throws -> CreateOptionSupport {
+        if let createOptionSupport {
+            return createOptionSupport
+        }
+        let result = try await command(["create", "--help"])
+        try requireSuccess(result, operation: "container create capability probe")
+        let help =
+            String(
+                bytes: result.standardOutput + result.standardError,
+                encoding: .utf8
+            ) ?? ""
+        let support = CreateOptionSupport(
+            hostname: help.contains("--hostname"),
+            privileged: help.contains("--privileged"),
+            securityOptions: help.contains("--security-opt")
+        )
+        createOptionSupport = support
+        return support
+    }
+
+    private func containerConfigurationArguments(
+        _ spec: ContainerSpec,
+        optionSupport: CreateOptionSupport
+    ) throws -> [String] {
+        if spec.hostname?.isEmpty == false, !optionSupport.hostname {
+            throw DevContainerError(
+                .unsupportedCapability,
+                message:
+                "this Apple container distribution cannot set a container hostname; "
+                    + "use a distribution whose create command exposes --hostname"
+            )
+        }
+        if !spec.securityOptions.isEmpty, !optionSupport.securityOptions {
+            throw DevContainerError(
+                .unsupportedCapability,
+                message:
+                "this Apple container distribution cannot enforce Docker security options; "
+                    + "use a distribution whose create command exposes --security-opt"
+            )
+        }
+
         var arguments = ["create", "--name", spec.name]
         arguments += spec.environment.sorted { $0.key < $1.key }
             .flatMap { ["--env", "\($0.key)=\($0.value)"] }
         arguments += spec.labels.sorted { $0.key < $1.key }
-            .flatMap { ["--label", "\($0.key)=\($0.value)"] }
+            .flatMap { key, value -> [String] in
+                // apple/container 1.1's CLI rejects a label whenever its value has
+                // another "=". The complete Docker label set remains in the durable
+                // adapter metadata and is projected by inspect/list after creation.
+                guard !key.contains("="), !value.contains("=") else {
+                    return []
+                }
+                return ["--label", "\(key)=\(value)"]
+            }
         arguments += Self.optionalArgument("--workdir", value: spec.workingDirectory)
         arguments += Self.optionalArgument("--user", value: spec.user)
         arguments += Self.optionalArgument("--hostname", value: spec.hostname)
         arguments += [
             (spec.terminal, "--tty"),
             (spec.openStandardInput, "--interactive"),
-            (spec.privileged, "--privileged"),
             (spec.initProcess, "--init")
         ].compactMap { $0.0 ? $0.1 : nil }
-        arguments += spec.capabilitiesToAdd.flatMap { ["--cap-add", $0] }
+        if spec.privileged, optionSupport.privileged {
+            arguments.append("--privileged")
+        }
+        var capabilitiesToAdd = spec.capabilitiesToAdd
+        if spec.privileged, !optionSupport.privileged,
+           !capabilitiesToAdd.contains(where: { $0.caseInsensitiveCompare("ALL") == .orderedSame })
+        {
+            // Stock apple/container 1.1 exposes guest privilege through
+            // Linux capabilities rather than a Docker-style --privileged
+            // switch. Each container remains isolated in its own VM.
+            capabilitiesToAdd.insert("ALL", at: 0)
+        }
+        arguments += capabilitiesToAdd.flatMap { ["--cap-add", $0] }
         arguments += spec.capabilitiesToDrop.flatMap { ["--cap-drop", $0] }
         arguments += spec.securityOptions.flatMap { ["--security-opt", $0] }
         arguments += Self.optionalArgument("--entrypoint", value: spec.entrypoint.first)
@@ -272,258 +393,6 @@ public extension AppleContainerRuntime {
             )
             throw error
         }
-    }
-
-    func startContainer(
-        id: String,
-        context: RuntimeRequestContext
-    ) async throws {
-        let resolved = try await resolveContainerID(id, context: context)
-        try await requireSuccess(
-            command(["start", resolved]),
-            operation: "container start"
-        )
-        let startedAt = Date()
-        startedContainers.insert(id)
-        startedContainers.insert(resolved)
-        containerStartedAt[id] = startedAt
-        containerStartedAt[resolved] = startedAt
-        if let metadataStore,
-           try await metadataStore.containerMetadata(id: resolved) != nil
-        {
-            try await metadataStore.markContainerStarted(id: resolved, at: startedAt)
-        }
-        let snapshot = try await inspectContainer(
-            id: resolved,
-            context: context
-        )
-        do {
-            let resolvedPorts = try await portForwarding.start(
-                containerID: resolved,
-                bindings: snapshot.spec.ports,
-                networkAddresses: snapshot.networkAddresses
-            )
-            if resolvedPorts != snapshot.spec.ports {
-                var updatedSpec = snapshot.spec
-                updatedSpec.ports = resolvedPorts
-                let request = RequestedContainer(
-                    spec: updatedSpec,
-                    createdAt: snapshot.createdAt
-                )
-                requestedContainers[resolved] = request
-                requestedContainers[updatedSpec.name] = request
-                try await metadataStore?.recordContainerMetadata(
-                    RuntimeContainerMetadata(
-                        runtimeID: snapshot.runtimeID,
-                        dockerID: snapshot.dockerID,
-                        spec: updatedSpec,
-                        createdAt: snapshot.createdAt,
-                        startedAt: startedAt
-                    )
-                )
-            }
-        } catch {
-            _ = try? await command(["stop", "--time", "0", resolved])
-            throw error
-        }
-        try await synchronizeNetworkHosts(context: context)
-    }
-
-    func stopContainer(
-        id: String,
-        timeout: Duration?,
-        context: RuntimeRequestContext
-    ) async throws {
-        let resolved = try await resolveContainerID(id, context: context)
-        var arguments = ["stop"]
-        if let timeout {
-            let components = timeout.components
-            let seconds = components.seconds + (components.attoseconds > 0 ? 1 : 0)
-            arguments += ["--time", String(seconds)]
-        }
-        arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container stop")
-        await portForwarding.stop(containerID: resolved)
-        try await synchronizeNetworkHosts(context: context)
-    }
-
-    func killContainer(
-        id: String,
-        signal: String,
-        context: RuntimeRequestContext
-    ) async throws {
-        let resolved = try await resolveContainerID(id, context: context)
-        try await requireSuccess(
-            command(["kill", "--signal", signal, resolved]),
-            operation: "container kill"
-        )
-        await portForwarding.stop(containerID: resolved)
-        try await synchronizeNetworkHosts(context: context)
-    }
-
-    func removeContainer(
-        id: String,
-        force: Bool,
-        context: RuntimeRequestContext
-    ) async throws {
-        let snapshot = try await inspectContainer(id: id, context: context)
-        let resolved = snapshot.runtimeID.rawValue
-        var arguments = ["delete"]
-        if force {
-            arguments.append("--force")
-        }
-        arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container delete")
-        await portForwarding.stop(containerID: resolved)
-        requestedContainers.removeValue(forKey: id)
-        requestedContainers.removeValue(forKey: resolved)
-        requestedContainers.removeValue(forKey: snapshot.spec.name)
-        startedContainers.remove(id)
-        startedContainers.remove(resolved)
-        containerStartedAt.removeValue(forKey: id)
-        containerStartedAt.removeValue(forKey: resolved)
-        try await metadataStore?.removeContainerMetadata(id: resolved)
-        try await synchronizeNetworkHosts(context: context)
-    }
-
-    func waitContainer(
-        id: String,
-        context: RuntimeRequestContext
-    ) async throws -> Int32 {
-        while !Task.isCancelled {
-            do {
-                let snapshot = try await inspectContainer(id: id, context: context)
-                if snapshot.state == .stopped, wasStarted(id: id, snapshot: snapshot) {
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
-                    let exitCode = snapshot.exitCode ?? 0
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
-                    }
-                    return exitCode
-                }
-            } catch let error as DevContainerError where error.code == .notFound {
-                if requestedContainers[id] == nil {
-                    return 0
-                }
-            }
-            try await Task.sleep(for: .milliseconds(200))
-        }
-        throw DevContainerError(.cancelled, message: "container wait was cancelled")
-    }
-
-    func containerLogs(
-        id: String,
-        follow: Bool,
-        standardOutput _: Bool,
-        standardError _: Bool,
-        context: RuntimeRequestContext
-    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
-        let resolved = try await resolveContainerID(id, context: context)
-        var arguments = ["logs"]
-        if follow {
-            arguments.append("--follow")
-        }
-        arguments.append(resolved)
-        return try process(arguments).frames
-    }
-
-    func attachContainer(
-        id: String,
-        terminal _: Bool,
-        context: RuntimeRequestContext
-    ) async throws -> any RuntimeProcessSession {
-        ApplePollingLogSession {
-            try await self.pollLogs(id: id, context: context)
-        }
-    }
-
-    func createExec(
-        containerID: String,
-        spec: ExecSpec,
-        context: RuntimeRequestContext
-    ) async throws -> ExecSnapshot {
-        let container = try await inspectContainer(id: containerID, context: context)
-        guard container.state == .running else {
-            throw DevContainerError(.conflict, message: "container \(containerID) is not running")
-        }
-        let exec = ExecSnapshot(
-            id: .random(),
-            containerID: container.runtimeID,
-            spec: spec
-        )
-        execs[exec.id] = exec
-        return exec
-    }
-
-    func startExec(
-        id: ExecID,
-        context _: RuntimeRequestContext
-    ) async throws -> any RuntimeProcessSession {
-        guard var exec = execs[id] else {
-            throw DevContainerError(.notFound, message: "exec \(id) was not found")
-        }
-        guard !exec.running, exec.exitCode == nil else {
-            throw DevContainerError(.conflict, message: "exec \(id) has already started")
-        }
-        var arguments = ["exec"]
-        for (key, value) in exec.spec.environment.sorted(by: { $0.key < $1.key }) {
-            arguments += ["--env", "\(key)=\(value)"]
-        }
-        if let workingDirectory = exec.spec.workingDirectory {
-            arguments += ["--workdir", workingDirectory]
-        }
-        if let user = exec.spec.user {
-            arguments += ["--user", user]
-        }
-        if exec.spec.terminal {
-            arguments.append("--tty")
-        }
-        if exec.spec.attachStandardInput {
-            arguments.append("--interactive")
-        }
-        arguments.append(exec.containerID.rawValue)
-        arguments += exec.spec.command
-        exec.running = true
-        execs[id] = exec
-        let session: any RuntimeProcessSession = if useDirectProcessAPI, exec.spec.terminal {
-            try await AppleDirectProcessSession.create(
-                containerID: exec.containerID.rawValue,
-                spec: exec.spec
-            )
-        } else {
-            try process(arguments)
-        }
-        Task {
-            do {
-                let exitCode = try await session.wait()
-                self.finishExec(id: id, exitCode: exitCode)
-            } catch {
-                self.finishExec(id: id, exitCode: 255)
-            }
-        }
-        return session
-    }
-
-    func inspectExec(
-        id: ExecID,
-        context _: RuntimeRequestContext
-    ) async throws -> ExecSnapshot {
-        guard let exec = execs[id] else {
-            throw DevContainerError(.notFound, message: "exec \(id) was not found")
-        }
-        return exec
-    }
-
-    private func finishExec(id: ExecID, exitCode: Int32) {
-        guard var exec = execs[id] else {
-            return
-        }
-        exec.running = false
-        exec.exitCode = exitCode
-        execs[id] = exec
     }
 
     func copyArchiveFromContainer(
@@ -718,11 +587,15 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> ImageSnapshot {
         let images = try await listImages(context: context)
-        guard let image = images.first(where: {
-            $0.id == reference || $0.references.contains(where: {
-                Self.equivalentImageReference($0, reference)
+        guard
+            let image = images.first(where: {
+                $0.id == reference
+                    || Self.imageDigest(reference) == $0.id
+                    || $0.references.contains(where: {
+                        Self.equivalentImageReference($0, reference)
+                    })
             })
-        }) else {
+        else {
             throw DevContainerError(.notFound, message: "image \(reference) was not found")
         }
         return image
@@ -915,9 +788,11 @@ public extension AppleContainerRuntime {
     ) async throws -> VolumeSnapshot {
         _ = context
         if Self.requiresNativeVolume(name: name) {
-            guard let volume = try await nativeBuildKitVolumes().first(where: {
-                $0.name == name
-            }) else {
+            guard
+                let volume = try await nativeBuildKitVolumes().first(where: {
+                    $0.name == name
+                })
+            else {
                 throw DevContainerError(.notFound, message: "volume \(name) was not found")
             }
             return volume
@@ -946,11 +821,13 @@ public extension AppleContainerRuntime {
             labels: [:],
             context: context
         )
-        guard !containers.contains(where: { container in
-            container.spec.mounts.contains {
-                $0.type == .volume && $0.source == name
-            }
-        }) else {
+        guard
+            !containers.contains(where: { container in
+                container.spec.mounts.contains {
+                    $0.type == .volume && $0.source == name
+                }
+            })
+        else {
             throw DevContainerError(
                 .conflict,
                 message: "volume \(name) is in use by a container"

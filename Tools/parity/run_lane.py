@@ -13,6 +13,7 @@ import platform
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,8 @@ class LaneRunner:
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
         self.builder_name: str | None = None
+        self.builder_container_ids: set[str] = set()
+        self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
 
@@ -109,18 +112,30 @@ class LaneRunner:
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
         finally:
-            self.stop_builder()
-            self.stop_engine()
+            try:
+                self.stop_builder()
+                self.check_runtime_state_cleanup()
+            finally:
+                self.stop_engine()
 
-        success = all(result["status"] == "passed" for result in results)
+        success = (
+            all(result["status"] == "passed" for result in results)
+            and not self.cleanup_differences
+        )
         payload = {
             "schemaVersion": 1,
             "backend": self.lane,
             "status": "passed" if success else "failed",
             "fixtures": results,
+            "cleanupDifferences": self.cleanup_differences,
         }
         atomic_json(self.output / "results.json", payload)
-        write_junit(self.output / "junit.xml", self.lane, results)
+        write_junit(
+            self.output / "junit.xml",
+            self.lane,
+            results,
+            self.cleanup_differences,
+        )
         return 0 if success else 1
 
     def start_engine(self) -> None:
@@ -166,6 +181,7 @@ class LaneRunner:
         )
         self.environment["DOCKER_HOST"] = f"unix://{socket_path}"
         self.environment["DEVCONTAINER_SOCKET"] = str(socket_path)
+        self.environment["DEVCONTAINER_STATE"] = str(state_path)
         self.environment["DEVCONTAINER_CONFIG"] = str(
             self.runtime_root / "missing-config.toml"
         )
@@ -206,6 +222,7 @@ class LaneRunner:
             self.socket_root = None
 
     def prepare_builder(self) -> None:
+        before = self.docker_container_inventory()
         self.builder_name = f"devcontainer-parity-{self.lane}-{os.getpid()}"
         result = subprocess.run(
             [
@@ -246,19 +263,124 @@ class LaneRunner:
             raise ParityError(
                 f"isolated buildx builder did not become ready: {bootstrap.stderr.strip()}"
             )
+        self.builder_container_ids = self.docker_container_inventory() - before
+        if not self.builder_container_ids:
+            raise ParityError(
+                "isolated buildx builder did not expose a dedicated container"
+            )
 
     def stop_builder(self) -> None:
         if self.builder_name is None or not self.docker:
             return
-        subprocess.run(
+        builder_name = self.builder_name
+        result = subprocess.run(
             [self.docker, "buildx", "rm", "--force", self.builder_name],
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
+            text=True,
             check=False,
             timeout=120,
         )
+        (self.output / "buildx-remove.log").write_text(
+            result.stdout + result.stderr,
+            encoding="utf-8",
+        )
+        if result.returncode != 0:
+            self.cleanup_differences.append(
+                f"buildx rm for {builder_name} exited {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
+
+        remaining = set(self.builder_container_ids)
+        deadline = time.monotonic() + 15
+        while remaining and time.monotonic() < deadline:
+            try:
+                remaining &= self.docker_container_inventory()
+            except ParityError as error:
+                self.cleanup_differences.append(str(error))
+                break
+            if remaining:
+                time.sleep(0.2)
+        if remaining:
+            identifiers = sorted(remaining)
+            cleanup = subprocess.run(
+                [self.docker, "rm", "-f", *identifiers],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            diagnostic = (
+                "isolated buildx builder leaked container(s): "
+                + ", ".join(identifiers)
+            )
+            if cleanup.returncode != 0:
+                diagnostic += (
+                    f"; exact cleanup exited {cleanup.returncode}: "
+                    f"{cleanup.stderr.strip()}"
+                )
+            self.cleanup_differences.append(diagnostic)
         self.builder_name = None
+        self.builder_container_ids = set()
+
+    def docker_container_inventory(self) -> set[str]:
+        """Return the exact container IDs visible through the selected lane."""
+
+        result = subprocess.run(
+            [self.docker, "ps", "-aq"],
+            cwd=self.repository,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise ParityError(
+                "cannot inventory parity containers: "
+                f"{result.stderr.strip()}"
+            )
+        return {
+            value.strip()
+            for value in result.stdout.splitlines()
+            if value.strip()
+        }
+
+    def check_runtime_state_cleanup(self) -> None:
+        """Require Apple lanes to leave no durable project/container ownership."""
+
+        if self.lane == "docker":
+            return
+        state = self.runtime_root / "state.sqlite"
+        if not state.is_file():
+            self.cleanup_differences.append(
+                f"lane state database is missing: {state}"
+            )
+            return
+        try:
+            with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as database:
+                projects = int(
+                    database.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+                )
+                containers = int(
+                    database.execute(
+                        "SELECT COUNT(*) FROM runtime_containers"
+                    ).fetchone()[0]
+                )
+        except sqlite3.Error as error:
+            self.cleanup_differences.append(
+                f"cannot inspect lane state cleanup: {error}"
+            )
+            return
+        if projects or containers:
+            self.cleanup_differences.append(
+                "lane state leaked "
+                f"{projects} project claim(s) and "
+                f"{containers} runtime container record(s)"
+            )
 
     def require_docker_oracle(self) -> None:
         result = run_checked(
@@ -1031,6 +1153,7 @@ class LaneRunner:
 
     def cleanup_fixture(self, fixture: Any) -> str:
         cleanup_output = ""
+        cleanup_error = ""
         label = f"devcontainer.local_folder={fixture.directory}"
         result = subprocess.run(
             [self.docker, "ps", "-aq", "--filter", f"label={label}"],
@@ -1105,32 +1228,38 @@ class LaneRunner:
             )
             if down.returncode == 0:
                 cleanup_output += down.stdout + down.stderr
-                rediscovered = subprocess.run(
-                    [
-                        self.docker,
-                        "ps",
-                        "-aq",
-                        "--filter",
-                        f"label=com.docker.compose.project={project}",
-                    ],
-                    cwd=self.repository,
-                    env=self.environment,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=30,
+            else:
+                cleanup_output += down.stdout + down.stderr
+                cleanup_error = (
+                    f"compose down exited {down.returncode}: "
+                    f"{down.stderr.strip() or down.stdout.strip() or 'no diagnostic output'}"
                 )
-                if rediscovered.returncode == 0:
-                    identifiers = [
-                        line for line in rediscovered.stdout.splitlines() if line
-                    ]
-                    if not identifiers:
-                        return cleanup_output
-                else:
-                    return (
-                        "ERROR: compose cleanup discovery exited "
-                        f"{rediscovered.returncode}: {rediscovered.stderr}"
-                    )
+            rediscovered = subprocess.run(
+                [
+                    self.docker,
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    f"label=com.docker.compose.project={project}",
+                ],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if rediscovered.returncode == 0:
+                identifiers = [
+                    line for line in rediscovered.stdout.splitlines() if line
+                ]
+                if not identifiers and not cleanup_error:
+                    return cleanup_output
+            else:
+                return (
+                    "ERROR: compose cleanup discovery exited "
+                    f"{rediscovered.returncode}: {rediscovered.stderr}"
+                )
         if identifiers:
             remove = subprocess.run(
                 [self.docker, "rm", "-f", *identifiers],
@@ -1143,8 +1272,12 @@ class LaneRunner:
             )
             if remove.returncode != 0:
                 return f"ERROR: cleanup exited {remove.returncode}: {remove.stderr}"
-            return cleanup_output + remove.stdout
-        return cleanup_output + "no fixture containers remained\n"
+            cleanup_output += remove.stdout
+        else:
+            cleanup_output += "no fixture containers remained\n"
+        if cleanup_error:
+            return f"ERROR: {cleanup_error}\n{cleanup_output}"
+        return cleanup_output
 
 
 SAFE_ENVIRONMENT_KEYS = frozenset(
@@ -1216,15 +1349,22 @@ def run_checked(
     return result
 
 
-def write_junit(path: Path, lane: str, results: list[dict[str, Any]]) -> None:
+def write_junit(
+    path: Path,
+    lane: str,
+    results: list[dict[str, Any]],
+    cleanup_differences: Sequence[str] = (),
+) -> None:
     """Write a portable JUnit report for CI readers."""
 
+    failures = sum(result["status"] != "passed" for result in results)
+    failures += bool(cleanup_differences)
     suite = ET.Element(
         "testsuite",
         {
             "name": f"parity-{lane}",
-            "tests": str(len(results)),
-            "failures": str(sum(result["status"] != "passed" for result in results)),
+            "tests": str(len(results) + bool(cleanup_differences)),
+            "failures": str(failures),
             "time": f"{sum(result['durationSeconds'] for result in results):.3f}",
         },
     )
@@ -1241,6 +1381,22 @@ def write_junit(path: Path, lane: str, results: list[dict[str, Any]]) -> None:
         if result["status"] != "passed":
             failure = ET.SubElement(case, "failure", {"message": result["diagnostic"]})
             failure.text = "\n".join(result["differences"])
+    if cleanup_differences:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": f"parity.{lane}",
+                "name": "runtime-cleanup",
+                "time": "0.000",
+            },
+        )
+        failure = ET.SubElement(
+            case,
+            "failure",
+            {"message": "runtime resources leaked after parity"},
+        )
+        failure.text = "\n".join(cleanup_differences)
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 

@@ -137,6 +137,17 @@ Docker-shaped error. They must not return a successful approximation.
 Buildx is reported only after its session and stream behavior passes the
 Feature, build-context, and UID-update fixtures.
 
+### Stock Apple 1.1.0 create-time boundary
+
+The unmodified Apple 1.1.0 `container create` command does not expose `--hostname`, `--security-opt`, or `--privileged`. Its public `ContainerConfiguration` also has no hostname or security-option transport field. The stock adapter therefore:
+
+- accepts the normal Dev Containers path where Docker sends an empty hostname and no security options;
+- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation;
+- rejects a non-empty Docker `Hostname` or any `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
+- reports a Docker-shaped unsupported-capability response rather than claiming a weakened security approximation.
+
+The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.1.0/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
+
 ## Functional support ledger
 
 Every row has an implemented parity fixture and remains a development
