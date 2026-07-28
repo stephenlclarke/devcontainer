@@ -636,16 +636,27 @@ class LaneRunner:
 
     def validate_ports(self, raw: Path) -> dict[str, str]:
         body = ""
-        for _ in range(50):
+        attempts: list[str] = []
+        for attempt in range(1, 51):
             try:
                 with urllib.request.urlopen(
                     "http://127.0.0.1:49277/",
                     timeout=2,
                 ) as response:
                     body = response.read().decode(errors="replace").strip()
+                attempts.append(
+                    f"attempt {attempt}: HTTP success; body={body!r}"
+                )
                 break
-            except (OSError, urllib.error.URLError):
+            except (OSError, urllib.error.URLError) as error:
+                attempts.append(
+                    f"attempt {attempt}: {type(error).__name__}: {error}"
+                )
                 time.sleep(0.1)
+        (raw / "host-connectivity.log").write_text(
+            "\n".join(attempts) + "\n",
+            encoding="utf-8",
+        )
 
         collision_name = f"dcparity-port-collision-{os.getpid()}"
         collision = subprocess.run(

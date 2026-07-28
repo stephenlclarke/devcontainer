@@ -33,6 +33,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
+        let publish: Bool
         let privileged: Bool
         let securityOptions: Bool
     }
@@ -272,15 +273,34 @@ public extension AppleContainerRuntime {
         for mount in spec.mounts {
             arguments += try await mountArguments(mount)
         }
-        // Published sockets are projected after the VM starts with the same
-        // SocketForwarder package used by Apple's container stack.
+        if optionSupport.publish {
+            arguments += spec.ports.compactMap(Self.nativePublishArguments).flatMap(\.self)
+        }
+        // Ephemeral host ports are resolved after the VM starts because
+        // Apple's stored configuration retains port zero rather than the
+        // listener selected by the kernel.
         arguments += spec.networks.flatMap { ["--network", $0.name] }
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
     }
 
-    private func supportedCreateOptions() async throws -> CreateOptionSupport {
+    static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
+        guard let hostPort = binding.hostPort, hostPort > 0 else {
+            return nil
+        }
+        let hostAddress =
+            binding.hostAddress.contains(":")
+                ? "[\(binding.hostAddress)]"
+                : binding.hostAddress
+        return [
+            "--publish",
+            "\(hostAddress):\(hostPort):\(binding.containerPort)/"
+                + binding.protocolName.lowercased()
+        ]
+    }
+
+    internal func supportedCreateOptions() async throws -> CreateOptionSupport {
         if let createOptionSupport {
             return createOptionSupport
         }
@@ -293,6 +313,7 @@ public extension AppleContainerRuntime {
             ) ?? ""
         let support = CreateOptionSupport(
             hostname: help.contains("--hostname"),
+            publish: help.contains("--publish"),
             privileged: help.contains("--privileged"),
             securityOptions: help.contains("--security-opt")
         )

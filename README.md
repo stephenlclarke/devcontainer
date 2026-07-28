@@ -29,12 +29,12 @@
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
 > [!IMPORTANT]
-> Version 1.0.0 is the first stable release. Its compatibility claim is bound
-> to the exact versions in [COMPATIBILITY.md](COMPATIBILITY.md): real Docker,
+> Version 1.0.0 is the current release candidate, not yet a published stable
+> release. Its eventual compatibility claim is bound to the exact versions in
+> [COMPATIBILITY.md](COMPATIBILITY.md) and is published only after real Docker,
 > unmodified Apple `container` 1.1.0, and the separately maintained
-> `container-compose` provider stack pass
-> all 18 CLI fixtures plus the real VS Code end-to-end fixture with zero
-> normalized semantic differences.
+> `container-compose` provider stack pass all 18 CLI fixtures plus the real
+> VS Code end-to-end fixture with zero normalized semantic differences.
 
 ## See it work
 
@@ -162,6 +162,12 @@ Runtime references are [Apple container](https://github.com/apple/container), [A
 Requirements are an Apple-silicon Mac running macOS Tahoe 26 or later and
 Apple [`container` 1.1.0](https://github.com/apple/container/releases/tag/1.1.0).
 Install Apple's signed package first, then install `devcontainer`:
+
+When macOS asks whether Apple's `container-runtime-linux` may find and connect
+to devices on the local network, choose **Allow**. Apple port publishing
+connects its signed runtime helper to each container VM on a local vmnet
+subnet; denying that permission leaves the host listener open but resets
+connections with `No route to host`.
 
 ```console
 brew tap stephenlclarke/tap

@@ -2,9 +2,10 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.0 is the supported stable release. The Homebrew formula installs
-> its immutable, Developer ID-signed and notarized GitHub archive, verifies the
-> archive checksum, and keeps the Apple runtime as a separate installation.
+> Version 1.0.0 is the current release candidate. The stable Homebrew formula
+> becomes available only after its immutable GitHub archive is Developer
+> ID-signed, notarized, parity-certified, and published. The formula verifies
+> the archive checksum and keeps the Apple runtime as a separate installation.
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock
 `container` runtime on Apple-silicon Macs running macOS Tahoe. It installs as a
@@ -38,6 +39,8 @@ The prebuilt and Homebrew packages require:
 - Apple silicon (`arm64`).
 - macOS Tahoe 26 or later.
 - Apple's stock `container` 1.1.0 runtime for the stock Apple backend.
+- Local Network permission for Apple's signed `container-runtime-linux`
+  helper so published host ports can reach the container VM.
 - The Docker CLI and upstream Docker Compose client used by VS Code.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
@@ -65,6 +68,10 @@ container system version --format json
 The stock-Apple backend must reject a runtime whose provenance identifies a custom distribution when strict stock mode is requested.
 
 Do not remove Apple's package to install `devcontainer`. Do not install a custom runtime as a workaround for an installation check. Runtime compatibility gaps belong in the project's status ledger and issue template.
+
+The first published-port operation can display a macOS Local Network privacy
+prompt for Apple's `container-runtime-linux` helper. Choose **Allow**. This is
+Apple runtime permission, not permission for `devcontainer` to scan the LAN.
 
 ## Homebrew Installation
 
@@ -423,6 +430,30 @@ Uninstall removes only the formula-owned `devcontainer` payload. It must not rem
 - Images, containers, networks, volumes, caches, or Dev Container project data owned by another runtime.
 
 ## Troubleshooting
+
+If an internally reachable container service resets its published host
+connection, inspect Apple's system log:
+
+```sh
+container system logs --last 5m |
+  grep -E 'forwarder|No route to host|connect failed'
+```
+
+`No route to host` from `container-runtime-linux` while the container VM
+address is directly reachable means macOS denied the Apple helper's Local
+Network access. Open **System Settings → Privacy & Security → Local Network**
+and enable the entry for Apple `container` or `container-runtime-linux`, then
+restart the runtime:
+
+```sh
+container system stop
+container system start
+```
+
+Apple documents the privacy model in
+[TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
+and the expected `--publish` behavior in the
+[`apple/container` how-to](https://github.com/apple/container/blob/main/docs/how-to.md#forward-traffic-from-localhost-to-your-container).
 
 Before filing an issue, capture:
 

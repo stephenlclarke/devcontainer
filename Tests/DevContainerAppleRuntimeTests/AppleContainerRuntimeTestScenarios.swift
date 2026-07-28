@@ -187,7 +187,7 @@ extension AppleContainerRuntimeTests {
             )
         )
         #expect(log.contains("--tmpfs /run"))
-        #expect(!log.contains("--publish 0.0.0.0:18080:8080/tcp"))
+        #expect(log.contains("--publish 0.0.0.0:18080:8080/tcp"))
         #expect(!log.contains("--publish 127.0.0.1:0:53/udp"))
         #expect(log.contains("--network fixture-network fixture:latest"))
         #expect(!log.contains("fixture-network,alias="))

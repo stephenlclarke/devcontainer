@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+import urllib.error
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +79,46 @@ class BoundedCommandTests(unittest.TestCase):
         self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
         self.assertLess(len(str(root / "docker.sock").encode()), 104)
         make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
+
+
+class PortEvidenceTests(unittest.TestCase):
+    def test_failed_host_connections_are_preserved_as_evidence(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = Path("/repository")
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.docker = "/usr/bin/docker"
+            completed = [
+                mock.Mock(returncode=17, stdout="", stderr="collision"),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+
+            with (
+                mock.patch(
+                    "run_lane.urllib.request.urlopen",
+                    side_effect=urllib.error.URLError("No route to host"),
+                ),
+                mock.patch("run_lane.time.sleep"),
+                mock.patch(
+                    "run_lane.subprocess.run",
+                    side_effect=completed,
+                ),
+            ):
+                observations = runner.validate_ports(Path(temporary))
+
+            evidence = (
+                Path(temporary) / "host-connectivity.log"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            observations,
+            {
+                "collision_rejected": "true",
+                "host_connectivity": "false",
+            },
+        )
+        self.assertIn("attempt 1: URLError: <urlopen error No route", evidence)
+        self.assertIn("attempt 50: URLError: <urlopen error No route", evidence)
 
 
 class CleanupFixtureTests(unittest.TestCase):

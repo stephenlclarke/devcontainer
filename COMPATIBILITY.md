@@ -3,11 +3,13 @@
 ## Current status
 
 > [!IMPORTANT]
-> Version 1.0.0 is supported for the exact component fingerprints below. Real
-> Docker, the unmodified stock Apple package, and the independently installed
-> Stephen Clarke's separate `container-compose` provider pass every checked-in
-> CLI and VS Code fixture with
-> zero normalized semantic differences.
+> Version 1.0.0 is a release candidate for the exact component fingerprints
+> below. The Docker lane passes all 18 CLI fixtures. The latest stock Apple and
+> separate `container-compose` candidate runs pass 17 of 18; published-port
+> host connectivity is blocked until Local Network access is enabled for
+> Apple's signed `container-runtime-linux` helper on the physical runner.
+> No stable compatibility claim exists until all CLI and VS Code fixtures pass
+> with zero normalized semantic differences.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -32,9 +34,9 @@ until it passes, normalized to hide a difference, or waived.
 
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
-| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
-| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
+| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `candidate` |
+| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `candidate` |
+| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `candidate` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:

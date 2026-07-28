@@ -666,8 +666,8 @@ struct FakeAppleCLI {
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
         let createHelp = enhancedCreateOptions
-            ? "--hostname\\n--privileged\\n--security-opt"
-            : "--cap-add\\n--cap-drop"
+            ? "--hostname\\n--publish\\n--privileged\\n--security-opt"
+            : "--cap-add\\n--cap-drop\\n--publish"
         return """
         #!/bin/sh
         set -eu

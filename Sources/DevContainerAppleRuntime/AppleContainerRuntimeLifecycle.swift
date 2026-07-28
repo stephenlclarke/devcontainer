@@ -116,11 +116,21 @@ public extension AppleContainerRuntime {
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
         do {
-            let ports = try await portForwarding.start(
+            let optionSupport = try await supportedCreateOptions()
+            let emulated = snapshot.spec.ports.filter {
+                !optionSupport.publish || ($0.hostPort ?? 0) == 0
+            }
+            var replacements = try await portForwarding.start(
                 containerID: resolved,
-                bindings: snapshot.spec.ports,
+                bindings: emulated,
                 networkAddresses: snapshot.networkAddresses
-            )
+            ).makeIterator()
+            let ports = snapshot.spec.ports.map { binding in
+                guard !optionSupport.publish || (binding.hostPort ?? 0) == 0 else {
+                    return binding
+                }
+                return replacements.next() ?? binding
+            }
             guard ports != snapshot.spec.ports else {
                 return
             }
