@@ -152,9 +152,7 @@ class LaneRunner:
         if self.runtime_root.exists():
             shutil.rmtree(self.runtime_root)
         self.runtime_root.mkdir(parents=True)
-        self.socket_root = Path(
-            tempfile.mkdtemp(prefix=f"devcontainer-{self.lane}-socket-")
-        )
+        self.socket_root = create_socket_root()
         socket_path = self.socket_root / "docker.sock"
         state_path = self.runtime_root / "state.sqlite"
         container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
@@ -1327,6 +1325,19 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
         for key, value in source.items()
         if key in SAFE_ENVIRONMENT_KEYS
     }
+
+
+def create_socket_root() -> Path:
+    """Create a private root whose Docker socket fits Darwin's path limit."""
+
+    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
+    socket_path = root / "docker.sock"
+    if len(os.fsencode(socket_path)) >= 104:
+        shutil.rmtree(root)
+        raise ParityError(
+            f"compatibility socket exceeds Darwin's 103-byte limit: {socket_path}"
+        )
+    return root
 
 
 def run_checked(

@@ -13,7 +13,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from run_lane import LaneRunner, run_checked, safe_environment
+from run_lane import (
+    LaneRunner,
+    create_socket_root,
+    run_checked,
+    safe_environment,
+)
 
 
 class SafeEnvironmentTests(unittest.TestCase):
@@ -62,6 +67,17 @@ class BoundedCommandTests(unittest.TestCase):
 
         self.assertIs(result, completed)
         self.assertEqual(run.call_args.kwargs["timeout"], 1800)
+
+    def test_compatibility_socket_stays_within_darwin_limit(self) -> None:
+        with mock.patch(
+            "run_lane.tempfile.mkdtemp",
+            return_value="/tmp/dc-sock-fixture",
+        ) as make_directory:
+            root = create_socket_root()
+
+        self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
+        self.assertLess(len(str(root / "docker.sock").encode()), 104)
+        make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
 
 
 class CleanupFixtureTests(unittest.TestCase):

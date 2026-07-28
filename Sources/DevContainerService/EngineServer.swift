@@ -78,6 +78,8 @@ final class EngineServer: @unchecked Sendable {
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 let responseEncoder = HTTPResponseEncoder()
+                let upgradeState = DockerUpgradeState()
+                let inputCloseBarrier = DockerInputCloseBarrier(state: upgradeState)
                 let requestDecoder = ByteToMessageHandler(
                     HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)
                 )
@@ -86,10 +88,13 @@ final class EngineServer: @unchecked Sendable {
                     logger: logger,
                     connections: connections,
                     responseEncoder: responseEncoder,
-                    requestDecoder: requestDecoder
+                    requestDecoder: requestDecoder,
+                    upgradeState: upgradeState,
+                    inputCloseBarrier: inputCloseBarrier
                 )
                 do {
                     try channel.pipeline.syncOperations.addHandler(responseEncoder)
+                    try channel.pipeline.syncOperations.addHandler(inputCloseBarrier)
                     try channel.pipeline.syncOperations.addHandler(requestDecoder)
                     try channel.pipeline.syncOperations.addHandler(handler)
                     return channel.eventLoop.makeSucceededVoidFuture()
@@ -240,6 +245,58 @@ enum EngineServerError: Error, CustomStringConvertible {
     }
 }
 
+/// Holds the connection state needed to preserve an input half-close that
+/// arrives while an HTTP upgrade response is being prepared.
+private final class DockerUpgradeState: @unchecked Sendable {
+    var upgradeCandidate = false
+    var inputClosed = false
+
+    func beginRequest(_ head: HTTPRequestHead) {
+        upgradeCandidate = head.headers.contains(name: "Upgrade")
+    }
+}
+
+/// Prevents the HTTP decoder from consuming upgraded-protocol bytes as a
+/// truncated HTTP message when the client sends its input and EOF eagerly.
+private final class DockerInputCloseBarrier:
+    ChannelInboundHandler,
+    RemovableChannelHandler,
+    @unchecked Sendable
+{
+    typealias InboundIn = ByteBuffer
+
+    private let state: DockerUpgradeState
+
+    init(state: DockerUpgradeState) {
+        self.state = state
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        context.fireChannelRead(data)
+    }
+
+    func userInboundEventTriggered(
+        context: ChannelHandlerContext,
+        event: Any
+    ) {
+        if let channelEvent = event as? ChannelEvent,
+           channelEvent == .inputClosed,
+           state.upgradeCandidate
+        {
+            state.inputClosed = true
+            return
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func removeHandler(
+        context: ChannelHandlerContext,
+        removalToken: ChannelHandlerContext.RemovalToken
+    ) {
+        context.leavePipeline(removalToken: removalToken)
+    }
+}
+
 private final class DockerHTTPHandler:
     ChannelInboundHandler,
     RemovableChannelHandler,
@@ -255,6 +312,8 @@ private final class DockerHTTPHandler:
     private let connections: EngineConnectionTracker
     private let responseEncoder: HTTPResponseEncoder
     private let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
+    private let upgradeState: DockerUpgradeState
+    private let inputCloseBarrier: DockerInputCloseBarrier
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
     private var responseInFlight = false
@@ -265,13 +324,17 @@ private final class DockerHTTPHandler:
         logger: Logger,
         connections: EngineConnectionTracker,
         responseEncoder: HTTPResponseEncoder,
-        requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
+        requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>,
+        upgradeState: DockerUpgradeState,
+        inputCloseBarrier: DockerInputCloseBarrier
     ) {
         self.router = router
         self.logger = logger
         self.connections = connections
         self.responseEncoder = responseEncoder
         self.requestDecoder = requestDecoder
+        self.upgradeState = upgradeState
+        self.inputCloseBarrier = inputCloseBarrier
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -304,6 +367,7 @@ private final class DockerHTTPHandler:
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case let .head(head):
+            upgradeState.beginRequest(head)
             requestHead = head
             requestBody.clear()
         case var .body(buffer):
@@ -370,6 +434,7 @@ private final class DockerHTTPHandler:
     }
 
     private func write(_ response: DockerHTTPResponse, context: ChannelHandlerContext) {
+        closeAfterResponse = closeAfterResponse || upgradeState.inputClosed
         var headers = HTTPHeaders(response.headers.map { ($0.key, $0.value) })
         let status = HTTPResponseStatus(statusCode: response.status)
         switch response.body {
@@ -487,10 +552,34 @@ private final class DockerHTTPHandler:
         do {
             try result.get()
             try context.pipeline.syncOperations.addHandler(handler)
-            context.pipeline.syncOperations.removeHandler(requestDecoder, promise: nil)
-            context.pipeline.syncOperations.removeHandler(responseEncoder, promise: nil)
-            context.pipeline.syncOperations.removeHandler(self, promise: nil)
-            handler.start(channel: context.channel)
+            let pipeline = context.pipeline
+            let sendableContext = SendableChannelHandlerContext(context)
+            pipeline.syncOperations.removeHandler(self)
+                .flatMap {
+                    pipeline.syncOperations.removeHandler(self.requestDecoder)
+                }
+                .flatMap {
+                    pipeline.syncOperations.removeHandler(self.responseEncoder)
+                }
+                .flatMap {
+                    pipeline.syncOperations.removeHandler(self.inputCloseBarrier)
+                }
+                .whenComplete { removal in
+                    let context = sendableContext.value
+                    switch removal {
+                    case .success:
+                        handler.start(channel: context.channel)
+                        if self.closeAfterResponse || self.upgradeState.inputClosed {
+                            handler.closeInput()
+                        }
+                    case let .failure(error):
+                        self.logger.error(
+                            "Engine connection takeover failed",
+                            metadata: ["error": .string(String(describing: error))]
+                        )
+                        context.close(promise: nil)
+                    }
+                }
         } catch {
             logger.error(
                 "Engine connection takeover failed",
@@ -644,9 +733,13 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
         inputPump.write(Data(bytes))
     }
 
+    func closeInput() {
+        inputPump.close()
+    }
+
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let channelEvent = event as? ChannelEvent, channelEvent == .inputClosed {
-            inputPump.close()
+            closeInput()
         }
         context.fireUserInboundEventTriggered(event)
     }

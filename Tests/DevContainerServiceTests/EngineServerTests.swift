@@ -16,6 +16,7 @@
 
 import DevContainerDockerAPI
 import DevContainerModel
+import DevContainerRuntimeSPI
 @testable import DevContainerService
 import DevContainerTestSupport
 import Foundation
@@ -52,6 +53,51 @@ struct EngineServerTests {
         try await server.shutdown()
 
         #expect(!FileManager.default.fileExists(atPath: fixture.socketPath))
+    }
+
+    @Test
+    func `server forwards an early client half close after hijack`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let session = EOFProcessSession()
+        let runtime = InMemoryRuntime(execSession: session)
+        await runtime.seedImage(
+            ImageSnapshot(
+                id: "sha256:fixture",
+                references: ["alpine:3.22"],
+                createdAt: Date(timeIntervalSince1970: 1),
+                size: 42
+            )
+        )
+        let server = fixture.server(runtime: runtime)
+        try await server.start()
+
+        do {
+            let container = try fixture.createRunningContainer()
+            let exec = try fixture.createExec(container: container)
+            let payload = Data("input-before-upgrade".utf8)
+            let process = try fixture.startEarlyHalfClose(
+                exec: exec,
+                payload: payload
+            )
+            defer {
+                if process.isRunning {
+                    process.terminate()
+                }
+                process.waitUntilExit()
+            }
+
+            for _ in 0 ..< 100 where !session.inputClosed {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(session.inputClosed)
+            #expect(session.input == payload)
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
     }
 
     private func exerciseServer(_ fixture: ServerFixture) throws {
@@ -229,6 +275,79 @@ private struct ServerFixture {
             components.dropLast().joined(separator: "\n")
         )
     }
+
+    func createRunningContainer() throws -> String {
+        let create = try curl(
+            "/v1.53/containers/create?name=half-close-fixture",
+            method: "POST",
+            body: """
+            {"Image":"alpine:3.22","Cmd":["sleep","30"]}
+            """
+        )
+        let decoded = try JSONSerialization.jsonObject(
+            with: Data(create.body.utf8)
+        ) as? [String: Any]
+        guard create.status == 201, let identifier = decoded?["Id"] as? String else {
+            throw CurlError("container create returned \(create.status): \(create.body)")
+        }
+        let start = try curl(
+            "/v1.53/containers/\(identifier)/start",
+            method: "POST"
+        )
+        guard start.status == 204 else {
+            throw CurlError("container start returned \(start.status): \(start.body)")
+        }
+        return identifier
+    }
+
+    func createExec(container: String) throws -> String {
+        let create = try curl(
+            "/v1.53/containers/\(container)/exec",
+            method: "POST",
+            body: """
+            {"AttachStdin":true,"AttachStdout":true,"AttachStderr":true,"Cmd":["cat"]}
+            """
+        )
+        let decoded = try JSONSerialization.jsonObject(
+            with: Data(create.body.utf8)
+        ) as? [String: Any]
+        guard create.status == 201, let identifier = decoded?["Id"] as? String else {
+            throw CurlError("exec create returned \(create.status): \(create.body)")
+        }
+        return identifier
+    }
+
+    func startEarlyHalfClose(
+        exec: String,
+        payload: Data
+    ) throws -> Process {
+        let body = Data(#"{"Detach":false,"Tty":false}"#.utf8)
+        let headers = Data(
+            (
+                "POST /v1.53/exec/\(exec)/start HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Upgrade: tcp\r\n"
+                    + "Content-Type: application/json\r\n"
+                    + "Content-Length: \(body.count)\r\n\r\n"
+            ).utf8
+        )
+        var request = headers
+        request.append(body)
+        request.append(payload)
+
+        let input = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        process.arguments = ["-U", socketPath]
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(request)
+        try input.fileHandleForWriting.close()
+        return process
+    }
 }
 
 private struct CurlError: Error {
@@ -236,5 +355,73 @@ private struct CurlError: Error {
 
     init(_ message: String) {
         self.message = message
+    }
+}
+
+private final class EOFProcessSession: RuntimeProcessSession, @unchecked Sendable {
+    let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
+
+    private let frameContinuation:
+        AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    private let completionContinuation: AsyncStream<Int32>.Continuation
+    private let completionTask: Task<Int32, Never>
+    private let lock = NSLock()
+    private var bytes = Data()
+    private var closed = false
+
+    init() {
+        (frames, frameContinuation) = AsyncThrowingStream.makeStream()
+        let (completion, continuation) = AsyncStream<Int32>.makeStream()
+        completionContinuation = continuation
+        completionTask = Task {
+            for await status in completion {
+                return status
+            }
+            return 255
+        }
+    }
+
+    var input: Data {
+        lock.withLock { bytes }
+    }
+
+    var inputClosed: Bool {
+        lock.withLock { closed }
+    }
+
+    func write(_ data: Data) {
+        lock.withLock {
+            bytes.append(data)
+        }
+    }
+
+    func closeStandardInput() {
+        let output: Data? = lock.withLock {
+            guard !closed else {
+                return nil
+            }
+            closed = true
+            return bytes
+        }
+        guard let output else {
+            return
+        }
+        frameContinuation.yield(
+            RuntimeIOFrame(channel: .standardOutput, data: output)
+        )
+        frameContinuation.finish()
+        completionContinuation.yield(0)
+        completionContinuation.finish()
+    }
+
+    func resize(width _: UInt16, height _: UInt16) {}
+
+    func wait() async -> Int32 {
+        await completionTask.value
+    }
+
+    func cancel() {
+        frameContinuation.finish()
+        completionContinuation.finish()
     }
 }
