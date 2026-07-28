@@ -39,8 +39,9 @@ The prebuilt and Homebrew packages require:
 - Apple silicon (`arm64`).
 - macOS Tahoe 26 or later.
 - Apple's stock `container` 1.1.0 runtime for the stock Apple backend.
-- Local Network permission for Apple's signed `container-runtime-linux`
-  helper so published host ports can reach the container VM.
+- Local Network permission for the selected runtime's
+  `container-runtime-linux` helper so published host ports can reach the
+  container VM.
 - The Docker CLI and upstream Docker Compose client used by VS Code.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
@@ -70,8 +71,11 @@ The stock-Apple backend must reject a runtime whose provenance identifies a cust
 Do not remove Apple's package to install `devcontainer`. Do not install a custom runtime as a workaround for an installation check. Runtime compatibility gaps belong in the project's status ledger and issue template.
 
 The first published-port operation can display a macOS Local Network privacy
-prompt for Apple's `container-runtime-linux` helper. Choose **Allow**. This is
-Apple runtime permission, not permission for `devcontainer` to scan the LAN.
+prompt for the selected runtime's `container-runtime-linux` helper. Choose
+**Allow**. Stock mode uses Apple's Developer-ID-signed helper; the optional
+provider stack uses a separately installed helper. macOS can list them as
+distinct entries. This is runtime permission, not permission for
+`devcontainer` to scan the LAN.
 
 ## Homebrew Installation
 
@@ -440,10 +444,11 @@ container system logs --last 5m |
 ```
 
 `No route to host` from `container-runtime-linux` while the container VM
-address is directly reachable means macOS denied the Apple helper's Local
+address is directly reachable means macOS denied the selected helper's Local
 Network access. Open **System Settings → Privacy & Security → Local Network**
-and enable the entry for Apple `container` or `container-runtime-linux`, then
-restart the runtime:
+and enable the relevant `container` or `container-runtime-linux` entry, then
+restart that runtime. If both stock and provider lanes are installed, authorize
+each helper separately:
 
 ```sh
 container system stop

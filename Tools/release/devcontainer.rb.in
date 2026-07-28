@@ -36,6 +36,10 @@ class @FORMULA_CLASS@ < Formula
       Start Apple's stock runtime:
         /usr/local/bin/container system start
 
+      When macOS requests Local Network access for the selected runtime's
+      container-runtime-linux helper, choose Allow. Stock and custom runtime
+      helpers may appear as separate permission entries.
+
       Start the compatibility engine:
         brew services start #{name}
 

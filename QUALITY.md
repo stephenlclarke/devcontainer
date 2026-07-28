@@ -11,9 +11,9 @@ below. The current 1.0.0 candidate has 123 Swift tests and greater than 90%
 first-party executable-line coverage. Real Docker passes all 18 CLI parity
 fixtures. The latest stock Apple and separately identified
 `container-compose` runs pass 17 of 18 while the physical runner awaits Local
-Network permission for Apple's signed runtime helper. The pinned real VS Code
-fixture and all zero-difference claims remain release gates. Exact final
-metrics and workflow links will be recorded in the 1.0.0 release notes.
+Network permission for each selected runtime helper. The pinned real VS Code
+fixture and all zero-difference claims remain release gates. Exact final metrics
+and workflow links will be recorded in the 1.0.0 release notes.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -202,14 +202,15 @@ code requires:
 
 - at least 90% line coverage;
 - at most 3% duplicated lines;
-- no blocker or critical reliability, security, or maintainability issue;
-- every security hotspot reviewed;
+- zero unresolved reliability, security, or maintainability issues;
+- zero security hotspots;
 - no unresolved analysis failure or missing coverage import.
 
 The SonarCloud project uses `main` as its real main branch and a project-level
 30-day new-code definition. The workflow validates both remote invariants
 before scanning so a newly created project cannot silently publish
-`Not Computed` badges.
+`Not Computed` badges. After the quality gate completes, it also queries the
+issues and hotspots APIs and fails unless both totals are zero.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A passing Sonar gate cannot override an independent coverage, compiler, CodeQL, sanitizer, or parity failure.
 
@@ -256,7 +257,7 @@ live validation:
 | Workflow | Environment | Responsibility |
 | --- | --- | --- |
 | `ci.yml` | Hosted `macos-26` | Format/lint, unit/contract/integration tests, both 90% coverage gates, build, and CLI smoke |
-| `quality.yml` | Hosted `macos-26` | ASan on pushes/PRs and TSan on schedules or explicit dispatch |
+| `quality.yml` | Hosted `macos-26` | ASan and TSan on pushes, PRs, schedules, and explicit dispatch |
 | `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL |
 | `dependency-review.yml` | Hosted Ubuntu | Vulnerability, scope, license, and dependency Scorecard review |
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |

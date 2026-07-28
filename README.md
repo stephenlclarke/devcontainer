@@ -163,11 +163,12 @@ Requirements are an Apple-silicon Mac running macOS Tahoe 26 or later and
 Apple [`container` 1.1.0](https://github.com/apple/container/releases/tag/1.1.0).
 Install Apple's signed package first, then install `devcontainer`:
 
-When macOS asks whether Apple's `container-runtime-linux` may find and connect
-to devices on the local network, choose **Allow**. Apple port publishing
-connects its signed runtime helper to each container VM on a local vmnet
-subnet; denying that permission leaves the host listener open but resets
-connections with `No route to host`.
+When macOS asks whether the selected runtime's `container-runtime-linux` may
+find and connect to devices on the local network, choose **Allow**. Stock mode
+uses Apple's signed helper; the optional provider stack uses its separately
+installed helper. macOS can list them as distinct Local Network entries.
+Denying either helper leaves its host listener open but resets connections with
+`No route to host`.
 
 ```console
 brew tap stephenlclarke/tap

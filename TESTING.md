@@ -9,7 +9,7 @@ driver. The hosted-safe suite contains 123 Swift tests and records greater than
 90% first-party line coverage. The current Docker candidate passes all 18 CLI
 fixtures. The latest stock Apple and separately identified `container-compose`
 candidate runs pass 17 of 18; their published-port host check is pending Local
-Network permission for Apple's signed runtime helper on the physical runner.
+Network permission for each selected runtime helper on the physical runner.
 Version 1.0.0 will bind only a complete zero-difference CLI and VS Code result
 to its exact physical-runner, signing, notarization, and publication evidence.
 
@@ -39,7 +39,7 @@ The suite is divided by the boundary it proves. A higher layer supplements rathe
 | Docker oracle integration | Official `@devcontainers/cli` against real Docker Engine | Hosted Linux or trusted live runner | Required for affected fixtures |
 | Real runtime parity | Differential execution on stock Apple and `container-compose` | Dedicated physical Apple-silicon runner | Required for trusted main candidates and stable release |
 | VS Code E2E | Real extension activation, attach, rebuild, and cleanup | Dedicated physical Apple-silicon runner | Required for stable release |
-| Sanitizers | Memory and data-race detection | Hosted macOS, plus live runner where needed | ASan on pull requests; TSan nightly and before stable release |
+| Sanitizers | Memory and data-race detection | Hosted macOS, plus live runner where needed | ASan and TSan on pull requests, protected main, schedules, and stable candidates |
 
 ### Unit tests
 

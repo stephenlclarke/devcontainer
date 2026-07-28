@@ -76,6 +76,11 @@ depends_on "docker-compose"
 depends_on macos: :tahoe
 ```
 
+Published ports require Local Network access for the selected runtime's
+`container-runtime-linux` helper. Stock Apple and separately installed custom
+runtime helpers may appear as distinct entries under **System Settings →
+Privacy & Security → Local Network**; authorize each runtime that will be used.
+
 Neither formula declares a dependency on:
 
 ```ruby
@@ -172,6 +177,10 @@ class Devcontainer < Formula
 
       Start Apple's stock runtime:
         /usr/local/bin/container system start
+
+      When macOS requests Local Network access for the selected runtime's
+      container-runtime-linux helper, choose Allow. Stock and custom runtime
+      helpers may appear as separate permission entries.
 
       Start the compatibility engine:
         brew services start #{name}

@@ -17,7 +17,7 @@ cleanup flows.
 
 Real Docker currently passes all 18 CLI fixtures. The latest stock Apple
 `container` 1.1.0 and matched `container-compose` provider candidate runs pass
-17 of 18 while Local Network permission for Apple's signed runtime helper
+17 of 18 while Local Network permission for each selected runtime helper
 remains disabled on the physical runner. A stable release requires those lanes
 and the real VS Code fixture to pass without semantic differences. Release
 evidence includes the normalized comparison, raw recordings, diagnostics,

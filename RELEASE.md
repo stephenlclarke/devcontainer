@@ -192,7 +192,7 @@ The implemented workflow split is:
 | `codeql.yml` | `macos-26` | Exact-commit Swift CodeQL analysis |
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
-| `quality.yml` | `macos-26` | ASan on pull requests/pushes and TSan on schedules or dispatch |
+| `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |
 | `docs.yml` | `macos-26`, then Ubuntu | Build and publish DocC Pages |
 | `homebrew.yml` | `macos-26` | Render the candidate package/formula, check Ruby syntax and formula style, and upload evidence |
 | `parity.yml` | Trusted bare-metal Apple silicon | Live Docker, stock Apple, and Compose-provider parity |

@@ -7,7 +7,8 @@
 > below. The Docker lane passes all 18 CLI fixtures. The latest stock Apple and
 > separate `container-compose` candidate runs pass 17 of 18; published-port
 > host connectivity is blocked until Local Network access is enabled for
-> Apple's signed `container-runtime-linux` helper on the physical runner.
+> each selected runtime's `container-runtime-linux` helper on the physical
+> runner.
 > No stable compatibility claim exists until all CLI and VS Code fixtures pass
 > with zero normalized semantic differences.
 
