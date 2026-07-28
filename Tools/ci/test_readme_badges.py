@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -19,7 +20,7 @@ class ReadmeBadgeTests(unittest.TestCase):
         )
         self.assertIn('<br clear="left" />', README)
 
-    def test_complete_sonar_badge_set_is_present(self) -> None:
+    def test_complete_supported_sonar_badge_set_is_present(self) -> None:
         expected_metrics = {
             "alert_status",
             "bugs",
@@ -33,11 +34,12 @@ class ReadmeBadgeTests(unittest.TestCase):
             "sqale_rating",
             "vulnerabilities",
         }
-        for metric in expected_metrics:
-            self.assertIn(
-                "project=stephenlclarke_devcontainer&metric=" + metric,
-                README,
-            )
+        actual_metrics = re.findall(
+            r"project=stephenlclarke_devcontainer&metric=([a-z_]+)",
+            README,
+        )
+        self.assertEqual(set(actual_metrics), expected_metrics)
+        self.assertEqual(len(actual_metrics), len(expected_metrics))
 
     def test_delivery_and_project_badges_are_present(self) -> None:
         for marker in (
