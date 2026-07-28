@@ -319,6 +319,7 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
+- Per-fixture monotonic durations and candidate/Docker timing ratios; only non-completion or a duration of at least `10x` the matching Docker fixture is a performance failure.
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.

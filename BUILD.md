@@ -222,7 +222,11 @@ container project unless its owner has reserved the runner for that lane.
 
 The aggregate stores raw and normalized observations under
 `.build/parity`. Comparison permits only the nondeterminism defined in the
-manifest. Cleanup proof is part of a passing result.
+manifest. Cleanup proof is part of a passing result. Each fixture records
+monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
+stock and provider timings with Docker. Completed slowdowns below `10x` are
+informational; a timeout, other non-completion, missing timing, or duration of
+at least `10x` the corresponding Docker fixture fails.
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.

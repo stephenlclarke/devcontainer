@@ -174,6 +174,8 @@ The `docker` lane is the behavioral oracle. For a fixture to pass,
 `apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
 
+Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. A completed slowdown below `10x` is informational and does not alter semantic parity. A timeout, other non-completion, missing duration, or candidate duration of at least `10x` the Docker fixture is a parity failure; performance failures are never retried or normalized away.
+
 The harness may normalize only:
 
 - stable symbolic resource identifiers;

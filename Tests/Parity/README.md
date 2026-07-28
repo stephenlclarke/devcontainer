@@ -26,3 +26,5 @@ observations without patching the Microsoft extension.
 Runtime jobs retain raw output, normalized observation JSON, JUnit results, a
 Markdown matrix, backend fingerprints, cleanup evidence, and diagnostics for
 every difference.
+
+Every fixture result also records monotonic wall-clock `durationSeconds`. The comparison JSON and Markdown matrix show stock-Apple/Docker and provider/Docker ratios for the same fixture. Timing is not an exact-equivalence assertion: a completed candidate remains passing when it is slower by less than one order of magnitude. A timeout, other non-completion, missing timing evidence, or duration of at least `10x` the Docker oracle fails the parity gate. The harness does not retry or normalize a performance failure.

@@ -331,7 +331,7 @@ Per-project provider choice and configuration digest live in the service databas
 
 ## Observability
 
-Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. There is no outbound telemetry in the initial product.
+Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time; slowdowns below `10x` are informational, while non-completion or a duration of at least `10x` fails the gate. There is no outbound telemetry in the initial product.
 
 `container devcontainer diagnostics` creates a reviewable archive containing versions, capability probes, redacted logs, runtime resource summaries, config hashes, and recent event state. The command prints the archive manifest before writing it.
 
