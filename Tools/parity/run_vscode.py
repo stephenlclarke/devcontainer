@@ -33,7 +33,7 @@ from parity_lib import (
     implemented_fixtures,
     load_manifest,
 )
-from run_lane import LaneRunner
+from run_lane import LaneRunner, write_junit
 
 FIXTURE_ID = "V01-vscode-end-to-end"
 DEFAULT_TIMEOUT_SECONDS = 1800
@@ -992,6 +992,7 @@ class VSCodeLane:
             "status": status,
         }
         atomic_json(self.output / "results.json", payload)
+        write_junit(self.output / "junit.xml", self.lane, [result])
         atomic_json(
             self.output / "live-result.json",
             {

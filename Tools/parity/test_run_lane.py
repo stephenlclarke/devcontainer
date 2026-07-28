@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import signal
 import sqlite3
 import unittest
 import urllib.error
@@ -15,9 +16,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from parity_lib import ParityError
 from run_lane import (
     LaneRunner,
     create_socket_root,
+    install_cancellation_handlers,
     run_checked,
     safe_environment,
 )
@@ -36,6 +39,7 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "HOME": "/Users/operator",
                 "LD_PRELOAD": "/tmp/injected.dylib",
                 "PATH": "/usr/bin:/bin",
+                "RUNNER_TRACKING_ID": "github_fixture",
                 "SONAR_TOKEN": "must-not-leak",
             }
         )
@@ -49,8 +53,27 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
                 "PATH": "/usr/bin:/bin",
+                "RUNNER_TRACKING_ID": "github_fixture",
             },
         )
+
+
+class CancellationHandlerTests(unittest.TestCase):
+    def test_workflow_termination_becomes_a_catchable_cleanup_error(self) -> None:
+        with mock.patch("run_lane.signal.signal") as register:
+            install_cancellation_handlers()
+
+        self.assertEqual(
+            [call.args[0] for call in register.call_args_list],
+            [signal.SIGINT, signal.SIGTERM],
+        )
+        cancel = register.call_args_list[1].args[1]
+        with self.assertRaisesRegex(
+            ParityError,
+            "CLI parity interrupted by SIGTERM",
+        ):
+            cancel(signal.SIGTERM, None)
+        cancel(signal.SIGTERM, None)
 
 
 class BoundedCommandTests(unittest.TestCase):

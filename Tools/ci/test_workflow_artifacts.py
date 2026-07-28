@@ -33,6 +33,33 @@ class WorkflowArtifactTests(unittest.TestCase):
 
         self.assertGreater(checked, 20)
 
+    def test_repeated_external_actions_use_one_revision(self) -> None:
+        uses_pattern = re.compile(r"^\s+uses:\s+([^@\s]+)@([^\s#]+)", re.MULTILINE)
+        revisions: dict[str, set[str]] = {}
+        occurrences: dict[str, int] = {}
+
+        for workflow in WORKFLOWS.glob("*.yml"):
+            for action, revision in uses_pattern.findall(
+                workflow.read_text(encoding="utf-8")
+            ):
+                if action.startswith("./"):
+                    continue
+                revisions.setdefault(action, set()).add(revision)
+                occurrences[action] = occurrences.get(action, 0) + 1
+
+        repeated = {
+            action: values
+            for action, values in revisions.items()
+            if occurrences[action] > 1
+        }
+        self.assertTrue(repeated)
+        for action, values in repeated.items():
+            self.assertEqual(
+                len(values),
+                1,
+                f"{action} uses inconsistent immutable revisions: {sorted(values)}",
+            )
+
     def test_supply_chain_workflows_are_fail_closed(self) -> None:
         dependency_review = (
             WORKFLOWS / "dependency-review.yml"

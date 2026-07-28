@@ -11,11 +11,15 @@ import io
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from unittest import mock
 
-from parity_lib import ParityError
+from parity_lib import Fixture, ParityError
 from run_vscode import (
+    FIXTURE_ID,
+    VSCodeLane,
     VSCodePins,
     code_command,
     decode_vsix_response,
@@ -282,6 +286,90 @@ class VSCodeParityTests(unittest.TestCase):
             )
             names, removed = scrub_sensitive_evidence(root)
             self.assertEqual((names, removed), ([], []))
+
+    def test_completed_vscode_fixture_records_junit_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture_root = root / "fixture"
+            fixture_root.mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.evidence_root = root / "evidence"
+            lane.output = lane.evidence_root / lane.lane
+            lane.runtime = mock.Mock(
+                docker="/usr/bin/docker",
+                environment={"PATH": "/usr/bin:/bin"},
+            )
+            lane.runtime.cleanup_fixture.return_value = ""
+            lane.fixture = mock.Mock(
+                return_value=Fixture(
+                    identifier=FIXTURE_ID,
+                    directory=fixture_root,
+                    expected={"open": "true"},
+                    backends=("docker",),
+                    runner="vscode",
+                )
+            )
+            lane.require_reference = mock.Mock(return_value={})
+            lane.prepare_runtime = mock.Mock(return_value={})
+            lane.compose_path = mock.Mock(return_value="/usr/bin/docker-compose")
+            lane.install_extensions = mock.Mock()
+
+            def complete_driver(
+                _workspace: Path,
+                _user_data: Path,
+                _extensions: Path,
+                _driver_state: Path,
+                driver_result: Path,
+            ) -> None:
+                driver_result.write_text("{}\n", encoding="utf-8")
+
+            lane.launch = mock.Mock(side_effect=complete_driver)
+            observations = {
+                "attach": "true",
+                "cleanup": "true",
+                "extension_activation": "true",
+                "forward_port": "true",
+                "integrated_command": "true",
+                "open": "true",
+                "rebuild": "true",
+                "reopen": "true",
+                "vscode_server": "true",
+            }
+            with (
+                mock.patch(
+                    "run_vscode.validate_driver_result",
+                    return_value=observations,
+                ),
+                mock.patch(
+                    "run_vscode.discover_compose_project",
+                    return_value="",
+                ),
+                mock.patch(
+                    "run_vscode.no_resources_remain",
+                    return_value=(True, "clean\n"),
+                ),
+                mock.patch(
+                    "run_vscode.scrub_sensitive_evidence",
+                    return_value=([], []),
+                ),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+                mock.patch("run_vscode.assert_contract", return_value=[]),
+                mock.patch(
+                    "run_vscode.time.monotonic",
+                    side_effect=[100.0, 102.5],
+                ),
+            ):
+                status = lane.run()
+
+            report = ET.parse(lane.output / "junit.xml").getroot()
+            case = report.find("testcase")
+            self.assertEqual(status, 0)
+            self.assertEqual(report.attrib["time"], "2.500")
+            self.assertIsNotNone(case)
+            self.assertEqual(case.attrib["name"], FIXTURE_ID)
+            self.assertEqual(case.attrib["time"], "2.500")
 
 
 if __name__ == "__main__":

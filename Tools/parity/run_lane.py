@@ -1321,6 +1321,8 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "LC_CTYPE",
         "NO_COLOR",
         "PATH",
+        # Preserve GitHub's orphan-process cleanup marker on self-hosted runners.
+        "RUNNER_TRACKING_ID",
         "SDKROOT",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
@@ -1430,6 +1432,23 @@ def write_junit(
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 
+def install_cancellation_handlers() -> None:
+    """Turn workflow cancellation into a catchable failure with cleanup."""
+
+    handled = False
+
+    def cancel(signum: int, _frame: Any) -> None:
+        nonlocal handled
+        if handled:
+            return
+        handled = True
+        name = signal.Signals(signum).name
+        raise ParityError(f"CLI parity interrupted by {name}")
+
+    signal.signal(signal.SIGINT, cancel)
+    signal.signal(signal.SIGTERM, cancel)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=LANES)
@@ -1442,6 +1461,7 @@ def main() -> int:
     repository = Path(__file__).resolve().parents[2]
     evidence = args.evidence.resolve()
     try:
+        install_cancellation_handlers()
         return LaneRunner(args.lane, repository, evidence).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)

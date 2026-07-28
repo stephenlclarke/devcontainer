@@ -86,7 +86,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download all lane evidence
-        uses: actions/download-artifact@3e5f2d17c3dc71e769f702cc7c9e62c90d109d23 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: parity-*
           path: .build/parity
