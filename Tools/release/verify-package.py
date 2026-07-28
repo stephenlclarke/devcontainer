@@ -18,6 +18,15 @@ from versioning import require_commit, require_semantic_version
 
 
 DIGEST_PATTERN = re.compile(r"^(?P<digest>[0-9a-f]{64})  (?P<name>[^/\n]+)\n?$")
+MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\((?P<target>[^)\s]+)")
+HTML_LINK_PATTERN = re.compile(
+    r"\b(?:href|src)=(?P<quote>['\"])(?P<target>[^'\"]+)(?P=quote)"
+)
+IMMUTABLE_SOURCE_PATTERN = re.compile(
+    r"^https://(?:github\.com/stephenlclarke/devcontainer/(?:blob|tree)"
+    r"|raw\.githubusercontent\.com/stephenlclarke/devcontainer)"
+    r"/(?P<revision>[0-9a-f]{40})/"
+)
 
 
 @dataclass(frozen=True)
@@ -259,6 +268,27 @@ def require_third_party_notices(
             )
 
 
+def require_packaged_readme(text: str, commit: str) -> None:
+    """Require package documentation links to be usable and immutable."""
+
+    targets = [
+        *(match.group("target") for match in MARKDOWN_LINK_PATTERN.finditer(text)),
+        *(match.group("target") for match in HTML_LINK_PATTERN.finditer(text)),
+    ]
+    for target in targets:
+        if target.startswith("#") or target.startswith("mailto:"):
+            continue
+        if not target.startswith(("http://", "https://")):
+            raise ValueError(
+                f"package README contains a repository-relative target: {target}"
+            )
+        source_match = IMMUTABLE_SOURCE_PATTERN.match(target)
+        if source_match is not None and source_match.group("revision") != commit:
+            raise ValueError(
+                f"package README source target is not bound to {commit}: {target}"
+            )
+
+
 def verify_archive(
     archive_path: Path,
     version: str,
@@ -329,6 +359,8 @@ def verify_archive(
             f"{metadata_root}/THIRD-PARTY-NOTICES.txt",
         )
         require_third_party_notices(notices, dependencies)
+        readme = read_text_member(archive, f"{metadata_root}/README.md")
+        require_packaged_readme(readme, commit)
         notarization_name = f"{metadata_root}/notarization.json"
         notarized = notarization_name in by_name
         if require_notarization and not notarized:

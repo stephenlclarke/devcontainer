@@ -141,6 +141,11 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 ```
 
+The packaged `README.md` points repository files, directories, and images at
+the archive's exact source commit. Package verification rejects relative or
+mismatched source links, so installed documentation cannot silently drift with
+`main`.
+
 Homebrew installs only the package payload under its own prefix and exposes
 `bin/devcontainer`. It does not write under Apple's package prefix or
 `/usr/local/libexec/container-plugins`. Register the packaged Apple CLI plug-in

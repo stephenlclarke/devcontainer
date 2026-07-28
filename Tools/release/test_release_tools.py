@@ -293,6 +293,93 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.run_tool(*arguments)
 
+    def test_package_readme_links_target_the_exact_source_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "README.md"
+            output = root / "packaged" / "README.md"
+            (root / "docs").mkdir()
+            (root / "Examples" / "hello").mkdir(parents=True)
+            (root / "GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+            (root / "docs" / "demo.gif").write_bytes(b"GIF89a")
+            source.write_text(
+                '<img src="docs/demo.gif" />\n'
+                "<a href='GUIDE.md'>HTML guide</a>\n"
+                "[Guide](GUIDE.md#install)\n"
+                "[Example](Examples/hello)\n"
+                "![Demo](docs/demo.gif)\n"
+                "[Section](#section)\n"
+                "[Upstream](https://github.com/devcontainers)\n",
+                encoding="utf-8",
+            )
+            revision = "0123456789abcdef0123456789abcdef01234567"
+
+            self.run_tool(
+                "render-package-readme.py",
+                "--source",
+                str(source),
+                "--repository-root",
+                str(root),
+                "--repository",
+                "stephenlclarke/devcontainer",
+                "--revision",
+                revision,
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            source_root = (
+                "https://github.com/stephenlclarke/devcontainer"
+            )
+            raw_root = (
+                "https://raw.githubusercontent.com/"
+                "stephenlclarke/devcontainer"
+            )
+            self.assertIn(
+                f"{source_root}/blob/{revision}/GUIDE.md#install",
+                rendered,
+            )
+            self.assertIn(
+                f"href='{source_root}/blob/{revision}/GUIDE.md'",
+                rendered,
+            )
+            self.assertIn(
+                f"{source_root}/tree/{revision}/Examples/hello",
+                rendered,
+            )
+            self.assertEqual(
+                rendered.count(f"{raw_root}/{revision}/docs/demo.gif"),
+                2,
+            )
+            self.assertIn("[Section](#section)", rendered)
+            self.assertIn(
+                "[Upstream](https://github.com/devcontainers)",
+                rendered,
+            )
+
+    def test_package_readme_rejects_a_missing_source_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "README.md"
+            source.write_text("[Missing](MISSING.md)\n", encoding="utf-8")
+
+            arguments = (
+                "render-package-readme.py",
+                "--source",
+                str(source),
+                "--repository-root",
+                str(root),
+                "--repository",
+                "stephenlclarke/devcontainer",
+                "--revision",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--output",
+                str(root / "output.md"),
+            )
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_tool(*arguments)
+
     def test_homebrew_formula_embeds_version_and_archive_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

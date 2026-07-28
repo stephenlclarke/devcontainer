@@ -75,8 +75,14 @@ install -m 0755 .build/release/devcontainer \
   "$stage/libexec/container/plugins/devcontainer/bin/devcontainer"
 install -m 0644 Packaging/devcontainer-plugin-config.toml \
   "$stage/libexec/container/plugins/devcontainer/config.toml"
-install -m 0644 LICENSE NOTICE.md README.md \
-  "$stage/share/devcontainer/"
+install -m 0644 LICENSE NOTICE.md "$stage/share/devcontainer/"
+python3 Tools/release/render-package-readme.py \
+  --source README.md \
+  --repository-root "$repository_root" \
+  --repository stephenlclarke/devcontainer \
+  --revision "$commit" \
+  --output "$stage/share/devcontainer/README.md"
+chmod 0644 "$stage/share/devcontainer/README.md"
 install -m 0644 Packaging/com.github.stephenlclarke.devcontainer.plist.in \
   "$stage/share/devcontainer/"
 

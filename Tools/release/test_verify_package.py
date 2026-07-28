@@ -50,6 +50,7 @@ class PackageVerificationTests(unittest.TestCase):
         notarized: bool = True,
         legal_files: bool = True,
         valid_notice_metadata: bool = True,
+        readme: bytes = b"README\n",
     ) -> tuple[Path, Path]:
         archive_path = root / "devcontainer-release-arm64.tar.gz"
         package_root = f"devcontainer-{VERSION}"
@@ -147,7 +148,6 @@ class PackageVerificationTests(unittest.TestCase):
                 for name in (
                     "LICENSE",
                     "NOTICE.md",
-                    "README.md",
                     "com.github.stephenlclarke.devcontainer.plist.in",
                 ):
                     self.add_bytes(
@@ -155,6 +155,11 @@ class PackageVerificationTests(unittest.TestCase):
                         f"{metadata_root}/{name}",
                         f"{name}\n".encode(),
                     )
+                self.add_bytes(
+                    archive,
+                    f"{metadata_root}/README.md",
+                    readme,
+                )
                 third_party_notices = [
                     "devcontainer third-party notices",
                     "=" * 78,
@@ -309,6 +314,30 @@ class PackageVerificationTests(unittest.TestCase):
             result = self.run_verifier(archive, checksum)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("third-party notice metadata", result.stderr)
+
+    def test_package_readme_relative_target_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                readme=b"[Install](INSTALL.md)\n",
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("repository-relative target", result.stderr)
+
+    def test_package_readme_source_target_must_match_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                readme=(
+                    b"[Install](https://github.com/stephenlclarke/"
+                    b"devcontainer/blob/ffffffffffffffffffffffffffffffffffffffff/"
+                    b"INSTALL.md)\n"
+                ),
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("source target is not bound", result.stderr)
 
 
 if __name__ == "__main__":

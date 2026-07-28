@@ -395,7 +395,8 @@ ledger assigns a reviewed Apache-compatible SPDX license to every pin; any
 missing or stale entry fails packaging. Release archives also contain complete
 root license and notice texts for all pins. Package validation rejects
 dependency, version, revision, source, license, relationship, notice,
-provenance, or normalized-archive-metadata drift.
+provenance, normalized-archive-metadata drift, and packaged README links that
+are relative or bound to a different source commit.
 
 `actions/attest-build-provenance` attests the final archive, checksum, SBOM, and
 build-info assets. Release verification uses `gh attestation verify` against
