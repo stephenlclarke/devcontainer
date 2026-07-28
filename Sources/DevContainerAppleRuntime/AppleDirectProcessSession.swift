@@ -52,6 +52,11 @@ private struct DirectProcessStreams: @unchecked Sendable {
     }
 }
 
+private struct DirectProcessMonitors: @unchecked Sendable {
+    let output: DirectPipeMonitor?
+    let error: DirectPipeMonitor?
+}
+
 /// A Docker-style process session backed directly by Apple's public container
 /// API client. Direct process handles are necessary for lossless duplex I/O and
 /// terminal resizing; the `container exec` command does not expose its process
@@ -60,13 +65,11 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
 
     private let process: any ClientProcess
-    private let standardInput: Pipe?
+    private let inputWriter: ProcessInputWriter?
     private let outputMonitor: DirectPipeMonitor?
     private let errorMonitor: DirectPipeMonitor?
     private let startup: Task<Void, any Error>
     private let completion: Task<Int32, any Error>
-    private let stateLock = NSLock()
-    private var inputClosed = false
 
     init(
         process: any ClientProcess,
@@ -75,13 +78,19 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         standardError: Pipe?
     ) {
         self.process = process
-        self.standardInput = standardInput
         let streams = DirectProcessStreams(
             standardInput: standardInput,
             standardOutput: standardOutput,
             standardError: standardError
         )
+        let inputWriter = streams.standardInput.map {
+            ProcessInputWriter(
+                pipe: $0,
+                label: "io.github.stephenlclarke.devcontainer.direct-process-input"
+            )
+        }
         frames = streams.frames
+        self.inputWriter = inputWriter
         outputMonitor = Self.monitor(
             streams.standardOutput,
             channel: .standardOutput,
@@ -98,12 +107,16 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
             Self.trace("started process \(process.id)")
         }
         self.startup = startup
+        let monitors = DirectProcessMonitors(
+            output: outputMonitor,
+            error: errorMonitor
+        )
         completion = Self.completionTask(
             process: process,
             startup: startup,
             streams: streams,
-            outputMonitor: outputMonitor,
-            errorMonitor: errorMonitor
+            monitors: monitors,
+            inputWriter: inputWriter
         )
     }
 
@@ -131,8 +144,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         process: any ClientProcess,
         startup: Task<Void, any Error>,
         streams: DirectProcessStreams,
-        outputMonitor: DirectPipeMonitor?,
-        errorMonitor: DirectPipeMonitor?
+        monitors: DirectProcessMonitors,
+        inputWriter: ProcessInputWriter?
     ) -> Task<Int32, any Error> {
         Task {
             do {
@@ -149,8 +162,9 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 {
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                outputMonitor?.cancel()
-                errorMonitor?.cancel()
+                monitors.output?.cancel()
+                monitors.error?.cancel()
+                inputWriter?.cancel()
                 for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
                 for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
                 Self.trace("I/O drained for \(process.id)")
@@ -158,8 +172,9 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 return exitCode
             } catch {
                 Self.trace("process \(process.id) failed: \(error)")
-                outputMonitor?.cancel()
-                errorMonitor?.cancel()
+                monitors.output?.cancel()
+                monitors.error?.cancel()
+                inputWriter?.cancel()
                 for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
                 for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
                 streams.frameContinuation.finish(throwing: error)
@@ -262,7 +277,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
 
     func write(_ data: Data) async throws {
         try await startup.value
-        guard let standardInput else {
+        guard let inputWriter else {
             throw DevContainerError(
                 .conflict,
                 message: "standard input was not attached to this exec session"
@@ -270,18 +285,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         }
         Self.trace("writing \(data.count) stdin bytes to \(process.id)")
         do {
-            try stateLock.withLock {
-                guard !inputClosed else {
-                    throw DevContainerError(.conflict, message: "standard input is closed")
-                }
-                do {
-                    try standardInput.fileHandleForWriting.write(contentsOf: data)
-                } catch {
-                    inputClosed = true
-                    try? standardInput.fileHandleForWriting.close()
-                    throw error
-                }
-            }
+            try await inputWriter.write(data)
             Self.trace("wrote \(data.count) stdin bytes to \(process.id)")
         } catch {
             Self.trace("stdin write failed for \(process.id): \(error)")
@@ -291,17 +295,11 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
 
     func closeStandardInput() async throws {
         try await startup.value
-        guard let standardInput else {
+        guard let inputWriter else {
             return
         }
-        try stateLock.withLock {
-            guard !inputClosed else {
-                return
-            }
-            inputClosed = true
-            Self.trace("closing stdin for \(process.id)")
-            try standardInput.fileHandleForWriting.close()
-        }
+        Self.trace("closing stdin for \(process.id)")
+        try await inputWriter.close()
     }
 
     func resize(width: UInt16, height: UInt16) async throws {
@@ -316,8 +314,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
     func cancel() async {
         startup.cancel()
         completion.cancel()
+        inputWriter?.cancel()
         try? await process.kill(SIGKILL)
-        try? await closeStandardInput()
     }
 
     static func mergedEnvironment(

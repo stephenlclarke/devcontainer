@@ -174,6 +174,51 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
+    func `direct session configures ordered nonblocking standard input`() async throws {
+        let input = Pipe()
+        let process = MockClientProcess(input: input, exitCode: 0)
+        let session = AppleDirectProcessSession(
+            process: process,
+            standardInput: input,
+            standardOutput: nil,
+            standardError: nil
+        )
+
+        let flags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
+        #expect(flags >= 0)
+        #expect(flags & O_NONBLOCK == O_NONBLOCK)
+
+        try await session.closeStandardInput()
+        #expect(try await session.wait() == 0)
+    }
+
+    @Test
+    func `direct session preserves four mebibytes of duplex backpressure`() async throws {
+        let input = Pipe()
+        let output = Pipe()
+        let process = EchoClientProcess(input: input, output: output)
+        let session = AppleDirectProcessSession(
+            process: process,
+            standardInput: input,
+            standardOutput: output,
+            standardError: nil
+        )
+        let payload = Data((0 ..< 4 * 1024 * 1024).lazy.map { UInt8($0 & 0xFF) })
+
+        try await session.write(payload)
+        try await session.closeStandardInput()
+
+        var echoed = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            echoed.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        #expect(echoed == payload)
+    }
+
+    @Test
     func `direct session supports detached channels and cancellation`() async throws {
         let process = MockClientProcess(exitCode: 0)
         let session = AppleDirectProcessSession(
@@ -339,5 +384,47 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
             recordedInput = value
         }
         return exitCode
+    }
+}
+
+private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
+    let id = "echo-process"
+
+    private let input: FileHandle
+    private let output: FileHandle
+
+    init(input: Pipe, output: Pipe) {
+        self.input = FileHandle(
+            fileDescriptor: Darwin.dup(input.fileHandleForReading.fileDescriptor),
+            closeOnDealloc: true
+        )
+        self.output = FileHandle(
+            fileDescriptor: Darwin.dup(output.fileHandleForWriting.fileDescriptor),
+            closeOnDealloc: true
+        )
+    }
+
+    func start() async throws {}
+
+    func resize(_: Terminal.Size) async throws {}
+
+    func kill(_: Int32) async throws {
+        try? input.close()
+        try? output.close()
+    }
+
+    func wait() async throws -> Int32 {
+        let input = input
+        let output = output
+        return try await Task.detached {
+            defer {
+                try? input.close()
+                try? output.close()
+            }
+            while let data = try input.read(upToCount: 16 * 1024), !data.isEmpty {
+                try output.write(contentsOf: data)
+            }
+            return 0
+        }.value
     }
 }

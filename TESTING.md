@@ -192,7 +192,7 @@ The machine-readable manifest is the source of release scope. Fixture identifier
 
 - Ping, version negotiation, information, supported and unsupported API prefixes.
 - Container list, create, inspect, start, stop, kill, wait, remove, logs, and attach.
-- Exec create, attached and detached start, resize, input, multiplexed output, inspect, cancellation, and exit status.
+- Exec create, attached and detached start, resize, byte-exact 4 MiB duplex input/output under backpressure, multiplexed output, inspect, cancellation, and exit status.
 - Image list, pull, inspect, tag, remove, Dockerfile build, build errors, and streamed progress.
 - Archive upload, download, path stat, empty files, modes, ownership, symlinks, traversal rejection, and long paths.
 - Network and volume create, inspect, connect, disconnect, mount, filter, and remove.

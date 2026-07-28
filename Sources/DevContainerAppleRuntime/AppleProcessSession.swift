@@ -207,18 +207,19 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
 
 /// Serializes potentially blocking writes away from Swift's cooperative
 /// executor. The queue also orders EOF after every accepted input chunk.
-private final class ProcessInputWriter: @unchecked Sendable {
+final class ProcessInputWriter: @unchecked Sendable {
     private let handle: FileHandle
     private let descriptor: Int32
-    private let queue = DispatchQueue(
-        label: "io.github.stephenlclarke.devcontainer.cli-process-input",
-        qos: .userInitiated
-    )
+    private let queue: DispatchQueue
     private var closed = false
 
-    init(pipe: Pipe) {
+    init(
+        pipe: Pipe,
+        label: String = "io.github.stephenlclarke.devcontainer.cli-process-input"
+    ) {
         handle = pipe.fileHandleForWriting
         descriptor = handle.fileDescriptor
+        queue = DispatchQueue(label: label, qos: .userInitiated)
         let flags = fcntl(descriptor, F_GETFL)
         if flags >= 0 {
             _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
