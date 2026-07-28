@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -360,7 +361,9 @@ class LaneRunner:
             )
             return
         try:
-            with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as database:
+            with closing(
+                sqlite3.connect(f"file:{state}?mode=ro", uri=True)
+            ) as database:
                 projects = int(
                     database.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
                 )

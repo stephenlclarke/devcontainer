@@ -129,18 +129,18 @@ main() {
   docker_engine_version="$("$docker_bin" version --format '{{.Server.Version}}')"
   docker_engine_api="$("$docker_bin" version --format '{{.Server.APIVersion}}')"
   docker_engine_commit="$("$docker_bin" version --format '{{.Server.GitCommit}}')"
-  test "$docker_cli_version" = "$(
+  [[ "$docker_cli_version" == "$(
     jq -r '.referencePins.docker.cliVersion' Tests/Parity/manifest.json
-  )"
-  test "$docker_engine_version" = "$(
+  )" ]]
+  [[ "$docker_engine_version" == "$(
     jq -r '.referencePins.docker.engineVersion' Tests/Parity/manifest.json
-  )"
-  test "$docker_engine_api" = "$(
+  )" ]]
+  [[ "$docker_engine_api" == "$(
     jq -r '.referencePins.docker.engineApiVersion' Tests/Parity/manifest.json
-  )"
-  test "$docker_engine_commit" = "$(
+  )" ]]
+  [[ "$docker_engine_commit" == "$(
     jq -r '.referencePins.docker.engineCommit' Tests/Parity/manifest.json
-  )"
+  )" ]]
   "$docker_bin" info >/dev/null
 
   local devcontainers_version
@@ -153,12 +153,12 @@ main() {
   if [[ "$lane" == "docker" || "$lane" == "all" ]]; then
     need colima
     colima status >/dev/null
-    test "$(docker context show)" = "colima"
-    test "$(
+    [[ "$(docker context show)" == "colima" ]]
+    [[ "$(
       colima ssh -- sha256sum /usr/bin/dockerd | cut -d ' ' -f 1
-    )" = "$(
+    )" == "$(
       jq -r '.referencePins.docker.engineSHA256' Tests/Parity/manifest.json
-    )"
+    )" ]]
     [[ -n "$docker_compose_bin" ]] || {
       printf '%s: Docker Compose is required for %s parity\n' \
         "$SCRIPT_NAME" "$lane" >&2
@@ -185,15 +185,15 @@ main() {
   grep -Fx "$expected_code_version" <<<"$actual_code_version"
   grep -Fx "$expected_code_commit" <<<"$actual_code_version"
 
-  test "$(uname -m)" = "$(
+  [[ "$(uname -m)" == "$(
     jq -r '.referencePins.releaseHost.architecture' Tests/Parity/manifest.json
-  )"
-  test "$(sw_vers -productVersion)" = "$(
+  )" ]]
+  [[ "$(sw_vers -productVersion)" == "$(
     jq -r '.referencePins.releaseHost.macOSProductVersion' Tests/Parity/manifest.json
-  )"
-  test "$(sw_vers -buildVersion)" = "$(
+  )" ]]
+  [[ "$(sw_vers -buildVersion)" == "$(
     jq -r '.referencePins.releaseHost.macOSBuildVersion' Tests/Parity/manifest.json
-  )"
+  )" ]]
   xcodebuild -version | grep -Fx "Xcode $(
     jq -r '.referencePins.releaseHost.xcodeVersion' Tests/Parity/manifest.json
   )"

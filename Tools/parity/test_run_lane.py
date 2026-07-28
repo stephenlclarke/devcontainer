@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 import urllib.error
+from contextlib import closing
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from types import SimpleNamespace
@@ -221,7 +222,7 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.runtime_root = Path(temporary)
             runner.cleanup_differences = []
             state = runner.runtime_root / "state.sqlite"
-            with sqlite3.connect(state) as database:
+            with closing(sqlite3.connect(state)) as database, database:
                 database.execute("CREATE TABLE projects (key TEXT)")
                 database.execute(
                     "CREATE TABLE runtime_containers (runtime_id TEXT)"

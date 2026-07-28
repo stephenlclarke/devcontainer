@@ -40,6 +40,8 @@ stop_runtime() {
     running | starting | stopping)
       "$executable" system stop
       ;;
+    *)
+      ;;
   esac
 }
 
