@@ -351,7 +351,7 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
 - write complete output to `SWIFT_TEST_RESULT_LOG`, defaulting to `.build/swift-test.log`;
 - run `SWIFT_TEST_ATTEMPTS`, defaulting to two attempts;
 - print the last `SWIFT_TEST_TAIL_LINES`, defaulting to 200, after success;
-- retry only when the log contains `swiftpm-testing-helper` with `signal code 13`;
+- retry when the log contains `swiftpm-testing-helper` with `signal code 13`;
 - distinguish explicit passing output from Swift Testing/XCTest failure output;
 - control the post-pass signal-13 fallback with `SWIFT_TEST_ACCEPT_SIGNAL_13`;
 - optionally bound a run with `SWIFT_TEST_TIMEOUT_SECONDS`, terminate the
