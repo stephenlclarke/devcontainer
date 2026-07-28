@@ -53,7 +53,7 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
-    func `process session supports input closure cancellation and error output`() async throws {
+    func `process session captures error output and rejects late writes`() async throws {
         let fixture = try FakeAppleCLI()
         let session = try AppleProcessSession(
             executable: fixture.executable,
@@ -81,7 +81,11 @@ struct AppleRuntimeStreamTests {
             try await session.write(Data("late".utf8))
         }
         session.cancel()
+    }
 
+    @Test
+    func `process session supports input closure and cancellation`() async throws {
+        let fixture = try FakeAppleCLI()
         let interactive = try AppleProcessSession(
             executable: fixture.executable,
             arguments: ["cat-session"],
