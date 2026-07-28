@@ -7,7 +7,7 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
-below. The current 1.0.0 candidate has 125 Swift tests and greater than 90%
+below. The current 1.0.0 candidate has 127 Swift tests and greater than 90%
 first-party executable-line coverage. Real Docker passes all 18 CLI parity
 fixtures. The latest stock Apple and separately identified
 `container-compose` runs pass 17 of 18 while the physical runner awaits Local
