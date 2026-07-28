@@ -101,6 +101,12 @@ struct AppleRuntimeStreamTests {
             arguments: ["sleep-session"],
             environment: [:]
         )
+        try await cancellable.write(Data())
+        try await cancellable.closeStandardInput()
+        try await cancellable.closeStandardInput()
+        await #expect(throws: DevContainerError.self) {
+            try await cancellable.write(Data("closed".utf8))
+        }
         cancellable.cancel()
         #expect(try await cancellable.wait() != 0)
     }
