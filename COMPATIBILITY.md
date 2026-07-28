@@ -143,30 +143,30 @@ Every row has an implemented parity fixture and candidate-bound evidence.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
-| Engine negotiation | Ping, version negotiation, versioned paths, errors | `supported` |
-| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `supported` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `supported` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `supported` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `supported` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `supported` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `supported` |
-| Users and environment | Container/remote users, UID update, environment probing | `supported` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `supported` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `supported` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `supported` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `supported` |
-| Compose service | Selected service, generated overrides, workspace projection | `supported` |
-| Compose dependencies | `runServices`, health gates, service DNS | `supported` |
-| Compose resources | Named volumes, networks, aliases, environment files | `supported` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `supported` |
-| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
+| Engine negotiation | Ping, version negotiation, versioned paths, errors | `candidate` |
+| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `candidate` |
+| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `candidate` |
+| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `candidate` |
+| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `candidate` |
+| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `candidate` |
+| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `candidate` |
+| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `candidate` |
+| Users and environment | Container/remote users, UID update, environment probing | `candidate` |
+| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `candidate` |
+| Features | OCI resolution, ordering, installation, locks, frozen locks | `candidate` |
+| Ports | Publish, forward, collision handling, host/service connectivity | `candidate` |
+| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `candidate` |
+| Compose service | Selected service, generated overrides, workspace projection | `candidate` |
+| Compose dependencies | `runServices`, health gates, service DNS | `candidate` |
+| Compose resources | Named volumes, networks, aliases, environment files | `candidate` |
+| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `candidate` |
+| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `candidate` |
+| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `candidate` |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must
-not mark a row supported before its manifest fixture is `implemented` and its
-evidence is attached to a release candidate.
+not mark a row supported before its manifest fixture is `implemented` and
+every required candidate-bound parity and release gate has passed.
 
 ## Parity definition
 
