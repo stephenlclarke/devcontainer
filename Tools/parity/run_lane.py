@@ -147,6 +147,7 @@ class LaneRunner:
                 ["swift", "build", "--disable-automatic-resolution"],
                 cwd=self.repository,
                 environment=self.environment,
+                timeout_seconds=1800,
             )
         if self.runtime_root.exists():
             shutil.rmtree(self.runtime_root)
@@ -1333,6 +1334,7 @@ def run_checked(
     *,
     cwd: Path | None = None,
     environment: dict[str, str],
+    timeout_seconds: int = 60,
 ) -> subprocess.CompletedProcess[str]:
     """Run a bounded command and surface its diagnostic on failure."""
 
@@ -1343,7 +1345,7 @@ def run_checked(
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        timeout=timeout_seconds,
     )
     if result.returncode != 0:
         raise ParityError(

@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from run_lane import LaneRunner, safe_environment
+from run_lane import LaneRunner, run_checked, safe_environment
 
 
 class SafeEnvironmentTests(unittest.TestCase):
@@ -44,6 +44,24 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "PATH": "/usr/bin:/bin",
             },
         )
+
+
+class BoundedCommandTests(unittest.TestCase):
+    def test_clean_swift_build_can_select_the_live_gate_timeout(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            result = run_checked(
+                ["swift", "build"],
+                cwd=Path("/repository"),
+                environment={"PATH": "/usr/bin:/bin"},
+                timeout_seconds=1800,
+            )
+
+        self.assertIs(result, completed)
+        self.assertEqual(run.call_args.kwargs["timeout"], 1800)
 
 
 class CleanupFixtureTests(unittest.TestCase):

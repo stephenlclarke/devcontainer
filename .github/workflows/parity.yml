@@ -43,6 +43,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Build compatibility bridge
+        if: matrix.lane != 'docker'
+        run: swift build --disable-automatic-resolution
       - name: Prepare isolated runtime
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance
