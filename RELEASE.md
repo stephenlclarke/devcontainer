@@ -2,10 +2,11 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.0 uses the release process in this document. The authoritative
+> Version 1.0.0 uses the release process in this document. Its authoritative
 > version, deterministic signed package, notarization evidence, checksums, SBOM,
 > GitHub attestation, hosted and physical parity gates, Homebrew promotion,
-> SonarQube, and DocC publication are all candidate-bound.
+> SonarQube analysis, and DocC publication are bound to one immutable release
+> commit and signed tag.
 
 This document defines how `devcontainer` validates and publishes an arm64
 macOS command-line tool for Apple's stock `container` runtime. Docker is the

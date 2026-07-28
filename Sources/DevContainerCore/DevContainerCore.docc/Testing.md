@@ -4,8 +4,8 @@ The hosted-safe suite contains unit, contract, state-recovery, malformed-input,
 archive-safety, and HTTP wire tests. Aggregate first-party Swift line coverage
 must remain at or above 90 percent. Address Sanitizer and Thread Sanitizer run
 in separate clean build directories and fail on crashes or sanitizer findings.
-The current 1.0.0 candidate contains 127 Swift tests and records more than 90
-percent first-party line coverage. CI also enforces at least 90 percent
+The 1.0.0 release contains 127 Swift tests and records 91.0 percent first-party
+line coverage. CI also enforces at least 90 percent
 coverage on changed executable lines and retains LCOV plus Sonar generic XML
 evidence.
 
@@ -15,13 +15,13 @@ Compose provider must then match those results. A pinned VS Code and Dev
 Containers extension perform open, attach, terminal, port, rebuild, reopen, and
 cleanup flows.
 
-Real Docker currently passes all 18 CLI fixtures. The latest stock Apple
-`container` 1.1.0 and matched `container-compose` provider candidate runs pass
-17 of 18 while Local Network permission for each selected runtime helper
-remains disabled on the physical runner. A stable release requires those lanes
-and the real VS Code fixture to pass without semantic differences. Release
-evidence includes the normalized comparison, raw recordings, diagnostics,
-fingerprints, JUnit, and cleanup reports for all three lanes.
+Real Docker, stock Apple `container` 1.1.0, and the matched
+`container-compose` 0.10.1 provider pass all 18 CLI fixtures and the real VS
+Code fixture without normalized semantic or performance differences. The
+largest CLI ratios are 4.314x for stock Apple and 3.062x for
+`container-compose`; the corresponding VS Code ratios are 1.091x and 1.545x.
+Release evidence includes the normalized comparison, raw recordings,
+diagnostics, fingerprints, JUnit, and cleanup reports for all three lanes.
 
 Every CLI fixture also records monotonic wall-clock time in lane JSON and
 JUnit. The comparison artifact retains raw durations and reports stock/Docker

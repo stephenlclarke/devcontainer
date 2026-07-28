@@ -2,10 +2,10 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.0 is the current release candidate. The stable Homebrew formula
-> becomes available only after its immutable GitHub archive is Developer
-> ID-signed, notarized, parity-certified, and published. The formula verifies
-> the archive checksum and keeps the Apple runtime as a separate installation.
+> Version 1.0.0 is the stable release. Its immutable GitHub archive is
+> Developer ID-signed, notarized, parity-certified, checksummed, and published
+> through the stable Homebrew formula. The Apple runtime remains a separate
+> installation.
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock
 `container` runtime on Apple-silicon Macs running macOS Tahoe. It installs as a

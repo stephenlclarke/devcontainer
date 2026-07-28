@@ -6,12 +6,13 @@ The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
 driver. The hosted-safe suite contains 127 Swift tests and records greater than
-90% first-party line coverage. The current Docker candidate passes all 18 CLI
-fixtures. The latest stock Apple and separately identified `container-compose`
-candidate runs pass 17 of 18; their published-port host check is pending Local
-Network permission for each selected runtime helper on the physical runner.
-Version 1.0.0 will bind only a complete zero-difference CLI and VS Code result
-to its exact physical-runner, signing, notarization, and publication evidence.
+90% first-party line coverage. For version 1.0.0, real Docker, stock Apple,
+and separately identified `container-compose` lanes pass all 18 CLI fixtures
+and the pinned real VS Code fixture with zero normalized semantic or
+performance differences. The largest recorded CLI ratios are 4.314x for stock
+Apple and 3.062x for `container-compose`; the corresponding VS Code ratios are
+1.091x and 1.545x. The release binds these results to the exact physical
+runner, signing, notarization, and publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 

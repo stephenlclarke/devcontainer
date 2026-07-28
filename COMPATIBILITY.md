@@ -3,14 +3,13 @@
 ## Current status
 
 > [!IMPORTANT]
-> Version 1.0.0 is a release candidate for the exact component fingerprints
-> below. The Docker lane passes all 18 CLI fixtures. The latest stock Apple and
-> separate `container-compose` candidate runs pass 17 of 18; published-port
-> host connectivity is blocked until Local Network access is enabled for
-> each selected runtime's `container-runtime-linux` helper on the physical
-> runner.
-> No stable compatibility claim exists until all CLI and VS Code fixtures pass
-> with zero normalized semantic differences.
+> Version 1.0.0 supports the exact component fingerprints below. Real Docker,
+> stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
+> provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
+> with zero normalized semantic or performance differences. The largest CLI
+> ratios were 4.314x for stock Apple and 3.062x for `container-compose`; the
+> corresponding VS Code ratios were 1.091x and 1.545x, all below the 10x
+> failure threshold.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -35,9 +34,9 @@ until it passes, normalized to hide a difference, or waived.
 
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
-| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `candidate` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `candidate` |
-| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `candidate` |
+| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
+| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
+| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
@@ -52,7 +51,7 @@ or another implementation module.
 
 ## Pinned design-time provenance
 
-These pins define the 1.0.0 compatibility matrix. Candidate-bound release
+These pins define the 1.0.0 compatibility matrix. Release-bound
 evidence also records the signing identity where applicable, platform triple,
 and each component's machine-readable version output.
 
@@ -139,34 +138,34 @@ The separately fingerprinted enhanced runtime used by the optional Compose lane 
 
 ## Functional support ledger
 
-Every row has an implemented parity fixture and candidate-bound evidence.
+Every row has an implemented parity fixture and release-bound evidence.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
-| Engine negotiation | Ping, version negotiation, versioned paths, errors | `candidate` |
-| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `candidate` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `candidate` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `candidate` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `candidate` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `candidate` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `candidate` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `candidate` |
-| Users and environment | Container/remote users, UID update, environment probing | `candidate` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `candidate` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `candidate` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `candidate` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `candidate` |
-| Compose service | Selected service, generated overrides, workspace projection | `candidate` |
-| Compose dependencies | `runServices`, health gates, service DNS | `candidate` |
-| Compose resources | Named volumes, networks, aliases, environment files | `candidate` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `candidate` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `candidate` |
-| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `candidate` |
+| Engine negotiation | Ping, version negotiation, versioned paths, errors | `supported` |
+| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `supported` |
+| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `supported` |
+| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `supported` |
+| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `supported` |
+| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
+| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `supported` |
+| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `supported` |
+| Users and environment | Container/remote users, UID update, environment probing | `supported` |
+| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `supported` |
+| Features | OCI resolution, ordering, installation, locks, frozen locks | `supported` |
+| Ports | Publish, forward, collision handling, host/service connectivity | `supported` |
+| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `supported` |
+| Compose service | Selected service, generated overrides, workspace projection | `supported` |
+| Compose dependencies | `runServices`, health gates, service DNS | `supported` |
+| Compose resources | Named volumes, networks, aliases, environment files | `supported` |
+| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
+| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `supported` |
+| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must
 not mark a row supported before its manifest fixture is `implemented` and
-every required candidate-bound parity and release gate has passed.
+every required release-bound parity and release gate has passed.
 
 ## Parity definition
 

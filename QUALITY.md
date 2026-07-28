@@ -7,13 +7,14 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
-below. The current 1.0.0 candidate has 127 Swift tests and greater than 90%
-first-party executable-line coverage. Real Docker passes all 18 CLI parity
-fixtures. The latest stock Apple and separately identified
-`container-compose` runs pass 17 of 18 while the physical runner awaits Local
-Network permission for each selected runtime helper. The pinned real VS Code
-fixture and all zero-difference claims remain release gates. Exact final metrics
-and workflow links will be recorded in the 1.0.0 release notes.
+below. The 1.0.0 release baseline has 127 Swift tests and 91.0% first-party
+line coverage. Sonar reports zero bugs, vulnerabilities, code smells, security
+hotspots, and technical debt; 0.4% duplication; and A ratings throughout.
+CodeQL, dependency review, AddressSanitizer, and ThreadSanitizer pass. Real
+Docker, stock Apple, and separately identified `container-compose` lanes pass
+all 18 CLI parity fixtures and the pinned real VS Code fixture with zero
+normalized semantic or performance differences. The largest recorded CLI
+slowdown is 4.314x and the largest VS Code slowdown is 1.545x.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 

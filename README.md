@@ -28,12 +28,12 @@
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
 > [!IMPORTANT]
-> Version 1.0.0 is the current release candidate, not yet a published stable
-> release. Its eventual compatibility claim is bound to the exact versions in
-> [COMPATIBILITY.md](COMPATIBILITY.md) and is published only after real Docker,
+> Version 1.0.0 supports the exact component fingerprints in
+> [COMPATIBILITY.md](COMPATIBILITY.md). Release certification ran all 18 CLI
+> fixtures plus the real VS Code end-to-end fixture against real Docker,
 > unmodified Apple `container` 1.1.0, and the separately maintained
-> `container-compose` provider stack pass all 18 CLI fixtures plus the real
-> VS Code end-to-end fixture with zero normalized semantic differences.
+> `container-compose` 0.10.1 provider stack with zero normalized semantic
+> differences.
 
 ## See it work
 
