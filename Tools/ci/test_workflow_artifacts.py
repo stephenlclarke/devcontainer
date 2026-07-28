@@ -92,6 +92,15 @@ class WorkflowArtifactTests(unittest.TestCase):
             self.assertIn("\nconcurrency:\n", contents, name)
             self.assertIn("  cancel-in-progress: true\n", contents, name)
 
+    def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
+        for name in ("ci.yml", "quality.yml", "sonar.yml"):
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            self.assertEqual(
+                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "1200"'),
+                1,
+                name,
+            )
+
     def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
         contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
         prime = contents.index("- name: Prime resolved SwiftPM dependencies")

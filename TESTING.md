@@ -353,7 +353,14 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
 - print the last `SWIFT_TEST_TAIL_LINES`, defaulting to 200, after success;
 - retry only when the log contains `swiftpm-testing-helper` with `signal code 13`;
 - distinguish explicit passing output from Swift Testing/XCTest failure output;
-- control the post-pass signal-13 fallback with `SWIFT_TEST_ACCEPT_SIGNAL_13`.
+- control the post-pass signal-13 fallback with `SWIFT_TEST_ACCEPT_SIGNAL_13`;
+- optionally bound a run with `SWIFT_TEST_TIMEOUT_SECONDS`, terminate the
+  command's entire process group, retain its diagnostic output, and retry.
+
+The timeout is disabled by default. Hosted CI coverage, Sonar coverage, and
+sanitizer jobs set it to 1,200 seconds so a wedged `swiftpm-testing` process
+cannot consume the full hosted-job timeout. An ordinary test failure is never
+retried as a timeout and continues to fail the gate immediately.
 
 The AddressSanitizer job uses the same command shape as `container-compose`:
 

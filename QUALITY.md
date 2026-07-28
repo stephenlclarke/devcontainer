@@ -140,7 +140,7 @@ Public API additions require DocC documentation and tests. Error messages expose
 
 ## Memory and concurrency gates
 
-Swift AddressSanitizer and ThreadSanitizer use the same full-log retry harness interface currently used by `container-compose`: `Tools/ci/run-swift-test.sh`, `SWIFT_TEST_RESULT_LOG`, `SWIFT_TEST_ATTEMPTS`, `SWIFT_TEST_TAIL_LINES`, and `SWIFT_TEST_ACCEPT_SIGNAL_13`.
+Swift AddressSanitizer and ThreadSanitizer use the same full-log retry harness interface currently used by `container-compose`: `Tools/ci/run-swift-test.sh`, `SWIFT_TEST_RESULT_LOG`, `SWIFT_TEST_ATTEMPTS`, `SWIFT_TEST_TAIL_LINES`, `SWIFT_TEST_ACCEPT_SIGNAL_13`, and the optional `SWIFT_TEST_TIMEOUT_SECONDS`. A positive timeout runs the command in an isolated process group so the harness can terminate a wedged `swiftpm-testing` tree, retain its output, and retry without weakening any sanitizer or coverage result.
 
 The implemented ASan invocation is:
 
@@ -167,7 +167,8 @@ manual dispatch and TSan nightly or by manual dispatch. Its harness retries
 only a logged `swiftpm-testing-helper` signal 13, defaults to two attempts,
 tails 200 lines on success, and defaults `SWIFT_TEST_ACCEPT_SIGNAL_13` to `1`
 when passing output exists without detected failure output. This project reuses
-that retry/log mechanism. The exact stable candidate sets
+that retry/log mechanism and additionally supports an opt-in process-group
+timeout for hosted SwiftPM stalls. The exact stable candidate sets
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
 evidence. ASan and TSan both run on protected main, schedules, explicit
 dispatches, and the exact stable candidate.
