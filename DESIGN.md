@@ -2,7 +2,12 @@
 
 ## Status and decision
 
-This document is the implementation blueprint for `devcontainer`. The project will provide unmodified VS Code Dev Containers compatibility by placing a Docker Engine API compatibility service in front of Apple-native runtime providers. A companion `container devcontainer` CLI manages configuration and diagnostics; it does not replace or fork the Dev Container specification engine.
+This document describes the implemented `devcontainer` architecture. The
+project provides unmodified VS Code Dev Containers compatibility by placing a
+Docker Engine API compatibility service in front of Apple-native runtime
+providers. A companion `container devcontainer` CLI manages configuration and
+diagnostics; it does not replace or fork the Dev Container specification
+engine.
 
 The product has two first-class runtime modes:
 
@@ -304,7 +309,7 @@ See [SECURITY.md](SECURITY.md) and [QUALITY.md](QUALITY.md) for disclosure and r
 
 ## Configuration and state
 
-Planned user configuration lives in `~/.config/devcontainer/config.toml`:
+User configuration lives in `~/.config/devcontainer/config.toml`:
 
 ```toml
 backend = "stock"
@@ -342,22 +347,12 @@ Stable formulae use immutable semantic release assets. The generated
 fail-closed until the trusted release runner, signing, notarization, and tap
 promotion controls described in [RELEASE.md](RELEASE.md) are provisioned.
 
-## Delivery phases
-
-1. **Bootstrap:** documentation, DocC Pages, parity manifest, strict hosted CI, CodeQL, license, and quality policy.
-2. **Wire contract:** Docker API router over a Unix socket, fake runtime, Docker CLI black-box tests, stream framing, state migrations, and diagnostics.
-3. **Stock single-container:** official Apple tagged/main adapters for images, lifecycle, exec, archives, mounts, ports, events, and cleanup.
-4. **Reference Dev Containers:** image and Dockerfile scenarios, metadata labels, UID rewrite, Features, lifecycle commands, and VS Code attach.
-5. **Compose:** Docker Compose over the stock bridge, followed by the separately installed `container-compose` provider and Docker-label projection.
-6. **Hardening:** failures, cancellation, reconciliation, ASan/TSan, performance budgets, security review, Homebrew install, signing/notarization, and real VS Code E2E.
-7. **Stable release:** zero functional parity differences for every claimed fixture in all required lanes and complete candidate-bound release evidence.
-
 ## Release definition of done
 
 A stable tag is prohibited until:
 
 - every fixture in `Tests/Parity/manifest.json` is implemented;
-- Docker oracle, stock Apple stable/main, and Compose stable/main recordings pass;
+- Docker oracle, stock Apple 1.1.0, and `container-compose` 0.10.1 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
 - hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;
@@ -368,7 +363,7 @@ A stable tag is prohibited until:
 
 | Risk | Consequence | Mitigation |
 | --- | --- | --- |
-| Apple package source instability | Adapter fails after minor upgrades | Exact stable pin, main compatibility lane, isolated adapter target, capability probe |
+| Apple package source instability | Adapter fails after minor upgrades | Exact stable pin, isolated adapter target, capability probe |
 | Docker wire-semantic mismatch | VS Code fails despite successful native calls | Raw protocol tests and Docker/Dev Containers black-box oracle |
 | Missing Apple primitive | Requested configuration cannot be represented | Typed fail-fast capability error, upstream issue, no false success |
 | Compose label/model mismatch | Primary service cannot be discovered or reused | Native-to-Docker label projection and filter translation |

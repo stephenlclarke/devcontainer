@@ -29,6 +29,19 @@ struct PluginCommandTests {
     }
 
     @Test
+    func `default runtime selection prefers the stock Apple package`() {
+        if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/container") {
+            #expect(CLIPaths.containerExecutable == "/usr/local/bin/container")
+        } else if FileManager.default.isExecutableFile(
+            atPath: "/opt/homebrew/bin/container"
+        ) {
+            #expect(CLIPaths.containerExecutable == "/opt/homebrew/bin/container")
+        } else {
+            #expect(CLIPaths.containerExecutable == "/usr/local/bin/container")
+        }
+    }
+
+    @Test
     func `registration is idempotent and removes only its own link`() throws {
         let fixture = try PluginRegistrationFixture()
         let registration = try fixture.registration()
@@ -111,7 +124,7 @@ struct PluginCommandTests {
         )
         #expect(
             PluginRegistration.packagedPluginURL(
-                executable: "/opt/homebrew/Cellar/devcontainer/0.1.0/bin/devcontainer"
+                executable: "/opt/homebrew/Cellar/devcontainer/1.0.0/bin/devcontainer"
             ).path == "/opt/homebrew/opt/devcontainer/libexec/container/plugins/devcontainer"
         )
     }

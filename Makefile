@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := workflow
 
-DEVCONTAINER_VERSION ?= 0.1.0
+DEVCONTAINER_VERSION ?= 1.0.0
 SWIFT ?= swift
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
@@ -37,7 +37,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: parity-release runtime-check
 .PHONY: package package-release homebrew-formula homebrew-formula-current
 .PHONY: release-version
-.PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan clean
+.PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
+.PHONY: clean
 
 all: workflow
 
@@ -155,6 +156,7 @@ sonar-scan:
 asan:
 	@SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
+		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/asan --sanitize=address --no-parallel
@@ -162,6 +164,7 @@ asan:
 tsan:
 	@SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
+		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/tsan --sanitize=thread --no-parallel
@@ -179,14 +182,9 @@ lint:
 	$(PYTHON) -m unittest discover Tools/ci
 	$(MARKDOWNLINT) '*.md' 'docs/**/*.md' 'Tests/**/*.md' \
 		'Sources/**/*.md'
-	@mkdir -p .build
-	$(PYTHON) Tools/ci/swiftlint_baseline.py \
-		--input .swiftlint-baseline.json \
-		--output .build/swiftlint-baseline.json \
-		--root "$(CURDIR)"
 	$(SWIFTLINT) lint --strict --quiet \
-		--baseline .build/swiftlint-baseline.json Sources Tests
-	$(SWIFTFORMAT) Sources Tests --lint
+		Sources Tests Plugins Tools/version-generator
+	$(SWIFTFORMAT) Sources Tests Plugins Tools/version-generator --lint
 	bash -n Tools/ci/*.sh Tools/coverage/*.sh Tools/parity/*.sh \
 		Tools/release/*.sh scripts/*.sh
 	shellcheck Tools/ci/*.sh Tools/coverage/*.sh Tools/parity/*.sh \
@@ -194,10 +192,10 @@ lint:
 	$(ACTIONLINT)
 
 format:
-	$(SWIFTFORMAT) Sources Tests
+	$(SWIFTFORMAT) Sources Tests Plugins Tools/version-generator
 
 format-check:
-	$(SWIFTFORMAT) Sources Tests --lint
+	$(SWIFTFORMAT) Sources Tests Plugins Tools/version-generator --lint
 
 parity-manifest:
 	$(PYTHON) Tools/parity/validate_manifest.py
@@ -315,6 +313,11 @@ docs:
 
 serve-docs: docs
 	$(PYTHON) -m http.server 8000 --directory "$(DOCS_OUTPUT_DIR)"
+
+demo:
+	Tools/release/record-vhs-live-demo.sh \
+		docs/devcontainer-demo.tape \
+		docs/images/devcontainer-demo.gif
 
 clean:
 	$(PYTHON) Tools/ci/safe-clean.py

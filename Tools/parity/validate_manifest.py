@@ -34,6 +34,41 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
 
     references = payload.get("referencePins")
     _require(isinstance(references, dict), "referencePins must be an object")
+    docker = references.get("docker")
+    _require(isinstance(docker, dict), "referencePins.docker must be an object")
+    for field in (
+        "cliSHA256",
+        "cliBottleSHA256",
+        "engineSHA256",
+        "composeSHA256",
+        "composeBottleSHA256",
+    ):
+        _require(
+            SHA256.fullmatch(str(docker.get(field, ""))) is not None,
+            f"referencePins.docker.{field} must be a SHA-256 digest",
+        )
+
+    release_host = references.get("releaseHost")
+    _require(
+        isinstance(release_host, dict),
+        "referencePins.releaseHost must be an object",
+    )
+    _require(
+        release_host.get("architecture") == "arm64",
+        "the release host must use arm64",
+    )
+    for field in (
+        "macOSProductVersion",
+        "macOSBuildVersion",
+        "xcodeVersion",
+        "xcodeBuildVersion",
+        "swiftVersion",
+    ):
+        _require(
+            isinstance(release_host.get(field), str) and release_host[field],
+            f"referencePins.releaseHost.{field} is required",
+        )
+
     vscode = references.get("vscode")
     _require(isinstance(vscode, dict), "referencePins.vscode must be an object")
     _require(

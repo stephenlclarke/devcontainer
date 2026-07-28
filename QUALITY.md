@@ -7,13 +7,12 @@ The repository now contains the hosted CI, 90% coverage enforcement, Sonar
 coverage export and quality-gate workflow, sanitizer jobs, CodeQL, parity
 harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
-below. At this development-candidate snapshot, 120 Swift tests pass with
-90.68% first-party executable-line coverage. All 18 CLI parity fixtures and
-the pinned real VS Code fixture pass through real Docker, signed stock Apple
-`container` 1.1.0, and the separately identified Apple Compose lane with zero
-normalized differences. Candidate-bound trusted-runner evidence, signing,
-notarization, and tap publication remain release blockers, so these results are
-not yet a stable-support claim.
+below. Version 1.0.0 has 121 Swift tests and greater than 90% first-party
+executable-line coverage. All 18 CLI parity fixtures and the pinned real VS
+Code fixture pass through real Docker, signed stock Apple `container` 1.1.0,
+and the separately identified Apple Compose lane with zero normalized
+differences. The exact metrics and workflow links are recorded in the 1.0.0
+release notes.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -36,7 +35,7 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
 | Changed coverage | Covered changed executable lines relative to merge base | At least 90.00% | At least 90.00% for candidate range |
 | Differential parity | Semantic differences in claimed fixtures | Affected hosted/oracle fixtures | Zero across every required real lane |
 | VS Code E2E | Pinned stable VS Code and Dev Containers extension | Not run on untrusted code | Full pass |
-| Style | SwiftLint strict and SwiftFormat lint | No new violations beyond the checked-in debt baseline | Baseline retired; zero violations |
+| Style | SwiftLint strict and SwiftFormat lint | Zero violations | Zero violations |
 | Memory safety | Swift AddressSanitizer | Pass for relevant changes | Pass on exact candidate |
 | Concurrency safety | Swift ThreadSanitizer | Nightly/dispatch | Pass on exact candidate |
 | Static security | CodeQL Swift | Required when source changes | No open release-blocking alert |
@@ -106,29 +105,35 @@ The gate initially applies to all implemented first-party source, even while the
 - Stable release validation reads the checked-in parity manifest and fails until every scoped fixture is implemented.
 - Raw and normalized recordings, pins, cleanup results, and digests must identify the exact candidate commit.
 
-The required-check aggregator will fail if an upstream job is cancelled, skipped unexpectedly, or omitted by a path filter. It may report a deliberate documentation-only skip only when the classifier itself ran and the changed paths are included in the checked policy.
+The required-check aggregator fails if an upstream job is cancelled, skipped
+unexpectedly, or omitted by a path filter. It may report a deliberate
+documentation-only skip only when the classifier itself ran and the changed
+paths are included in the checked policy.
 
 ## Swift style and compiler discipline
 
-Swift source will be formatted and linted across the entire first-party source and test tree:
+Swift source is formatted and linted across the entire first-party source and
+test tree:
 
 ```console
 make lint
 make format-check
 ```
 
-SwiftLint scans only first-party `Sources` and `Tests`. The initial structural
-findings are recorded in a portable checked-in baseline, so new violations
-fail immediately while the large router/runtime types are split in subsequent
-quality work. The baseline is technical-debt evidence, not a claim that the
-repository has zero existing findings.
+SwiftLint scans first-party `Sources`, `Tests`, build-tool `Plugins`, and
+`Tools/version-generator` with no suppression baseline. Every maintained-source
+violation fails strict lint.
 
 Swift 6.2 is the checked-in language and toolchain target; it is not permission
 to float the compiler silently. SwiftLint and SwiftFormat are validated by the
 hosted quality workflow. Generated and vendored directories may be excluded
 explicitly, but new production directories are included by default.
 
-The package will use Swift 6 language mode and strict concurrency where dependencies permit. Compiler warnings are treated as failures in CI. New use of `@unchecked Sendable`, `nonisolated(unsafe)`, force casts, force tries, or fatal termination in library paths requires a narrow review and a test that demonstrates the invariant.
+The package uses Swift 6 language mode and strict concurrency where
+dependencies permit. Compiler warnings are treated as failures in CI. New use
+of `@unchecked Sendable`, `nonisolated(unsafe)`, force casts, force tries, or
+fatal termination in library paths requires a narrow review and a test that
+demonstrates the invariant.
 
 Public API additions require DocC documentation and tests. Error messages exposed through the Docker contract require stable error-class assertions; snapshots alone do not replace semantic checks.
 
@@ -141,6 +146,7 @@ The implemented ASan invocation is:
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
+  SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
   Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
 ```
 
@@ -149,6 +155,7 @@ The implemented TSan invocation is:
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
+  SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
   Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=thread --no-parallel
 ```
 
@@ -247,17 +254,17 @@ live validation:
 
 | Workflow | Environment | Responsibility |
 | --- | --- | --- |
-| `ci.yml` | Hosted `macos-26` | Build, unit, contract, hosted integration, 90% coverage gates, and package validation |
-| `quality.yml` | Hosted `macos-26` | SwiftLint, SwiftFormat, ASan, scheduled/dispatch TSan |
+| `ci.yml` | Hosted `macos-26` | Format/lint, unit/contract/integration tests, both 90% coverage gates, build, and CLI smoke |
+| `quality.yml` | Hosted `macos-26` | ASan on pushes/PRs and TSan on schedules or explicit dispatch |
 | `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL |
 | `dependency-review.yml` | Hosted Ubuntu | Vulnerability, scope, license, and dependency Scorecard review |
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
-| `parity.yml` | Three dedicated physical Apple-silicon runners | CLI and pinned VS Code parity for Docker, stock Apple, and Apple Compose |
+| `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and Apple Compose |
 | `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
-| `homebrew.yml` | Hosted validation plus physical install smoke | Formula update, audit, install, meaningful test, live smoke |
+| `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
 
 All workflows use explicit least-privilege `permissions`, pinned action SHAs, concurrency groups, timeouts, deterministic tool pins, dependency caching keyed by lockfiles/toolchains, and artifact names containing the candidate SHA. Scripts contain the substantial logic so it can be run and tested locally.
 
@@ -267,12 +274,12 @@ Path filtering is an optimization, not authority. Changes to workflow policy, de
 
 Hosted `macos-26` is appropriate for compilation, SwiftPM tests, coverage, style, CodeQL, and sanitizers. It is an ARM64 hosted virtual machine with limited memory and no supported nested Apple container runtime, so a green hosted job does not prove live compatibility.
 
-Real runtime and VS Code tests use three provenance-specific physical
-Apple-silicon runner labels: `devcontainer-docker`,
-`devcontainer-apple-stock`, and `devcontainer-apple-compose`, in addition to
-`self-hosted`, `macOS`, and `ARM64`. This prevents a job from replacing the
-runtime distribution beneath another session. Jobs use isolated application
-roots and runtime namespaces and prove cleanup.
+Real runtime and VS Code tests use three provenance-specific labels:
+`devcontainer-docker`, `devcontainer-apple-stock`, and
+`devcontainer-apple-compose`, in addition to `self-hosted`, `macOS`, and
+`ARM64`. A single isolated Mac may carry all three labels only when the workflow
+serializes the profiles, verifies the exact selected executable before every
+lane, and proves cleanup before switching runtime distributions.
 
 Untrusted fork pull requests never execute on the self-hosted runner. A dispatcher may enqueue only an exact commit from protected `main`, a scheduled protected ref, or a maintainer-approved manual input that already passed hosted checks. The live workflow checks the commit's repository and ancestry again before checkout. Test jobs do not receive release or tap credentials.
 
@@ -280,7 +287,7 @@ Runner maintenance includes OS/toolchain pin records, clean workspace verificati
 
 ## Branch protection and merge gates
 
-Protected `main` will require:
+Protected `main` requires:
 
 - reviewed pull requests and resolved conversations;
 - successful required-check aggregation for build, test, overall coverage, changed coverage, style, ASan where relevant, CodeQL, Sonar, dependency review, documentation, and package validation;
@@ -290,7 +297,8 @@ Protected `main` will require:
 
 Live runtime jobs cannot safely run arbitrary pull-request code and therefore do not become a fork-triggered merge requirement. Instead, a merge queue or protected-main candidate is automatically held from promotion until candidate-bound live parity succeeds. A failure opens a corrective change; it never causes the same untested SHA to be released.
 
-The repository will document exact required check names so a renamed workflow cannot silently stop enforcement.
+The repository documents exact required check names so a renamed workflow
+cannot silently stop enforcement.
 
 ## Stable release gate
 
@@ -299,7 +307,8 @@ The repository will document exact required check names so a renamed workflow ca
 - hosted CI, unit, contract, integration, 90% overall line coverage, and 90% changed-line coverage;
 - strict style, ASan, TSan, CodeQL, SonarCloud, dependency review, and documentation checks;
 - every fixture in the release parity manifest implemented;
-- zero semantic differences across the Docker oracle, stock Apple stable/main recording, and `container-compose` stable/main recording required by the candidate;
+- zero semantic differences across the Docker oracle, stock Apple release, and
+  `container-compose` release recordings required by the candidate;
 - pinned stable VS Code and Dev Containers extension E2E;
 - complete cleanup and no ignored, expected-failure, accepted-signal-13, or manual-waiver result;
 - reproducible archive validation, licenses, notices, SBOM, checksums, and provenance;
@@ -311,7 +320,7 @@ Stable tags and releases are created only after the gate passes. The release job
 
 ## Supply-chain evidence
 
-Each release will publish:
+Each release publishes:
 
 - immutable architecture-specific archives and SHA-256 checksums;
 - an SPDX 2.3 SBOM covering distributed binaries and dependencies;
@@ -320,26 +329,39 @@ Each release will publish:
 - GitHub artifact attestations for archives, checksums, and SBOM;
 - candidate-bound quality and parity evidence digests.
 
-GitHub artifact attestations can support SLSA Build Level 2. The project will claim SLSA Build Level 3 only after the build uses a protected reusable hosted workflow meeting the isolation and parameter requirements and the generated provenance is independently verified. Documentation must not inflate the level based only on the presence of an attestation.
+GitHub artifact attestations can support SLSA Build Level 2. The project claims
+SLSA Build Level 3 only after the build uses a protected reusable hosted
+workflow meeting the isolation and parameter requirements and the generated
+provenance is independently verified. Documentation does not inflate the level
+based only on the presence of an attestation.
 
 Release workflows separate build from publication. Publishing permissions are granted only to the final protected environment after digest verification and any configured human approval.
 
 ## Homebrew quality
 
-The planned stable formula in `stephenlclarke/homebrew-tap` will use immutable release URLs and checksums, declare Apple silicon and macOS Tahoe requirements, and install only this project:
+The stable formula in `stephenlclarke/homebrew-tap` uses immutable release URLs
+and checksums, declares Apple silicon and macOS Tahoe requirements, and installs
+only this project:
 
 ```ruby
 depends_on arch: :arm64
 depends_on macos: :tahoe
 ```
 
-`container-compose` remains optional and independently installed. A future mutable `devcontainer-current` formula, if introduced, must have an explicit conflict/migration policy and cannot share stable release claims.
+`container-compose` remains optional and independently installed. The mutable
+`devcontainer-current` formula conflicts with the stable formula and does not
+share stable release claims.
 
-The tap workflow will run Ruby syntax, `brew style`, `brew audit`, fetch, install, and formula test on a clean hosted runner. The formula test must do more than print `--version` or `--help`: it will validate or render a minimal pinned `devcontainer.json` configuration and assert structured output without requiring a live runtime. A separate physical-runner smoke will install the bottled/released artifact through Homebrew, register it in an isolated root, run `doctor`, exercise a minimal real backend operation, and remove all resources.
+The tap workflow runs Ruby syntax, `brew style`, `brew audit`, fetch, install,
+and formula tests on a clean hosted runner. The formula test does more than
+print `--version` or `--help`: it validates structured output without requiring
+a live runtime. A separate physical-runner smoke installs the released artifact
+through Homebrew, registers it in an isolated root, runs `doctor`, exercises a
+minimal real backend operation, and removes all resources.
 
 The formula update verifies the release attestation, checksum, version, supported architecture, and source repository before opening or merging a tap change. Tap credentials are unavailable to build and test jobs.
 
-## Implemented controls and deferred infrastructure
+## Implemented controls and release operations
 
 The repository now implements:
 
@@ -350,31 +372,17 @@ The repository now implements:
 - raw-socket contract and fake-runtime integration infrastructure;
 - hosted ASan, TSan, CodeQL, dependency review, Scorecard, documentation, and package validation workflows;
 - deterministic pin, manifest, normalizer, and evidence schemas;
-- signed/notarized package, SBOM, checksum, formula, and publication logic that
-  remains fail-closed until release credentials are provisioned.
+- signed/notarized package, SBOM, checksum, formula, and fail-closed publication
+  logic;
+- physical Apple-silicon Docker, stock Apple, Apple Compose, and VS Code
+  recordings;
+- retained raw parity, E2E, package, and notarization evidence.
 
-The following require infrastructure or credentials and must remain visibly unavailable rather than silently green:
-
-- physical Apple-silicon live parity and VS Code runner registration;
-- Docker/Apple/Compose image and tool caches on that runner;
-- dedicated physical release and parity runners;
-- protected GitHub environments, branch rules, release signing/attestation authority, and tap token;
-- release-retention storage for raw parity and E2E evidence.
-
-Stable release automation remains disabled until those dependencies exist and a dry run proves the trust boundary.
-
-## Remaining adoption sequence
-
-1. Provision and harden the three physical runner profiles, then record stock
-   Apple and `container-compose` live lanes for the same exact candidate.
-2. Record the pinned stable VS Code scenario on both Apple lanes and retain its
-   cleanup evidence.
-3. Protect `main` with the stable required contexts and review policy.
-4. Provision the Developer ID, notary, release environment, and tap token; run
-   a non-publishing candidate rehearsal.
-5. Publish and soak the first signed Current build.
-6. Enable stable tagging and publication only after a full candidate dry run
-   satisfies every gate.
+Repository administrators provide the protected branch, release environment,
+runner registration, runtime caches, Developer ID identity, notarization
+profile, tap token, and evidence retention. Missing infrastructure causes a
+visible failed or pending release gate; it is never represented as a passing
+result.
 
 ## Reference implementations and primary sources
 

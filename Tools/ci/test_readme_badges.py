@@ -50,6 +50,14 @@ class ReadmeBadgeTests(unittest.TestCase):
         ):
             self.assertIn(marker, README)
 
+    def test_reproducible_live_demo_is_linked(self) -> None:
+        self.assertIn("## See it work", README)
+        self.assertIn("docs/images/devcontainer-demo.gif", README)
+        self.assertTrue((REPOSITORY_ROOT / "docs/devcontainer-demo.tape").is_file())
+        self.assertTrue(
+            (REPOSITORY_ROOT / "Tools/release/record-vhs-live-demo.sh").is_file()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

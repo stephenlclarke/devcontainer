@@ -6,9 +6,10 @@ Containers extension, `@devcontainers/cli`, macOS, Apple container, and the
 optional Compose provider.
 
 The parity manifest binds every scenario to Docker-oracle, stock-Apple, and
-Compose-provider lanes. Runtime and VS Code jobs use separate provenance-bound
-runner labels so a lane never replaces another lane's live runtime
-distribution. Release validation rejects incomplete or missing evidence.
+Compose-provider lanes. A serialized trusted-runner workflow prepares and
+fingerprints one distribution at a time so a lane never replaces another
+lane's live runtime distribution. Release validation rejects incomplete or
+missing evidence.
 
 Stock Apple `container` 1.1.0 does not transport explicit Docker hostnames or
 security options. The adapter rejects those fields before side effects and

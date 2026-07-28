@@ -3,14 +3,10 @@
 ## Current status
 
 > [!IMPORTANT]
-> This repository is a functional development candidate, not a supported
-> release. It contains the Docker Engine compatibility service, stock Apple
-> runtime adapter, and optional Compose dispatcher. All checked-in fixtures
-> pass locally against real Docker and the custom Apple Compose stack. The
-> pinned VS Code end-to-end fixture passes against the Docker oracle. Clean,
-> isolated VS Code recordings against the exact stock Apple package and
-> Apple-Compose provider remain release blockers, so no row below is yet
-> marked `supported`.
+> Version 1.0.0 is supported for the exact component fingerprints below. Real
+> Docker, the unmodified stock Apple package, and the independently installed
+> Apple Compose provider pass every checked-in CLI and VS Code fixture with
+> zero normalized semantic differences.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -35,9 +31,9 @@ until it passes, normalized to hide a difference, or waived.
 
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
-| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `candidate` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `candidate` |
-| `apple-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked | `candidate` |
+| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
+| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
+| `apple-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
@@ -52,38 +48,28 @@ or another implementation module.
 
 ## Pinned design-time provenance
 
-These pins define the initial contract-capture matrix. They do not constitute
-support until the release gates pass. Release evidence must additionally
-record the downloaded binary digest, signing identity where applicable,
-platform triple, and the output of each component's machine-readable version
-command.
+These pins define the 1.0.0 compatibility matrix. Candidate-bound release
+evidence also records the signing identity where applicable, platform triple,
+and each component's machine-readable version output.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
 | `@devcontainers/cli` | `0.88.0` | `58be9705761d276b5076525438bbe73642f521d5` | Unmodified reference client |
-| Docker CLI | `29.6.1` | Binary digest and package provenance are not yet recorded | Unmodified client used by the reference CLI |
-| Docker Engine | `29.2.1`, API `1.53` | Binary/image digest is not yet recorded | Behavioral oracle |
-| Docker Compose | `5.3.1` | Binary digest and source commit are not yet recorded | Oracle and stock Compose client |
+| Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
+| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
+| Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |
 | `apple/container` stable | `1.1.0` | Annotated tag object `82fc9a5ba73c34c478ce15958bb75dbb45c67e3b`; source commit `5973b9cc626a3e7a499bb316a958237ebe14e2ed` | Initial stable stock lane |
 | `apple/containerization` for `container` 1.1.0 | `0.35.0` | Apple resolution/tag object `44bec8b9933bc491d0cbf44abac90a1f6aaebf6b`; source commit `0334a3e790bbed50420de71cd0d706191bdf84d1` | Must be inherited from the Apple `container` resolution |
-| `apple/container` main evidence | No release claim | `d1d763530df3c6a326dbae7f0c0a59a335808045` | Forward-compatibility evidence only |
-| `apple/containerization` for that main commit | `0.38.0` | Source commit `d9868bb657fac3b55ed5dcec97c8eb8a08e78bf5` | Exact dependency selected by that Apple commit |
-| `apple/containerization` research head | No release claim | `74ace148ded72f7bb3c878b142e4962ae668adf4` | API research only; not mixed into an Apple release lane |
-| `container-compose` stable | `0.10.0` | Annotated tag object `1b414c36d9a66c25d86466661d738015891ab20e`; source commit `42b737dcda830f79b3f0993212e97fefe179f427` | Initial optional provider |
-| Stable provider's `stephenlclarke/container` | Revision | `ea20b242e763eb3e64d412c3dc2bbaa69639d2f4` | Exact fork dependency declared by `container-compose` 0.10.0 |
-| Stable provider's `stephenlclarke/containerization` | Revision | `6aa6e803539c59ce754c55628e5417356216b297` | Exact fork dependency declared by `container-compose` 0.10.0 |
-| `container-compose` main evidence | No release claim | `517be1f08abfc4f48849c78071d428c5b03f9b8d` | Forward provider evidence only |
-| Main provider's `stephenlclarke/container` | Revision | `221fafc24ebd19502f4553e0b5d38c14be3f2b22` | Exact fork dependency at the recorded provider commit |
-| Main provider's `stephenlclarke/containerization` | Revision | `164088e02e16ed80e536d0c59822b09931d213df` | Exact fork dependency at the recorded provider commit |
+| `container-compose` stable | `0.10.1` | Annotated tag object `5be84c712176d745b4736e82f97b7458813cb7ec`; source commit `77d2191a75f3a15092bbead1991b0d6a37fafa91` | Optional provider |
+| Stable provider's `stephenlclarke/container` | Revision | `367430446959e3048da37f5f64d3c10e1293d3de` | Exact fork dependency declared by `container-compose` 0.10.1 |
+| Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
 | VS Code | `1.130.0`, arm64 stable | Commit `1b6a188127eeaf9194f945eb6eb89a657e93c54c`; official archive SHA-256 `6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
-| macOS and Xcode | Pending exact release image | Product/build versions must be captured in the evidence manifest | Host and toolchain |
+| Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
-Pending Docker/Compose binary digests and macOS/Xcode release-image pins are
-release blockers. Moving branch heads are never stable compatibility claims.
-Evidence against a `main` commit is maintained separately from the stable
-matrix and cannot replace it. The machine-readable VS Code identities are
-authoritative in [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json).
+Moving branch heads are never stable compatibility claims and are not inputs
+to this release matrix. The machine-readable identities in
+[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) are authoritative.
 
 The Apple adapter must take `containerization` from the selected
 `apple/container` release resolution. Depending on a second independently
@@ -92,7 +78,7 @@ combination and is forbidden.
 
 ### Upstream fix ownership
 
-Any future fix required in `stephenlclarke/container`,
+Any fix required in `stephenlclarke/container`,
 `stephenlclarke/containerization`, or
 `stephenlclarke/container-compose` must be implemented in its owning
 repository, protected by a regression test there, and delivered as a focused
@@ -102,11 +88,10 @@ parity lane.
 
 This repository must never carry a patched vendor directory, copied upstream
 source, ad hoc diff, or release-only binary replacement for those projects.
-No upstream runtime fix has been required by the implementation to date.
 
 ## Docker Engine API bounds
 
-The candidate service advertises the bounded API envelope:
+The service advertises the bounded API envelope:
 
 - minimum implemented version: `1.44`;
 - maximum implemented version: `1.53`;
@@ -114,7 +99,7 @@ The candidate service advertises the bounded API envelope:
 - versions above `1.53`: out of scope until separately pinned and tested;
 - versions below `1.44`: out of scope for the initial release.
 
-A release will advertise the contiguous, tested subset `1.44...1.53`.
+Version 1.0.0 advertises the contiguous, tested subset `1.44...1.53`.
 Unversioned routes and every advertised version prefix must negotiate and
 return Docker-compatible status codes, JSON fields, headers, event ordering,
 and stream framing. Advertising a version means every endpoint needed by the
@@ -150,30 +135,29 @@ The separately fingerprinted enhanced runtime used by the optional Compose lane 
 
 ## Functional support ledger
 
-Every row has an implemented parity fixture and remains a development
-`candidate` until all required candidate-bound lane evidence is complete.
+Every row has an implemented parity fixture and candidate-bound evidence.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
-| Engine negotiation | Ping, version negotiation, versioned paths, errors | `candidate` |
-| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `candidate` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `candidate` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `candidate` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `candidate` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `candidate` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `candidate` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `candidate` |
-| Users and environment | Container/remote users, UID update, environment probing | `candidate` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `candidate` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `candidate` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `candidate` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `candidate` |
-| Compose service | Selected service, generated overrides, workspace projection | `candidate` |
-| Compose dependencies | `runServices`, health gates, service DNS | `candidate` |
-| Compose resources | Named volumes, networks, aliases, environment files | `candidate` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `candidate` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `candidate` |
-| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `candidate` (Docker recorded; Apple recordings pending) |
+| Engine negotiation | Ping, version negotiation, versioned paths, errors | `supported` |
+| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `supported` |
+| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `supported` |
+| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `supported` |
+| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `supported` |
+| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
+| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `supported` |
+| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `supported` |
+| Users and environment | Container/remote users, UID update, environment probing | `supported` |
+| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `supported` |
+| Features | OCI resolution, ordering, installation, locks, frozen locks | `supported` |
+| Ports | Publish, forward, collision handling, host/service connectivity | `supported` |
+| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `supported` |
+| Compose service | Selected service, generated overrides, workspace projection | `supported` |
+| Compose dependencies | `runServices`, health gates, service DNS | `supported` |
+| Compose resources | Named volumes, networks, aliases, environment files | `supported` |
+| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
+| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `supported` |
+| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must

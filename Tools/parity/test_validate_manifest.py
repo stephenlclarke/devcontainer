@@ -54,6 +54,20 @@ class ValidateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "archiveSHA256"):
             validate_manifest(payload)
 
+    def test_docker_binary_digest_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["docker"]["cliSHA256"] = "not-a-digest"
+
+        with self.assertRaisesRegex(ManifestError, "docker.cliSHA256"):
+            validate_manifest(payload)
+
+    def test_release_host_identity_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["releaseHost"]["macOSBuildVersion"] = ""
+
+        with self.assertRaisesRegex(ManifestError, "macOSBuildVersion"):
+            validate_manifest(payload)
+
     def test_vscode_embedded_cli_version_matches_direct_oracle(self) -> None:
         payload = copy.deepcopy(self.payload)
         payload["referencePins"]["vscode"]["devContainersExtension"][

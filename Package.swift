@@ -15,26 +15,12 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import Foundation
 import PackageDescription
-
-let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let makefile = try String(
-    contentsOf: packageRoot.appendingPathComponent("Makefile"),
-    encoding: .utf8
-)
-let versionPrefix = "DEVCONTAINER_VERSION ?= "
-guard let versionLine = makefile.split(separator: "\n").first(where: { $0.hasPrefix(versionPrefix) }) else {
-    fatalError("Makefile must define DEVCONTAINER_VERSION")
-}
-let devcontainerVersion = String(versionLine.dropFirst(versionPrefix.count))
-let sourceCommit = ProcessInfo.processInfo.environment["GIT_COMMIT"] ?? "unspecified"
-let buildLane = ProcessInfo.processInfo.environment["DEVCONTAINER_BUILD_LANE"] ?? "development"
 
 let package = Package(
     name: "devcontainer",
     platforms: [
-        .macOS(.v15),
+        .macOS(.v15)
     ],
     products: [
         .library(name: "DevContainerModel", targets: ["DevContainerModel"]),
@@ -47,7 +33,7 @@ let package = Package(
         .library(name: "DevContainerTestSupport", targets: ["DevContainerTestSupport"]),
         .executable(name: "devcontainer", targets: ["DevContainerCLI"]),
         .executable(name: "devcontainer-engine", targets: ["DevContainerService"]),
-        .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"]),
+        .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/container.git", exact: "1.1.0"),
@@ -55,22 +41,22 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0"),
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],
     targets: [
-        .target(
-            name: "CDevContainerVersion",
-            publicHeadersPath: "include",
-            cSettings: [
-                .define("DEVCONTAINER_VERSION", to: "\"\(devcontainerVersion)\""),
-                .define("DEVCONTAINER_SOURCE_COMMIT", to: "\"\(sourceCommit)\""),
-                .define("DEVCONTAINER_BUILD_LANE", to: "\"\(buildLane)\""),
-            ]
+        .executableTarget(
+            name: "DevContainerVersionGenerator",
+            path: "Tools/version-generator"
+        ),
+        .plugin(
+            name: "GenerateDevContainerVersion",
+            capability: .buildTool(),
+            dependencies: ["DevContainerVersionGenerator"]
         ),
         .systemLibrary(name: "CSQLite"),
         .target(
             name: "DevContainerModel",
-            dependencies: ["CDevContainerVersion"]
+            plugins: ["GenerateDevContainerVersion"]
         ),
         .target(
             name: "DevContainerRuntimeSPI",
@@ -81,7 +67,7 @@ let package = Package(
             dependencies: [
                 "CSQLite",
                 "DevContainerModel",
-                "DevContainerRuntimeSPI",
+                "DevContainerRuntimeSPI"
             ]
         ),
         .target(
@@ -89,7 +75,7 @@ let package = Package(
             dependencies: [
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
-                "DevContainerState",
+                "DevContainerState"
             ]
         ),
         .target(
@@ -99,7 +85,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio")
             ]
         ),
         .target(
@@ -113,14 +99,14 @@ let package = Package(
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "SocketForwarder", package: "container"),
+                .product(name: "SocketForwarder", package: "container")
             ]
         ),
         .target(
             name: "DevContainerComposeProvider",
             dependencies: [
                 "DevContainerModel",
-                "DevContainerRuntimeSPI",
+                "DevContainerRuntimeSPI"
             ]
         ),
         .target(
@@ -128,7 +114,7 @@ let package = Package(
             dependencies: [
                 "DevContainerDockerAPI",
                 "DevContainerModel",
-                "DevContainerRuntimeSPI",
+                "DevContainerRuntimeSPI"
             ]
         ),
         .executableTarget(
@@ -144,7 +130,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
             ]
         ),
         .executableTarget(
@@ -155,7 +141,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerState",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Logging", package: "swift-log")
             ]
         ),
         .executableTarget(
@@ -164,7 +150,7 @@ let package = Package(
                 "DevContainerComposeProvider",
                 "DevContainerCore",
                 "DevContainerModel",
-                "DevContainerState",
+                "DevContainerState"
             ]
         ),
         .testTarget(
@@ -173,7 +159,7 @@ let package = Package(
                 "DevContainerCLI",
                 "DevContainerCore",
                 "DevContainerModel",
-                "DevContainerState",
+                "DevContainerState"
             ]
         ),
         .testTarget(
@@ -185,7 +171,7 @@ let package = Package(
             dependencies: [
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
-                "DevContainerState",
+                "DevContainerState"
             ]
         ),
         .testTarget(
@@ -194,7 +180,7 @@ let package = Package(
                 "DevContainerCore",
                 "DevContainerModel",
                 "DevContainerState",
-                "DevContainerTestSupport",
+                "DevContainerTestSupport"
             ]
         ),
         .testTarget(
@@ -202,7 +188,7 @@ let package = Package(
             dependencies: [
                 "DevContainerDockerAPI",
                 "DevContainerModel",
-                "DevContainerTestSupport",
+                "DevContainerTestSupport"
             ]
         ),
         .testTarget(
@@ -210,7 +196,7 @@ let package = Package(
             dependencies: [
                 "DevContainerComposeProvider",
                 "DevContainerModel",
-                "DevContainerRuntimeSPI",
+                "DevContainerRuntimeSPI"
             ]
         ),
         .testTarget(
@@ -223,7 +209,7 @@ let package = Package(
                 .product(name: "ContainerResource", package: "container"),
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
             ]
         ),
         .testTarget(
@@ -234,9 +220,9 @@ let package = Package(
                 "DevContainerRuntimeSPI",
                 "DevContainerService",
                 "DevContainerTestSupport",
-                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Logging", package: "swift-log")
             ]
-        ),
+        )
     ],
     swiftLanguageModes: [.v6]
 )

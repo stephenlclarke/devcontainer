@@ -2,7 +2,9 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: maintained source for the managed `devcontainer` section in `stephenlclarke/homebrew-tap`. Release automation installs the section with explicit markers when the first signed, notarized, attested, and verified package is published; no installable formula is claimed before then.
+> Status: maintained source for the managed `devcontainer` section in
+> `stephenlclarke/homebrew-tap`. Release automation updates the section between
+> explicit markers with each signed, notarized, attested, and verified package.
 
 ## Dev Containers For Apple container
 
@@ -12,10 +14,11 @@ The formula installs only this project's `devcontainer`, compatibility-engine, a
 
 - Apple's `container` package.
 - A custom `container` runtime.
-- Docker.
 - `container-compose`.
 
-Install Apple's stock runtime separately from Apple before using the Apple backend.
+The formula depends on the upstream Docker CLI and Docker Compose protocol
+client. It does not install or start a Docker engine. Install Apple's stock
+runtime separately from Apple before using the Apple backend.
 
 ### Stable
 
@@ -25,6 +28,9 @@ The stable formula follows immutable bare semantic releases:
 brew tap stephenlclarke/tap
 brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer
+/usr/local/bin/container system start
+brew services start stephenlclarke/tap/devcontainer
+devcontainer doctor --container /usr/local/bin/container
 ```
 
 Stable assets use:
@@ -65,6 +71,8 @@ Both formulae declare:
 
 ```ruby
 depends_on arch: :arm64
+depends_on "docker"
+depends_on "docker-compose"
 depends_on macos: :tahoe
 ```
 
@@ -77,11 +85,14 @@ Neither formula declares a dependency on:
 "stephenlclarke/tap/container-compose-current"
 ```
 
-This separation is intentional. `devcontainer`'s supported core compatibility boundary is Apple's stock runtime. Docker and `container-compose` are explicit optional backends/providers.
+This separation is intentional. `devcontainer`'s supported core compatibility
+boundary is Apple's stock runtime. The upstream Docker CLI and Docker Compose
+are required protocol clients; a Docker engine and `container-compose` are
+optional backends/providers.
 
 ### Verify
 
-After a formula is published and installed:
+After installation:
 
 ```sh
 devcontainer version
@@ -123,14 +134,15 @@ Stable and Current tap updates share one non-cancelling concurrency group so the
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/0.1.0/devcontainer-release-arm64.tar.gz"
-  version "0.1.0"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.0/devcontainer-release-arm64.tar.gz"
+  version "1.0.0"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
   depends_on arch: :arm64
+  depends_on "docker"
+  depends_on "docker-compose"
   depends_on macos: :tahoe
-  depends_on "docker" => :recommended
   conflicts_with "devcontainer-current", because: "both install devcontainer commands"
 
   def install
@@ -141,17 +153,41 @@ class Devcontainer < Formula
     pkgshare.install "share/devcontainer"
   end
 
+  service do
+    run [opt_bin/"devcontainer-engine"]
+    keep_alive true
+    process_type :interactive
+    log_path var/"log/devcontainer.log"
+    error_log_path var/"log/devcontainer-error.log"
+  end
+
   def caveats
     <<~EOS
-      This formula installs only devcontainer.
-      Install Apple's stock container runtime separately from Apple.
-      Docker and container-compose remain optional and are not installed or replaced.
+      Install either the stock Apple container package or a compatible
+      container distribution before starting the service.
+
+      Start Apple's stock runtime:
+        /usr/local/bin/container system start
+
+      Start the compatibility engine:
+        brew services start #{name}
+
+      Use it without changing your default Docker context:
+        eval "$(devcontainer context)"
+
+      Configure VS Code's Dev Containers extension to use:
+        #{opt_bin}/devcontainer-compose
+
+      Register the optional Apple container CLI plug-in explicitly:
+        devcontainer plugin register
     EOS
   end
 
   test do
-    assert_match "0.1.0", shell_output("#{bin}/devcontainer version --short")
+    assert_match "1.0.0", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
+    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end
 end
 ```
@@ -160,16 +196,21 @@ The Current template changes the class, formula name, version, URL, and expected
 
 ## Tap CI
 
-Changes to either formula should run on a hosted Tahoe-capable macOS runner:
+Source-repository pull requests and pushes render a formula fixture and run:
 
 ```text
 ruby -c
 brew style
+```
+
+The protected publication transaction then runs against the staged,
+Developer ID-signed and notarized release archive:
+
+```text
 brew audit --formula --strict --online
 brew fetch --formula --force
 brew install --formula
 brew test
-brew info --formula
 ```
 
 GitHub Actions must be pinned to complete commit SHAs. Tap CI must not start a live Apple VM merely to validate formula installation; live runtime compatibility belongs to the source repository's trusted bare-metal release gate.

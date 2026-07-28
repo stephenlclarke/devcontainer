@@ -132,6 +132,15 @@ struct EngineServerTests {
         #expect(DefaultPaths.socket.hasSuffix("/devcontainer/docker.sock"))
         #expect(DefaultPaths.stateDatabase.hasSuffix("/devcontainer/state.sqlite"))
         #expect(DefaultPaths.containerExecutable.hasPrefix("/"))
+        if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/container") {
+            #expect(DefaultPaths.containerExecutable == "/usr/local/bin/container")
+        } else if FileManager.default.isExecutableFile(
+            atPath: "/opt/homebrew/bin/container"
+        ) {
+            #expect(DefaultPaths.containerExecutable == "/opt/homebrew/bin/container")
+        } else {
+            #expect(DefaultPaths.containerExecutable == "/usr/local/bin/container")
+        }
     }
 }
 

@@ -241,6 +241,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.publish == 'true'
     runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+    environment: release
     timeout-minutes: 180
     permissions:
       attestations: write

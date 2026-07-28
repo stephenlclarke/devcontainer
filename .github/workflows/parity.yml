@@ -17,19 +17,31 @@ jobs:
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - lane: docker
             runner: devcontainer-docker
+            container-bin: ""
+            compose-bin: ""
           - lane: apple-stock
             runner: devcontainer-apple-stock
+            container-bin: /usr/local/bin/container
+            compose-bin: ""
           - lane: apple-compose
             runner: devcontainer-apple-compose
+            container-bin: /opt/homebrew/bin/container
+            compose-bin: /opt/homebrew/bin/container-compose
     runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner }}"]
     timeout-minutes: 240
+    env:
+      DEVCONTAINER_CONTAINER_BIN: ${{ matrix.container-bin }}
+      DEVCONTAINER_COMPOSE_BIN: ${{ matrix.compose-bin }}
     steps:
       - name: Check out exact trusted commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare isolated runtime
+        run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance
         run: Tools/parity/runner-preflight.sh "${{ matrix.lane }}"
       - name: Run Dev Containers CLI parity
@@ -43,6 +55,9 @@ jobs:
         run: >-
           python3 Tools/parity/scrub_vscode_evidence.py
           ".build/parity/vscode/${{ matrix.lane }}"
+      - name: Stop isolated runtime
+        if: always()
+        run: Tools/parity/runner-runtime.sh stop "${{ matrix.lane }}"
       - name: Upload lane evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

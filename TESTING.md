@@ -5,19 +5,18 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite currently contains 120 Swift tests and records
-90.68% first-party line coverage. All 18 CLI fixtures and the V01 real VS Code
+driver. The hosted-safe suite contains 121 Swift tests and records greater than
+90% first-party line coverage. All 18 CLI fixtures and the V01 real VS Code
 fixture pass against the real Docker oracle, signed stock Apple `container`
 1.1.0, and Stephen's separately identified matched Apple Compose stack with
-zero normalized differences. Stable release authority still requires
-candidate-bound physical-runner evidence plus the signing, notarization, and
-publication controls in [`RELEASE.md`](RELEASE.md).
+zero normalized differences. Version 1.0.0 binds those results to its exact
+physical-runner, signing, notarization, and publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
 ## Test objectives
 
-The test system will prove all of the following:
+The test system proves all of the following:
 
 - Docker Engine requests used by the pinned Dev Containers toolchain have the expected status, headers, body, stream framing, errors, and lifecycle effects.
 - Provider-neutral behavior is identical through the stock Apple and `container-compose` providers wherever the project claims support.
@@ -43,7 +42,7 @@ The suite is divided by the boundary it proves. A higher layer supplements rathe
 
 ### Unit tests
 
-Unit tests will own fast, deterministic coverage of:
+Unit tests own fast, deterministic coverage of:
 
 - Docker API version parsing and route negotiation;
 - wire DTO encoding and decoding, including missing, extra, and malformed fields;
@@ -56,11 +55,15 @@ Unit tests will own fast, deterministic coverage of:
 - SQLite migrations, crash recovery, reconciliation, and cleanup plans;
 - deadlines, retry classification, privacy redaction, and diagnostic manifests.
 
-Fakes will use controllable clocks, deterministic identifiers, scripted byte streams, and injected failures. Unit tests will not mock away the subject under test: a router test will exercise the real router, and a migration test will use the real schema against a temporary database.
+Fakes use controllable clocks, deterministic identifiers, scripted byte
+streams, and injected failures. Unit tests do not mock away the subject under
+test: router tests exercise the real router, and migration tests use the real
+schema against a temporary database.
 
 ### Docker wire contract tests
 
-Contract tests will start the actual HTTP server on a temporary user-owned Unix socket and issue raw HTTP requests without the Docker CLI. They will assert:
+Contract tests start the actual HTTP server on a temporary user-owned Unix
+socket and issue raw HTTP requests without the Docker CLI. They assert:
 
 - the advertised API version and behavior of version-prefixed routes;
 - status code, content type, required headers, and exact Docker error envelope;
@@ -71,7 +74,9 @@ Contract tests will start the actual HTTP server on a temporary user-owned Unix 
 - event-stream ordering, filtering, reconnect cursor, cancellation, and terminal behavior;
 - success and error cases for every advertised endpoint and API version.
 
-Every advertised endpoint will have contract coverage for its success path and its material errors. The service must not advertise an endpoint or API version that lacks these tests.
+Every advertised endpoint has contract coverage for its success path and its
+material errors. The service does not advertise an endpoint or API version that
+lacks these tests.
 
 ### Hosted integration tests
 
@@ -86,31 +91,39 @@ fake Apple executor. They exercise:
 - resource reconciliation after the fake executor reports partial native state;
 - multiple clients acting on the same and different projects.
 
-The fake runtime records the provider-neutral requests it receives. Tests will compare those requests with expected capability, idempotency, deadline, and project-lease values, rather than only checking the final CLI exit code.
+The fake runtime records the provider-neutral requests it receives. Tests
+compare those requests with expected capability, idempotency, deadline, and
+project-lease values rather than only checking the final CLI exit code.
 
 ## Differential parity harness
 
 ### Required logical backends
 
-The parity harness will execute a common fixture model against three logical backends:
+The parity harness executes a common fixture model against three logical backends:
 
 1. **Docker oracle:** a pinned real Docker Engine and Docker Compose installation driven by the pinned official `@devcontainers/cli`.
 2. **Stock Apple:** the product under test backed only by official `apple/container` and `apple/containerization`.
 3. **Apple Compose:** the same compatibility service and Apple runtime, with a separately installed `container-compose` executable selected for Compose planning and lifecycle.
 
-The Apple providers are not interchangeable provenance labels. The stock lane must contain only official Apple runtime dependencies. If a released `container-compose` requires Stephen's matched runtime stack, the lane will be recorded as `apple-compose/matched-fork` and must not be described as stock Apple.
+The Apple providers are not interchangeable provenance labels. The stock lane
+contains only official Apple runtime dependencies. Because the supported
+`container-compose` release requires Stephen's matched runtime stack, the
+provider lane records `apple-compose/matched-fork` and does not describe that
+runtime as stock Apple.
 
-### Stable and main sublanes
+### Release lanes
 
-Each stable candidate will retain five provider recordings:
+Each stable candidate retains three provider recordings:
 
-- Docker oracle, executed once against the candidate fixture and oracle pins;
+- Docker oracle against the candidate fixture and exact oracle pins;
 - stock Apple against the pinned supported Apple release;
-- stock Apple against the exact checked-out Apple `main` commit;
-- `container-compose` against its pinned supported release and matched Apple stack;
-- `container-compose` against exact checked-out main commits for the provider and its declared matched stack.
+- `container-compose` against its pinned release and matched Apple stack.
 
-Release claims are based on the stable sublanes. Main sublanes are forward-compatibility alarms and become release blocking only when the candidate explicitly targets those commits. Every recording identifies the exact project commit, macOS and Xcode build, Docker Engine, Docker Compose, `@devcontainers/cli`, Apple runtime, `container-compose`, fixture revision, image digest, and VS Code versions that produced it.
+Every recording identifies the exact project commit, macOS and Xcode build,
+Docker Engine, Docker Compose, `@devcontainers/cli`, Apple runtime,
+`container-compose`, fixture revision, image digest, and VS Code versions that
+produced it. Separate forward-compatibility runs against moving upstream
+branches never replace the stable matrix.
 
 ### Fixture execution and assertions
 
@@ -127,7 +140,10 @@ Each fixture follows the same state machine:
 7. Compare the Apple observation with the Docker oracle observation.
 8. Tear down and prove that no fixture-owned processes, sockets, containers, images, networks, volumes, mounts, or state rows remain.
 
-An exit code of zero is necessary but not sufficient. The harness will assert observable files, ownership and modes, environment, user identity, process exit state, port connectivity, labels, resource topology, lifecycle ordering, error class, and cleanup.
+An exit code of zero is necessary but not sufficient. The harness asserts
+observable files, ownership and modes, environment, user identity, process exit
+state, port connectivity, labels, resource topology, lifecycle ordering, error
+class, and cleanup.
 
 ### Normalization boundary
 
@@ -148,7 +164,10 @@ Normalization must never remove or rewrite:
 - connectivity failures, protocol framing, retry count, timeout class, or cancellation outcome;
 - a stock-runtime limitation that changes requested semantics.
 
-Both raw and normalized evidence will be retained. A stable release requires zero unexplained semantic differences in the claimed fixture scope. There is no expected-failure list, parity waiver, ignored fixture, or allow-failure release lane.
+Both raw and normalized evidence are retained. A stable release requires zero
+unexplained semantic differences in the claimed fixture scope. There is no
+expected-failure list, parity waiver, ignored fixture, or allow-failure release
+lane.
 
 ## Fixture catalog
 
@@ -174,7 +193,9 @@ The machine-readable manifest is the source of release scope. Fixture identifier
 - Workspace mounts, bind mounts, named volumes, port attributes, forwarding, and Unix sockets.
 - Resource discovery by labels, reuse of a matching configuration, rebuild after a changed digest, and close cleanup.
 
-All external images and Features used by stable fixtures will be content-addressed or mirrored into a release-controlled fixture registry. A tag alone is not a reproducible test input.
+All external images and Features used by stable fixtures are content-addressed
+or mirrored into a release-controlled fixture registry. A tag alone is not a
+reproducible test input.
 
 ### Compose fixtures
 
@@ -210,23 +231,25 @@ GitHub-hosted `macos-26` is suitable for Swift builds, unit/contract tests, cove
 
 Live jobs use three provenance-specific self-hosted runner labels:
 `devcontainer-docker`, `devcontainer-apple-stock`, and
-`devcontainer-apple-compose`. This keeps the stock Apple package, Stephen's
-matched runtime stack, and the Docker oracle on independently managed hosts
-and avoids changing a live runtime distribution underneath another job. Each
-run creates an explicit application root, Docker context, socket, state
-database, runtime namespace, and fixture prefix. Cleanup runs even after
-cancellation and fails the job if owned resources remain.
+`devcontainer-apple-compose`. One isolated Mac may carry all three labels only
+when the workflow serializes them and validates the exact selected runtime
+before each lane. Each run creates an explicit application root, Docker
+context, socket, state database, runtime namespace, and fixture prefix. Cleanup
+runs even after cancellation and fails the job if owned resources remain.
 
-The self-hosted runner will never execute untrusted public-fork pull-request code. Live runs are limited to an exact trusted commit from protected `main`, a schedule, or an explicit maintainer dispatch after hosted checks pass. Release credentials are unavailable to test steps.
+The self-hosted runner never executes untrusted public-fork pull-request code.
+Live runs are limited to an exact trusted commit from protected `main`, a
+schedule, or an explicit maintainer dispatch after hosted checks pass. Release
+credentials are unavailable to test steps.
 
 ### Matrix policy
 
-| Candidate | Docker oracle | Stock stable | Stock main | Compose stable | Compose main | VS Code stable |
-| --- | --- | --- | --- | --- | --- | --- |
-| Pull request | Hosted affected fixtures where safe | Not on self-hosted runner | Not on self-hosted runner | Not on self-hosted runner | Not on self-hosted runner | No |
-| Protected main | Yes | Yes | Yes | Yes | Yes | Smoke |
-| Nightly | Yes | Yes | Yes | Yes | Yes | Full |
-| Stable candidate | Full | Full | Full recording | Full | Full recording | Full |
+| Candidate | Docker oracle | Stock Apple | Apple Compose | VS Code |
+| --- | --- | --- | --- | --- |
+| Pull request | Hosted affected fixtures where safe | Not on self-hosted runner | Not on self-hosted runner | No |
+| Protected main | Full | Full | Full | Full |
+| Nightly | Full | Full | Full | Full |
+| Stable candidate | Full | Full | Full | Full |
 
 Changes to fixture definitions, the normalizer, comparison rules, or release manifest force the full matrix. A path filter may skip only a lane that cannot be affected, and the required-check aggregator must report the reason and still succeed or fail explicitly.
 
@@ -294,7 +317,10 @@ The implemented Swift coverage flow is:
 6. Produce LCOV for the overall and changed-line check and SonarQube generic coverage XML for SonarCloud.
 7. Map the merge-base diff to executable Swift lines in the LCOV report and fail when overall or changed-line coverage is below 90%.
 
-The coverage checker will fail closed on a missing test binary, missing profile, unrecognized source path, empty test execution, or source file absent from the report. It will print numerator, denominator, exclusions, merge base, and uncovered changed lines.
+The coverage checker fails closed on a missing test binary, missing profile,
+unrecognized source path, empty test execution, or source file absent from the
+report. It prints numerator, denominator, exclusions, merge base, and uncovered
+changed lines.
 
 The runner harness uses two coverage attempts and
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`. Accepting a
@@ -302,7 +328,9 @@ The runner harness uses two coverage attempts and
 incomplete profiles and report false 0% coverage, so it is never accepted
 during coverage collection.
 
-Coverage is evidence of exercised lines, not behavioral parity. Tests will not be weakened, merged, or deleted solely to improve the percentage, and a 90% result cannot override a failed contract, sanitizer, parity, or E2E gate.
+Coverage is evidence of exercised lines, not behavioral parity. Tests are not
+weakened, merged, or deleted solely to improve the percentage, and a 90%
+result cannot override a failed contract, sanitizer, parity, or E2E gate.
 
 ## Memory and concurrency tooling
 
@@ -318,7 +346,7 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
 - distinguish explicit passing output from Swift Testing/XCTest failure output;
 - control the post-pass signal-13 fallback with `SWIFT_TEST_ACCEPT_SIGNAL_13`.
 
-The AddressSanitizer job will use the same command shape as `container-compose`:
+The AddressSanitizer job uses the same command shape as `container-compose`:
 
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
@@ -326,7 +354,7 @@ SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
 ```
 
-The ThreadSanitizer job will use:
+The ThreadSanitizer job uses:
 
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
@@ -334,15 +362,20 @@ SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=thread --no-parallel
 ```
 
-In the current `container-compose` workflow, those sanitizer invocations leave `SWIFT_TEST_ACCEPT_SIGNAL_13` unset, so the harness default of `1` applies after retries when passing output exists and no failure output is detected. This project will preserve the same retry and log-detection implementation but set `SWIFT_TEST_ACCEPT_SIGNAL_13=0` for stable-release sanitizer gates. That fail-closed release policy ensures a toolchain signal cannot convert an incomplete sanitizer execution into release evidence. Pull-request use of the fallback, if retained to tolerate the known SwiftPM toolchain failure, will be visible in the job summary and cannot satisfy the candidate-bound release gate.
+This project reuses the Compose stack's retry and full-log implementation but
+sets `SWIFT_TEST_ACCEPT_SIGNAL_13=0` for ASan, TSan, and coverage. A toolchain
+signal therefore cannot convert an incomplete execution into release evidence.
 
-ASan runs on relevant pull requests and explicit dispatches. TSan runs nightly, on explicit dispatch, and for the exact stable candidate. Both run with `--no-parallel`, separate SwiftPM build/cache directories or fingerprints, full uploaded logs, and no test filtering that omits production modules. Live-runtime sanitizer variants will be added for adapter paths that fakes cannot execute.
+ASan and TSan run on relevant pull requests, `main`, schedules, explicit
+dispatches, and the exact stable candidate. Both run with `--no-parallel`,
+separate SwiftPM build/cache directories, full uploaded logs, and no filtering
+that omits production modules.
 
 Any AddressSanitizer finding, ThreadSanitizer warning, unexpected test failure, missing test execution, or accepted signal-13 fallback fails the stable gate.
 
 ## Evidence and reproducibility
 
-Every non-unit run will publish a manifest containing:
+Every non-unit run publishes a manifest containing:
 
 - candidate and workflow commit SHAs;
 - complete toolchain and runtime fingerprints;
@@ -354,11 +387,11 @@ Every non-unit run will publish a manifest containing:
 
 Secrets, tokens, host usernames, and unrelated paths are redacted before upload. Redaction is structural and tested; it must not alter the fields used for parity. Stable evidence is retained with the release record, while pull-request artifacts may use a shorter retention period.
 
-## Remaining release evidence
+## Release evidence
 
 The service, unit/contract/integration suite, differential CLI harness,
 sanitizer jobs, coverage gate, and pinned VS Code fixture are implemented.
-Stable publication remains fail-closed until the exact release commit has:
+Stable publication is fail-closed unless the exact release commit has:
 
 1. clean, isolated stock-Apple and Apple-Compose CLI recordings;
 2. clean, isolated stock-Apple and Apple-Compose VS Code recordings;

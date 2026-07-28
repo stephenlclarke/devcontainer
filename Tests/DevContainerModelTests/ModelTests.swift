@@ -20,7 +20,7 @@ import Testing
 
 @Test
 func `build info uses makefile owned version`() throws {
-    #expect(BuildInfo.current.version == "0.1.0")
+    #expect(BuildInfo.current.version == "1.0.0")
     #expect(BuildInfo.current.source == "stephenlclarke/devcontainer")
     #expect(!BuildInfo.current.lane.isEmpty)
     #expect(BuildInfo.current.buildType == "development")

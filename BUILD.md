@@ -17,7 +17,7 @@ starts, stops, installs, or replaces a developer's Apple container runtime.
 | --- | --- |
 | Build, tests, coverage, sanitizers, and DocC | Apple-silicon macOS 15 or later, Xcode 26/Swift 6.2, Python 3, GNU Make |
 | Live stock Apple parity | Physical Apple-silicon macOS 26 host with the pinned stock `container` release |
-| Live Compose parity | Separately managed physical host with the pinned `container-compose` and its declared matched stack |
+| Live Compose parity | Reserved physical Apple-silicon host with pinned `container-compose` and its declared matched stack; the workflow serializes this lane when sharing the stock/Docker host |
 | VS Code end-to-end parity | Physical Apple-silicon host with a logged-in GUI session and the pinned VS Code/VSIX artifacts |
 
 Run the non-mutating prerequisite probe first:
@@ -36,15 +36,13 @@ The package targets enforce the provider boundary described in
 [DESIGN.md](DESIGN.md):
 
 ```text
-CDevContainerVersion
-└── DevContainerModel
-    ├── DevContainerRuntimeSPI
-    │   ├── DevContainerState
-    │   │   └── DevContainerCore
-    │   │       └── DevContainerDockerAPI
-    │   ├── DevContainerAppleRuntime
-    │   └── DevContainerComposeProvider
-    └── DevContainerTestSupport
+DevContainerVersionGenerator -> GenerateDevContainerVersion -> DevContainerModel
+DevContainerModel -> DevContainerRuntimeSPI
+DevContainerRuntimeSPI -> DevContainerState -> DevContainerCore
+DevContainerCore -> DevContainerDockerAPI
+DevContainerRuntimeSPI -> DevContainerAppleRuntime
+DevContainerRuntimeSPI -> DevContainerComposeProvider
+DevContainerDockerAPI -> DevContainerTestSupport
 ```
 
 The three executable products are:
@@ -75,9 +73,10 @@ make build-release
 ```
 
 `make build` uses exact resolved dependencies. `make build-release` injects the
-current commit and the release build lane into the generated C build-info
-target. `DEVCONTAINER_VERSION` in `Makefile` is the only editable product
-version.
+current commit and release lane through the `GenerateDevContainerVersion`
+SwiftPM build-tool plug-in. The generator declares `Makefile` as an input, so a
+version change invalidates SwiftPM's generated-source cache.
+`DEVCONTAINER_VERSION` in `Makefile` is the only editable product version.
 
 Useful direct commands are:
 
@@ -173,7 +172,7 @@ Apple service or guest binary was sanitizer-instrumented.
 Build first, then use an isolated configuration and state root:
 
 ```console
-export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.json"
+export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.toml"
 export DEVCONTAINER_STATE="$PWD/.build/manual/state.sqlite"
 export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
 

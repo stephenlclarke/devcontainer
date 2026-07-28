@@ -29,18 +29,32 @@
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
 > [!IMPORTANT]
-> This repository contains a functional development candidate, not a stable
-> release. The Docker Engine bridge, stock Apple runtime adapter, optional
-> `container-compose` provider, package builder, Homebrew formula generator,
-> DocC site, and automated quality gates are implemented. Real Docker, stock
-> Apple `container`, and the custom Apple Compose lane pass all 18 checked-in
-> CLI parity fixtures locally with zero normalized differences. The pinned real
-> VS Code/Dev Containers attach, rebuild, reopen, lifecycle, terminal, extension,
-> port-forwarding, and cleanup fixture also passes in all three lanes.
+> Version 1.0.0 is the first stable release. Its compatibility claim is bound
+> to the exact versions in [COMPATIBILITY.md](COMPATIBILITY.md): real Docker,
+> unmodified Apple `container` 1.1.0, and the matched Apple Compose stack pass
+> all 18 CLI fixtures plus the real VS Code end-to-end fixture with zero
+> normalized semantic differences.
+
+## See it work
+
+![Live terminal recording of a Dev Container starting and running on stock Apple container](docs/images/devcontainer-demo.gif)
+
+The recording starts the local compatibility endpoint, runs the official
+`@devcontainers/cli` against the checked-in [hello example](Examples/hello),
+executes its lifecycle hook, reads the mounted workspace from the running
+Apple container, and proves exact cleanup. It is generated from
+[docs/devcontainer-demo.tape](docs/devcontainer-demo.tape) with
+[VHS](https://github.com/charmbracelet/vhs); every displayed result comes from
+the live command immediately above it. Recreate it on a release host with
+`make demo`.
 
 ## Design promise
 
-The project keeps the official [Dev Containers](https://github.com/devcontainers) toolchain above a local Docker Engine compatibility service. VS Code and the reference [`@devcontainers/cli`](https://github.com/devcontainers/cli) remain unmodified; the service translates their tested Docker API subset into Apple-native runtime operations.
+The project keeps the official [Dev Containers](https://github.com/devcontainers)
+toolchain above a local Docker Engine compatibility service. VS Code and the
+reference [`@devcontainers/cli`](https://github.com/devcontainers/cli) remain
+unmodified; the service translates their tested Docker API subset into
+Apple-native runtime operations.
 
 ```mermaid
 flowchart LR
@@ -56,7 +70,9 @@ flowchart LR
     ContainerCompose --> Stock
 ```
 
-The `container-compose` integration is first-class but independently installed. The core does not import `ComposeCore`, and installing this project must never silently replace stock Apple `container` with my matched fork stack.
+The `container-compose` integration is first-class but independently installed.
+The core does not import `ComposeCore`, and installing this project never
+silently replaces stock Apple `container` with the matched fork stack.
 
 ## Compatibility target
 
@@ -68,13 +84,18 @@ The `container-compose` integration is first-class but independently installed. 
 
 The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md) and [COMPATIBILITY.md](COMPATIBILITY.md).
 
-Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker security-option fields. Requests containing those fields fail before container or mount side effects; they are not silently weakened and are outside the stock 1.1.0 compatibility claim. A separately fingerprinted enhanced runtime may advertise and enforce them through native `--hostname` and `--security-opt` flags.
+Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker
+security-option fields. Requests containing those fields fail before container
+or mount side effects; they are not silently weakened and are outside the stock
+1.1.0 compatibility claim. A separately fingerprinted enhanced runtime may
+advertise and enforce them through native `--hostname` and `--security-opt`
+flags.
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| [DESIGN.md](DESIGN.md) | Detailed architecture, data flow, runtime boundaries, security, and delivery phases |
+| [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
 | [TESTING.md](TESTING.md) | Three-lane Docker/Apple/Compose differential test harness |
 | [QUALITY.md](QUALITY.md) | Software-quality analysis, measurable gates, and supply-chain controls |
 | [BUILD.md](BUILD.md) | Current local build, test, coverage, sanitizer, parity, and package commands |
@@ -83,6 +104,7 @@ Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker sec
 | [COMPATIBILITY.md](COMPATIBILITY.md) | Compatibility contract and explicit claim policy |
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
+| [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
 | `Sources/DevContainerDockerAPI` | Docker Engine API compatibility router |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Unix-socket compatibility engine |
@@ -134,15 +156,46 @@ The design follows the maintained sources in the [Dev Containers GitHub organiza
 
 Runtime references are [Apple container](https://github.com/apple/container), [Apple containerization](https://github.com/apple/containerization), and the [Apple container API documentation](https://apple.github.io/container/documentation/). VS Code behavior is documented in [Developing inside a Container](https://code.visualstudio.com/docs/devcontainers/containers).
 
-## Installation
+## Install
 
-There is no supported package yet. Development archives and formulae can be
-built with `make homebrew-formula`. The intended stable installation is:
+Requirements are an Apple-silicon Mac running macOS Tahoe 26 or later and
+Apple [`container` 1.1.0](https://github.com/apple/container/releases/tag/1.1.0).
+Install Apple's signed package first, then install `devcontainer`:
 
 ```console
 brew tap stephenlclarke/tap
-brew trust --formula stephenlclarke/tap/devcontainer
+brew trust --tap stephenlclarke/tap
 brew install stephenlclarke/tap/devcontainer
+/usr/local/bin/container system start
+brew services start stephenlclarke/tap/devcontainer
+devcontainer doctor --container /usr/local/bin/container
+```
+
+Use the compatibility socket only in the shell that needs it:
+
+```console
+eval "$(devcontainer context)"
+npx --yes @devcontainers/cli@0.88.0 up \
+  --workspace-folder /path/to/project
+```
+
+For VS Code, configure the Compose wrapper once and launch the workspace from
+that configured shell:
+
+```json
+{
+  "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
+}
+```
+
+```console
+eval "$(devcontainer context)"
+code /path/to/project
+```
+
+Optional Apple CLI plug-in registration is explicit and reversible:
+
+```console
 devcontainer plugin register
 container devcontainer doctor
 ```
@@ -151,8 +204,9 @@ The stable formula installs this project with upstream Docker CLI and Docker
 Compose protocol-client dependencies; it does not install a container runtime.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
-`container-compose` remains an explicit optional installation and provider choice. See
-[INSTALL.md](INSTALL.md) for registration, verification, and migration.
+`container-compose` remains an explicit optional installation and provider
+choice. See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
+service management, upgrades, verification, troubleshooting, and removal.
 
 ## Independence and trademarks
 

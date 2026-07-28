@@ -33,8 +33,11 @@ class @FORMULA_CLASS@ < Formula
       Install either the stock Apple container package or a compatible
       container distribution before starting the service.
 
+      Start Apple's stock runtime:
+        /usr/local/bin/container system start
+
       Start the compatibility engine:
-        brew services start devcontainer
+        brew services start #{name}
 
       Use it without changing your default Docker context:
         eval "$(devcontainer context)"

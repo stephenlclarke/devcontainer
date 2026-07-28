@@ -7,20 +7,24 @@
       "commit": "58be9705761d276b5076525438bbe73642f521d5"
     },
     "docker": {
-      "cliVersion": "29.6.1",
+      "cliVersion": "29.6.2",
+      "cliSHA256": "eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a",
+      "cliBottleSHA256": "b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821",
       "engineVersion": "29.2.1",
+      "engineCommit": "6bc6209",
+      "engineSHA256": "e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2",
       "engineApiVersion": "1.53",
-      "composeVersion": "5.3.1"
+      "composeVersion": "5.3.1",
+      "composeSHA256": "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3",
+      "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608"
     },
     "appleContainer": {
       "stableVersion": "1.1.0",
-      "stableCommit": "5973b9cc626a3e7a499bb316a958237ebe14e2ed",
-      "mainCommit": "d1d763530df3c6a326dbae7f0c0a59a335808045"
+      "stableCommit": "5973b9cc626a3e7a499bb316a958237ebe14e2ed"
     },
     "containerCompose": {
-      "stableVersion": "0.10.0",
-      "stableCommit": "42b737dcda830f79b3f0993212e97fefe179f427",
-      "mainCommit": "517be1f08abfc4f48849c78071d428c5b03f9b8d"
+      "stableVersion": "0.10.1",
+      "stableCommit": "77d2191a75f3a15092bbead1991b0d6a37fafa91"
     },
     "vscode": {
       "version": "1.130.0",
@@ -40,6 +44,14 @@
         "embeddedCliCommit": "f683c29f64a20109b4453e5149807e390ff65133",
         "embeddedCliSHA256": "ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca"
       }
+    },
+    "releaseHost": {
+      "architecture": "arm64",
+      "macOSProductVersion": "26.5.2",
+      "macOSBuildVersion": "25F84",
+      "xcodeVersion": "26.6",
+      "xcodeBuildVersion": "17F113",
+      "swiftVersion": "6.3.3"
     }
   },
   "releasePolicy": {
@@ -49,7 +61,6 @@
       "apple-compose"
     ],
     "requireZeroFunctionalDifferences": true,
-    "requireStableAndMainAppleEvidence": true,
     "requireRawEvidenceRetention": true
   },
   "backends": {
