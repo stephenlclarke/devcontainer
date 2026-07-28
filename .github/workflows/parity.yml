@@ -35,11 +35,14 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner }}"]
     timeout-minutes: 240
     env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
       DEVCONTAINER_CONTAINER_BIN: ${{ matrix.container-bin }}
       DEVCONTAINER_COMPOSE_BIN: ${{ matrix.compose-bin }}
     steps:
       - name: Check out exact trusted commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Prepare isolated runtime
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance
@@ -76,6 +79,8 @@ jobs:
     steps:
       - name: Check out exact trusted commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Download all lane evidence
         uses: actions/download-artifact@3e5f2d17c3dc71e769f702cc7c9e62c90d109d23 # v8
         with:

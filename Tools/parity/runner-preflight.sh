@@ -99,7 +99,7 @@ main() {
   fi
 
   local command_name
-  for command_name in code codesign jq make node npx python3 shasum swift; do
+  for command_name in code codesign jq make node npx python3 shasum swift xcodebuild; do
     need "$command_name"
   done
 
