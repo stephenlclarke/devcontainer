@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-REQUIRED_BACKENDS = {"docker", "apple-stock", "apple-compose"}
+REQUIRED_BACKENDS = {"docker", "apple-stock", "container-compose"}
 IMPLEMENTED_STATUS = "implemented"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -115,14 +115,14 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
     )
     _require(
         set(policy.get("requiredBackends", [])) == REQUIRED_BACKENDS,
-        "releasePolicy.requiredBackends must contain docker, apple-stock, and apple-compose",
+        "releasePolicy.requiredBackends must contain docker, apple-stock, and container-compose",
     )
 
     backends = payload.get("backends")
     _require(isinstance(backends, dict), "backends must be an object")
     _require(
         set(backends) == REQUIRED_BACKENDS,
-        "backends must define exactly docker, apple-stock, and apple-compose",
+        "backends must define exactly docker, apple-stock, and container-compose",
     )
     _require(
         backends["docker"].get("role") == "oracle",

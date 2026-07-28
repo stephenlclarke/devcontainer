@@ -32,8 +32,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: test-contract test-integration swift-test coverage coverage-check
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
-.PHONY: parity-apple-compose parity parity-vscode-docker
-.PHONY: parity-vscode-apple-stock parity-vscode-apple-compose parity-vscode
+.PHONY: parity-container-compose parity parity-vscode-docker
+.PHONY: parity-vscode-apple-stock parity-vscode-container-compose parity-vscode
 .PHONY: parity-release runtime-check
 .PHONY: package package-release homebrew-formula homebrew-formula-current
 .PHONY: release-version
@@ -206,10 +206,10 @@ parity-docker:
 parity-apple-stock:
 	Tools/parity/run-lane.sh apple-stock "$(PARITY_EVIDENCE_DIR)"
 
-parity-apple-compose:
-	Tools/parity/run-lane.sh apple-compose "$(PARITY_EVIDENCE_DIR)"
+parity-container-compose:
+	Tools/parity/run-lane.sh container-compose "$(PARITY_EVIDENCE_DIR)"
 
-parity: parity-docker parity-apple-stock parity-apple-compose
+parity: parity-docker parity-apple-stock parity-container-compose
 	$(PYTHON) Tools/parity/compare_results.py "$(PARITY_EVIDENCE_DIR)"
 
 parity-vscode:
@@ -221,8 +221,8 @@ parity-vscode-docker:
 parity-vscode-apple-stock:
 	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" apple-stock
 
-parity-vscode-apple-compose:
-	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" apple-compose
+parity-vscode-container-compose:
+	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" container-compose
 
 parity-release: parity parity-vscode
 	$(PYTHON) Tools/parity/validate_manifest.py --release

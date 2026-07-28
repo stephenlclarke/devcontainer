@@ -303,7 +303,12 @@ The three lanes are:
 | Stock Apple | Apple-signed `container` | None | Required core compatibility |
 | Compose provider | Explicitly supplied runtime and `container-compose` | Required | Optional multi-service integration evidence |
 
-The provider lane must state whether its underlying runtime is `apple` or `custom`. Current supported `stephenlclarke/tap/container-compose` depends on a custom matched runtime, so installing that formula is forbidden in the stock lane. Until the provider works against stock Apple, its live evidence is valid only as a separately labelled provider comparison and cannot be used to claim stock-Apple Compose support.
+The provider lane must state whether its underlying runtime is `apple` or
+`custom`. Current supported `stephenlclarke/tap/container-compose` depends on a
+custom matched runtime, so installing that formula is forbidden in the stock
+lane. Until the provider works against stock Apple, its live evidence is valid
+only as a separately labelled provider comparison and cannot be used to claim
+that Apple supplies Compose support.
 
 Each lane uses:
 

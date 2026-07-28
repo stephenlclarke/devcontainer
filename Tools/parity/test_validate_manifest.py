@@ -35,7 +35,7 @@ class ValidateManifestTests(unittest.TestCase):
 
     def test_backend_omission_is_rejected(self) -> None:
         payload = copy.deepcopy(self.payload)
-        payload["fixtures"][0]["backends"].remove("apple-compose")
+        payload["fixtures"][0]["backends"].remove("container-compose")
 
         with self.assertRaisesRegex(ManifestError, "all three required backends"):
             validate_manifest(payload)

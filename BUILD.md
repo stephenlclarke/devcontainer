@@ -210,7 +210,7 @@ Live lane targets are intentionally explicit:
 ```console
 make parity-docker
 make parity-apple-stock
-make parity-apple-compose
+make parity-container-compose
 make parity
 make parity-vscode
 ```

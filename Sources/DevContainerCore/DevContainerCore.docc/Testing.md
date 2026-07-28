@@ -15,6 +15,7 @@ Containers extension perform open, attach, terminal, port, rebuild, reopen, and
 cleanup flows.
 
 All 18 CLI fixtures and the real VS Code fixture pass against real Docker,
-stock Apple `container` 1.1.0, and the matched Apple Compose stack. Release
+stock Apple `container` 1.1.0, and the matched `container-compose` provider
+stack. Release
 evidence includes the normalized comparison, raw recordings, diagnostics,
 fingerprints, JUnit, and cleanup reports for all three lanes.

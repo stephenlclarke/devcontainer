@@ -58,7 +58,7 @@
     "requiredBackends": [
       "docker",
       "apple-stock",
-      "apple-compose"
+      "container-compose"
     ],
     "requireZeroFunctionalDifferences": true,
     "requireRawEvidenceRetention": true
@@ -72,7 +72,7 @@
       "role": "candidate",
       "description": "The compatibility service using only official apple/container runtime dependencies; Compose files run through Docker Compose over the bridge."
     },
-    "apple-compose": {
+    "container-compose": {
       "role": "candidate",
       "description": "The same compatibility service with container-compose selected as the Compose provider; runtime provenance is recorded independently."
     }
@@ -102,122 +102,122 @@
       "id": "E01-engine-negotiation",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["ping and version negotiation", "API prefix handling", "Docker error envelopes"]
     },
     {
       "id": "E02-container-lifecycle",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["create through remove", "inspect state", "wait and idempotent cleanup"]
     },
     {
       "id": "E03-exec-streams",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["TTY and non-TTY framing", "user environment and workdir", "exact exit status and cancellation"]
     },
     {
       "id": "E04-image-build",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["pull and inspect", "Dockerfile build options", "failed build stream"]
     },
     {
       "id": "E05-archive-copy",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["copy in and out", "tar framing", "modes symlinks and large files"]
     },
     {
       "id": "E06-network-volume",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["network lifecycle", "volume lifecycle", "bind read-only and tmpfs mounts"]
     },
     {
       "id": "D01-image-config",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["workspace mount and folder", "container labels", "keepalive and attach"]
     },
     {
       "id": "D02-dockerfile-config",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["context and Dockerfile", "build arguments and target", "entrypoint CMD and rebuild"]
     },
     {
       "id": "D03-users-environment",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["container and remote users", "UID update", "container remote and probed environment"]
     },
     {
       "id": "D04-lifecycle-hooks",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["normative hook ordering", "parallel object commands", "failure gating"]
     },
     {
       "id": "D05-features",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["OCI feature resolution", "install ordering", "lockfile and frozen-lock behavior"]
     },
     {
       "id": "D06-ports",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["published and forwarded ports", "collision behavior", "host and service connectivity"]
     },
     {
       "id": "D07-reuse-cleanup",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["reuse and rebuild", "shutdown actions", "crash reconciliation and no leaked resources"]
     },
     {
       "id": "C01-compose-service",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["selected service", "generated override files", "workspace projection"]
     },
     {
       "id": "C02-compose-dependencies",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["runServices", "health-gated dependencies", "service DNS"]
     },
     {
       "id": "C03-compose-resources",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["named volumes", "networks and aliases", "environment files"]
     },
     {
       "id": "C04-compose-lifecycle",
       "status": "implemented",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["recreation and shutdown", "signals and restart", "primary container discovery labels"]
     },
     {
       "id": "F01-fault-recovery",
       "status": "implemented",
       "runner": "engine",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["backend and socket failure", "timeouts and signals", "concurrent lifecycle races"]
     },
     {
       "id": "V01-vscode-end-to-end",
       "status": "implemented",
       "runner": "vscode",
-      "backends": ["docker", "apple-stock", "apple-compose"],
+      "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["open and attach", "extension activation and integrated command", "port forwarding rebuild reopen and cleanup"]
     }
   ]

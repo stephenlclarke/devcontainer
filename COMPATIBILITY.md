@@ -5,7 +5,8 @@
 > [!IMPORTANT]
 > Version 1.0.0 is supported for the exact component fingerprints below. Real
 > Docker, the unmodified stock Apple package, and the independently installed
-> Apple Compose provider pass every checked-in CLI and VS Code fixture with
+> Stephen Clarke's separate `container-compose` provider pass every checked-in
+> CLI and VS Code fixture with
 > zero normalized semantic differences.
 
 This document is the support and claim ledger for `devcontainer`. A stable
@@ -33,12 +34,12 @@ until it passes, normalized to hide a difference, or waived.
 | --- | --- | --- | --- |
 | `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
 | `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
-| `apple-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked | `supported` |
+| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
 all Compose-backed Dev Container fixtures must pass through both
-`apple-stock` and `apple-compose` before a stable release.
+`apple-stock` and `container-compose` before a stable release.
 
 `container-compose` is not a Swift package dependency of the runtime-neutral
 core, is not copied into this product, and is not a service startup
@@ -167,7 +168,7 @@ evidence is attached to a release candidate.
 ## Parity definition
 
 The `docker` lane is the behavioral oracle. For a fixture to pass,
-`apple-stock` and `apple-compose` must have zero semantic differences from the
+`apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
 
 The harness may normalize only:
@@ -220,10 +221,12 @@ operation recovery metadata; it is not a second Compose lifecycle database.
 Out-of-band `container compose` resources may be adopted only when their
 project identity and provider are unambiguous.
 
-The optional provider's `com.apple.container.compose.*` labels are projected
-to the `com.docker.compose.*` labels consumed by Dev Containers. Docker label
-filters are translated in the other direction. Conflicting native and
-projected values are reconciliation errors and are never overwritten.
+The optional `container-compose` provider's compatibility labels happen to use
+the `com.apple.container.compose.*` namespace; they do not identify an
+Apple-authored Compose product. They are projected to the
+`com.docker.compose.*` labels consumed by Dev Containers. Docker label filters
+are translated in the other direction. Conflicting native and projected values
+are reconciliation errors and are never overwritten.
 
 ## Runner and evidence requirements
 

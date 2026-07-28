@@ -32,7 +32,7 @@ class ParityLibraryTests(unittest.TestCase):
             for lane, value in (
                 ("docker", "oracle"),
                 ("apple-stock", "oracle"),
-                ("apple-compose", "different"),
+                ("container-compose", "different"),
             ):
                 directory = root / lane
                 directory.mkdir()
@@ -54,7 +54,7 @@ class ParityLibraryTests(unittest.TestCase):
                 )
             result, markdown = compare(root)
             self.assertEqual(result["status"], "failed")
-            self.assertIn("Apple Compose", markdown)
+            self.assertIn("container-compose provider", markdown)
 
 
 if __name__ == "__main__":

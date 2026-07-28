@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0.
 #
 # USAGE:
-#   runner-preflight.sh [docker|apple-stock|apple-compose|all]
+#   runner-preflight.sh [docker|apple-stock|container-compose|all]
 
 set -euo pipefail
 
@@ -65,7 +65,7 @@ validate_lane() {
   local requested="$1"
 
   case "$requested" in
-    docker | apple-stock | apple-compose | all)
+    docker | apple-stock | container-compose | all)
       ;;
     *)
       printf '%s: unsupported lane: %s\n' "$SCRIPT_NAME" "$requested" >&2
@@ -229,7 +229,7 @@ main() {
       )) | length == 1'
   fi
 
-  if [[ "$lane" == "apple-compose" || "$lane" == "all" ]]; then
+  if [[ "$lane" == "container-compose" || "$lane" == "all" ]]; then
     [[ -n "$container_compose_bin" ]] || {
       printf '%s: container-compose is required for %s parity\n' \
         "$SCRIPT_NAME" "$lane" >&2

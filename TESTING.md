@@ -8,7 +8,7 @@ parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
 driver. The hosted-safe suite contains 121 Swift tests and records greater than
 90% first-party line coverage. All 18 CLI fixtures and the V01 real VS Code
 fixture pass against the real Docker oracle, signed stock Apple `container`
-1.1.0, and Stephen's separately identified matched Apple Compose stack with
+1.1.0, and Stephen's separately identified `container-compose` provider stack with
 zero normalized differences. Version 1.0.0 binds those results to its exact
 physical-runner, signing, notarization, and publication evidence.
 
@@ -103,12 +103,15 @@ The parity harness executes a common fixture model against three logical backend
 
 1. **Docker oracle:** a pinned real Docker Engine and Docker Compose installation driven by the pinned official `@devcontainers/cli`.
 2. **Stock Apple:** the product under test backed only by official `apple/container` and `apple/containerization`.
-3. **Apple Compose:** the same compatibility service and Apple runtime, with a separately installed `container-compose` executable selected for Compose planning and lifecycle.
+3. **`container-compose` provider:** the same compatibility service, with
+   Stephen Clarke's separately installed `container-compose` executable and
+   matched runtime selected for Compose planning and lifecycle. Apple does not
+   supply this provider.
 
 The Apple providers are not interchangeable provenance labels. The stock lane
 contains only official Apple runtime dependencies. Because the supported
 `container-compose` release requires Stephen's matched runtime stack, the
-provider lane records `apple-compose/matched-fork` and does not describe that
+provider lane records `container-compose/matched-fork` and does not describe that
 runtime as stock Apple.
 
 ### Release lanes
@@ -231,7 +234,7 @@ GitHub-hosted `macos-26` is suitable for Swift builds, unit/contract tests, cove
 
 Live jobs use three provenance-specific self-hosted runner labels:
 `devcontainer-docker`, `devcontainer-apple-stock`, and
-`devcontainer-apple-compose`. One isolated Mac may carry all three labels only
+`devcontainer-container-compose`. One isolated Mac may carry all three labels only
 when the workflow serializes them and validates the exact selected runtime
 before each lane. Each run creates an explicit application root, Docker
 context, socket, state database, runtime namespace, and fixture prefix. Cleanup
@@ -244,7 +247,7 @@ credentials are unavailable to test steps.
 
 ### Matrix policy
 
-| Candidate | Docker oracle | Stock Apple | Apple Compose | VS Code |
+| Candidate | Docker oracle | Stock Apple | `container-compose` provider | VS Code |
 | --- | --- | --- | --- | --- |
 | Pull request | Hosted affected fixtures where safe | Not on self-hosted runner | Not on self-hosted runner | No |
 | Protected main | Full | Full | Full | Full |
@@ -393,8 +396,8 @@ The service, unit/contract/integration suite, differential CLI harness,
 sanitizer jobs, coverage gate, and pinned VS Code fixture are implemented.
 Stable publication is fail-closed unless the exact release commit has:
 
-1. clean, isolated stock-Apple and Apple-Compose CLI recordings;
-2. clean, isolated stock-Apple and Apple-Compose VS Code recordings;
+1. clean, isolated stock-Apple and `container-compose`-provider CLI recordings;
+2. clean, isolated stock-Apple and `container-compose`-provider VS Code recordings;
 3. a successful three-lane semantic comparison and cleanup proof;
 4. candidate-bound signing, notarization, package verification, and quality
    evidence.

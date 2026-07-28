@@ -142,7 +142,7 @@ class BuilderCleanupTests(unittest.TestCase):
     def test_runtime_state_cleanup_reports_durable_leaks(self) -> None:
         with TemporaryDirectory() as temporary:
             runner = LaneRunner.__new__(LaneRunner)
-            runner.lane = "apple-compose"
+            runner.lane = "container-compose"
             runner.runtime_root = Path(temporary)
             runner.cleanup_differences = []
             state = runner.runtime_root / "state.sqlite"

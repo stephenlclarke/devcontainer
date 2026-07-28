@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0.
 #
 # USAGE:
-#   runner-runtime.sh start|stop docker|apple-stock|apple-compose
+#   runner-runtime.sh start|stop docker|apple-stock|container-compose
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ selected_runtime() {
     apple-stock)
       printf '%s\n' "${DEVCONTAINER_CONTAINER_BIN:-$stock_bin}"
       ;;
-    apple-compose)
+    container-compose)
       printf '%s\n' "${DEVCONTAINER_CONTAINER_BIN:-$compose_bin}"
       ;;
     *)
@@ -98,7 +98,7 @@ main() {
   local lane="$2"
 
   case "$lane" in
-    docker | apple-stock | apple-compose)
+    docker | apple-stock | container-compose)
       ;;
     *)
       fail "unsupported lane: $lane"

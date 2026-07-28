@@ -107,7 +107,11 @@ The `devcontainer` output reports its source commit and release lane. The `conta
 
 The tap does not install `container-compose` for `devcontainer`.
 
-Current supported `stephenlclarke/tap/container-compose` formulae depend on a matched custom runtime. They must not be installed automatically or described as stock-Apple Compose support. Users who deliberately configure a provider are responsible for its installation and runtime compatibility; `devcontainer` will report a custom runtime as a separate provider lane.
+Current supported `stephenlclarke/tap/container-compose` formulae depend on a
+matched custom runtime. They must not be installed automatically or described
+as Compose support supplied by Apple. Users who deliberately configure a
+provider are responsible for its installation and runtime compatibility;
+`devcontainer` will report a custom runtime as a separate provider lane.
 
 ## Formula Publication Contract
 

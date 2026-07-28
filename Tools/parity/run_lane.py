@@ -446,7 +446,7 @@ class LaneRunner:
                 "--format",
                 "json",
             ]
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             commands["containerCompose"] = [
                 os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",
@@ -1053,7 +1053,7 @@ class LaneRunner:
 
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1124,7 +1124,7 @@ class LaneRunner:
         timeout: int,
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(self.environment)
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",

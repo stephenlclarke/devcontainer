@@ -10,7 +10,7 @@ deterministic package/SBOM tooling, and Homebrew formula validation described
 below. Version 1.0.0 has 121 Swift tests and greater than 90% first-party
 executable-line coverage. All 18 CLI parity fixtures and the pinned real VS
 Code fixture pass through real Docker, signed stock Apple `container` 1.1.0,
-and the separately identified Apple Compose lane with zero normalized
+and the separately identified `container-compose` provider lane with zero normalized
 differences. The exact metrics and workflow links are recorded in the 1.0.0
 release notes.
 
@@ -261,7 +261,7 @@ live validation:
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
-| `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and Apple Compose |
+| `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and the separate `container-compose` provider |
 | `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
@@ -276,7 +276,7 @@ Hosted `macos-26` is appropriate for compilation, SwiftPM tests, coverage, style
 
 Real runtime and VS Code tests use three provenance-specific labels:
 `devcontainer-docker`, `devcontainer-apple-stock`, and
-`devcontainer-apple-compose`, in addition to `self-hosted`, `macOS`, and
+`devcontainer-container-compose`, in addition to `self-hosted`, `macOS`, and
 `ARM64`. A single isolated Mac may carry all three labels only when the workflow
 serializes the profiles, verifies the exact selected executable before every
 lane, and proves cleanup before switching runtime distributions.
@@ -374,7 +374,7 @@ The repository now implements:
 - deterministic pin, manifest, normalizer, and evidence schemas;
 - signed/notarized package, SBOM, checksum, formula, and fail-closed publication
   logic;
-- physical Apple-silicon Docker, stock Apple, Apple Compose, and VS Code
+- physical Apple-silicon Docker, stock Apple, `container-compose` provider, and VS Code
   recordings;
 - retained raw parity, E2E, package, and notarization evidence.
 

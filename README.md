@@ -31,7 +31,8 @@ Run VS Code-compatible Development Containers on Apple silicon through stock [`a
 > [!IMPORTANT]
 > Version 1.0.0 is the first stable release. Its compatibility claim is bound
 > to the exact versions in [COMPATIBILITY.md](COMPATIBILITY.md): real Docker,
-> unmodified Apple `container` 1.1.0, and the matched Apple Compose stack pass
+> unmodified Apple `container` 1.1.0, and the separately maintained
+> `container-compose` provider stack pass
 > all 18 CLI fixtures plus the real VS Code end-to-end fixture with zero
 > normalized semantic differences.
 
@@ -80,7 +81,7 @@ silently replaces stock Apple `container` with the matched fork stack.
 | --- | --- | --- |
 | Real Docker | Behavioral oracle using pinned Docker Engine, Docker Compose, and `@devcontainers/cli` | Complete raw and normalized evidence |
 | Stock Apple | Official `apple/container` only; Docker Compose uses the compatibility API | Zero semantic differences in every claimed fixture |
-| Apple Compose | `container-compose` selected as the Compose provider, with its exact runtime provenance recorded | Zero semantic differences in every claimed fixture |
+| `container-compose` provider | Stephen Clarke's separately installed `container-compose`, with its exact runtime provenance recorded | Zero semantic differences in every claimed fixture |
 
 The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md) and [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -96,7 +97,7 @@ flags.
 | Path | Purpose |
 | --- | --- |
 | [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
-| [TESTING.md](TESTING.md) | Three-lane Docker/Apple/Compose differential test harness |
+| [TESTING.md](TESTING.md) | Docker, stock Apple, and separate `container-compose` differential harness |
 | [QUALITY.md](QUALITY.md) | Software-quality analysis, measurable gates, and supply-chain controls |
 | [BUILD.md](BUILD.md) | Current local build, test, coverage, sanitizer, parity, and package commands |
 | [INSTALL.md](INSTALL.md) | Source, prebuilt, Homebrew, provider, and uninstall contract |

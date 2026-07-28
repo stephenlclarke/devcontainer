@@ -26,7 +26,7 @@ func `design manifest and library agree on required backends`() {
         Set(DevContainerProject.requiredParityBackends) == [
             "docker",
             "apple-stock",
-            "apple-compose"
+            "container-compose"
         ]
     )
 }

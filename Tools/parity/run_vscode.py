@@ -379,18 +379,12 @@ def validate_driver_result(value: Mapping[str, Any]) -> dict[str, str]:
     return {key: "true" for key in sorted(required)}
 
 
-def terminate_isolated_vscode(user_data: Path) -> None:
-    """Terminate only VS Code processes carrying this run's unique profile path."""
+def isolated_vscode_processes(output: str, user_data: Path) -> list[int]:
+    """Select only processes carrying one parity run's unique profile path."""
 
-    result = subprocess.run(
-        ["ps", "-axo", "pid=,command="],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
     marker = str(user_data)
-    for line in result.stdout.splitlines():
+    identifiers: list[int] = []
+    for line in output.splitlines():
         stripped = line.strip()
         process_id, separator, command = stripped.partition(" ")
         if not separator or marker not in command:
@@ -400,10 +394,70 @@ def terminate_isolated_vscode(user_data: Path) -> None:
         except ValueError:
             continue
         if pid != os.getpid():
+            identifiers.append(pid)
+    return sorted(set(identifiers))
+
+
+def terminate_isolated_vscode(user_data: Path) -> None:
+    """Terminate and reap only processes carrying this run's unique profile."""
+
+    deadline = time.monotonic() + 10
+    sent_term: set[int] = set()
+    while True:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        identifiers = isolated_vscode_processes(result.stdout, user_data)
+        if not identifiers:
+            return
+        expired = time.monotonic() >= deadline
+        for pid in identifiers:
             try:
-                os.kill(pid, signal.SIGTERM)
+                os.kill(
+                    pid,
+                    signal.SIGKILL if expired or pid in sent_term else signal.SIGTERM,
+                )
+                sent_term.add(pid)
             except ProcessLookupError:
                 pass
+        if expired:
+            time.sleep(0.1)
+            final = subprocess.run(
+                ["ps", "-axo", "pid=,command="],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=10,
+            )
+            remaining = isolated_vscode_processes(final.stdout, user_data)
+            if remaining:
+                raise ParityError(
+                    "isolated VS Code processes survived cleanup: "
+                    + ", ".join(str(pid) for pid in remaining)
+                )
+            return
+        time.sleep(0.1)
+
+
+def install_cancellation_handlers() -> None:
+    """Turn workflow cancellation into a catchable failure with cleanup."""
+
+    handled = False
+
+    def cancel(signum: int, _frame: Any) -> None:
+        nonlocal handled
+        if handled:
+            return
+        handled = True
+        name = signal.Signals(signum).name
+        raise ParityError(f"VS Code parity interrupted by {name}")
+
+    signal.signal(signal.SIGINT, cancel)
+    signal.signal(signal.SIGTERM, cancel)
 
 
 def discover_compose_project(
@@ -711,7 +765,7 @@ class VSCodeLane:
             self.runtime.environment,
             user_data.parent,
         )
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -767,6 +821,18 @@ class VSCodeLane:
         finally:
             stdout.close()
             stderr.close()
+            if self.process is not None and self.process.poll() is None:
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                    self.process.wait(timeout=10)
+                except ProcessLookupError:
+                    pass
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(self.process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.process.wait(timeout=5)
             terminate_isolated_vscode(user_data)
 
     def run(self) -> int:
@@ -965,6 +1031,7 @@ def main() -> int:
     args = parse_args()
     repository = Path(__file__).resolve().parents[2]
     try:
+        install_cancellation_handlers()
         return VSCodeLane(args.lane, repository, args.evidence.resolve()).run()
     except (OSError, ParityError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

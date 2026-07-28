@@ -34,7 +34,7 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
     lines = [
         "# Dev Containers runtime parity",
         "",
-        "| Fixture | Docker oracle | Stock Apple | Apple Compose | Equivalent |",
+        "| Fixture | Docker oracle | Stock Apple | container-compose provider | Equivalent |",
         "| --- | --- | --- | --- | --- |",
     ]
     all_equivalent = True
@@ -59,7 +59,7 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
         if missing:
             differences.append(f"missing lanes: {', '.join(missing)}")
         if oracle is not None:
-            for lane in ("apple-stock", "apple-compose"):
+            for lane in ("apple-stock", "container-compose"):
                 candidate = by_lane[lane]
                 if candidate is not None and (
                     candidate.get("observations") != oracle.get("observations")
@@ -81,7 +81,7 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
             fixture_id,
             statuses["docker"],
             statuses["apple-stock"],
-            statuses["apple-compose"],
+            statuses["container-compose"],
             "yes" if equivalent else "no",
         ]
         lines.append("| " + " | ".join(cells) + " |")

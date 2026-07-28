@@ -252,6 +252,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.resolve.outputs.sha }}
           path: devcontainer
       - name: Require isolated ARM64 release identity
@@ -354,11 +355,56 @@ jobs:
             release_heading="Current build"
             formula_name=devcontainer-current
           fi
+          apple_version="$(
+            jq -r '.referencePins.appleContainer.stableVersion' \
+              Tests/Parity/manifest.json
+          )"
+          compose_version="$(
+            jq -r '.referencePins.containerCompose.stableVersion' \
+              Tests/Parity/manifest.json
+          )"
+          docker_version="$(
+            jq -r '.referencePins.docker.engineVersion' \
+              Tests/Parity/manifest.json
+          )"
           {
             printf '# %s\n\n' "${release_heading}"
-            printf "Source: \`%s\`\n\n" "${PUBLISH_SHA}"
-            printf "Install through \`stephenlclarke/tap/%s\` after tap promotion.\n" \
-              "${formula_name}"
+            printf 'Signed, notarized Apple-silicon release built from '
+            printf "[\`%s\`](https://github.com/%s/commit/%s).\\n\\n" \
+              "${PUBLISH_SHA}" "${GITHUB_REPOSITORY}" "${PUBLISH_SHA}"
+            printf '## Install with Homebrew\n\n'
+            printf '```console\n'
+            printf 'brew tap stephenlclarke/tap\n'
+            printf 'brew trust --tap stephenlclarke/tap\n'
+            printf 'brew install stephenlclarke/tap/%s\n' "${formula_name}"
+            printf 'devcontainer version --format json\n'
+            printf '```\n\n'
+            printf "The formula installs the standalone \`devcontainer\` service, "
+            printf 'Docker-compatible engine adapter, and Compose adapter. '
+            printf "Stock Apple \`container\` is selected by default; "
+            printf "\`container-compose\` remains an optional provider.\\n\\n"
+            printf '## Certified compatibility\n\n'
+            printf -- "- Apple \`container\` \`%s\`\\n" "${apple_version}"
+            printf -- "- \`container-compose\` \`%s\`\\n" "${compose_version}"
+            printf -- "- Docker Engine \`%s\` reference oracle\\n" "${docker_version}"
+            printf -- '- Real VS Code Dev Containers sessions and the pinned '
+            printf "\`@devcontainers/cli\` reference\\n\\n"
+            printf 'Every published asset has a checksum, SPDX SBOM, '
+            printf 'notarization evidence, build identity, and GitHub '
+            printf 'provenance attestation.\n\n'
+            printf '## Verify the archive\n\n'
+            printf '```console\n'
+            printf 'gh attestation verify %s --repo %s\n' \
+              "${asset}" "${GITHUB_REPOSITORY}"
+            printf 'shasum -a 256 -c %s.sha256\n' "${asset}"
+            printf '```\n\n'
+            printf 'See the [installation guide]'
+            printf '(https://github.com/%s/blob/%s/INSTALL.md) ' \
+              "${GITHUB_REPOSITORY}" "${PUBLISH_SHA}"
+            printf 'and [DocC documentation]'
+            printf '(https://stephenlclarke.github.io/devcontainer/) '
+            printf 'for runtime selection, service control, upgrades, '
+            printf 'and uninstalling.\n'
           } >"${notes}"
           {
             printf 'archive=%s\n' "${assets}/${asset}"

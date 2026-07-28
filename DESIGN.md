@@ -164,7 +164,12 @@ Every project resource carries:
 - project-owned labels recording backend kind, configuration digest, project identifier, and schema version;
 - native Apple labels needed by the selected provider.
 
-`container-compose` currently uses Apple-specific Compose labels. The provider adapter and inspection layer project those into `com.docker.compose.*` labels and translate Docker label filters back to native discovery queries. A projected label never overwrites conflicting runtime data; conflict is a reconciliation error.
+`container-compose` currently uses provider-owned compatibility labels in the
+`com.apple.container.compose.*` namespace. These labels do not represent an
+Apple-authored Compose product. The provider adapter and inspection layer
+project them into `com.docker.compose.*` labels and translate Docker label
+filters back to native discovery queries. A projected label never overwrites
+conflicting runtime data; conflict is a reconciliation error.
 
 ## Provider selection
 
@@ -181,7 +186,7 @@ container-compose
   inspect/exec     -> Docker API bridge -> runtime discovery
 ```
 
-The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `apple-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
+The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `container-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
 
 ## Single-container request sequence
 

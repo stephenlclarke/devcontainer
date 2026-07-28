@@ -20,6 +20,7 @@ from run_vscode import (
     code_command,
     decode_vsix_response,
     download_vsix,
+    isolated_vscode_processes,
     parse_code_version,
     scrub_sensitive_evidence,
     validate_driver_result,
@@ -197,6 +198,26 @@ class VSCodeParityTests(unittest.TestCase):
         self.assertIn("--use-inmemory-secretstorage", command)
         self.assertIn("--extensionDevelopmentPath=/source/driver", command)
         self.assertEqual(command[-1], "/evidence/workspace")
+
+    def test_process_cleanup_selects_only_the_unique_isolated_profile(self) -> None:
+        output = "\n".join(
+            [
+                "  101 /Applications/Visual Studio Code.app/Code "
+                "--user-data-dir /tmp/dc-vscode-docker-unique/data",
+                "  102 Code Helper --user-data-dir=/tmp/dc-vscode-other/data",
+                "invalid command /tmp/dc-vscode-docker-unique/data",
+                "  101 duplicate /tmp/dc-vscode-docker-unique/data",
+                "  103 shutdownMonitor "
+                "/tmp/dc-vscode-docker-unique/data/logs/window1",
+            ]
+        )
+        self.assertEqual(
+            isolated_vscode_processes(
+                output,
+                Path("/tmp/dc-vscode-docker-unique/data"),
+            ),
+            [101, 103],
+        )
 
     def test_gui_environment_is_fail_closed_and_uses_isolated_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
