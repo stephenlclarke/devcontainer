@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
@@ -50,19 +51,21 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
 
     private let process: Process
-    private let standardInput: Pipe
+    private let inputWriter: ProcessInputWriter
+    private let outputMonitor: ProcessPipeMonitor
+    private let errorMonitor: ProcessPipeMonitor
     private let completion: Task<Int32, any Error>
 
     init(
         executable: URL,
         arguments: [String],
         environment: [String: String],
-        workingDirectory: URL? = nil,
-        input: Data? = nil
+        workingDirectory: URL? = nil
     ) throws {
         let process = Process()
         let streams = ProcessSessionIO()
-        Self.configure(
+        let inputWriter = ProcessInputWriter(pipe: streams.standardInput)
+        let monitors = Self.configure(
             process,
             configuration: ProcessLaunchConfiguration(
                 executable: executable,
@@ -73,13 +76,14 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
             streams: streams
         )
         try Self.start(process, streams: streams)
-        if let input {
-            streams.standardInput.fileHandleForWriting.write(input)
-            try? streams.standardInput.fileHandleForWriting.close()
-        }
-        completion = Self.completionTask(streams)
+        completion = Self.completionTask(
+            streams,
+            inputWriter: inputWriter
+        )
         self.process = process
-        standardInput = streams.standardInput
+        self.inputWriter = inputWriter
+        outputMonitor = monitors.output
+        errorMonitor = monitors.error
         frames = streams.frames
     }
 
@@ -87,7 +91,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         _ process: Process,
         configuration: ProcessLaunchConfiguration,
         streams: ProcessSessionIO
-    ) {
+    ) -> (output: ProcessPipeMonitor, error: ProcessPipeMonitor) {
         process.executableURL = configuration.executable
         process.arguments = configuration.arguments
         process.environment = configuration.environment
@@ -99,18 +103,19 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
             streams.terminationContinuation.yield(process.terminationStatus)
             streams.terminationContinuation.finish()
         }
-        drain(
+        let output = drain(
             streams.standardOutput,
             channel: .standardOutput,
             end: streams.outputEndContinuation,
             frames: streams.frameContinuation
         )
-        drain(
+        let error = drain(
             streams.standardError,
             channel: .standardError,
             end: streams.errorEndContinuation,
             frames: streams.frameContinuation
         )
+        return (output, error)
     }
 
     private static func drain(
@@ -118,20 +123,13 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         channel: RuntimeIOChannel,
         end: AsyncStream<Void>.Continuation,
         frames: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
-    ) {
-        let handle = pipe.fileHandleForReading
-        Task.detached {
-            defer { end.finish() }
-            do {
-                while let data = try handle.read(upToCount: 64 * 1024),
-                      !data.isEmpty
-                {
-                    frames.yield(RuntimeIOFrame(channel: channel, data: data))
-                }
-            } catch {
-                frames.finish(throwing: error)
-            }
-        }
+    ) -> ProcessPipeMonitor {
+        ProcessPipeMonitor(
+            pipe: pipe,
+            channel: channel,
+            end: end,
+            frames: frames
+        )
     }
 
     private static func start(
@@ -157,14 +155,16 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     }
 
     private static func completionTask(
-        _ streams: ProcessSessionIO
+        _ streams: ProcessSessionIO,
+        inputWriter: ProcessInputWriter
     ) -> Task<Int32, any Error> {
-        Task.detached {
+        Task {
             var exitCode: Int32 = 255
             for await status in streams.termination {
                 exitCode = status
                 break
             }
+            inputWriter.cancel()
             for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
             for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
             streams.frameContinuation.finish()
@@ -172,15 +172,15 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         }
     }
 
-    func write(_ data: Data) throws {
+    func write(_ data: Data) async throws {
         guard process.isRunning else {
             throw DevContainerError(.conflict, message: "process is no longer running")
         }
-        standardInput.fileHandleForWriting.write(data)
+        try await inputWriter.write(data)
     }
 
-    func closeStandardInput() throws {
-        try standardInput.fileHandleForWriting.close()
+    func closeStandardInput() async throws {
+        try await inputWriter.close()
     }
 
     func resize(width _: UInt16, height _: UInt16) throws {
@@ -195,10 +195,218 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     }
 
     func cancel() {
+        inputWriter.cancel()
         guard process.isRunning else {
             return
         }
         process.terminate()
+        outputMonitor.cancel()
+        errorMonitor.cancel()
+    }
+}
+
+/// Serializes potentially blocking writes away from Swift's cooperative
+/// executor. The queue also orders EOF after every accepted input chunk.
+private final class ProcessInputWriter: @unchecked Sendable {
+    private let handle: FileHandle
+    private let descriptor: Int32
+    private let queue = DispatchQueue(
+        label: "io.github.stephenlclarke.devcontainer.cli-process-input",
+        qos: .userInitiated
+    )
+    private var closed = false
+
+    init(pipe: Pipe) {
+        handle = pipe.fileHandleForWriting
+        descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        }
+        _ = fcntl(descriptor, F_SETNOSIGPIPE, 1)
+    }
+
+    func write(_ data: Data) async throws {
+        guard !data.isEmpty else {
+            return
+        }
+        let _: Void = try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                guard !closed else {
+                    continuation.resume(
+                        throwing: DevContainerError(
+                            .conflict,
+                            message: "process standard input is closed"
+                        )
+                    )
+                    return
+                }
+                do {
+                    try writeAll(data)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func writeAll(_ data: Data) throws {
+        try data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = min(16 * 1024, bytes.count - offset)
+                let written = Darwin.write(
+                    descriptor,
+                    bytes.baseAddress?.advanced(by: offset),
+                    count
+                )
+                if written > 0 {
+                    offset += written
+                    continue
+                }
+                if written < 0, errno == EINTR {
+                    continue
+                }
+                if written < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                    try waitUntilWritable()
+                    continue
+                }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+
+    private func waitUntilWritable() throws {
+        var event = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+        while true {
+            let result = Darwin.poll(&event, 1, -1)
+            if result > 0 {
+                if event.revents & Int16(POLLOUT) != 0 {
+                    return
+                }
+                throw POSIXError(.EPIPE)
+            }
+            if result < 0, errno == EINTR {
+                continue
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    func close() async throws {
+        let _: Void = try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                guard !closed else {
+                    continuation.resume()
+                    return
+                }
+                closed = true
+                do {
+                    try handle.close()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func cancel() {
+        queue.async { [self] in
+            guard !closed else {
+                return
+            }
+            closed = true
+            try? handle.close()
+        }
+    }
+}
+
+/// Drains a launched CLI process on dedicated OS threads. stdout and stderr can
+/// block independently without occupying Swift's cooperative executor or
+/// relying on a one-shot readiness edge while a child performs duplex I/O.
+private final class ProcessPipeMonitor: @unchecked Sendable {
+    private let handle: FileHandle
+    private let descriptor: Int32
+    private let channel: RuntimeIOChannel
+    private let end: AsyncStream<Void>.Continuation
+    private let frames: AsyncThrowingStream<
+        RuntimeIOFrame,
+        any Error
+    >.Continuation
+    private let stateLock = NSLock()
+    private var finished = false
+
+    init(
+        pipe: Pipe,
+        channel: RuntimeIOChannel,
+        end: AsyncStream<Void>.Continuation,
+        frames: AsyncThrowingStream<
+            RuntimeIOFrame,
+            any Error
+        >.Continuation
+    ) {
+        handle = pipe.fileHandleForReading
+        descriptor = handle.fileDescriptor
+        self.channel = channel
+        self.end = end
+        self.frames = frames
+        Thread.detachNewThread { [self] in
+            Thread.current.name =
+                "io.github.stephenlclarke.devcontainer.cli-process-\(channel)"
+            drain()
+        }
+    }
+
+    func cancel() {
+        finish()
+    }
+
+    private func drain() {
+        defer { finish() }
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                frames.yield(
+                    RuntimeIOFrame(
+                        channel: channel,
+                        data: Data(buffer.prefix(count))
+                    )
+                )
+                continue
+            }
+            if count == 0 {
+                return
+            }
+            if errno == EINTR {
+                continue
+            }
+            if stateLock.withLock({ finished }) {
+                return
+            }
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            frames.finish(throwing: POSIXError(code))
+            return
+        }
+    }
+
+    private func finish() {
+        let shouldFinish = stateLock.withLock {
+            guard !finished else {
+                return false
+            }
+            finished = true
+            return true
+        }
+        guard shouldFinish else {
+            return
+        }
+        try? handle.close()
+        end.finish()
     }
 }
 
@@ -311,12 +519,12 @@ final class MonitoredAppleProcessSession: RuntimeProcessSession, @unchecked Send
         frames = process.frames
     }
 
-    func write(_ data: Data) throws {
-        try process.write(data)
+    func write(_ data: Data) async throws {
+        try await process.write(data)
     }
 
-    func closeStandardInput() throws {
-        try process.closeStandardInput()
+    func closeStandardInput() async throws {
+        try await process.closeStandardInput()
     }
 
     func resize(width: UInt16, height: UInt16) throws {
@@ -535,12 +743,12 @@ enum AppleCommandRunner {
                 executable: executable,
                 arguments: arguments,
                 environment: environment,
-                workingDirectory: workingDirectory,
-                input: input
+                workingDirectory: workingDirectory
             )
-            if input == nil {
-                try session.closeStandardInput()
+            if let input {
+                try await session.write(input)
             }
+            try await session.closeStandardInput()
         } catch {
             throw DevContainerError(
                 .runtimeUnavailable,

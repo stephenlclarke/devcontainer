@@ -83,8 +83,8 @@ struct EngineServerTests {
             defer {
                 if process.isRunning {
                     process.terminate()
+                    process.waitUntilExit()
                 }
-                process.waitUntilExit()
             }
 
             for _ in 0 ..< 100 where !session.inputClosed {

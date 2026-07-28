@@ -58,9 +58,10 @@ struct AppleRuntimeStreamTests {
         let session = try AppleProcessSession(
             executable: fixture.executable,
             arguments: ["echo-session"],
-            environment: [:],
-            input: Data("input".utf8)
+            environment: [:]
         )
+        try await session.write(Data("input".utf8))
+        try await session.closeStandardInput()
         var standardOutput = Data()
         var standardError = Data()
         for try await frame in session.frames {
@@ -76,8 +77,8 @@ struct AppleRuntimeStreamTests {
         #expect(try await session.wait() == 0)
         #expect(String(data: standardOutput, encoding: .utf8) == "input")
         #expect(String(data: standardError, encoding: .utf8) == "session-error")
-        #expect(throws: DevContainerError.self) {
-            try session.write(Data())
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
         }
         session.cancel()
 
@@ -86,8 +87,8 @@ struct AppleRuntimeStreamTests {
             arguments: ["cat-session"],
             environment: [:]
         )
-        try interactive.write(Data("interactive".utf8))
-        try interactive.closeStandardInput()
+        try await interactive.write(Data("interactive".utf8))
+        try await interactive.closeStandardInput()
         var echoed = Data()
         for try await frame in interactive.frames where frame.channel == .standardOutput {
             echoed.append(frame.data)
@@ -102,5 +103,38 @@ struct AppleRuntimeStreamTests {
         )
         cancellable.cancel()
         #expect(try await cancellable.wait() != 0)
+    }
+
+    @Test
+    func `process session preserves large duplex streams`() async throws {
+        let payload = Data(
+            (0 ..< (4 * 1024 * 1024)).lazy.map { UInt8($0 & 0xFF) }
+        )
+        let session = try AppleProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                "cat; printf large-stream-stderr >&2"
+            ],
+            environment: [:]
+        )
+        try await session.write(payload)
+        try await session.closeStandardInput()
+        var standardOutput = Data()
+        var standardError = Data()
+        for try await frame in session.frames {
+            switch frame.channel {
+            case .standardOutput:
+                standardOutput.append(frame.data)
+            case .standardError:
+                standardError.append(frame.data)
+            case .standardInput:
+                break
+            }
+        }
+
+        #expect(try await session.wait() == 0)
+        #expect(standardOutput == payload)
+        #expect(standardError == Data("large-stream-stderr".utf8))
     }
 }
