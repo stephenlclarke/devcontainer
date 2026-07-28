@@ -5,7 +5,7 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite contains 123 Swift tests and records greater than
+driver. The hosted-safe suite contains 125 Swift tests and records greater than
 90% first-party line coverage. The current Docker candidate passes all 18 CLI
 fixtures. The latest stock Apple and separately identified `container-compose`
 candidate runs pass 17 of 18; their published-port host check is pending Local
@@ -177,6 +177,12 @@ Both raw and normalized evidence are retained. A stable release requires zero
 unexplained semantic differences in the claimed fixture scope. There is no
 expected-failure list, parity waiver, ignored fixture, or allow-failure release
 lane.
+
+### Timing evidence
+
+Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
+
+Timing is not an exact-equivalence assertion. A completed candidate remains passing when it is slower than Docker by less than one order of magnitude. A timeout or other non-completion, missing or invalid timing evidence, or a candidate duration of at least `10x` the Docker oracle for the same fixture fails the parity gate. The harness does not retry, normalize, or waive those failures.
 
 ## Fixture catalog
 

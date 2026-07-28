@@ -4,7 +4,7 @@ The hosted-safe suite contains unit, contract, state-recovery, malformed-input,
 archive-safety, and HTTP wire tests. Aggregate first-party Swift line coverage
 must remain at or above 90 percent. Address Sanitizer and Thread Sanitizer run
 in separate clean build directories and fail on crashes or sanitizer findings.
-The current 1.0.0 candidate contains 123 Swift tests and records more than 90
+The current 1.0.0 candidate contains 125 Swift tests and records more than 90
 percent first-party line coverage. CI also enforces at least 90 percent
 coverage on changed executable lines and retains LCOV plus Sonar generic XML
 evidence.
