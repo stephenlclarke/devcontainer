@@ -76,6 +76,7 @@ jobs:
           if-no-files-found: error
 
   compare:
+    if: ${{ always() }}
     needs: lane
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -92,9 +93,11 @@ jobs:
           merge-multiple: true
       - name: Require exact CLI and VS Code equivalence
         run: |
-          python3 Tools/parity/compare_results.py .build/parity
-          python3 Tools/parity/compare_results.py .build/parity/vscode
-          python3 Tools/parity/validate_manifest.py --release
+          status=0
+          python3 Tools/parity/compare_results.py .build/parity || status=1
+          python3 Tools/parity/compare_results.py .build/parity/vscode || status=1
+          python3 Tools/parity/validate_manifest.py --release || status=1
+          exit "${status}"
       - name: Upload candidate-bound comparison
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -207,6 +207,26 @@ class WorkflowArtifactTests(unittest.TestCase):
             dependabot,
         )
 
+    def test_parity_comparison_survives_failed_lanes(self) -> None:
+        contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
+        compare = contents[contents.index("  compare:\n"):]
+
+        self.assertIn("    if: ${{ always() }}\n", compare)
+        self.assertIn("          status=0\n", compare)
+        self.assertIn(
+            "compare_results.py .build/parity || status=1",
+            compare,
+        )
+        self.assertIn(
+            "compare_results.py .build/parity/vscode || status=1",
+            compare,
+        )
+        self.assertIn(
+            "validate_manifest.py --release || status=1",
+            compare,
+        )
+        self.assertIn('          exit "${status}"\n', compare)
+
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
         contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
             encoding="utf-8"

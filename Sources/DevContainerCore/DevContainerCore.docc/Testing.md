@@ -22,3 +22,10 @@ remains disabled on the physical runner. A stable release requires those lanes
 and the real VS Code fixture to pass without semantic differences. Release
 evidence includes the normalized comparison, raw recordings, diagnostics,
 fingerprints, JUnit, and cleanup reports for all three lanes.
+
+Every CLI fixture also records monotonic wall-clock time in lane JSON and
+JUnit. The comparison artifact retains raw durations and reports stock/Docker
+and provider/Docker ratios even when functional parity fails. Completed
+slowdowns below `10x` are informational; a timeout, other non-completion,
+missing or invalid timing, or candidate duration of at least `10x` the matching
+Docker fixture fails the parity gate.
