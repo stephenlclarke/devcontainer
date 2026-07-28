@@ -48,9 +48,8 @@ class LaneRunner:
         self.manifest = load_manifest(
             repository / "Tests" / "Parity" / "manifest.json"
         )
-        self.cli_version = self.manifest["referencePins"]["devcontainersCli"][
-            "version"
-        ]
+        self.cli_reference = self.manifest["referencePins"]["devcontainersCli"]
+        self.cli_version = self.cli_reference["version"]
         self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
             "docker"
         )
@@ -459,6 +458,7 @@ class LaneRunner:
             "backend": self.lane,
             "machine": platform.machine(),
             "platform": platform.platform(),
+            "devcontainersReference": self.cli_reference,
             "commands": {},
         }
         for name, command in commands.items():

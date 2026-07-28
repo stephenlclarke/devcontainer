@@ -99,7 +99,7 @@ main() {
   fi
 
   local command_name
-  for command_name in code codesign jq make node npx python3 shasum swift xcodebuild; do
+  for command_name in code codesign jq make node npm npx python3 shasum swift xcodebuild; do
     need "$command_name"
   done
 
@@ -144,9 +144,16 @@ main() {
   "$docker_bin" info >/dev/null
 
   local devcontainers_version
+  local devcontainers_integrity
   devcontainers_version="$(
     jq -r '.referencePins.devcontainersCli.version' Tests/Parity/manifest.json
   )"
+  devcontainers_integrity="$(
+    npm view "@devcontainers/cli@${devcontainers_version}" dist.integrity
+  )"
+  [[ "$devcontainers_integrity" == "$(
+    jq -r '.referencePins.devcontainersCli.npmIntegrity' Tests/Parity/manifest.json
+  )" ]]
   npx --yes "@devcontainers/cli@${devcontainers_version}" --version \
     | grep -Fx "$devcontainers_version"
 

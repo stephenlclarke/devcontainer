@@ -15,6 +15,11 @@ to its exact physical-runner, signing, notarization, and publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
+Direct oracle runs use the official `@devcontainers/cli` 0.88.0 package from
+tag commit `f683c29f64a20109b4453e5149807e390ff65133`. Preflight verifies its pinned
+npm SHA-512 integrity value before execution, and each lane fingerprint retains
+that immutable package identity.
+
 ## Test objectives
 
 The test system proves all of the following:

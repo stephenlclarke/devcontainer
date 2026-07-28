@@ -4,7 +4,8 @@
     "devcontainersCli": {
       "version": "0.88.0",
       "source": "https://github.com/devcontainers/cli",
-      "commit": "58be9705761d276b5076525438bbe73642f521d5"
+      "commit": "f683c29f64a20109b4453e5149807e390ff65133",
+      "npmIntegrity": "sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w=="
     },
     "docker": {
       "cliVersion": "29.6.2",

@@ -16,6 +16,7 @@ REQUIRED_BACKENDS = {"docker", "apple-stock", "container-compose"}
 IMPLEMENTED_STATUS = "implemented"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+SHA512_SRI = re.compile(r"^sha512-[A-Za-z0-9+/]{86}==$")
 
 
 class ManifestError(ValueError):
@@ -34,6 +35,23 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
 
     references = payload.get("referencePins")
     _require(isinstance(references, dict), "referencePins must be an object")
+    devcontainers = references.get("devcontainersCli")
+    _require(
+        isinstance(devcontainers, dict),
+        "referencePins.devcontainersCli must be an object",
+    )
+    _require(
+        devcontainers.get("source") == "https://github.com/devcontainers/cli",
+        "referencePins.devcontainersCli.source must identify the upstream repository",
+    )
+    _require(
+        GIT_COMMIT.fullmatch(str(devcontainers.get("commit", ""))) is not None,
+        "referencePins.devcontainersCli.commit must be a full Git commit",
+    )
+    _require(
+        SHA512_SRI.fullmatch(str(devcontainers.get("npmIntegrity", ""))) is not None,
+        "referencePins.devcontainersCli.npmIntegrity must be a SHA-512 SRI digest",
+    )
     docker = references.get("docker")
     _require(isinstance(docker, dict), "referencePins.docker must be an object")
     for field in (
@@ -103,8 +121,12 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
     )
     _require(
         extension.get("embeddedCliVersion")
-        == references.get("devcontainersCli", {}).get("version"),
+        == devcontainers.get("version"),
         "VS Code and direct parity must use the same Dev Containers CLI version",
+    )
+    _require(
+        extension.get("embeddedCliCommit") == devcontainers.get("commit"),
+        "VS Code and direct parity must use the same Dev Containers CLI commit",
     )
 
     policy = payload.get("releasePolicy")

@@ -58,7 +58,7 @@ and each component's machine-readable version output.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
-| `@devcontainers/cli` | `0.88.0` | `58be9705761d276b5076525438bbe73642f521d5` | Unmodified reference client |
+| `@devcontainers/cli` | `0.88.0` | Official `v0.88.0` tag commit `f683c29f64a20109b4453e5149807e390ff65133`; npm SHA-512 SRI `sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w==` | Unmodified reference client |
 | Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
 | Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
 | Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |

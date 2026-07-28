@@ -5,7 +5,10 @@ The parity suite treats a pinned real Docker Engine plus the official [`@devcont
 The checked-in [`manifest.json`](manifest.json) is the release contract.
 `python3 Tools/parity/validate_manifest.py --release` fails closed if a fixture
 or required pin is incomplete. A stable release cannot bypass the
-candidate-bound runtime recordings and comparison.
+candidate-bound runtime recordings and comparison. The runner preflight
+matches the direct `@devcontainers/cli` package's npm SHA-512 integrity value
+as well as its version; runtime fingerprints retain the exact tag commit and
+integrity pin with every lane.
 
 Each implemented CLI fixture contains:
 

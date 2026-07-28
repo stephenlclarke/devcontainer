@@ -82,6 +82,49 @@ class BoundedCommandTests(unittest.TestCase):
         make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
 
 
+class FingerprintTests(unittest.TestCase):
+    def test_direct_cli_reference_is_retained_with_runtime_evidence(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "docker"
+        runner.docker = "/usr/bin/docker"
+        runner.node_package_runner = "/usr/bin/npx"
+        runner.cli_version = "0.88.0"
+        runner.cli_reference = {
+            "version": "0.88.0",
+            "source": "https://github.com/devcontainers/cli",
+            "commit": "a" * 40,
+            "npmIntegrity": "sha512-" + "b" * 86 + "==",
+        }
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        completed = [
+            mock.Mock(returncode=0, stdout='{"Client":{}}', stderr=""),
+            mock.Mock(returncode=0, stdout="0.88.0\n", stderr=""),
+        ]
+
+        with (
+            mock.patch("run_lane.platform.machine", return_value="arm64"),
+            mock.patch(
+                "run_lane.platform.platform",
+                return_value="macOS-26-arm64",
+            ),
+            mock.patch(
+                "run_lane.subprocess.run",
+                side_effect=completed,
+            ) as run,
+        ):
+            fingerprint = runner.fingerprint()
+
+        self.assertEqual(
+            fingerprint["devcontainersReference"],
+            runner.cli_reference,
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.88.0", "--version"],
+        )
+
+
 class PortEvidenceTests(unittest.TestCase):
     def test_failed_host_connections_are_preserved_as_evidence(self) -> None:
         with TemporaryDirectory() as temporary:
