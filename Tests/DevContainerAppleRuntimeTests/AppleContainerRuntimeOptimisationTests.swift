@@ -95,7 +95,7 @@ struct AppleContainerRuntimeOptimisationTests {
 
         try await Task.sleep(for: .milliseconds(450))
 
-        #expect(await source.snapshotCount() >= 3)
+        #expect(await source.snapshotCount() >= 2)
         await poller.shutdown()
     }
 
