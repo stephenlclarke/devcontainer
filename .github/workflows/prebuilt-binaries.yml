@@ -512,30 +512,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
           formula=devcontainer
           if [[ "${LANE}" == current ]]; then
             formula=devcontainer-current
           fi
-          tap=stephenlclarke/tap
+          formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"
+          test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"
           cleanup() {
             for candidate in devcontainer devcontainer-current; do
               if brew list --formula | grep -Fxq "${candidate}"; then
                 brew uninstall --force "${candidate}" >/dev/null
               fi
             done
-            brew untap "${tap}" >/dev/null 2>&1 || true
+            brew untap "${test_tap}" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
-          brew tap "${tap}" "${PWD}/homebrew-tap"
-          brew trust --tap "${tap}"
-          brew audit --formula --strict --online \
-            "${tap}/${formula}"
-          brew fetch --formula --force "${tap}/${formula}"
-          brew install --formula "${tap}/${formula}"
-          brew test "${tap}/${formula}"
+          brew tap-new --no-git "${test_tap}"
+          test_tap_root="$(brew --repository "${test_tap}")"
+          cp "${formula_path}" "${test_tap_root}/Formula/${formula}.rb"
+          brew audit --formula --strict --online "${test_tap}/${formula}"
+          brew fetch --formula --force "${test_tap}/${formula}"
+          brew install --formula "${test_tap}/${formula}"
+          brew test "${test_tap}/${formula}"
           installed="$(
-            brew --prefix "${tap}/${formula}"
+            brew --prefix "${test_tap}/${formula}"
           )/bin/devcontainer"
           "${installed}" version --format json \
             | jq -e \
