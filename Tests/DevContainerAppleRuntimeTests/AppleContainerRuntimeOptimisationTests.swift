@@ -93,9 +93,7 @@ struct AppleContainerRuntimeOptimisationTests {
             context: RuntimeRequestContext()
         )
 
-        try await Task.sleep(for: .milliseconds(450))
-
-        #expect(await source.snapshotCount() >= 2)
+        #expect(await source.waitForSnapshotCount(atLeast: 2))
         await poller.shutdown()
     }
 
@@ -292,6 +290,16 @@ private actor EventSnapshotSource {
 
     func snapshotCount() -> Int {
         count
+    }
+
+    func waitForSnapshotCount(atLeast expected: Int) async -> Bool {
+        for _ in 0 ..< 100 {
+            if count >= expected {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return count >= expected
     }
 }
 
