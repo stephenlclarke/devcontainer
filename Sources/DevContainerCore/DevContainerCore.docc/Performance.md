@@ -34,9 +34,11 @@ optimization because the runtime source did not change.
 After this analysis, a provider E03 duplex-transfer timeout exposed a
 readiness-edge race in the direct process output monitor. Main replaces that
 monitor with independent blocking stdout/stderr drains. Ten repeated provider
-E03 sequences and a complete local provider lane pass. Acceptance remains
-gated by the full hosted parity workflow, and the change does not alter the
-historical matrix above.
+E03 sequences and a complete local provider lane passed. Fix commit `74566c2`
+also passed the full hosted Docker, stock Apple, provider, comparison, and real
+VS Code workflow. Provider E03 completed in 2.030s versus Docker's 1.776s, and
+the complete provider CLI lane took 117.155s versus Docker's 81.104s. The
+change does not alter the historical matrix above.
 
 The complete 19-row timing matrix, variability analysis, phase breakdown,
 artifact links, and measurement protocol is maintained in

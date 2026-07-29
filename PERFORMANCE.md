@@ -235,8 +235,23 @@ Pre-commit live validation after the change comprised:
 
 These observations validate the reliability fix; they do not replace the
 historical three-run matrix above or claim a statistically significant speed
-improvement. Acceptance of the exact fix commit is gated by the complete
-hosted Docker, stock Apple, provider, and real VS Code workflow.
+improvement.
+
+The exact fix commit, [`74566c2`](https://github.com/stephenlclarke/devcontainer/commit/74566c2b22069369f23d55110f872f9ec427ea43),
+then passed the complete
+[hosted parity workflow](https://github.com/stephenlclarke/devcontainer/actions/runs/30435178597):
+
+| Surface | Docker | Stock Apple | Provider |
+| --- | ---: | ---: | ---: |
+| CLI, 18-fixture total | 81.104s | 104.720s (1.291x) | 117.155s (1.445x) |
+| Real VS Code V01 | 37.007s | 39.969s (1.080x) | 56.472s (1.526x) |
+| E03 byte-exact duplex exec | 1.776s | 2.010s (1.132x) | 2.030s (1.143x) |
+
+All semantic, cleanup, CLI, VS Code, and comparison gates passed. The largest
+single provider ratio was C01 at 4.618x (7.661s versus 1.659s), still well below
+the 10x failure threshold and an absolute difference of 6.002s. The run
+therefore confirms the race fix without changing the optimization priorities
+derived from the three-run matrix.
 
 ## Optimization measurement protocol
 
