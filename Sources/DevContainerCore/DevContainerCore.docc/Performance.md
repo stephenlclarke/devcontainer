@@ -31,6 +31,13 @@ already close to Docker and is not a priority.
 No timing change between the release and post-release runs is attributed to an
 optimization because the runtime source did not change.
 
+After this analysis, a provider E03 duplex-transfer timeout exposed a
+readiness-edge race in the direct process output monitor. Main replaces that
+monitor with independent blocking stdout/stderr drains. Ten repeated provider
+E03 sequences and a complete local provider lane pass. Acceptance remains
+gated by the full hosted parity workflow, and the change does not alter the
+historical matrix above.
+
 The complete 19-row timing matrix, variability analysis, phase breakdown,
 artifact links, and measurement protocol is maintained in
 [PERFORMANCE.md](https://github.com/stephenlclarke/devcontainer/blob/main/PERFORMANCE.md).

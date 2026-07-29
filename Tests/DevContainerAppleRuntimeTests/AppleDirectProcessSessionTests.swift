@@ -174,19 +174,23 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
-    func `direct session configures ordered nonblocking standard input`() async throws {
+    func `direct session uses nonblocking input and blocking output drains`() async throws {
         let input = Pipe()
-        let process = MockClientProcess(input: input, exitCode: 0)
+        let output = Pipe()
+        let process = EchoClientProcess(input: input, output: output)
         let session = AppleDirectProcessSession(
             process: process,
             standardInput: input,
-            standardOutput: nil,
+            standardOutput: output,
             standardError: nil
         )
 
-        let flags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
-        #expect(flags >= 0)
-        #expect(flags & O_NONBLOCK == O_NONBLOCK)
+        let inputFlags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
+        #expect(inputFlags >= 0)
+        #expect(inputFlags & O_NONBLOCK == O_NONBLOCK)
+        let outputFlags = fcntl(output.fileHandleForReading.fileDescriptor, F_GETFL)
+        #expect(outputFlags >= 0)
+        #expect(outputFlags & O_NONBLOCK == 0)
 
         try await session.closeStandardInput()
         #expect(try await session.wait() == 0)

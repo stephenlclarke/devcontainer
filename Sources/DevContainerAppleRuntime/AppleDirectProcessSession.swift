@@ -386,63 +386,35 @@ enum AppleXPCFileHandleTransfer {
 }
 
 private final class DirectPipeMonitor: @unchecked Sendable {
-    private let source: DispatchSourceRead
+    private let handle: FileHandle
     private let descriptor: Int32
     private let channel: RuntimeIOChannel
     private let streams: DirectProcessStreams
     private let stateLock = NSLock()
-    private var cancelled = false
+    private var finished = false
 
     init(
         pipe: Pipe,
         channel: RuntimeIOChannel,
         streams: DirectProcessStreams
     ) {
+        handle = pipe.fileHandleForReading
         descriptor = pipe.fileHandleForReading.fileDescriptor
         self.channel = channel
         self.streams = streams
-        source = DispatchSource.makeReadSource(
-            fileDescriptor: descriptor,
-            queue: DispatchQueue(
-                label: "io.github.stephenlclarke.devcontainer.direct-process-\(channel)",
-                qos: .userInitiated
-            )
-        )
-        let flags = fcntl(descriptor, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        Thread.detachNewThread { [self] in
+            Thread.current.name =
+                "io.github.stephenlclarke.devcontainer.direct-process-\(channel)"
+            drain()
         }
-        source.setEventHandler { [weak self] in
-            self?.readAvailable()
-        }
-        source.setCancelHandler { [streams, channel] in
-            if channel == .standardOutput {
-                streams.drainState.finishOutput()
-                AppleDirectProcessSession.trace("stdout EOF")
-                streams.outputEndContinuation.finish()
-            } else {
-                streams.drainState.finishError()
-                AppleDirectProcessSession.trace("stderr EOF")
-                streams.errorEndContinuation.finish()
-            }
-        }
-        source.resume()
     }
 
     func cancel() {
-        let shouldCancel = stateLock.withLock {
-            guard !cancelled else {
-                return false
-            }
-            cancelled = true
-            return true
-        }
-        if shouldCancel {
-            source.cancel()
-        }
+        finish()
     }
 
-    private func readAvailable() {
+    private func drain() {
+        defer { finish() }
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
             let count = buffer.withUnsafeMutableBytes { bytes in
@@ -460,19 +432,40 @@ private final class DirectPipeMonitor: @unchecked Sendable {
                 continue
             }
             if count == 0 {
-                cancel()
                 return
             }
             if errno == EINTR {
                 continue
             }
-            if errno == EAGAIN || errno == EWOULDBLOCK {
+            if stateLock.withLock({ finished }) {
                 return
             }
             let code = POSIXErrorCode(rawValue: errno) ?? .EIO
             streams.frameContinuation.finish(throwing: POSIXError(code))
-            cancel()
             return
+        }
+    }
+
+    private func finish() {
+        let shouldFinish = stateLock.withLock {
+            guard !finished else {
+                return false
+            }
+            finished = true
+            return true
+        }
+        guard shouldFinish else {
+            return
+        }
+        try? handle.close()
+        if channel == .standardOutput {
+            streams.drainState.finishOutput()
+            AppleDirectProcessSession.trace("stdout EOF")
+            streams.outputEndContinuation.finish()
+        } else {
+            streams.drainState.finishError()
+            AppleDirectProcessSession.trace("stderr EOF")
+            streams.errorEndContinuation.finish()
         }
     }
 }

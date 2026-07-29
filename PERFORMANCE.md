@@ -210,6 +210,34 @@ E01 engine negotiation is effectively equal (1.048x stock, 1.077x provider). D05
 - Claiming the post-release run is an optimization: no runtime source changed. Its different timing is ordinary host/run variation.
 - Optimizing solely for the highest ratio: short fixtures need absolute-overhead analysis.
 
+## Post-analysis E03 reliability fix
+
+The documentation commit that published this analysis triggered
+[runtime parity run `30432362538`](https://github.com/stephenlclarke/devcontainer/actions/runs/30432362538).
+Docker and stock Apple passed, and 17 of 18 provider CLI fixtures passed. The
+provider E03 4 MiB duplex exec transfer stopped making progress and was killed
+at its 300-second deadline. Its 301.720s duration was a timeout failure, not an
+acceptable slowdown and not a result that a successful retry could waive.
+
+The direct Apple process output path still used dispatch-source readiness
+events even though the CLI-backed process path already used dedicated blocking
+drain threads to avoid missed readiness edges under duplex backpressure. Main
+now uses independently blocking stdout and stderr drains for direct exec as
+well. The regression test requires nonblocking ordered stdin, blocking output
+drains, and byte-exact 4 MiB duplex transfer.
+
+Pre-commit live validation after the change comprised:
+
+- 10 consecutive provider E01-E03 sequences, all passing;
+- E03 durations of 1.993-2.241s in nine runs and 5.326s in one run;
+- one complete 18-fixture provider lane with E03 at 2.005s and no semantic,
+  cleanup, timeout, or performance failure.
+
+These observations validate the reliability fix; they do not replace the
+historical three-run matrix above or claim a statistically significant speed
+improvement. Acceptance of the exact fix commit is gated by the complete
+hosted Docker, stock Apple, provider, and real VS Code workflow.
+
 ## Optimization measurement protocol
 
 For each candidate change:
