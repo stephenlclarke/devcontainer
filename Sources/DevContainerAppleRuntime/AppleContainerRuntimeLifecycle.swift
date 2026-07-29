@@ -26,6 +26,7 @@ public extension AppleContainerRuntime {
     ) async throws {
         let resolved = try await resolveContainerID(id, context: context)
         try await launchContainerProcess(id: resolved)
+        signalEventPollers()
         let startedAt = Date()
         try await recordStartedContainer(
             requestedID: id,
@@ -76,6 +77,7 @@ public extension AppleContainerRuntime {
     internal func handleContainerExit(_ exit: ContainerExit, id: String) async {
         recordContainerExit(exit, id: id)
         containerExitTasks.removeValue(forKey: id)
+        signalEventPollers()
         await portForwarding.stop(containerID: id)
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
@@ -111,7 +113,7 @@ public extension AppleContainerRuntime {
     }
 
     private func startPortForwarding(
-        snapshot: ContainerSnapshot,
+        snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
@@ -167,11 +169,16 @@ public extension AppleContainerRuntime {
         var arguments = ["stop"]
         if let timeout {
             let components = timeout.components
-            let seconds = components.seconds + (components.attoseconds > 0 ? 1 : 0)
+            let seconds = components.seconds
+                + (components.attoseconds > 0 ? 1 : 0)
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container stop")
+        try await requireSuccess(
+            command(arguments),
+            operation: "container stop"
+        )
+        signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
     }
@@ -186,6 +193,7 @@ public extension AppleContainerRuntime {
             command(["kill", "--signal", signal, resolved]),
             operation: "container kill"
         )
+        signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
     }
@@ -239,12 +247,17 @@ public extension AppleContainerRuntime {
             arguments.append("--force")
         }
         arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container delete")
+        try await requireSuccess(
+            command(arguments),
+            operation: "container delete"
+        )
+        signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         requestedContainers.removeValue(forKey: id)
         requestedContainers.removeValue(forKey: resolved)
         requestedContainers.removeValue(forKey: snapshot.dockerID.rawValue)
         requestedContainers.removeValue(forKey: snapshot.spec.name)
+        managedHostsState.removeValue(forKey: resolved)
         startedContainers.remove(id)
         startedContainers.remove(resolved)
         startedContainers.remove(snapshot.dockerID.rawValue)

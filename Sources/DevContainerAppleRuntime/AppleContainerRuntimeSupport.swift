@@ -15,12 +15,90 @@
 //===----------------------------------------------------------------------===//
 
 import ContainerAPIClient
+import ContainerizationError
+import ContainerResource
 import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
 extension AppleContainerRuntime {
+    func containerRecord(
+        _ value: ContainerResource.ContainerSnapshot
+    ) throws -> AppleContainerRecord {
+        let configuration = value.configuration
+        let process = configuration.initProcess
+        let labels = configuration.labels
+        let id = value.id
+        return AppleContainerRecord(
+            id: id,
+            dockerID: labels[Self.dockerIDLabel] ?? id,
+            spec: ContainerSpec(
+                name: id,
+                image: configuration.image.reference,
+                command: process.executable.isEmpty
+                    ? process.arguments
+                    : [process.executable] + process.arguments,
+                environment: Self.environmentDictionary(process.environment),
+                labels: labels,
+                workingDirectory: process.workingDirectory,
+                user: process.user.description,
+                mounts: configuration.mounts.compactMap(Self.mount),
+                ports: configuration.publishedPorts.flatMap(Self.ports),
+                networks: configuration.networks.map {
+                    NetworkAttachment(name: $0.network)
+                },
+                terminal: process.terminal,
+                openStandardInput: false,
+                privileged: false,
+                initProcess: configuration.useInit,
+                capabilitiesToAdd: configuration.capAdd,
+                capabilitiesToDrop: configuration.capDrop
+            ),
+            state: value.status.rawValue,
+            createdAt: configuration.creationDate,
+            startedAt: value.startedDate,
+            finishedAt: nil,
+            exitCode: nil,
+            networkAddresses: Dictionary(
+                uniqueKeysWithValues: value.networks.map {
+                    ($0.network, $0.ipv4Address.address.description)
+                }
+            )
+        )
+    }
+
+    static func mount(_ value: Filesystem) -> RuntimeMount? {
+        let type: RuntimeMountType
+        switch value.type {
+        case .virtiofs:
+            type = .bind
+        case .volume:
+            type = .volume
+        case .tmpfs:
+            type = .tmpfs
+        case .block:
+            return nil
+        }
+        return RuntimeMount(
+            type: type,
+            source: value.source,
+            destination: value.destination,
+            readOnly: value.options.contains("ro")
+        )
+    }
+
+    static func ports(_ value: PublishPort) -> [PortBinding] {
+        (0 ..< value.count).map { offset in
+            PortBinding(
+                containerPort: value.containerPort + offset,
+                hostPort: value.hostPort + offset,
+                protocolName: value.proto.rawValue,
+                hostAddress: value.hostAddress.description
+            )
+        }
+    }
+
     func containerRecord(_ value: [String: Any]) throws -> AppleContainerRecord {
         guard
             let id = value["id"] as? String,
@@ -74,6 +152,42 @@ extension AppleContainerRuntime {
         return request?.spec
     }
 
+    func directAPIError(
+        _ error: any Error,
+        operation: String
+    ) -> DevContainerError {
+        if let error = error as? DevContainerError {
+            return error
+        }
+        if let error = error as? ContainerizationError {
+            let code: DevContainerErrorCode =
+                switch error.code {
+                case .invalidArgument:
+                    .invalidRequest
+                case .exists, .invalidState:
+                    .conflict
+                case .notFound:
+                    .notFound
+                case .cancelled, .interrupted:
+                    .cancelled
+                case .timeout:
+                    .deadlineExceeded
+                case .unsupported:
+                    .unsupportedCapability
+                default:
+                    .runtimeUnavailable
+                }
+            return DevContainerError(
+                code,
+                message: "\(operation) failed: \(error)"
+            )
+        }
+        return DevContainerError(
+            .runtimeUnavailable,
+            message: "\(operation) failed: \(error)"
+        )
+    }
+
     func discardContainerState(
         id: String,
         dockerID: String,
@@ -94,6 +208,7 @@ extension AppleContainerRuntime {
         if let name {
             containerStartedAt.removeValue(forKey: name)
         }
+        managedHostsState.removeValue(forKey: id)
         containerExitTasks.removeValue(forKey: id)?.cancel()
         containerExits.removeValue(forKey: id)
     }
@@ -162,8 +277,8 @@ extension AppleContainerRuntime {
 
     func apply(
         metadata: RuntimeContainerMetadata,
-        to observed: ContainerSnapshot
-    ) -> ContainerSnapshot {
+        to observed: DevContainerModel.ContainerSnapshot
+    ) -> DevContainerModel.ContainerSnapshot {
         var snapshot = observed
         var spec = metadata.spec
         spec.labels.merge(observed.spec.labels) { _, observedValue in observedValue }
@@ -225,6 +340,21 @@ extension AppleContainerRuntime {
                 internalNetwork: configuration["mode"] as? String == "isolated"
             ),
             createdAt: Self.date(configuration["creationDate"]) ?? Date(timeIntervalSince1970: 0)
+        )
+    }
+
+    func networkSnapshot(
+        _ value: NetworkResource
+    ) -> NetworkSnapshot {
+        NetworkSnapshot(
+            id: value.id,
+            spec: NetworkSpec(
+                name: value.name,
+                labels: value.configuration.labels.dictionary,
+                driver: value.configuration.plugin,
+                internalNetwork: value.configuration.mode == .hostOnly
+            ),
+            createdAt: value.creationDate
         )
     }
 
@@ -559,7 +689,7 @@ extension AppleContainerRuntime {
     }
 
     private func attachLogData(
-        snapshot: ContainerSnapshot
+        snapshot: DevContainerModel.ContainerSnapshot
     ) async throws -> (Data, Data) {
         if useDirectProcessAPI {
             return try await (
@@ -636,7 +766,10 @@ extension AppleContainerRuntime {
         }
     }
 
-    func wasStarted(id: String, snapshot: ContainerSnapshot) -> Bool {
+    func wasStarted(
+        id: String,
+        snapshot: DevContainerModel.ContainerSnapshot
+    ) -> Bool {
         snapshot.startedAt != nil
             || startedContainers.contains(id)
             || startedContainers.contains(snapshot.runtimeID.rawValue)

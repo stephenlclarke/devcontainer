@@ -110,7 +110,8 @@ extension AppleContainerRuntime {
             var previous = request.initial
             var sequence = Int64(Date().timeIntervalSince1970 * 1_000_000)
             while !Task.isCancelled, request.until.map({ Date() < $0 }) ?? true {
-                try await Task.sleep(for: .milliseconds(200))
+                let observedGeneration = eventGeneration
+                await waitForEventChange(after: observedGeneration)
                 let current = try await containerMap(
                     labels: request.labels,
                     context: request.context
@@ -132,6 +133,43 @@ extension AppleContainerRuntime {
         } catch {
             continuation.finish(throwing: error)
         }
+    }
+
+    func waitForEventChange(after observedGeneration: UInt64) async {
+        guard eventGeneration == observedGeneration else {
+            return
+        }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard eventGeneration == observedGeneration else {
+                    continuation.resume()
+                    return
+                }
+                eventWaiters[id] = continuation
+                Task {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    self.resumeEventWaiter(id)
+                }
+            }
+        } onCancel: {
+            Task {
+                await self.resumeEventWaiter(id)
+            }
+        }
+    }
+
+    func signalEventPollers() {
+        eventGeneration &+= 1
+        let continuations = eventWaiters.values
+        eventWaiters.removeAll(keepingCapacity: true)
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    private func resumeEventWaiter(_ id: UUID) {
+        eventWaiters.removeValue(forKey: id)?.resume()
     }
 
     static func lifecycleEvents(
@@ -288,11 +326,20 @@ extension AppleContainerRuntime {
     func synchronizeNetworkHosts(
         context: RuntimeRequestContext
     ) async throws {
-        let running = try await listContainers(
+        let containers = try await listContainers(
             all: true,
             labels: [:],
             context: context
-        ).filter {
+        )
+        let observed = Dictionary(
+            uniqueKeysWithValues: containers.map {
+                ($0.runtimeID.rawValue, $0.createdAt)
+            }
+        )
+        managedHostsState = managedHostsState.filter { id, state in
+            observed[id] == state.createdAt
+        }
+        let running = containers.filter {
             $0.state == .running
                 && $0.spec.networks.contains {
                     Self.isUserDefinedNetwork($0.name)
@@ -317,46 +364,148 @@ extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws {
         let hosts = Self.managedHosts(target: target, containers: containers)
+        let targetID = target.runtimeID.rawValue
+        let nextState = AppleManagedHostsState(
+            createdAt: target.createdAt,
+            managedHosts: hosts
+        )
+        guard managedHostsState[targetID] != nextState else {
+            return
+        }
+
         let temporary = try TemporaryDirectory(base: Self.transferDirectory)
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
-        let download = try await command([
-            "cp",
-            "\(target.runtimeID.rawValue):/etc/hosts",
-            localHosts.path
-        ])
-        let observedState = await (try? inspectContainer(
-            id: target.runtimeID.rawValue,
-            context: context
-        ).state)
-        if download.exitCode != 0 {
-            if observedState != .running
-                || Self.isTransientContainerCopyFailure(download)
-            {
-                return
-            }
-            try requireSuccess(download, operation: "container hosts download")
-        }
-        let current = try String(contentsOf: localHosts, encoding: .utf8)
-        let updated = Self.replacingManagedHosts(in: current, with: hosts)
-        try Data(updated.utf8).write(to: localHosts, options: .atomic)
-        let upload = try await command([
-            "cp",
-            localHosts.path,
-            "\(target.runtimeID.rawValue):/etc/hosts"
-        ])
-        if upload.exitCode != 0 {
-            let observedState = await (try? inspectContainer(
-                id: target.runtimeID.rawValue,
+        guard
+            let current = try await downloadContainerHosts(
+                id: targetID,
+                to: localHosts,
                 context: context
-            ).state)
-            if observedState != .running
-                || Self.isTransientContainerCopyFailure(upload)
-            {
+            )
+        else {
+            return
+        }
+        let updated = Self.replacingManagedHosts(in: current, with: hosts)
+        if current != updated {
+            try Data(updated.utf8).write(to: localHosts, options: .atomic)
+            guard
+                try await uploadContainerHosts(
+                    id: targetID,
+                    from: localHosts,
+                    context: context
+                )
+            else {
                 return
             }
         }
-        try requireSuccess(upload, operation: "container hosts upload")
+        managedHostsState[targetID] = nextState
+    }
+
+    private func downloadContainerHosts(
+        id: String,
+        to localHosts: URL,
+        context: RuntimeRequestContext
+    ) async throws -> String? {
+        if useDirectContainerAPI {
+            do {
+                try await resourceClient.copyOut(
+                    id: id,
+                    source: "/etc/hosts",
+                    destination: localHosts.path,
+                    createParents: true
+                )
+            } catch {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                if observedState != .running
+                    || Self.isTransientContainerCopyFailure(error)
+                {
+                    return nil
+                }
+                throw directAPIError(
+                    error,
+                    operation: "container hosts download"
+                )
+            }
+        } else {
+            let download = try await command([
+                "cp",
+                "\(id):/etc/hosts",
+                localHosts.path
+            ])
+            if download.exitCode != 0 {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                if observedState != .running
+                    || Self.isTransientContainerCopyFailure(download)
+                {
+                    return nil
+                }
+                try requireSuccess(
+                    download,
+                    operation: "container hosts download"
+                )
+            }
+        }
+        return try String(contentsOf: localHosts, encoding: .utf8)
+    }
+
+    private func uploadContainerHosts(
+        id: String,
+        from localHosts: URL,
+        context: RuntimeRequestContext
+    ) async throws -> Bool {
+        if useDirectContainerAPI {
+            do {
+                try await resourceClient.copyIn(
+                    id: id,
+                    source: localHosts.path,
+                    destination: "/etc/hosts",
+                    mode: 0o644,
+                    createParents: true
+                )
+            } catch {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                if observedState != .running
+                    || Self.isTransientContainerCopyFailure(error)
+                {
+                    return false
+                }
+                throw directAPIError(
+                    error,
+                    operation: "container hosts upload"
+                )
+            }
+        } else {
+            let upload = try await command([
+                "cp",
+                localHosts.path,
+                "\(id):/etc/hosts"
+            ])
+            if upload.exitCode != 0 {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                if observedState != .running
+                    || Self.isTransientContainerCopyFailure(upload)
+                {
+                    return false
+                }
+            }
+            try requireSuccess(
+                upload,
+                operation: "container hosts upload"
+            )
+        }
+        return true
     }
 
     static func isTransientContainerCopyFailure(
@@ -371,6 +520,15 @@ extension AppleContainerRuntime {
         )?.lowercased() ?? ""
         return diagnostic.contains("container is not running")
             || diagnostic.contains("container was not found")
+    }
+
+    static func isTransientContainerCopyFailure(
+        _ error: any Error
+    ) -> Bool {
+        let diagnostic = String(describing: error).lowercased()
+        return diagnostic.contains("container is not running")
+            || diagnostic.contains("container was not found")
+            || diagnostic.contains("container not found")
     }
 
     static func managedHosts(
@@ -547,8 +705,7 @@ extension AppleContainerRuntime {
         return values
     }
 
-    func containerSnapshot(_ value: [String: Any]) throws -> ContainerSnapshot {
-        let record = try containerRecord(value)
+    func containerSnapshot(_ record: AppleContainerRecord) -> ContainerSnapshot {
         let wasStarted = startedContainers.contains(record.id)
             || startedContainers.contains(record.dockerID)
         let requestedSpec = requestedSpec(for: record)

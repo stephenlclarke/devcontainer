@@ -144,6 +144,35 @@ Each request contains an idempotency key, correlation identifier, deadline, sele
 
 The Apple adapter also probes `container create --help` once per selected executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged switches: privileged requests map to the stock capability model, while explicit hostname or security-option requests fail before mount or container side effects. A separately fingerprinted enhanced runtime uses its native switches. Capability discovery is behavioral and never inferred from an install path or attributed across provider lanes.
 
+### Apple adapter fast path
+
+The adapter keeps one official `ContainerClient` and `NetworkClient` for the
+lifetime of each engine process. Container inventory, exact inspection,
+network operations, archive transfers, and managed `/etc/hosts` transfers use
+Apple's typed API. Operations without a stable typed equivalent continue
+through the pinned `container` executable so stock and enhanced runtime
+behavior remain identical.
+
+```mermaid
+flowchart LR
+    Request["Runtime SPI request"] --> Choice{"Certified typed operation?"}
+    Choice -->|Yes| Client["Reusable Apple API clients"]
+    Choice -->|No| CLI["Selected container executable"]
+    Client --> Services["Apple XPC services"]
+    CLI --> Services
+    Mutation["Authoritative in-process mutation"] --> Wake["Wake event waiter"]
+    Wake --> Poll["Reconcile immediately"]
+    Fallback["External mutation or timeout"] --> Poll
+    Poll --> Inventory["Typed inventory snapshot"]
+```
+
+The event loop wakes immediately after an in-process mutation and retains a
+200ms reconciliation fallback for changes made by another process. Managed
+host-file content is cached by container runtime identifier, creation
+timestamp, and desired block. The cache is invalidated by container
+recreation, removal, or any archive upload because an archive may replace
+`/etc/hosts`.
+
 ## Docker Engine compatibility boundary
 
 The service advertises only the Docker API versions proven by the parity suite. It returns Docker-shaped identifiers, JSON, headers, streams, status codes, and errors for this tested surface:

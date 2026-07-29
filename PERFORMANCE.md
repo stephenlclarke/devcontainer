@@ -270,7 +270,7 @@ For each candidate change:
 
 The repository already records durations in machine-readable JSON, JUnit, and the human comparison matrix. Future phase instrumentation should supplement those artifacts rather than replace the end-to-end metric.
 
-## Current priority order
+## Priority order before the July 2026 E06 work
 
 1. Provider VS Code first attach.
 2. Stock E06 network/volume request sequence.
@@ -279,4 +279,128 @@ The repository already records durations in machine-readable JSON, JUnit, and th
 5. D07 reuse/rebuild/cleanup.
 6. Re-measure D03 provider variability before changing it.
 
-This order balances user-visible seconds, repeatability, and ownership. It does not change the performance pass policy.
+This historical order selected the E06 work described below. It does not
+change the performance pass policy.
+
+## July 2026 Apple runtime optimization
+
+The `perf/devcontainer-speedups` work implements the highest-priority stock
+E06 optimization and the subsequently identified E05 archive-copy fast path
+in the Devcontainer adapter itself. The final candidate:
+
+- reuses one Apple `ContainerClient` and `NetworkClient` per engine process;
+- uses Apple’s typed API for container inventory, exact container inspection,
+  network operations, and archive transfer;
+- resolves Docker IDs through durable metadata before issuing a filtered
+  runtime lookup;
+- maps typed Apple snapshots directly instead of serializing them through an
+  intermediate JSON object;
+- wakes event polling immediately after authoritative in-process mutations
+  while retaining the 200ms fallback for out-of-process changes;
+- copies the managed `/etc/hosts` block through the direct API and skips the
+  transfer when the container incarnation and desired block are unchanged;
+- preserves the managed-host cache across a stop/start of the same container
+  and invalidates it on recreation or removal.
+
+Container stop, kill, and delete deliberately remain on the CLI path. A
+candidate that moved those mutations to the direct API improved the median but
+caused materially worse cleanup tails with the custom runtime, so it was
+rejected.
+
+### Same-host comparison
+
+The final source was selected using real E06 parity probes on the same Mac,
+with an unmodified `main` engine and candidate engine alternated or run under
+the same consecutive-load pattern. Each probe created a real network, managed
+volume, bind and tmpfs mounts, two long-running containers, a transient
+auto-remove container, DNS traffic, exec traffic, persistence checks, inspect
+calls, and complete cleanup.
+
+| Runtime | Sample | Baseline median | Candidate median | Median improvement | Baseline mean | Candidate mean | Baseline p90 | Candidate p90 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 10 + 10 sustained runs | 5.584s | 4.655s | 16.6% | 6.650s | 5.566s | 8.670s | 7.776s |
+| Matched custom `container` used by `container-compose` 0.10.1 | 10 + 10 sustained runs | 5.697s | 4.691s | 17.7% | 5.674s | 4.976s | 5.788s | 5.231s |
+
+All 40 observations passed their semantic and cleanup contracts. The
+candidate improved the stock mean by 16.3% and p90 by 10.3%; it improved the
+custom-runtime mean by 12.3% and p90 by 9.6%. Periodic VM cleanup tails remain
+visible in both baseline and candidate samples, but the accepted candidate
+does not worsen them.
+
+These are focused local A/B measurements, not a replacement for the hosted
+three-lane release matrix. Full Docker, stock Apple, custom-runtime, and real
+VS Code parity remain publication gates.
+
+### Final-source confirmation
+
+After the client protocols were made injectable for deterministic unit tests,
+the exact final source completed ten additional E06 runs per Apple runtime.
+All 20 runs passed their semantic and cleanup contracts:
+
+| Runtime | Sample | Median | Mean | p90 | Maximum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 10 | 4.307s | 5.188s | 7.355s | 7.381s |
+| Matched custom `container` | 10 | 4.620s | 5.297s | 7.879s | 8.092s |
+
+Most observations were close to the median. The slower observations coincided
+with periodic VM cleanup and did not change semantics or leave resources.
+
+The archive fast path removes two `container cp` process launches by calling
+the same official typed copy API directly. Three focused E05 runs per runtime
+all preserved content, executable mode, symbolic links, a 110-character path,
+and a 1 MiB binary:
+
+| Runtime | Sample | Median | Minimum | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 3 | 1.664s | 1.576s | 1.808s |
+| Matched custom `container` | 3 | 1.703s | 1.630s | 1.833s |
+
+In the final complete matrix, E05 took 1.606s on stock and 1.700s on the
+custom runtime, compared with Docker's 1.290s. The earlier custom-runtime
+matrix observation before this fast path was 4.896s.
+
+### Final acceptance matrix
+
+The exact final source passed all 54 CLI fixture-lane executions with zero
+normalized semantic or cleanup differences:
+
+| Matrix | Docker | Stock Apple | Custom runtime |
+| --- | ---: | ---: | ---: |
+| 18-fixture total | 81.957s | 120.979s | 114.792s |
+| E05 archive copy | 1.290s | 1.606s (1.245x) | 1.700s (1.318x) |
+| E06 network and volume | 1.766s | 4.453s (2.522x) | 4.422s (2.504x) |
+
+The stock total includes a 48.454s Feature build and a 12.449s Compose
+lifecycle observation; neither path was changed by this work, and every
+fixture remained below the 10x performance threshold.
+
+The authenticated real VS Code Dev Containers attach, command, rebuild,
+reopen, and cleanup workflow also passed on every lane:
+
+| Docker | Stock Apple | Custom runtime |
+| ---: | ---: | ---: |
+| 39.497s | 39.733s (1.006x) | 53.687s (1.359x) |
+
+### Rejected lower-layer changes
+
+An operation-static client-reuse change was also measured in
+`container-compose`. It was neutral within ordinary variation because each
+Compose CLI invocation is a new process. The change was removed. A 50ms event
+polling experiment added four times as many inventory requests without a
+stable improvement and was also removed.
+
+The optimization therefore requires no source change in `container-compose`,
+the custom `container` fork, or the custom `containerization` fork. Dedicated
+`perf/devcontainer-speedups` branches exist in those repositories so later
+Compose-stack work can be reconciled without colliding with concurrent
+development, but they intentionally remain source-identical to their
+respective main branches.
+
+The remaining priority order is:
+
+1. Provider VS Code first attach.
+2. Stock/provider C04 Compose lifecycle.
+3. D07 reuse/rebuild/cleanup.
+4. Re-measure D03 provider variability before changing it.
+5. Revisit E06 only if the complete hosted matrix identifies a remaining
+   product-owned phase rather than ordinary VM cleanup variance.

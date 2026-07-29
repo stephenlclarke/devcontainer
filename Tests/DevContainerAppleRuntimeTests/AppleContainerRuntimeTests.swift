@@ -649,6 +649,7 @@ struct FakeAppleCLI {
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
+            useDirectContainerAPI: false,
             metadataStore: metadataStore,
             volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
         )
@@ -903,7 +904,7 @@ struct FakeAppleCLI {
     }
 }
 
-private actor TestMetadataStore: RuntimeMetadataStore {
+actor TestMetadataStore: RuntimeMetadataStore {
     private var values: [String: RuntimeContainerMetadata] = [:]
 
     func recordContainerMetadata(
