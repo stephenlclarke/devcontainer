@@ -6,10 +6,11 @@
 > Version 1.0.0 supports the exact component fingerprints below. Real Docker,
 > stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
 > provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
-> with zero normalized semantic or performance differences. The largest CLI
-> ratios were 4.314x for stock Apple and 3.062x for `container-compose`; the
-> corresponding VS Code ratios were 1.091x and 1.545x, all below the 10x
-> failure threshold.
+> with zero normalized semantic differences and no performance failures. In
+> the exact tag run, the largest CLI ratios were 2.876x for stock Apple and
+> 4.509x for `container-compose`; the corresponding VS Code ratios were 1.232x
+> and 1.311x, all below the 10x failure threshold. Repeated-run statistics are
+> in [PERFORMANCE.md](PERFORMANCE.md).
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -29,6 +30,10 @@ startup are not compatibility evidence.
 
 No row may move to `supported` while a required fixture is skipped, retried
 until it passes, normalized to hide a difference, or waived.
+
+This release vocabulary applies to the fixture claim. The broader standards
+audit also uses `delegated`, `partial`, and `unverified`; see
+[CONFORMANCE.md](CONFORMANCE.md).
 
 ## Provider lanes
 
@@ -117,55 +122,75 @@ The bounded endpoint surface is:
 - exec create, start, resize, inspect, cancellation, and TTY/non-TTY streams;
 - archive upload/download and path metadata;
 - image list, inspect, pull, build, tag, and remove;
-- network and volume lifecycle needed by the fixtures;
+- network and volume lifecycle needed by the fixtures, with network attachment
+  fixed at container creation;
 - label-filtered, ordered, reconnectable events.
 
-Unsupported endpoints or request fields must fail before side effects with a
-Docker-shaped error. They must not return a successful approximation.
+Decoded unsupported endpoints and fields fail before side effects with a
+Docker-shaped error. Version 1.0.0 does not yet reject every unknown Docker
+create/build member: Swift decoding can omit fields outside the bounded DTO.
+Arbitrary `runArgs` therefore are not a blanket support surface. This known
+non-conformance and its remediation priority are recorded in
+[CONFORMANCE.md](CONFORMANCE.md).
 Buildx is reported only after its session and stream behavior passes the
-Feature, build-context, and UID-update fixtures.
+Feature and build-context fixtures.
 
 ### Stock Apple 1.1.0 create-time boundary
 
 The unmodified Apple 1.1.0 `container create` command does not expose `--hostname`, `--security-opt`, or `--privileged`. Its public `ContainerConfiguration` also has no hostname or security-option transport field. The stock adapter therefore:
 
 - accepts the normal Dev Containers path where Docker sends an empty hostname and no security options;
-- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation;
-- rejects a non-empty Docker `Hostname` or any `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
+- treats `seccomp=unconfined` as the already-native state because Apple containers do not install Docker’s default seccomp profile;
+- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation but not claiming full Docker privileged semantics;
+- rejects a non-empty Docker `Hostname` or any remaining `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
 - reports a Docker-shaped unsupported-capability response rather than claiming a weakened security approximation.
 
 The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.1.0/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
 
-## Functional support ledger
+## Certified fixture ledger
 
-Every row has an implemented parity fixture and release-bound evidence.
+Every row is bounded by the assertions in its implemented parity fixture and
+release-bound evidence. A row does not certify every option in that broad
+technology area; [CONFORMANCE.md](CONFORMANCE.md) records the untested and
+non-conformant forms.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
 | Engine negotiation | Ping, version negotiation, versioned paths, errors | `supported` |
 | Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `supported` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `supported` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `supported` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `supported` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `supported` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `supported` |
-| Users and environment | Container/remote users, UID update, environment probing | `supported` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `supported` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `supported` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `supported` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `supported` |
+| Exec and streams | TTY/non-TTY output, user/environment/workdir, 4 MiB stdin/stdout, stderr, exit status | `supported` |
+| Images and builds | Public arm64 pull/inspect, checked-in Dockerfile context/arguments/target, failed-build stream | `supported` |
+| Archive | Copy in/out, content, mode, symlink, long path, 1 MiB file | `supported` |
+| Networks and volumes | Checked-in lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
+| Image Dev Container | Workspace, environment, selected user, post-create command | `supported` |
+| Dockerfile Dev Container | Dockerfile/context path, target, build argument, workspace, post-create command | `supported` |
+| Users and environment | Checked-in container/remote users, environment expansion, and explicit no-UID-update path | `supported` |
+| Lifecycle hooks | Checked-in string-valued create/update/post-create/start/attach ordering | `supported` |
+| Features | Two public OCI Features, generated build, lockfile, frozen-lock rejection | `supported` |
+| Ports | TCP publishing, forward metadata, real VS Code forwarding, collision rejection, host/container connectivity | `supported` |
+| Reuse and cleanup | Same-config reuse, forced replacement, hook counts, volume/container cleanup | `supported` |
 | Compose service | Selected service, generated overrides, workspace projection | `supported` |
 | Compose dependencies | `runServices`, health gates, service DNS | `supported` |
 | Compose resources | Named volumes, networks, aliases, environment files | `supported` |
 | Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `supported` |
+| Fault recovery | Missing backend, bounded empty events, signal exit, concurrent start/remove convergence | `supported` |
 | VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must
 not mark a row supported before its manifest fixture is `implemented` and
 every required release-bound parity and release gate has passed.
+
+## Standards claim
+
+The fixture ledger is not a full Development Containers Specification claim.
+Version 1.0.0 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
+Docker privileged behavior, stock security options and hostname, advanced
+mount fields, image-anonymous volume semantics, and post-create network
+changes. It also has properties delegated to the official CLI or VS Code that
+are not independently certified. The complete property-by-property audit and
+known non-conformance IDs are maintained in
+[CONFORMANCE.md](CONFORMANCE.md).
 
 ## Parity definition
 

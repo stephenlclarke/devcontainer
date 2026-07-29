@@ -82,20 +82,25 @@ silently replaces stock Apple `container` with the matched fork stack.
 | Stock Apple | Official `apple/container` only; Docker Compose uses the compatibility API | Zero semantic differences in every claimed fixture |
 | `container-compose` provider | Stephen Clarke's separately installed `container-compose`, with its exact runtime provenance recorded | Zero semantic differences in every claimed fixture |
 
-The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md) and [COMPATIBILITY.md](COMPATIBILITY.md).
+The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md), [COMPATIBILITY.md](COMPATIBILITY.md), and the explicit [standards conformance audit](CONFORMANCE.md).
 
 Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker
-security-option fields. Requests containing those fields fail before container
-or mount side effects; they are not silently weakened and are outside the stock
-1.1.0 compatibility claim. A separately fingerprinted enhanced runtime may
-advertise and enforce them through native `--hostname` and `--security-opt`
-flags.
+security-option fields. A non-empty hostname and security options that are not
+already Apple’s native state fail before runtime creation. Stock privileged
+mode maps to Apple’s `--cap-add ALL` model and is not full Docker privileged
+mode. Version 1.0.0 also does not fail closed for every unknown Docker create
+member, so arbitrary `runArgs` are outside the compatibility claim. See
+[CONFORMANCE.md](CONFORMANCE.md) before using security, device, resource, or
+advanced mount options.
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
+| [USER_GUIDE.md](USER_GUIDE.md) | Installation-to-operation user manual for the stock and optional provider paths |
 | [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
+| [CONFORMANCE.md](CONFORMANCE.md) | Complete audited Dev Containers property ledger and explicit 1.0.0 non-conformances |
+| [PERFORMANCE.md](PERFORMANCE.md) | Full repeated-run parity timing analysis and optimization priorities |
 | [TESTING.md](TESTING.md) | Docker, stock Apple, and separate `container-compose` differential harness |
 | [QUALITY.md](QUALITY.md) | Software-quality analysis, measurable gates, and supply-chain controls |
 | [BUILD.md](BUILD.md) | Current local build, test, coverage, sanitizer, parity, and package commands |
@@ -137,10 +142,13 @@ Live runtime tests are deliberately not run on public pull-request code or GitHu
 
 ## Documentation
 
-The generated [DocC site](https://stephenlclarke.github.io/devcontainer/)
-contains the public Swift API reference and architecture articles. GitHub Pages
-publishes it from the exact `main` commit that passes the documentation
-workflow.
+Start with the [user guide](USER_GUIDE.md), then consult the
+[compatibility contract](COMPATIBILITY.md), [standards conformance
+audit](CONFORMANCE.md), and [parity timing analysis](PERFORMANCE.md). The
+generated [DocC site](https://stephenlclarke.github.io/devcontainer/) contains
+the public Swift API reference plus architecture, use, compatibility,
+conformance, testing, and performance articles. GitHub Pages publishes it from
+the exact `main` commit that passes the documentation workflow.
 
 ## Primary upstream references
 

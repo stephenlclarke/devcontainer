@@ -13,8 +13,10 @@ hotspots, and technical debt; 0.4% duplication; and A ratings throughout.
 CodeQL, dependency review, AddressSanitizer, and ThreadSanitizer pass. Real
 Docker, stock Apple, and separately identified `container-compose` lanes pass
 all 18 CLI parity fixtures and the pinned real VS Code fixture with zero
-normalized semantic or performance differences. The largest recorded CLI
-slowdown is 4.314x and the largest VS Code slowdown is 1.545x.
+normalized semantic differences and no performance failures. Across the three
+audited release-era runs, the largest observed CLI slowdown is 4.509x and the
+largest observed VS Code slowdown is 1.545x. See
+[`PERFORMANCE.md`](PERFORMANCE.md) for the full matrix and variability.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 

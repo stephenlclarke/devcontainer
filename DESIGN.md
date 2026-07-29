@@ -38,6 +38,13 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Hiding unsupported stock-Apple primitives behind success responses.
 - Treating the current matched `container-compose` fork stack as stock Apple.
 
+Version 1.0.0 has one known exception to the fail-explicitly goal: Docker
+create/build members absent from the bounded Swift DTO can be ignored during
+decoding. This means arbitrary `runArgs` are not fail-closed. The confirmed
+cases, user impact, and remediation priorities are maintained in
+[`CONFORMANCE.md`](CONFORMANCE.md); no design or compatibility claim should
+hide that exception.
+
 ## Normative and implementation references
 
 The Dev Containers organization is the primary source for configuration and lifecycle behavior:
@@ -133,7 +140,7 @@ The runtime SPI is capability-driven and asynchronous. Its initial protocol grou
 - `EventRuntime`: ordered lifecycle/image/network/volume/exec events with resumable cursors.
 - `ComposeProvider`: version/capability probe, config, build, up, stop, down, and primary-service discovery.
 
-Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Unsupported behavior returns a typed `unsupportedCapability` error before resources are created.
+Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Decoded unsupported behavior returns a typed `unsupportedCapability` error before resources are created. Docker create fields outside the current request model are an explicit conformance gap and can be ignored by Swift decoding; see [CONFORMANCE.md](CONFORMANCE.md).
 
 The Apple adapter also probes `container create --help` once per selected executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged switches: privileged requests map to the stock capability model, while explicit hostname or security-option requests fail before mount or container side effects. A separately fingerprinted enhanced runtime uses its native switches. Capability discovery is behavioral and never inferred from an install path or attributed across provider lanes.
 
@@ -151,7 +158,7 @@ The service advertises only the Docker API versions proven by the parity suite. 
 | Resources | volume and network create/list/inspect/connect/disconnect/remove |
 | Events | label-filtered, ordered JSON event stream with reconnect cursor |
 
-Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and UID-update fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
+Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and Dockerfile-build fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
 
 ## Identity and label projection
 

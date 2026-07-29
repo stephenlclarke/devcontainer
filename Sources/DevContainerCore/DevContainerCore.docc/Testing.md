@@ -17,11 +17,12 @@ cleanup flows.
 
 Real Docker, stock Apple `container` 1.1.0, and the matched
 `container-compose` 0.10.1 provider pass all 18 CLI fixtures and the real VS
-Code fixture without normalized semantic or performance differences. The
-largest CLI ratios are 4.314x for stock Apple and 3.062x for
-`container-compose`; the corresponding VS Code ratios are 1.091x and 1.545x.
-Release evidence includes the normalized comparison, raw recordings,
-diagnostics, fingerprints, JUnit, and cleanup reports for all three lanes.
+Code fixture without normalized semantic differences or performance failures.
+In the exact 1.0.0 tag run, the largest CLI ratios are 2.876x for stock Apple
+and 4.509x for `container-compose`; the corresponding VS Code ratios are
+1.232x and 1.311x. Release evidence includes the normalized comparison, raw
+recordings, diagnostics, fingerprints, JUnit, and cleanup reports for all
+three lanes.
 
 Every CLI fixture also records monotonic wall-clock time in lane JSON and
 JUnit. The comparison artifact retains raw durations and reports stock/Docker
@@ -29,3 +30,7 @@ and provider/Docker ratios even when functional parity fails. Completed
 slowdowns below `10x` are informational; a timeout, other non-completion,
 missing or invalid timing, or candidate duration of at least `10x` the matching
 Docker fixture fails the parity gate.
+
+See <doc:Performance> for the three-run matrix, variability, phase analysis,
+and optimization priorities. See <doc:Conformance> for properties that the
+release fixtures do not certify.

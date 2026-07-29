@@ -118,21 +118,21 @@
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["TTY and non-TTY framing", "user environment and workdir", "exact exit status and cancellation"]
+      "assertions": ["TTY and non-TTY output", "user environment and workdir", "4 MiB stdin stdout and exact exit status"]
     },
     {
       "id": "E04-image-build",
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["pull and inspect", "Dockerfile build options", "failed build stream"]
+      "assertions": ["Dockerfile build argument and label", "plain progress stream", "failed build stream"]
     },
     {
       "id": "E05-archive-copy",
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["copy in and out", "tar framing", "modes symlinks and large files"]
+      "assertions": ["copy in and out", "content mode symlink and long path", "1 MiB file preservation"]
     },
     {
       "id": "E06-network-volume",
@@ -145,37 +145,37 @@
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["workspace mount and folder", "container labels", "keepalive and attach"]
+      "assertions": ["workspace mount and folder", "container environment and user", "post-create command"]
     },
     {
       "id": "D02-dockerfile-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["context and Dockerfile", "build arguments and target", "entrypoint CMD and rebuild"]
+      "assertions": ["context and Dockerfile path", "build argument and target", "workspace and post-create command"]
     },
     {
       "id": "D03-users-environment",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["container and remote users", "UID update", "container remote and probed environment"]
+      "assertions": ["container and remote users", "explicit no-UID-update path", "container and remote environment expansion"]
     },
     {
       "id": "D04-lifecycle-hooks",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["normative hook ordering", "parallel object commands", "failure gating"]
+      "assertions": ["string-valued hook ordering", "host create update start and attach phases", "lifecycle state observation"]
     },
     {
       "id": "D05-features",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["OCI feature resolution", "install ordering", "lockfile and frozen-lock behavior"]
+      "assertions": ["two OCI Features installed", "generated Feature build", "lockfile and frozen-lock behavior"]
     },
     {
       "id": "D06-ports",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["published and forwarded ports", "collision behavior", "host and service connectivity"]
+      "assertions": ["published TCP port and forward metadata", "collision behavior", "host and container connectivity"]
     },
     {
       "id": "D07-reuse-cleanup",

@@ -13,6 +13,11 @@ standalone command and does not install, replace, relink, start, stop, or modify
 an Apple container runtime. Its separate Homebrew service starts and stops only
 the `devcontainer-engine` compatibility endpoint.
 
+For a task-oriented walkthrough after installation, use the
+[`USER_GUIDE.md`](USER_GUIDE.md). The exact release scope and known standards
+gaps are in [`COMPATIBILITY.md`](COMPATIBILITY.md) and
+[`CONFORMANCE.md`](CONFORMANCE.md).
+
 ## Installation Contract
 
 The supported installation preserves these boundaries:

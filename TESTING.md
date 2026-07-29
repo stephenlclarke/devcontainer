@@ -8,11 +8,12 @@ parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
 driver. The hosted-safe suite contains 127 Swift tests and records greater than
 90% first-party line coverage. For version 1.0.0, real Docker, stock Apple,
 and separately identified `container-compose` lanes pass all 18 CLI fixtures
-and the pinned real VS Code fixture with zero normalized semantic or
-performance differences. The largest recorded CLI ratios are 4.314x for stock
-Apple and 3.062x for `container-compose`; the corresponding VS Code ratios are
-1.091x and 1.545x. The release binds these results to the exact physical
-runner, signing, notarization, and publication evidence.
+and the pinned real VS Code fixture with zero normalized semantic differences
+and no performance failures. In the exact 1.0.0 tag run, the largest CLI ratios
+are 2.876x for stock Apple and 4.509x for `container-compose`; the corresponding
+VS Code ratios are 1.232x and 1.311x. Three-run statistics and hotspot analysis
+are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds these results to
+the exact physical runner, signing, notarization, and publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
@@ -27,7 +28,9 @@ The test system proves all of the following:
 
 - Docker Engine requests used by the pinned Dev Containers toolchain have the expected status, headers, body, stream framing, errors, and lifecycle effects.
 - Provider-neutral behavior is identical through the stock Apple and `container-compose` providers wherever the project claims support.
-- An unsupported Apple primitive fails before creating resources and is never silently ignored.
+- A decoded unsupported Apple primitive fails before creating resources. The
+  separate standards audit tracks Docker request members that 1.0.0 does not
+  yet decode and reject.
 - State reconciliation, cancellation, concurrent operations, and cleanup remain correct after partial failures.
 - A pinned stable VS Code and Dev Containers extension can open, rebuild, reuse, and close a representative workspace without patches.
 - Tests execute enough product code to meet a 90% overall line-coverage gate and a 90% changed-code line-coverage gate.
@@ -183,7 +186,7 @@ lane.
 
 Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
 
-Timing is not an exact-equivalence assertion. A completed candidate remains passing when it is slower than Docker by less than one order of magnitude. A timeout or other non-completion, missing or invalid timing evidence, or a candidate duration of at least `10x` the Docker oracle for the same fixture fails the parity gate. The harness does not retry, normalize, or waive those failures.
+Timing is not an exact-equivalence assertion. A completed candidate remains passing when it is slower than Docker by less than one order of magnitude. A timeout or other non-completion, missing or invalid timing evidence, or a candidate duration of at least `10x` the Docker oracle for the same fixture fails the parity gate. The harness does not retry, normalize, or waive those failures. The complete 1.0.0 repeated-run analysis and optimization measurement protocol are in [`PERFORMANCE.md`](PERFORMANCE.md).
 
 ## Fixture catalog
 
@@ -191,46 +194,55 @@ The machine-readable manifest is the source of release scope. Fixture identifier
 
 ### Engine API fixtures
 
-- Ping, version negotiation, information, supported and unsupported API prefixes.
-- Container list, create, inspect, start, stop, kill, wait, remove, logs, and attach.
-- Exec create, attached and detached start, resize, byte-exact 4 MiB duplex input/output under backpressure, multiplexed output, inspect, cancellation, and exit status.
-- Image list, pull, inspect, tag, remove, Dockerfile build, build errors, and streamed progress.
-- Archive upload, download, path stat, empty files, modes, ownership, symlinks, traversal rejection, and long paths.
-- Network and volume create, inspect, connect, disconnect, mount, filter, and remove.
-- Event filters, ordering, reconnect, cursor expiry, slow consumer, and service restart.
+- Ping, version negotiation, supported API-prefix handling, `HEAD /_ping`,
+  Docker error envelopes, and malformed create requests.
+- Container create, inspect, start, wait, exit status, remove, and repeated-remove
+  behavior.
+- Exec TTY and non-TTY output, user/environment/workdir selection, byte-exact
+  4 MiB stdin/stdout transfer, stderr separation, and exact exit status.
+- Dockerfile build arguments and labels, plain progress output, and a failed
+  build stream.
+- Archive copy in and out with content, file mode, symlink, long-path, and
+  1 MiB file preservation.
+- Network and volume creation and inspection, service-name DNS, read-only bind,
+  tmpfs, and named-volume persistence.
 
 ### Dev Container fixtures
 
-- Image-based configuration and merged image metadata.
+- Image-based configuration, environment, workspace, lifecycle hook, and reuse.
 - Dockerfile configuration, build arguments, target stages, and build context.
-- Container and remote users, UID/GID update, environment probing, and shell selection.
-- Lifecycle command order, parallel object-form commands, failure propagation, and resume behavior.
-- Frozen Dev Container Feature lockfiles, Feature ordering, options, mounts, and installation failure.
-- Workspace mounts, bind mounts, named volumes, port attributes, forwarding, and Unix sockets.
-- Resource discovery by labels, reuse of a matching configuration, rebuild after a changed digest, and close cleanup.
+- Container and remote users, explicit `updateRemoteUserUID: false`, container/remote environment, and container-environment expansion.
+- String-valued lifecycle command order across initialize, create, update, post-create, start, and attach.
+- Two public Dev Container Features, generated build context, lockfile use, and frozen-lock rejection.
+- Workspace mounts, bind mounts, named volumes, port attributes, TCP publishing, and forwarding.
+- Same-configuration reuse, forced replacement, lifecycle-hook counts, and
+  explicit container/volume cleanup.
 
-All external images and Features used by stable fixtures are content-addressed
-or mirrored into a release-controlled fixture registry. A tag alone is not a
-reproducible test input.
+Release evidence records the resolved runtime and client fingerprints.
+Several 1.0.0 fixtures still name public image or Feature tags, so upstream
+content can drift between rebuilds. Converting every fixture input to an
+immutable digest is a reproducibility follow-up; a tag alone is not treated as
+proof of an immutable test input.
 
 ### Compose fixtures
 
-- Primary and sidecar services, generated overrides, profiles, and service selection.
-- Build and image services, dependency order, health-gated startup, and lifecycle failure.
-- Environment precedence, secrets/config rejection or support, resource constraints, and platform validation.
-- Default and named networks, aliases, DNS, published ports, bind mounts, and named volumes.
-- Stop signals, graceful timeout, restart policy, project reuse, partial failure, and down cleanup.
+- Selected primary service, generated override, and workspace projection.
+- `runServices`, dependency health, and service-name DNS.
+- Environment files, a named volume, a named network, and network aliases.
+- Restart, recreate, stop-signal handling, primary-container discovery,
+  project down, and cleanup.
 
 ### Fault and concurrency fixtures
 
-- Missing images, invalid JSON, unsupported API versions, unavailable backend, and permission errors.
-- Truncated HTTP, malformed native output, socket drop, slow consumer, deadline expiry, and backpressure.
-- SIGTERM during build/create/exec, forced child termination, service crash, and restart reconciliation.
-- Disk exhaustion, occupied port, invalid mount, inaccessible workspace, and state-database failure.
-- Concurrent create, start, stop, remove, rebuild, exec, event subscription, and cleanup races.
-- Duplicate idempotency keys, conflicting provider selection, stale leases, and two projects with similar paths.
+- A missing backend socket returns an error.
+- Four concurrent starts of one created container complete successfully.
+- Four concurrent forced removes converge on an absent container.
+- A `TERM` signal produces the expected container exit status.
+- An empty, filtered event stream returns within its bounded interval.
 
-Concurrency fixtures use barriers and controllable clocks instead of timing sleeps wherever possible. Every race test asserts final runtime state, state-store state, emitted events, and absence of leaks.
+The concurrency probe asserts the observed final container state and fixture
+cleanup. Wider fault injection and deterministic scheduler coverage remain
+future work and are not part of the 1.0.0 parity claim.
 
 ## Real runtime matrix
 

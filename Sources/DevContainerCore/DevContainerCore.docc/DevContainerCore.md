@@ -29,9 +29,12 @@ reference consumer.
 
 ### Essentials
 
+- <doc:UserGuide>
 - <doc:Architecture>
 - <doc:Compatibility>
+- <doc:Conformance>
 - <doc:Testing>
+- <doc:Performance>
 - ``DevContainerConfiguration``
 - ``DevContainerConfigurationStore``
 - ``RuntimeLabels``
