@@ -21,7 +21,7 @@ import Testing
 @Test
 func `design manifest and library agree on required backends`() {
     #expect(DevContainerProject.designSchemaVersion == 1)
-    #expect(DevContainerProject.buildInfo.version == "1.0.0")
+    #expect(DevContainerProject.buildInfo == BuildInfo.current)
     #expect(
         Set(DevContainerProject.requiredParityBackends) == [
             "docker",

@@ -100,6 +100,32 @@ struct EngineServerTests {
         try await server.shutdown()
     }
 
+    @Test
+    func `server serializes pipelined HTTP responses`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let server = fixture.server(runtime: InMemoryRuntime())
+        try await server.start()
+
+        do {
+            let response = try fixture.pipelined(
+                "GET /v1.53/version HTTP/1.1\r\n"
+                    + "Host: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n\r\n"
+            )
+            let version = try #require(response.range(of: "\"ApiVersion\""))
+            let ping = try #require(response.range(of: "\r\n\r\nOK"))
+            #expect(version.lowerBound < ping.lowerBound)
+            #expect(response.components(separatedBy: "HTTP/1.1 200 OK").count == 3)
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
+    }
+
     private func exerciseServer(_ fixture: ServerFixture) throws {
         let ping = try fixture.curl("/_ping")
         #expect(ping.status == 200)
@@ -298,6 +324,35 @@ private struct ServerFixture {
             throw CurlError("container start returned \(start.status): \(start.body)")
         }
         return identifier
+    }
+
+    func pipelined(_ request: String) throws -> String {
+        let input = Pipe()
+        let output = Pipe()
+        let error = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        process.arguments = ["-U", socketPath]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = error
+        try process.run()
+        input.fileHandleForWriting.write(Data(request.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        let standardOutput = try output.fileHandleForReading.readToEnd() ?? Data()
+        let standardError = try error.fileHandleForReading.readToEnd() ?? Data()
+        guard process.terminationStatus == 0 else {
+            throw CurlError(
+                "pipelined request: "
+                    + (
+                        String(data: standardError, encoding: .utf8)
+                            ?? "non-UTF-8 nc diagnostic"
+                    )
+            )
+        }
+        return String(data: standardOutput, encoding: .utf8)
+            ?? "non-UTF-8 pipelined response"
     }
 
     func createExec(container: String) throws -> String {

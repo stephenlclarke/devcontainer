@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import Darwin
+import DequeModule
 import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -297,6 +298,11 @@ private final class DockerInputCloseBarrier:
     }
 }
 
+private struct DockerHTTPPendingRequest {
+    let head: HTTPRequestHead
+    let request: DockerHTTPRequest?
+}
+
 private final class DockerHTTPHandler:
     ChannelInboundHandler,
     RemovableChannelHandler,
@@ -316,6 +322,8 @@ private final class DockerHTTPHandler:
     private let inputCloseBarrier: DockerInputCloseBarrier
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
+    private var activeRequestHead: HTTPRequestHead?
+    private var pendingRequests = Deque<DockerHTTPPendingRequest>()
     private var responseInFlight = false
     private var closeAfterResponse = false
 
@@ -354,7 +362,7 @@ private final class DockerHTTPHandler:
         if let channelEvent = event as? ChannelEvent,
            channelEvent == .inputClosed
         {
-            if responseInFlight {
+            if responseInFlight || !pendingRequests.isEmpty {
                 closeAfterResponse = true
             } else {
                 context.close(promise: nil)
@@ -367,11 +375,38 @@ private final class DockerHTTPHandler:
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case let .head(head):
+            guard requestHead == nil else {
+                context.close(promise: nil)
+                return
+            }
+            if responseInFlight,
+               activeRequestHead?.headers.contains(name: "Upgrade") == true
+            {
+                // The active response is about to replace the HTTP pipeline
+                // with a raw Docker stream, so no later HTTP request can be
+                // represented safely on this connection.
+                context.close(promise: nil)
+                return
+            }
+            if head.headers.contains(name: "Upgrade"),
+               responseInFlight || !pendingRequests.isEmpty
+            {
+                // An HTTP upgrade consumes the connection. It cannot be queued
+                // behind or ahead of another HTTP response safely.
+                context.close(promise: nil)
+                return
+            }
             upgradeState.beginRequest(head)
             requestHead = head
             requestBody.clear()
         case var .body(buffer):
             guard requestBody.readableBytes + buffer.readableBytes <= Self.maximumRequestBody else {
+                guard !responseInFlight, pendingRequests.isEmpty else {
+                    // A standalone error response would overtake an earlier
+                    // pipelined response, so reject this connection instead.
+                    context.close(promise: nil)
+                    return
+                }
                 writeError(
                     context: context,
                     status: .payloadTooLarge,
@@ -382,7 +417,7 @@ private final class DockerHTTPHandler:
             }
             requestBody.writeBuffer(&buffer)
         case .end:
-            handleRequest(context: context)
+            enqueueRequest(context: context)
         }
     }
 
@@ -391,9 +426,9 @@ private final class DockerHTTPHandler:
         context.close(promise: nil)
     }
 
-    private func handleRequest(context: ChannelHandlerContext) {
-        guard let head = requestHead, let method = DockerHTTPMethod(rawValue: head.method.rawValue) else {
-            writeError(context: context, status: .methodNotAllowed, message: "unsupported HTTP method")
+    private func enqueueRequest(context: ChannelHandlerContext) {
+        guard let head = requestHead else {
+            context.close(promise: nil)
             return
         }
         let body = Data(
@@ -406,14 +441,36 @@ private final class DockerHTTPHandler:
             head.headers.map { ($0.name, $0.value) },
             uniquingKeysWith: { _, latest in latest }
         )
-        let request = DockerHTTPRequest(
-            method: method,
-            target: head.uri,
-            headers: headers,
-            body: body
-        )
-        let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
+        let request = DockerHTTPMethod(rawValue: head.method.rawValue).map {
+            DockerHTTPRequest(
+                method: $0,
+                target: head.uri,
+                headers: headers,
+                body: body
+            )
+        }
+        requestHead = nil
+        requestBody.clear()
+        pendingRequests.append(DockerHTTPPendingRequest(head: head, request: request))
+        processNextRequest(context: context)
+    }
+
+    private func processNextRequest(context: ChannelHandlerContext) {
+        guard !responseInFlight, let pending = pendingRequests.popFirst() else {
+            return
+        }
         responseInFlight = true
+        activeRequestHead = pending.head
+        upgradeState.beginRequest(pending.head)
+        guard let request = pending.request else {
+            writeError(
+                context: context,
+                status: .methodNotAllowed,
+                message: "unsupported HTTP method"
+            )
+            return
+        }
+        let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
         let sendableContext = SendableChannelHandlerContext(context)
         promise.completeWithTask {
             await self.router.respond(to: request)
@@ -500,11 +557,11 @@ private final class DockerHTTPHandler:
         headers: inout HTTPHeaders,
         context: ChannelHandlerContext
     ) {
-        let requestedUpgrade = requestHead?.headers.contains(name: "Upgrade") ?? false
+        let requestedUpgrade = activeRequestHead?.headers.contains(name: "Upgrade") ?? false
         logger.debug(
             "Engine connection takeover requested",
             metadata: [
-                "request-target": .string(requestHead?.uri ?? "unknown"),
+                "request-target": .string(activeRequestHead?.uri ?? "unknown"),
                 "upgrade": .stringConvertible(requestedUpgrade)
             ]
         )
@@ -666,8 +723,11 @@ private final class DockerHTTPHandler:
         let sendableContext = SendableChannelHandlerContext(context)
         future.whenComplete { _ in
             self.responseInFlight = false
-            if self.closeAfterResponse {
+            self.activeRequestHead = nil
+            if self.closeAfterResponse, self.pendingRequests.isEmpty {
                 sendableContext.value.close(promise: nil)
+            } else {
+                self.processNextRequest(context: sendableContext.value)
             }
         }
     }

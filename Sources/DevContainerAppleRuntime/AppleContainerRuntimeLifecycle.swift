@@ -32,15 +32,17 @@ public extension AppleContainerRuntime {
             runtimeID: resolved,
             startedAt: startedAt
         )
-        let snapshot = try await inspectContainer(
-            id: resolved,
+        let inventory = try await listContainers(
+            all: true,
+            labels: [:],
             context: context
         )
+        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
         try await startPortForwarding(
             snapshot: snapshot,
             startedAt: startedAt
         )
-        try await synchronizeNetworkHosts(context: context)
+        try await synchronizeNetworkHosts(context: context, containers: inventory)
     }
 
     private func launchContainerProcess(id: String) async throws {
@@ -198,8 +200,8 @@ public extension AppleContainerRuntime {
         guard !name.isEmpty else {
             throw DevContainerError(.invalidRequest, message: "container name is empty")
         }
-        let snapshot = try await inspectContainer(id: id, context: context)
         let containers = try await listContainers(all: true, labels: [:], context: context)
+        let snapshot = try resolvedContainerSnapshot(id: id, in: containers)
         guard
             !containers.contains(where: {
                 $0.runtimeID != snapshot.runtimeID && $0.spec.name == name
