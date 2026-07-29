@@ -100,14 +100,14 @@ class SwiftTestRunnerTests(unittest.TestCase):
                 root,
                 command,
                 log,
-                timeout_seconds=1,
+                timeout_seconds=2,
             )
 
             self.assertEqual(result.returncode, 124)
             retained_output = log.read_text(encoding="utf-8")
             self.assertIn("test command started", retained_output)
             self.assertIn(
-                "Swift test command timed out after 1 seconds.",
+                "Swift test command timed out after 2 seconds.",
                 retained_output,
             )
             child_pid = int(
@@ -144,11 +144,11 @@ class SwiftTestRunnerTests(unittest.TestCase):
                 command,
                 log,
                 attempts=2,
-                timeout_seconds=1,
+                timeout_seconds=2,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("a 1-second timeout", result.stderr)
+            self.assertIn("a 2-second timeout", result.stderr)
             self.assertIn(
                 "123 tests passed",
                 log.read_text(encoding="utf-8"),

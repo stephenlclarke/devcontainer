@@ -105,6 +105,7 @@ with open(log_path, "wb") as log:
             except ProcessLookupError:
                 pass
             process.wait()
+        log.seek(0, os.SEEK_END)
         log.write(
             (
                 "\nSwift test command timed out after "
