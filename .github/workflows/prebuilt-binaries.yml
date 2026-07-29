@@ -452,12 +452,12 @@ jobs:
         run: |
           set -euo pipefail
           class=Devcontainer
-          conflict=devcontainer-current
+          conflict_args=()
           formula=devcontainer.rb
           tag="${{ steps.package.outputs.release_tag }}"
           if [[ "${LANE}" == current ]]; then
             class=DevcontainerCurrent
-            conflict=devcontainer
+            conflict_args=(--conflicts-with devcontainer)
             formula=devcontainer-current.rb
           fi
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${ASSET}"
@@ -466,7 +466,7 @@ jobs:
             --formula-version "${FORMULA_VERSION}" \
             --formula-class "${class}" \
             --url "${url}" \
-            --conflicts-with "${conflict}" \
+            "${conflict_args[@]}" \
             --archive "${{ steps.package.outputs.archive }}" \
             --template devcontainer/Tools/release/devcontainer.rb.in \
             --output "homebrew-tap/Formula/${formula}"

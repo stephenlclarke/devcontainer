@@ -266,7 +266,6 @@ homebrew-formula: package
 		--product-version "$(DEVCONTAINER_VERSION)" \
 		--formula-class Devcontainer \
 		--url "https://github.com/stephenlclarke/devcontainer/releases/download/$(DEVCONTAINER_VERSION)/devcontainer-release-arm64.tar.gz" \
-		--conflicts-with devcontainer-current \
 		--archive "$(DIST_DIR)/devcontainer-release-arm64.tar.gz" \
 		--template Tools/release/devcontainer.rb.in \
 		--output "$(DIST_DIR)/devcontainer.rb"

@@ -390,9 +390,9 @@ class ReleaseToolTests(unittest.TestCase):
             template.write_text(
                 "class @FORMULA_CLASS@\n"
                 'url "@URL@"\n'
-                'version "@FORMULA_VERSION@"\n'
+                "@VERSION_DECLARATION@\n"
                 'product "@PRODUCT_VERSION@"\n'
-                'conflict "@CONFLICTS_WITH@"\n'
+                "@CONFLICT_DECLARATION@\n"
                 'sha256 "@SHA256@"\n',
                 encoding="utf-8",
             )
@@ -433,11 +433,56 @@ class ReleaseToolTests(unittest.TestCase):
             )
             self.assertIn('version "current.418.0123456789ab"', rendered)
             self.assertIn('product "1.2.3"', rendered)
-            self.assertIn('conflict "devcontainer"', rendered)
+            self.assertIn(
+                'conflicts_with "devcontainer", because: '
+                '"both install devcontainer commands"',
+                rendered,
+            )
             self.assertIn(
                 f'sha256 "{hashlib.sha256(archive.read_bytes()).hexdigest()}"',
                 rendered,
             )
+
+    def test_stable_homebrew_formula_uses_url_version_without_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            archive = temporary_root / "devcontainer.tar.gz"
+            template = temporary_root / "formula.rb.in"
+            output = temporary_root / "devcontainer.rb"
+            archive.write_bytes(b"release-archive")
+            template.write_text(
+                "class @FORMULA_CLASS@\n"
+                'url "@URL@"\n'
+                "@VERSION_DECLARATION@\n"
+                "@CONFLICT_DECLARATION@\n"
+                'sha256 "@SHA256@"\n',
+                encoding="utf-8",
+            )
+
+            self.run_tool(
+                "render-homebrew-formula.py",
+                "--product-version",
+                "1.2.3",
+                "--formula-class",
+                "Devcontainer",
+                "--url",
+                (
+                    "https://github.com/stephenlclarke/devcontainer/"
+                    "releases/download/1.2.3/"
+                    "devcontainer-release-arm64.tar.gz"
+                ),
+                "--archive",
+                str(archive),
+                "--template",
+                str(template),
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            self.assertIn("class Devcontainer", rendered)
+            self.assertNotIn("version ", rendered)
+            self.assertNotIn("conflicts_with", rendered)
 
     def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

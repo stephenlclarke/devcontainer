@@ -2,17 +2,14 @@ class @FORMULA_CLASS@ < Formula
   desc "VS Code Dev Containers compatibility for Apple container"
   homepage "https://github.com/stephenlclarke/devcontainer"
   url "@URL@"
-  version "@FORMULA_VERSION@"
-  sha256 "@SHA256@"
+@VERSION_DECLARATION@  sha256 "@SHA256@"
   license "Apache-2.0"
 
   depends_on arch: :arm64
   depends_on "docker"
   depends_on "docker-compose"
   depends_on macos: :tahoe
-  conflicts_with "@CONFLICTS_WITH@", because: "both install devcontainer commands"
-
-  def install
+@CONFLICT_DECLARATION@  def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-compose"
