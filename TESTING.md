@@ -29,7 +29,7 @@ The test system proves all of the following:
 - Docker Engine requests used by the pinned Dev Containers toolchain have the expected status, headers, body, stream framing, errors, and lifecycle effects.
 - Provider-neutral behavior is identical through the stock Apple and `container-compose` providers wherever the project claims support.
 - A decoded unsupported Apple primitive fails before creating resources. The
-  separate standards audit tracks Docker request members that 1.0.0 does not
+  separate standards audit tracks Docker request members that 1.0.1 does not
   yet decode and reject.
 - State reconciliation, cancellation, concurrent operations, and cleanup remain correct after partial failures.
 - A pinned stable VS Code and Dev Containers extension can open, rebuild, reuse, and close a representative workspace without patches.
@@ -219,7 +219,7 @@ The machine-readable manifest is the source of release scope. Fixture identifier
   explicit container/volume cleanup.
 
 Release evidence records the resolved runtime and client fingerprints.
-Several 1.0.0 fixtures still name public image or Feature tags, so upstream
+Several 1.0.1 fixtures still name public image or Feature tags, so upstream
 content can drift between rebuilds. Converting every fixture input to an
 immutable digest is a reproducibility follow-up; a tag alone is not treated as
 proof of an immutable test input.
@@ -242,7 +242,7 @@ proof of an immutable test input.
 
 The concurrency probe asserts the observed final container state and fixture
 cleanup. Wider fault injection and deterministic scheduler coverage remain
-future work and are not part of the 1.0.0 parity claim.
+future work and are not part of the 1.0.1 parity claim.
 
 ## Real runtime matrix
 
@@ -283,8 +283,8 @@ Changes to fixture definitions, the normalizer, comparison rules, or release man
 
 ## VS Code end-to-end tests
 
-The E2E suite pins VS Code 1.130.0 for arm64 at commit
-`1b6a188127eeaf9194f945eb6eb89a657e93c54c`, Dev Containers extension 0.467.0,
+The E2E suite pins VS Code 1.131.0 for arm64 at commit
+`e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`, Dev Containers extension 0.467.0,
 and its embedded Dev Container CLI 0.88.0 at
 `f683c29f64a20109b4453e5149807e390ff65133`. The driver authenticates the
 official application, VSIX, and embedded CLI by checked-in SHA-256 digests.

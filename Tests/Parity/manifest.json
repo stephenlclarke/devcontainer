@@ -28,12 +28,12 @@
       "stableCommit": "77d2191a75f3a15092bbead1991b0d6a37fafa91"
     },
     "vscode": {
-      "version": "1.130.0",
-      "commit": "1b6a188127eeaf9194f945eb6eb89a657e93c54c",
+      "version": "1.131.0",
+      "commit": "e4c7e7b1d6d060162f4aa7f8225271b67ce1df75",
       "platform": "darwin-arm64",
       "source": "https://github.com/microsoft/vscode",
-      "archiveURL": "https://update.code.visualstudio.com/1.130.0/darwin-arm64/stable",
-      "archiveSHA256": "6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3",
+      "archiveURL": "https://update.code.visualstudio.com/1.131.0/darwin-arm64/stable",
+      "archiveSHA256": "796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99",
       "applicationIdentifier": "com.microsoft.VSCode",
       "signingTeamIdentifier": "UBF8T346G9",
       "devContainersExtension": {

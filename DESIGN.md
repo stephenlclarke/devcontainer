@@ -38,7 +38,7 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Hiding unsupported stock-Apple primitives behind success responses.
 - Treating the current matched `container-compose` fork stack as stock Apple.
 
-Version 1.0.0 has one known exception to the fail-explicitly goal: Docker
+Version 1.0.1 has one known exception to the fail-explicitly goal: Docker
 create/build members absent from the bounded Swift DTO can be ignored during
 decoding. This means arbitrary `runArgs` are not fail-closed. The confirmed
 cases, user impact, and remediation priorities are maintained in

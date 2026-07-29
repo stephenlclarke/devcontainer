@@ -1,6 +1,6 @@
 # Standards Conformance
 
-Version 1.0.0 is conformant for its release-certified fixture scope. It is not
+Version 1.0.1 is conformant for its release-certified fixture scope. It is not
 a complete implementation of every property in the Development Containers
 Specification.
 
@@ -10,11 +10,11 @@ and the exact official
 [`@devcontainers/cli` 0.88.0 commit](https://github.com/devcontainers/cli/tree/f683c29f64a20109b4453e5149807e390ff65133)
 used by the release.
 
-## Confirmed 1.0.0 non-conformances
+## Confirmed 1.0.1 non-conformances
 
 - Arbitrary `runArgs` are not a blanket pass-through. Unknown Docker create
   members can be ignored instead of rejected.
-- `hostRequirements.gpu` becomes a Docker device request that 1.0.0 does not
+- `hostRequirements.gpu` becomes a Docker device request that 1.0.1 does not
   decode or transport.
 - Stock privileged mode maps to `--cap-add ALL`, not full Docker privileged
   semantics.
@@ -26,13 +26,13 @@ used by the release.
   than a separate Docker anonymous-volume lifecycle.
 - Stock Apple cannot connect or disconnect networks after container creation.
 - Resource, namespace, device, DNS, host mapping, restart, and similar
-  arbitrary Docker run arguments are outside the 1.0.0 DTO and claim.
+  arbitrary Docker run arguments are outside the 1.0.1 DTO and claim.
 
 Properties owned by the official CLI or VS Code are separately classified as
 delegated, partial, or unverified. A delegated parser/UI feature can still
 depend on unsupported runtime behavior.
 
-Version 1.0.0 is limited to Linux `arm64` containers on Apple-silicon macOS
+Version 1.0.1 is limited to Linux `arm64` containers on Apple-silicon macOS
 Tahoe hosts. That is a product support boundary rather than a standards
 non-conformance.
 

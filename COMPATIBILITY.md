@@ -3,7 +3,7 @@
 ## Current status
 
 > [!IMPORTANT]
-> Version 1.0.0 supports the exact component fingerprints below. Real Docker,
+> Version 1.0.1 supports the exact component fingerprints below. Real Docker,
 > stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
 > provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
 > with zero normalized semantic differences and no performance failures. In
@@ -56,7 +56,7 @@ or another implementation module.
 
 ## Pinned design-time provenance
 
-These pins define the 1.0.0 compatibility matrix. Release-bound
+These pins define the 1.0.1 compatibility matrix. Release-bound
 evidence also records the signing identity where applicable, platform triple,
 and each component's machine-readable version output.
 
@@ -71,7 +71,7 @@ and each component's machine-readable version output.
 | `container-compose` stable | `0.10.1` | Annotated tag object `5be84c712176d745b4736e82f97b7458813cb7ec`; source commit `77d2191a75f3a15092bbead1991b0d6a37fafa91` | Optional provider |
 | Stable provider's `stephenlclarke/container` | Revision | `367430446959e3048da37f5f64d3c10e1293d3de` | Exact fork dependency declared by `container-compose` 0.10.1 |
 | Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
-| VS Code | `1.130.0`, arm64 stable | Commit `1b6a188127eeaf9194f945eb6eb89a657e93c54c`; official archive SHA-256 `6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
+| VS Code | `1.131.0`, arm64 stable | Commit `e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`; official archive SHA-256 `796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
 | Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
@@ -107,7 +107,7 @@ The service advertises the bounded API envelope:
 - versions above `1.53`: out of scope until separately pinned and tested;
 - versions below `1.44`: out of scope for the initial release.
 
-Version 1.0.0 advertises the contiguous, tested subset `1.44...1.53`.
+Version 1.0.1 advertises the contiguous, tested subset `1.44...1.53`.
 Unversioned routes and every advertised version prefix must negotiate and
 return Docker-compatible status codes, JSON fields, headers, event ordering,
 and stream framing. Advertising a version means every endpoint needed by the
@@ -127,7 +127,7 @@ The bounded endpoint surface is:
 - label-filtered, ordered, reconnectable events.
 
 Decoded unsupported endpoints and fields fail before side effects with a
-Docker-shaped error. Version 1.0.0 does not yet reject every unknown Docker
+Docker-shaped error. Version 1.0.1 does not yet reject every unknown Docker
 create/build member: Swift decoding can omit fields outside the bounded DTO.
 Arbitrary `runArgs` therefore are not a blanket support surface. This known
 non-conformance and its remediation priority are recorded in
@@ -184,7 +184,7 @@ every required release-bound parity and release gate has passed.
 ## Standards claim
 
 The fixture ledger is not a full Development Containers Specification claim.
-Version 1.0.0 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
+Version 1.0.1 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
 Docker privileged behavior, stock security options and hostname, advanced
 mount fields, image-anonymous volume semantics, and post-create network
 changes. It also has properties delegated to the official CLI or VS Code that

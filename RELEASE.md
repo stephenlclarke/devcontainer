@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.0 uses the release process in this document. Its authoritative
+> Version 1.0.1 uses the release process in this document. Its authoritative
 > version, deterministic signed package, notarization evidence, checksums, SBOM,
 > GitHub attestation, hosted and physical parity gates, Homebrew promotion,
 > SonarQube analysis, and DocC publication are bound to one immutable release
@@ -46,7 +46,7 @@ The `devcontainer` adaptation removes `container-compose`'s duplicated version
 literals. The only tracked product-version declaration is:
 
 ```makefile
-DEVCONTAINER_VERSION ?= 1.0.0
+DEVCONTAINER_VERSION ?= 1.0.1
 ```
 
 Source code does not contain a second editable copy. The
@@ -175,7 +175,7 @@ An existing stable release is immutable. Recovery may recreate only a missing or
   "lane": "stable",
   "provider": "none",
   "source": "stephenlclarke/devcontainer",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
 ```
 
@@ -424,7 +424,7 @@ Stable formula:
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.0/devcontainer-release-arm64.tar.gz"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
@@ -486,16 +486,16 @@ make release-gate-hosted
 make package-release
 ```
 
-For stable 1.0.0 publication:
+For stable 1.0.1 publication:
 
 1. Push the exact candidate to protected `main` and require every workflow in
    the stable gate to succeed for that commit.
 2. Run the serialized three-lane parity workflow and retain its raw, normalized,
    VS Code, and cleanup evidence.
-3. Create and push the annotated SSH-signed `1.0.0` tag.
-4. Dispatch `stable-release-gate.yml` with `ref=1.0.0`.
+3. Create and push the annotated SSH-signed `1.0.1` tag.
+4. Dispatch `stable-release-gate.yml` with `ref=1.0.1`.
 5. After its candidate-bound authority artifact is present, dispatch
-   `prebuilt-binaries.yml` with `ref=1.0.0`.
+   `prebuilt-binaries.yml` with `ref=1.0.1`.
 6. Verify the finalized GitHub release, attestations, tap commit, fresh
    `brew install stephenlclarke/tap/devcontainer`, formula test, build identity,
    and a stock-runtime smoke.

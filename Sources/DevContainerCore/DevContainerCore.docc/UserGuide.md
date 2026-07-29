@@ -70,7 +70,7 @@ Apple does not supply a Compose plug-in. The separately installed
 `container-compose` provider is optional, independently maintained, and uses
 its exact matched custom runtime stack.
 
-Version 1.0.0 certifies the checked-in image, Dockerfile, Feature, user,
+Version 1.0.1 certifies the checked-in image, Dockerfile, Feature, user,
 environment, lifecycle, port, reuse, Compose, engine, fault, and real VS Code
 fixtures. It does not certify every standard property or arbitrary Docker
 argument. Read <doc:Conformance> before using GPU, privileged, security,
