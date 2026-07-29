@@ -226,6 +226,6 @@ brew test
 
 GitHub Actions must be pinned to complete commit SHAs. Tap CI must not start a live Apple VM merely to validate formula installation; live runtime compatibility belongs to the source repository's trusted bare-metal release gate.
 
-## Source Maintenance
+## Devcontainer Source Maintenance
 
 Do not add `devcontainer` as a tap submodule. The formula is generated directly from immutable release assets and a source-owned template. This avoids stale source snapshots and keeps the tap's live content limited to installation metadata.
