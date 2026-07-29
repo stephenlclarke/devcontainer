@@ -45,7 +45,7 @@ devcontainer.spdx.json
 notarization.json
 ```
 
-The formula version exactly matches the GitHub release tag.
+Homebrew infers the stable formula version from the immutable tag-bearing URL. The formula does not repeat a redundant explicit `version` declaration.
 
 ### Current
 
@@ -63,7 +63,7 @@ Current uses:
 - Immutable candidate asset: `devcontainer-current-<sha12>-arm64.tar.gz`
 - Monotonic formula version: `current.<github_run_number>.<sha12>`
 
-Stable and Current conflict because they install the same executable. Install one channel at a time.
+Stable and Current cannot coexist because they install the same executables. The optional Current formula declares a conflict with `devcontainer`; install one channel at a time and uninstall the active channel before switching.
 
 ### Requirements
 
@@ -144,7 +144,6 @@ class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
   url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.0/devcontainer-release-arm64.tar.gz"
-  version "1.0.0"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
@@ -152,7 +151,6 @@ class Devcontainer < Formula
   depends_on "docker"
   depends_on "docker-compose"
   depends_on macos: :tahoe
-  conflicts_with "devcontainer-current", because: "both install devcontainer commands"
 
   def install
     bin.install "bin/devcontainer"
@@ -205,7 +203,7 @@ class Devcontainer < Formula
 end
 ```
 
-The Current template changes the class, formula name, version, URL, and expected lane while preserving the runtime-neutral install.
+The Current template changes the class, formula name, version, URL, and expected lane, and adds `conflicts_with "devcontainer"` while preserving the runtime-neutral install.
 
 ## Tap CI
 

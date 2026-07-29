@@ -425,7 +425,6 @@ class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
   url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.0/devcontainer-release-arm64.tar.gz"
-  version "1.0.0"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
@@ -461,7 +460,7 @@ class Devcontainer < Formula
 end
 ```
 
-The Current formula uses `DevcontainerCurrent`, a commit-identified URL, and `current.<run>.<sha12>`. Stable and Current formulae must conflict because both install `devcontainer`.
+Homebrew infers the stable version from the immutable tag-bearing URL, so the stable formula does not repeat a redundant `version` declaration. The Current formula uses `DevcontainerCurrent`, a commit-identified URL, an explicit `current.<run>.<sha12>` version, and a conflict with `devcontainer` because both channels install the same commands. Users must uninstall the active channel before switching.
 
 The formula must not:
 

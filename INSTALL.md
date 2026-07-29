@@ -105,7 +105,7 @@ brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
-Stable and Current conflict because both install the same `devcontainer` command. Switch channels explicitly rather than mixing files:
+Stable and Current cannot coexist because both install the same commands. The optional Current formula declares a conflict with `devcontainer`; switch channels explicitly rather than mixing files:
 
 ```sh
 brew uninstall --formula stephenlclarke/tap/devcontainer-current
