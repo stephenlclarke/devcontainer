@@ -179,6 +179,26 @@ class WorkflowArtifactTests(unittest.TestCase):
                 name,
             )
 
+    def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
+        swift_workflows = (
+            "ci.yml",
+            "codeql.yml",
+            "docs.yml",
+            "homebrew.yml",
+            "quality.yml",
+            "sonar.yml",
+            "stable-release-gate.yml",
+        )
+        developer_dir = (
+            "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer"
+        )
+        for name in swift_workflows:
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            self.assertIn(developer_dir, contents, name)
+
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertEqual(makefile.count("$(SWIFT) test --quiet"), 4)
+
     def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
         contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
         prime = contents.index("- name: Prime resolved SwiftPM dependencies")

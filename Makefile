@@ -73,7 +73,7 @@ swift-test:
 	@SWIFT_TEST_RESULT_LOG="$(SWIFT_TEST_RESULT_LOG)" \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) --no-parallel
+		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) --no-parallel
 
 coverage:
 	@mkdir -p .build
@@ -84,7 +84,7 @@ coverage:
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/coverage --enable-code-coverage --no-parallel
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		$(SWIFT_STRICT_FLAGS) \
@@ -158,7 +158,7 @@ asan:
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/asan --sanitize=address --no-parallel
 
 tsan:
@@ -166,7 +166,7 @@ tsan:
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path .build/tsan --sanitize=thread --no-parallel
 
 test-asan: asan

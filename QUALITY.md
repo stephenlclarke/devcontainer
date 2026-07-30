@@ -154,7 +154,7 @@ The implemented ASan invocation is:
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
   SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --no-parallel
 ```
 
 The implemented TSan invocation is:
@@ -163,7 +163,7 @@ The implemented TSan invocation is:
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
   SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=thread --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --no-parallel
 ```
 
 These are Swift's AddressSanitizer and ThreadSanitizer modes, not custom leak or race parsers. They run serially with separate build/cache fingerprints and retain `.build/swift-asan.log` or `.build/swift-tsan.log`.
@@ -178,6 +178,11 @@ timeout for hosted SwiftPM stalls. The exact stable candidate sets
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
 evidence. ASan and TSan both run on protected main, schedules, explicit
 dispatches, and the exact stable candidate.
+
+Every Swift test target uses SwiftPM's `--quiet` mode. Failures and the final
+suite summary remain in the retained log, while per-test success chatter is
+suppressed so GitHub's Swift test event reporter cannot block on output
+back-pressure as the suite grows.
 
 Any sanitizer diagnostic fails the job. Suppressions require a pinned upstream issue, the narrowest stack match, expiry, and security review; a suppression cannot cover first-party product code for stable release.
 

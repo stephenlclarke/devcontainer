@@ -399,7 +399,7 @@ The AddressSanitizer job uses the same command shape as `container-compose`:
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --no-parallel
 ```
 
 The ThreadSanitizer job uses:
@@ -407,12 +407,17 @@ The ThreadSanitizer job uses:
 ```console
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=thread --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --no-parallel
 ```
 
 This project reuses the Compose stack's retry and full-log implementation but
 sets `SWIFT_TEST_ACCEPT_SIGNAL_13=0` for ASan, TSan, and coverage. A toolchain
 signal therefore cannot convert an incomplete execution into release evidence.
+
+All Swift test targets pass `--quiet`: assertion failures and the final suite
+summary are retained, but successful per-test events are not rendered. This
+prevents the SwiftPM test reporter from blocking on CI output back-pressure as
+the suite grows without reducing the pass/fail evidence.
 
 ASan and TSan run on relevant pull requests, `main`, schedules, explicit
 dispatches, and the exact stable candidate. Both run with `--no-parallel`,
