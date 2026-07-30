@@ -36,6 +36,7 @@ extension AppleContainerRuntimeTests {
         #expect(container.state == .running)
         #expect(container.startedAt != nil)
         #expect(container.spec.user == "501:20")
+        #expect(container.spec.environment == ["A": "last", "EMPTY": ""])
         #expect(container.spec.mounts.map(\.type) == [.bind, .volume, .tmpfs])
         #expect(
             container.spec.ports == [

@@ -126,6 +126,60 @@ struct EngineServerTests {
         try await server.shutdown()
     }
 
+    @Test
+    func `server bounds request and pipeline buffering`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let limits = EngineServerLimits(
+            maximumRequestBodyBytes: 64,
+            maximumBufferedRequestBodyBytes: 64,
+            maximumPendingRequests: 1
+        )
+        let server = fixture.server(
+            runtime: InMemoryRuntime(),
+            limits: limits
+        )
+        try await server.start()
+
+        do {
+            let oversized = try fixture.curl(
+                "/_ping",
+                method: "POST",
+                body: String(repeating: "x", count: 65)
+            )
+            #expect(oversized.status == 413)
+
+            let body = String(repeating: "x", count: 40)
+            let boundedBodies = try fixture.pipelined(
+                "POST /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\n\r\n"
+                    + body
+                    + "POST /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\n\r\n"
+                    + body
+            )
+            #expect(
+                boundedBodies.components(separatedBy: "HTTP/1.1").count < 3
+            )
+
+            let boundedQueue = try fixture.pipelined(
+                "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            )
+            #expect(
+                boundedQueue.components(separatedBy: "HTTP/1.1").count < 4
+            )
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
+    }
+
     private func exerciseServer(_ fixture: ServerFixture) throws {
         let ping = try fixture.curl("/_ping")
         #expect(ping.status == 200)
@@ -234,11 +288,15 @@ private struct ServerFixture {
         )
     }
 
-    func server(runtime: InMemoryRuntime) -> EngineServer {
+    func server(
+        runtime: InMemoryRuntime,
+        limits: EngineServerLimits = .production
+    ) -> EngineServer {
         EngineServer(
             router: DockerRouter(runtime: runtime),
             socketPath: socketPath,
-            logger: Logger(label: "devcontainer-engine-tests")
+            logger: Logger(label: "devcontainer-engine-tests"),
+            limits: limits
         )
     }
 

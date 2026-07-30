@@ -131,6 +131,7 @@ let package = Package(
                 .product(name: "DequeModule", package: "swift-collections"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
             ]
@@ -199,6 +200,14 @@ let package = Package(
                 "DevContainerComposeProvider",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI"
+            ]
+        ),
+        .testTarget(
+            name: "DevContainerComposeCLITests",
+            dependencies: [
+                "DevContainerComposeCLI",
+                "DevContainerModel",
+                "DevContainerState"
             ]
         ),
         .testTarget(

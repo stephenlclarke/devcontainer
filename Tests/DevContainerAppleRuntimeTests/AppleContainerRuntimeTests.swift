@@ -827,7 +827,7 @@ struct FakeAppleCLI {
                 "initProcess":{
                   "executable":"/bin/sleep",
                   "arguments":["infinity"],
-                  "environment":["A=1","EMPTY="],
+                  "environment":["A=1","EMPTY=","A=last"],
                   "workingDirectory":"/workspace",
                   "terminal":true,
                   "user":{"id":{"uid":501,"gid":20}},

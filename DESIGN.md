@@ -158,6 +158,8 @@ The service advertises only the Docker API versions proven by the parity suite. 
 | Resources | volume and network create/list/inspect/connect/disconnect/remove |
 | Events | label-filtered, ordered JSON event stream with reconnect cursor |
 
+Each HTTP/1.1 connection has a 1 GiB aggregate retained-body budget and a bounded pending-request queue. Large request bodies transfer from SwiftNIO storage into `Data` without copying the bytes, and a client that exceeds either the per-request, aggregate-byte, or queue bound is rejected without allowing a later pipelined response to overtake an earlier one.
+
 Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and Dockerfile-build fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
 
 ## Identity and label projection
@@ -192,6 +194,8 @@ container-compose
   Compose          -> container-compose -> selected Apple runtime
   inspect/exec     -> Docker API bridge -> runtime discovery
 ```
+
+Before every resource-changing Compose command, the dispatcher consumes the complete supported global-option grammar, including inline Boolean forms, and fails closed on an option it cannot classify. Dry-run, help, and version requests do not acquire an ownership claim. Explicit project names are validated against the Compose naming contract; otherwise the selected Compose implementation resolves the canonical name through `config --format json`, preserving the official `-f`, `COMPOSE_FILE`, top-level `name:`, project-directory, and current-directory precedence. The canonical name, rather than an invocation directory alias, keys the immutable provider claim.
 
 The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `container-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
 
@@ -248,7 +252,7 @@ sequenceDiagram
     S->>R: inspect and process operations
 ```
 
-The bridge does not maintain a second Compose lifecycle database. Project leases store only provider selection and the configuration digest; live state is reconciled from runtime resources.
+The bridge does not maintain a second Compose lifecycle database. Project leases store provider selection, canonical Compose identity, and diagnostic invocation metadata; live state is reconciled from runtime resources.
 
 ## Lifecycle and reconciliation
 

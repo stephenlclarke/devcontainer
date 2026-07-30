@@ -231,13 +231,11 @@ terminal, port forwarding, rebuild, reopen, and cleanup smoke tests.
 
 Compose provider selection is durable project state:
 
-1. Before the first mutating Compose command, the service acquires a
-   project-scoped lease and records either `stock` or `container-compose`.
-2. The key is based on the user/runtime scope and normalized Compose project
-   name. Project directory, ordered files, and configuration hashes are
-   recorded as fingerprints, not as independent ownership domains.
-3. All later mutations use the recorded provider.
-4. An unavailable claimed provider produces an explicit failure; it never
+1. Before the first resource-changing Compose command, the dispatcher consumes every supported global option, fails closed on an option it cannot classify, acquires a project-scoped lease, and records either `stock` or `container-compose`.
+2. The key is based on the local user and canonical Compose project name. An explicit `-p` or `COMPOSE_PROJECT_NAME` is validated directly; otherwise the selected provider's `config --format json` resolves file, top-level `name:`, project-directory, and current-directory precedence. The invocation project directory is retained as diagnostic metadata, not as an independent ownership domain.
+3. Every later mutation must present the recorded provider; a conflicting
+   selection fails before the provider process runs.
+4. An unavailable selected provider produces an explicit failure; it never
    falls back to the other provider.
 5. Provider reset requires explicit `down`, reconciliation proving zero live
    project resources, and an explicit reset or migration command.
