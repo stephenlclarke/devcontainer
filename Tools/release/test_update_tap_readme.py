@@ -42,6 +42,27 @@ class TapReadmeUpdateTests(unittest.TestCase):
             self.module.update_readme(replaced, replacement),
             replaced,
         )
+        self.assertTrue(replaced.endswith("\n"))
+
+    def test_replacement_preserves_trailing_content(self) -> None:
+        original = (
+            "# Homebrew Tap\n\n"
+            "<!-- devcontainer-docs:start -->\n"
+            "## Dev Containers For Apple container\n\n"
+            "Old.\n"
+            "<!-- devcontainer-docs:end -->\n\n"
+            "## Trailing section\n"
+        )
+        section = "## Dev Containers For Apple container\n\nReplacement."
+
+        replaced = self.module.update_readme(original, section)
+
+        self.assertIn("Replacement.", replaced)
+        self.assertTrue(replaced.endswith("## Trailing section\n"))
+        self.assertIn(
+            "<!-- devcontainer-docs:end -->\n\n## Trailing section",
+            replaced,
+        )
 
     def test_source_extraction_omits_design_only_preamble(self) -> None:
         source = (

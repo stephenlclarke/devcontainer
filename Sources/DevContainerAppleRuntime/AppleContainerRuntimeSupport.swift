@@ -439,12 +439,15 @@ extension AppleContainerRuntime {
     }
 
     static func environmentDictionary(_ values: [String]) -> [String: String] {
-        Dictionary(
-            uniqueKeysWithValues: values.map { value in
-                let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-                return (String(parts[0]), parts.count == 2 ? String(parts[1]) : "")
-            }
-        )
+        values.reduce(into: [:]) { environment, value in
+            let parts = value.split(
+                separator: "=",
+                maxSplits: 1,
+                omittingEmptySubsequences: false
+            )
+            environment[String(parts[0])] =
+                parts.count == 2 ? String(parts[1]) : ""
+        }
     }
 
     static func securityOptions(_ configuration: [String: Any]) -> [String] {

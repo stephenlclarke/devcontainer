@@ -33,11 +33,14 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
+        let publish: Bool
         let privileged: Bool
         let securityOptions: Bool
     }
 
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
+    private static let nativeResourceRoleLabel = "com.apple.container.resource.role"
+    private static let nativePluginLabel = "com.apple.container.plugin"
 
     public let executable: URL
     let environment: [String: String]
@@ -54,6 +57,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExits: [String: ContainerExit] = [:]
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
+    var eventPollerState: AppleEventPoller?
 
     public init(
         executable: URL,
@@ -112,6 +116,7 @@ public extension AppleContainerRuntime {
 
     /// Releases all host-side compatibility resources owned by this adapter.
     func shutdown() async {
+        await eventPollerState?.shutdown()
         await portForwarding.stopAll()
     }
 
@@ -119,6 +124,20 @@ public extension AppleContainerRuntime {
         all: Bool,
         labels: [String: String],
         context _: RuntimeRequestContext
+    ) async throws -> [ContainerSnapshot] {
+        let snapshots = try await loadContainerInventory(all: all)
+        return snapshots.filter { snapshot in
+            labels.allSatisfy { key, expected in
+                guard let actual = snapshot.spec.labels[key] else {
+                    return false
+                }
+                return expected.isEmpty || actual == expected
+            }
+        }
+    }
+
+    private func loadContainerInventory(
+        all: Bool
     ) async throws -> [ContainerSnapshot] {
         var arguments = ["list"]
         if all {
@@ -129,34 +148,53 @@ public extension AppleContainerRuntime {
         try requireSuccess(result, operation: "container list")
         let values = try parseJSONObjectArray(result.standardOutput)
         var snapshots: [ContainerSnapshot] = []
+        snapshots.reserveCapacity(values.count)
         var observedRuntimeIDs = Set<String>()
+        let metadata = try await containerMetadataByRuntimeID()
         for value in values {
-            let snapshot = try await containerSnapshotWithMetadata(value)
-            observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
-            guard
-                labels.allSatisfy({ key, expected in
-                    guard let actual = snapshot.spec.labels[key] else {
-                        return false
-                    }
-                    return expected.isEmpty || actual == expected
-                })
-            else {
+            let observed = try containerSnapshot(value)
+            guard !Self.isInternalBuilderResource(observed) else {
                 continue
             }
+            let snapshot = try await containerSnapshotWithMetadata(
+                observed,
+                metadata: metadata[observed.runtimeID.rawValue]
+            )
+            observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
             snapshots.append(snapshot)
         }
         if all {
             try await removeOrphanedContainerMetadata(
-                observedRuntimeIDs: observedRuntimeIDs
+                observedRuntimeIDs: observedRuntimeIDs,
+                metadata: metadata
             )
         }
         return snapshots
     }
 
+    private static func isInternalBuilderResource(_ snapshot: ContainerSnapshot) -> Bool {
+        snapshot.spec.labels[nativeResourceRoleLabel] == "builder"
+            && snapshot.spec.labels[nativePluginLabel] == "builder"
+    }
+
+    private func containerMetadataByRuntimeID() async throws
+        -> [String: RuntimeContainerMetadata]
+    {
+        guard let metadataStore else {
+            return [:]
+        }
+        var metadata: [String: RuntimeContainerMetadata] = [:]
+        for value in try await metadataStore.listContainerMetadata() {
+            metadata[value.runtimeID.rawValue] = value
+        }
+        return metadata
+    }
+
     private func containerSnapshotWithMetadata(
-        _ value: [String: Any]
+        _ snapshot: ContainerSnapshot,
+        metadata: RuntimeContainerMetadata?
     ) async throws -> ContainerSnapshot {
-        var snapshot = try containerSnapshot(value)
+        var snapshot = snapshot
         if snapshot.state == .stopped,
            let exit = containerExits[snapshot.runtimeID.rawValue]
         {
@@ -166,9 +204,7 @@ public extension AppleContainerRuntime {
         guard let metadataStore else {
             return snapshot
         }
-        if let metadata = try await metadataStore.containerMetadata(
-            id: snapshot.runtimeID.rawValue
-        ) {
+        if let metadata {
             if Self.sameContainerIncarnation(
                 metadataCreatedAt: metadata.createdAt,
                 observedCreatedAt: snapshot.createdAt
@@ -208,12 +244,13 @@ public extension AppleContainerRuntime {
     }
 
     private func removeOrphanedContainerMetadata(
-        observedRuntimeIDs: Set<String>
+        observedRuntimeIDs: Set<String>,
+        metadata: [String: RuntimeContainerMetadata]
     ) async throws {
         guard let metadataStore else {
             return
         }
-        for metadata in try await metadataStore.listContainerMetadata()
+        for metadata in metadata.values
             where !observedRuntimeIDs.contains(metadata.runtimeID.rawValue)
         {
             try await metadataStore.removeContainerMetadata(
@@ -232,6 +269,13 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
         let matches = try await listContainers(all: true, labels: [:], context: context)
+        return try resolvedContainerSnapshot(id: id, in: matches)
+    }
+
+    internal func resolvedContainerSnapshot(
+        id: String,
+        in matches: [ContainerSnapshot]
+    ) throws -> ContainerSnapshot {
         if let exact = matches.first(where: {
             $0.runtimeID.rawValue == id || $0.dockerID.rawValue == id || $0.spec.name == id
         }) {
@@ -272,15 +316,34 @@ public extension AppleContainerRuntime {
         for mount in spec.mounts {
             arguments += try await mountArguments(mount)
         }
-        // Published sockets are projected after the VM starts with the same
-        // SocketForwarder package used by Apple's container stack.
+        if optionSupport.publish {
+            arguments += spec.ports.compactMap(Self.nativePublishArguments).flatMap(\.self)
+        }
+        // Ephemeral host ports are resolved after the VM starts because
+        // Apple's stored configuration retains port zero rather than the
+        // listener selected by the kernel.
         arguments += spec.networks.flatMap { ["--network", $0.name] }
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
     }
 
-    private func supportedCreateOptions() async throws -> CreateOptionSupport {
+    static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
+        guard let hostPort = binding.hostPort, hostPort > 0 else {
+            return nil
+        }
+        let hostAddress =
+            binding.hostAddress.contains(":")
+                ? "[\(binding.hostAddress)]"
+                : binding.hostAddress
+        return [
+            "--publish",
+            "\(hostAddress):\(hostPort):\(binding.containerPort)/"
+                + binding.protocolName.lowercased()
+        ]
+    }
+
+    internal func supportedCreateOptions() async throws -> CreateOptionSupport {
         if let createOptionSupport {
             return createOptionSupport
         }
@@ -293,6 +356,7 @@ public extension AppleContainerRuntime {
             ) ?? ""
         let support = CreateOptionSupport(
             hostname: help.contains("--hostname"),
+            publish: help.contains("--publish"),
             privileged: help.contains("--privileged"),
             securityOptions: help.contains("--security-opt")
         )

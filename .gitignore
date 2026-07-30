@@ -12,3 +12,4 @@ tmp/
 *.pyc
 *.profdata
 *.profraw
+.scannerwork/

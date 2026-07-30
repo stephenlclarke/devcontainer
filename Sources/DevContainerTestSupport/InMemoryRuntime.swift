@@ -20,6 +20,7 @@ import Foundation
 
 public actor InMemoryRuntime: DevContainerRuntime {
     private let runtimeDescriptor: ProtocolDescriptor
+    private let execSession: (any RuntimeProcessSession)?
     private var containers: [RuntimeID: ContainerSnapshot] = [:]
     private var dockerToRuntime: [DockerID: RuntimeID] = [:]
     private var execs: [ExecID: ExecSnapshot] = [:]
@@ -34,8 +35,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
         provider: BackendProvider = .stock,
         version: String = "test",
         commit: String = "test",
-        distribution: String = "test"
+        distribution: String = "test",
+        execSession: (any RuntimeProcessSession)? = nil
     ) {
+        self.execSession = execSession
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
             providerVersion: version,
@@ -345,6 +348,9 @@ public actor InMemoryRuntime: DevContainerRuntime {
         exec.running = false
         exec.exitCode = 0
         execs[id] = exec
+        if let execSession {
+            return execSession
+        }
         let text = exec.spec.command.joined(separator: " ") + "\n"
         return InMemoryProcessSession(
             frames: [RuntimeIOFrame(channel: .standardOutput, data: Data(text.utf8))],

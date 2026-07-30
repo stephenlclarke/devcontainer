@@ -38,7 +38,8 @@ class SigningToolTests(unittest.TestCase):
                 / "container"
                 / "plugins"
                 / "devcontainer"
-                / "container-devcontainer"
+                / "bin"
+                / "devcontainer"
             ),
         ]
         for binary in binaries:
@@ -100,14 +101,14 @@ class SigningToolTests(unittest.TestCase):
                 "devcontainer",
                 "devcontainer-compose",
                 "devcontainer-engine",
-                "container-devcontainer",
             ):
+                expected = 4 if executable == "devcontainer" else 2
                 self.assertEqual(
                     sum(
                         Path(line.split()[-1]).name == executable
                         for line in trace_lines
                     ),
-                    2,
+                    expected,
                 )
             value = json.loads(evidence.read_text(encoding="utf-8"))
             self.assertEqual(value["id"], SUBMISSION_ID)

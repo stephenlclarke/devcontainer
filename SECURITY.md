@@ -2,13 +2,10 @@
 
 ## Supported versions
 
-`devcontainer` is currently a development candidate. Until the first stable
-release, security fixes are applied to the latest commit on `main`; no released
-version is represented as supported.
-
-After stable publication, the latest stable minor line will receive security
-fixes. Older lines and Current development builds may be used to reproduce a
-report, but they will not receive separate long-term support.
+The latest stable minor line is supported. Version 1.0.x receives security
+fixes until a newer stable minor line is released. Older lines and Current
+development builds may be used to reproduce a report, but they do not receive
+separate long-term support.
 
 ## Reporting a vulnerability
 
