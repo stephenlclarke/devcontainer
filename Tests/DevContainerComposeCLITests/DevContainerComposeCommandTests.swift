@@ -31,9 +31,8 @@ struct DevContainerComposeCommandTests {
             try await DevContainerComposeCommand.run(
                 arguments: [
                     "--env-file", fixture.root.appendingPathComponent(".env").path,
-                    "--profile", "debug",
                     "-f", "/projects/example/compose.yaml",
-                    "up", "--detach"
+                    "up", "--profile", "debug", "--detach"
                 ],
                 environment: environment
             ) == 0
@@ -48,13 +47,13 @@ struct DevContainerComposeCommandTests {
         #expect(
             invocations.contains(
                 "--env-file \(fixture.root.appendingPathComponent(".env").path) "
-                    + "--profile debug -f /projects/example/compose.yaml config --format json"
+                    + "-f /projects/example/compose.yaml --profile debug config --format json"
             )
         )
         #expect(
             invocations.contains(
                 "--env-file \(fixture.root.appendingPathComponent(".env").path) "
-                    + "--profile debug -f /projects/example/compose.yaml up --detach"
+                    + "-f /projects/example/compose.yaml up --profile debug --detach"
             )
         )
     }
@@ -65,7 +64,7 @@ struct DevContainerComposeCommandTests {
 
         #expect(
             try await DevContainerComposeCommand.run(
-                arguments: ["--project-name", "explicit-project", "scale", "web=2"],
+                arguments: ["scale", "--project-name", "explicit-project", "web=2"],
                 environment: fixture.environment
             ) == 0
         )
@@ -76,7 +75,7 @@ struct DevContainerComposeCommandTests {
                 key: ProjectKey(rawValue: "\(getuid()):explicit-project")
             )?.provider == .containerCompose
         )
-        #expect(try fixture.invocations() == ["--project-name explicit-project scale web=2"])
+        #expect(try fixture.invocations() == ["scale --project-name explicit-project web=2"])
     }
 
     @Test
@@ -90,6 +89,30 @@ struct DevContainerComposeCommandTests {
             )
         }
         #expect(try fixture.invocations().isEmpty)
+    }
+
+    @Test
+    func `successful project removal releases the provider claim`() async throws {
+        for arguments in [
+            ["--project-name", "down-project", "down"],
+            ["--project-name", "wait-project", "wait", "web", "--down-project"]
+        ] {
+            let fixture = try ComposeCommandFixture(projectName: "ignored")
+            #expect(
+                try await DevContainerComposeCommand.run(
+                    arguments: arguments,
+                    environment: fixture.environment
+                ) == 0
+            )
+
+            let store = try SQLiteStateStore(path: fixture.state)
+            let projectName = arguments[1]
+            #expect(
+                try await store.project(
+                    key: ProjectKey(rawValue: "\(getuid()):\(projectName)")
+                ) == nil
+            )
+        }
     }
 }
 

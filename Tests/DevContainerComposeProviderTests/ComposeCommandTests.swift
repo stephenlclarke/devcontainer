@@ -36,6 +36,7 @@ func `command envelope finds project and mutation`() throws {
     #expect(envelope.projectDirectory == "/workspace")
     #expect(envelope.files == ["compose.yaml"])
     #expect(envelope.mutating)
+    #expect(!envelope.removesProject)
     #expect(envelope.projectKey(userID: 501) == ProjectKey(rawValue: "501:demo"))
     #expect(
         envelope.configurationArguments == [
@@ -52,10 +53,38 @@ func `read only and malformed commands are handled`() throws {
     let version = try ComposeCommandEnvelope(arguments: ["version"])
     #expect(version.command == "version")
     #expect(!version.mutating)
+    #expect(!version.removesProject)
     #expect(version.projectKey(userID: 501) == nil)
     #expect(throws: DevContainerError.self) {
         _ = try ComposeCommandEnvelope(arguments: ["--project-name"])
     }
+}
+
+@Test
+func `project removing commands release provider ownership`() throws {
+    #expect(
+        try ComposeCommandEnvelope(arguments: ["down"]).removesProject
+    )
+    #expect(
+        try ComposeCommandEnvelope(
+            arguments: ["wait", "web", "--down-project"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["wait", "--down-project=false", "web"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["wait", "--", "--down-project"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["--dry-run", "down"]
+        ).removesProject
+    )
 }
 
 @Test
@@ -131,6 +160,45 @@ func `command envelope accepts every global option spelling and separator`() thr
 }
 
 @Test
+func `inherited global options are normalized after the command`() throws {
+    let mutating = try ComposeCommandEnvelope(
+        arguments: [
+            "up",
+            "--project-name", "after-command",
+            "--profile=debug",
+            "--detach"
+        ]
+    )
+    #expect(mutating.projectName == "after-command")
+    #expect(mutating.mutating)
+    #expect(
+        mutating.configurationArguments == [
+            "--project-name", "after-command",
+            "--profile=debug",
+            "config", "--format", "json"
+        ]
+    )
+
+    let dryRun = try ComposeCommandEnvelope(
+        arguments: ["down", "--dry-run"]
+    )
+    #expect(!dryRun.mutating)
+    #expect(!dryRun.removesProject)
+
+    let help = try ComposeCommandEnvelope(
+        arguments: ["down", "--help"]
+    )
+    #expect(!help.mutating)
+    #expect(!help.removesProject)
+
+    let separator = try ComposeCommandEnvelope(
+        arguments: ["run", "web", "--", "--project-name", "process-argument"]
+    )
+    #expect(separator.projectName == nil)
+    #expect(separator.configurationArguments == ["config", "--format", "json"])
+}
+
+@Test
 func `non executing Boolean options do not require provider claims`() throws {
     #expect(
         try !ComposeCommandEnvelope(
@@ -174,6 +242,7 @@ func `non executing Boolean options do not require provider claims`() throws {
     "stop",
     "unpause",
     "up",
+    "wait",
     "watch"
 ])
 func `resource changing commands require a provider claim`(_ command: String) throws {
