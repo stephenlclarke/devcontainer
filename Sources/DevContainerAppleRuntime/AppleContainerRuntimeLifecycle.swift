@@ -25,6 +25,35 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws {
         let resolved = try await resolveContainerID(id, context: context)
+        if let operation = containerStartOperations[resolved] {
+            return try await operation.task.value
+        }
+        let registration = UUID()
+        let task = Task {
+            try await self.performStartContainer(
+                requestedID: id,
+                runtimeID: resolved,
+                context: context
+            )
+        }
+        containerStartOperations[resolved] = ContainerStartOperation(
+            registration: registration,
+            task: task
+        )
+        do {
+            try await task.value
+            finishStartOperation(id: resolved, registration: registration)
+        } catch {
+            finishStartOperation(id: resolved, registration: registration)
+            throw error
+        }
+    }
+
+    private func performStartContainer(
+        requestedID: String,
+        runtimeID resolved: String,
+        context: RuntimeRequestContext
+    ) async throws {
         try await launchContainerProcess(id: resolved)
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
@@ -32,7 +61,7 @@ public extension AppleContainerRuntime {
         await signalEventPollers()
         let startedAt = Date()
         try await recordStartedContainer(
-            requestedID: id,
+            requestedID: requestedID,
             runtimeID: resolved,
             startedAt: startedAt
         )
@@ -48,6 +77,13 @@ public extension AppleContainerRuntime {
         )
         try await synchronizeNetworkHosts(context: context, containers: inventory)
         await signalEventPollers()
+    }
+
+    private func finishStartOperation(id: String, registration: UUID) {
+        guard containerStartOperations[id]?.registration == registration else {
+            return
+        }
+        containerStartOperations.removeValue(forKey: id)
     }
 
     private func launchContainerProcess(id: String) async throws {

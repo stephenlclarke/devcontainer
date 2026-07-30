@@ -581,6 +581,30 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `concurrent starts share one native bootstrap`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        let runtime = try fixture.runtime()
+        let context = RuntimeRequestContext()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 4 {
+                group.addTask {
+                    try await runtime.startContainer(
+                        id: "fixture",
+                        context: context
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let starts = try fixture.log().split(separator: "\n")
+            .filter { $0 == "start fixture" }
+        #expect(starts.count == 1)
+    }
+
+    @Test
     func `exec logs attach pull and build stream process output`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()
@@ -1003,6 +1027,7 @@ struct FakeAppleCLI {
             ;;
           "start fixture")
             if [ "$state" = created ]; then
+              sleep 0.1
               printf '%s' running > "$STATE"
             fi
             ;;

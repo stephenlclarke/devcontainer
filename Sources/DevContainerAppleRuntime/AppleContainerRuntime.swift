@@ -36,6 +36,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let finishedAt: Date
     }
 
+    struct ContainerStartOperation {
+        let registration: UUID
+        let task: Task<Void, any Error>
+    }
+
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
         let publish: Bool
@@ -64,6 +69,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerStartedAt: [String: Date] = [:]
     var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
     var containerExits: [String: ContainerExit] = [:]
+    var containerStartOperations: [String: ContainerStartOperation] = [:]
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
     var directContainerInventorySupported: Bool?
