@@ -20,6 +20,217 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+actor AppleEventPoller {
+    typealias SnapshotProvider = @Sendable (RuntimeRequestContext) async throws
+        -> [String: ContainerSnapshot]
+
+    private struct Subscription {
+        let continuation: AsyncThrowingStream<RuntimeEvent, any Error>.Continuation
+        let since: Date?
+        let until: Date?
+        let labels: [String: String]
+        var previous: [String: ContainerSnapshot]
+        var sequence: Int64
+    }
+
+    private let snapshotProvider: SnapshotProvider
+    private var latestSnapshot: [String: ContainerSnapshot]?
+    private var initialSnapshotTask: Task<[String: ContainerSnapshot], Error>?
+    private var subscriptions: [UUID: Subscription] = [:]
+    private var pollingTask: Task<Void, Never>?
+    private var pollingID: UUID?
+
+    init(snapshotProvider: @escaping SnapshotProvider) {
+        self.snapshotProvider = snapshotProvider
+    }
+
+    func subscribe(
+        continuation: AsyncThrowingStream<RuntimeEvent, any Error>.Continuation,
+        since: Date?,
+        until: Date?,
+        labels: [String: String],
+        context: RuntimeRequestContext
+    ) async throws -> UUID {
+        let identifier = UUID()
+        let initial = try await snapshot(context: context)
+        subscriptions[identifier] = Subscription(
+            continuation: continuation,
+            since: since,
+            until: until,
+            labels: labels,
+            previous: Self.filtered(initial, labels: labels),
+            sequence: Int64(Date().timeIntervalSince1970 * 1_000_000)
+        )
+        startPollingIfNeeded()
+        return identifier
+    }
+
+    func unsubscribe(_ identifier: UUID) {
+        subscriptions.removeValue(forKey: identifier)
+        if subscriptions.isEmpty {
+            stopPolling()
+        }
+    }
+
+    func shutdown() {
+        for subscription in subscriptions.values {
+            subscription.continuation.finish()
+        }
+        subscriptions.removeAll()
+        stopPolling()
+    }
+
+    private func snapshot(
+        context: RuntimeRequestContext
+    ) async throws -> [String: ContainerSnapshot] {
+        if let latestSnapshot {
+            return latestSnapshot
+        }
+        if let initialSnapshotTask {
+            return try await initialSnapshotTask.value
+        }
+        let provider = snapshotProvider
+        let task = Task {
+            try await provider(context)
+        }
+        initialSnapshotTask = task
+        do {
+            let snapshot = try await task.value
+            latestSnapshot = snapshot
+            initialSnapshotTask = nil
+            return snapshot
+        } catch {
+            initialSnapshotTask = nil
+            throw error
+        }
+    }
+
+    private func startPollingIfNeeded() {
+        guard pollingTask == nil else {
+            return
+        }
+        let identifier = UUID()
+        pollingID = identifier
+        pollingTask = Task { [weak self] in
+            await self?.poll(identifier: identifier)
+        }
+    }
+
+    private func stopPolling() {
+        pollingTask?.cancel()
+        pollingTask = nil
+        pollingID = nil
+        latestSnapshot = nil
+    }
+
+    private func poll(identifier: UUID) async {
+        defer {
+            if pollingID == identifier {
+                pollingTask = nil
+                pollingID = nil
+                if subscriptions.isEmpty {
+                    latestSnapshot = nil
+                } else {
+                    startPollingIfNeeded()
+                }
+            }
+        }
+        do {
+            while !Task.isCancelled {
+                guard !activeSubscriptionIDs(at: Date()).isEmpty else {
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                guard
+                    !Task.isCancelled,
+                    !subscriptions.isEmpty
+                else {
+                    continue
+                }
+                // The subscription set can change while the poller sleeps.
+                // Re-evaluate immediately before reading the inventory so a
+                // late subscriber sees this snapshot and an expired one never
+                // receives an event beyond its requested deadline.
+                let active = activeSubscriptionIDs(at: Date())
+                guard !active.isEmpty else {
+                    return
+                }
+                let current = try await snapshotProvider(RuntimeRequestContext())
+                latestSnapshot = current
+                publish(current, to: active, timestamp: Date())
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            for subscription in subscriptions.values {
+                subscription.continuation.finish(throwing: error)
+            }
+            subscriptions.removeAll()
+        }
+    }
+
+    private func activeSubscriptionIDs(at timestamp: Date) -> [UUID] {
+        var active: [UUID] = []
+        var expired: [UUID] = []
+        for (identifier, subscription) in subscriptions {
+            guard subscription.until.map({ timestamp < $0 }) ?? true else {
+                expired.append(identifier)
+                continue
+            }
+            active.append(identifier)
+        }
+        for identifier in expired {
+            subscriptions.removeValue(forKey: identifier)?.continuation.finish()
+        }
+        return active
+    }
+
+    private func publish(
+        _ snapshot: [String: ContainerSnapshot],
+        to identifiers: [UUID],
+        timestamp: Date
+    ) {
+        for identifier in identifiers {
+            guard var subscription = subscriptions[identifier] else {
+                continue
+            }
+            let current = Self.filtered(snapshot, labels: subscription.labels)
+            let events = AppleContainerRuntime.lifecycleEvents(
+                previous: subscription.previous,
+                current: current,
+                timestamp: timestamp,
+                since: subscription.since,
+                sequence: &subscription.sequence
+            )
+            for event in events {
+                subscription.continuation.yield(event)
+            }
+            subscription.previous = current
+            subscriptions[identifier] = subscription
+        }
+    }
+
+    private static func filtered(
+        _ snapshots: [String: ContainerSnapshot],
+        labels: [String: String]
+    ) -> [String: ContainerSnapshot] {
+        var filtered: [String: ContainerSnapshot] = [:]
+        filtered.reserveCapacity(snapshots.count)
+        for (identifier, snapshot) in snapshots {
+            guard labels.allSatisfy({ key, expected in
+                guard let actual = snapshot.spec.labels[key] else {
+                    return false
+                }
+                return expected.isEmpty || actual == expected
+            }) else {
+                continue
+            }
+            filtered[identifier] = snapshot
+        }
+        return filtered
+    }
+}
+
 extension AppleContainerRuntime {
     func createNativeVolumeIfNeeded(
         spec: VolumeSpec
@@ -85,53 +296,35 @@ extension AppleContainerRuntime {
         labels: [String: String],
         context: RuntimeRequestContext
     ) async throws -> AsyncThrowingStream<RuntimeEvent, any Error> {
-        let request = try await AppleEventPollRequest(
-            initial: containerMap(labels: labels, context: context),
+        let poller = eventPoller()
+        let stream = AsyncThrowingStream<RuntimeEvent, any Error>.makeStream()
+        let identifier = try await poller.subscribe(
+            continuation: stream.continuation,
             since: since,
             until: until,
             labels: labels,
             context: context
         )
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                await self.pollEvents(request, continuation: continuation)
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
+        stream.continuation.onTermination = { _ in
+            Task {
+                await poller.unsubscribe(identifier)
             }
         }
+        return stream.stream
     }
 
-    func pollEvents(
-        _ request: AppleEventPollRequest,
-        continuation: AsyncThrowingStream<RuntimeEvent, any Error>.Continuation
-    ) async {
-        do {
-            var previous = request.initial
-            var sequence = Int64(Date().timeIntervalSince1970 * 1_000_000)
-            while !Task.isCancelled, request.until.map({ Date() < $0 }) ?? true {
-                try await Task.sleep(for: .milliseconds(200))
-                let current = try await containerMap(
-                    labels: request.labels,
-                    context: request.context
-                )
-                for event in Self.lifecycleEvents(
-                    previous: previous,
-                    current: current,
-                    timestamp: Date(),
-                    since: request.since,
-                    sequence: &sequence
-                ) {
-                    continuation.yield(event)
-                }
-                previous = current
-            }
-            continuation.finish()
-        } catch is CancellationError {
-            continuation.finish()
-        } catch {
-            continuation.finish(throwing: error)
+    private func eventPoller() -> AppleEventPoller {
+        if let eventPollerState {
+            return eventPollerState
         }
+        let poller = AppleEventPoller { [weak self] context in
+            guard let self else {
+                throw CancellationError()
+            }
+            return try await containerMap(context: context)
+        }
+        eventPollerState = poller
+        return poller
     }
 
     static func lifecycleEvents(
@@ -144,44 +337,50 @@ extension AppleContainerRuntime {
         guard since.map({ timestamp >= $0 }) ?? true else {
             return []
         }
-        return createdEvents(
+        var events: [RuntimeEvent] = []
+        events.reserveCapacity(current.count + previous.count)
+        let sortedCurrent = current.sorted(by: { $0.key < $1.key })
+        Self.appendCreatedEvents(
+            sortedCurrent,
             previous: previous,
-            current: current,
             timestamp: timestamp,
-            sequence: &sequence
-        ) + transitionEvents(
-            previous: previous,
-            current: current,
-            timestamp: timestamp,
-            sequence: &sequence
-        ) + destroyedEvents(
-            previous: previous,
-            current: current,
-            timestamp: timestamp,
-            sequence: &sequence
+            sequence: &sequence,
+            events: &events
         )
+        Self.appendTransitionEvents(
+            sortedCurrent,
+            previous: previous,
+            timestamp: timestamp,
+            sequence: &sequence,
+            events: &events
+        )
+        Self.appendDestroyedEvents(
+            previous.sorted(by: { $0.key < $1.key }),
+            current: current,
+            timestamp: timestamp,
+            sequence: &sequence,
+            events: &events
+        )
+        return events
     }
 
-    static func createdEvents(
+    private static func appendCreatedEvents(
+        _ current: [(key: String, value: ContainerSnapshot)],
         previous: [String: ContainerSnapshot],
-        current: [String: ContainerSnapshot],
         timestamp: Date,
-        sequence: inout Int64
-    ) -> [RuntimeEvent] {
-        current.sorted { $0.key < $1.key }.flatMap { element -> [RuntimeEvent] in
-            let (id, snapshot) = element
-            guard previous[id] == nil else {
-                return []
-            }
+        sequence: inout Int64,
+        events: inout [RuntimeEvent]
+    ) {
+        for (identifier, snapshot) in current where previous[identifier] == nil {
             sequence += 1
-            var events = [
+            events.append(
                 event(
                     sequence: sequence,
                     timestamp: timestamp,
                     snapshot: snapshot,
                     action: .create
                 )
-            ]
+            )
             if snapshot.state == .running {
                 sequence += 1
                 events.append(
@@ -193,30 +392,55 @@ extension AppleContainerRuntime {
                     )
                 )
             }
-            return events
         }
     }
 
-    static func transitionEvents(
+    private static func appendTransitionEvents(
+        _ current: [(key: String, value: ContainerSnapshot)],
         previous: [String: ContainerSnapshot],
-        current: [String: ContainerSnapshot],
         timestamp: Date,
-        sequence: inout Int64
-    ) -> [RuntimeEvent] {
-        current.sorted { $0.key < $1.key }.compactMap { id, snapshot in
+        sequence: inout Int64,
+        events: inout [RuntimeEvent]
+    ) {
+        for (identifier, snapshot) in current {
+            if previous[identifier] == nil {
+                continue
+            }
             guard
-                let old = previous[id],
-                old.state != snapshot.state,
+                let previousSnapshot = previous[identifier],
+                previousSnapshot.state != snapshot.state,
                 let action = eventAction(for: snapshot.state)
             else {
-                return nil
+                continue
             }
             sequence += 1
-            return event(
-                sequence: sequence,
-                timestamp: timestamp,
-                snapshot: snapshot,
-                action: action
+            events.append(
+                event(
+                    sequence: sequence,
+                    timestamp: timestamp,
+                    snapshot: snapshot,
+                    action: action
+                )
+            )
+        }
+    }
+
+    private static func appendDestroyedEvents(
+        _ previous: [(key: String, value: ContainerSnapshot)],
+        current: [String: ContainerSnapshot],
+        timestamp: Date,
+        sequence: inout Int64,
+        events: inout [RuntimeEvent]
+    ) {
+        for (identifier, snapshot) in previous where current[identifier] == nil {
+            sequence += 1
+            events.append(
+                event(
+                    sequence: sequence,
+                    timestamp: timestamp,
+                    snapshot: snapshot,
+                    action: .destroy
+                )
             )
         }
     }
@@ -234,37 +458,20 @@ extension AppleContainerRuntime {
         }
     }
 
-    static func destroyedEvents(
-        previous: [String: ContainerSnapshot],
-        current: [String: ContainerSnapshot],
-        timestamp: Date,
-        sequence: inout Int64
-    ) -> [RuntimeEvent] {
-        previous.sorted { $0.key < $1.key }.compactMap { id, snapshot in
-            guard current[id] == nil else {
-                return nil
-            }
-            sequence += 1
-            return event(
-                sequence: sequence,
-                timestamp: timestamp,
-                snapshot: snapshot,
-                action: .destroy
-            )
-        }
-    }
-
     func containerMap(
-        labels: [String: String],
         context: RuntimeRequestContext
     ) async throws -> [String: ContainerSnapshot] {
-        try await Dictionary(
-            uniqueKeysWithValues: listContainers(
-                all: true,
-                labels: labels,
-                context: context
-            ).map { ($0.runtimeID.rawValue, $0) }
+        let snapshots = try await listContainers(
+            all: true,
+            labels: [:],
+            context: context
         )
+        var containers: [String: ContainerSnapshot] = [:]
+        containers.reserveCapacity(snapshots.count)
+        for snapshot in snapshots {
+            containers[snapshot.runtimeID.rawValue] = snapshot
+        }
+        return containers
     }
 
     static func event(
@@ -286,13 +493,19 @@ extension AppleContainerRuntime {
     }
 
     func synchronizeNetworkHosts(
-        context: RuntimeRequestContext
+        context: RuntimeRequestContext,
+        containers: [ContainerSnapshot]? = nil
     ) async throws {
-        let running = try await listContainers(
-            all: true,
-            labels: [:],
-            context: context
-        ).filter {
+        let inventory: [ContainerSnapshot] = if let containers {
+            containers
+        } else {
+            try await listContainers(
+                all: true,
+                labels: [:],
+                context: context
+            )
+        }
+        let running = inventory.filter {
             $0.state == .running
                 && $0.spec.networks.contains {
                     Self.isUserDefinedNetwork($0.name)

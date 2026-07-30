@@ -90,7 +90,7 @@ fi
 release_exists() {
   local output status
   set +e
-  output="$("$GH" api --silent "repos/$REPOSITORY/releases/tags/$TAG" 2>&1)"
+  output="$("$GH" api "repos/$REPOSITORY/releases/tags/$TAG" 2>&1)"
   status="$?"
   set -e
   if (( status == 0 )); then

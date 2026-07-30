@@ -116,7 +116,15 @@ class ReleaseVersionTests(unittest.TestCase):
                 check=True,
             )
             subprocess.run(
-                ["git", "-C", str(repository), "tag", "1.2.4"],
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "tag.gpgSign=false",
+                    "tag",
+                    "1.2.4",
+                ],
                 check=True,
             )
             result = subprocess.run(

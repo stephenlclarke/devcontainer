@@ -25,7 +25,7 @@ public enum DevContainerProject {
     public static let requiredParityBackends = [
         "docker",
         "apple-stock",
-        "apple-compose"
+        "container-compose"
     ]
 
     /// Build provenance generated from the Makefile-owned semantic version.

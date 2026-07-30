@@ -72,7 +72,7 @@ BINARIES=(
   "$STAGE_DIRECTORY/bin/devcontainer"
   "$STAGE_DIRECTORY/bin/devcontainer-compose"
   "$STAGE_DIRECTORY/bin/devcontainer-engine"
-  "$STAGE_DIRECTORY/libexec/container/plugins/devcontainer/container-devcontainer"
+  "$STAGE_DIRECTORY/libexec/container/plugins/devcontainer/bin/devcontainer"
 )
 for binary in "${BINARIES[@]}"; do
   if [[ ! -x "$binary" ]]; then
