@@ -131,12 +131,14 @@ struct AppleProcessSessionSupportTests {
 
         let normalProcess = try AppleProcessSession(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "exit 7"],
+            arguments: ["-c", "cat >/dev/null; exit 7"],
             environment: [:]
         )
         let normal = MonitoredAppleProcessSession(process: normalProcess) {
             try? await Task.sleep(for: .seconds(2))
         }
+        try await normal.write(Data("forwarded".utf8))
+        try await normal.closeStandardInput()
         #expect(try await normal.wait() == 7)
         normal.cancel()
     }

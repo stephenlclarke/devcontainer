@@ -14,7 +14,6 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import CDevContainerVersion
 import Foundation
 
 /// Immutable provenance embedded by SwiftPM from the Makefile-owned version.
@@ -49,10 +48,10 @@ public struct BuildInfo: Codable, Equatable, Sendable {
     }
 
     public static let current: BuildInfo = {
-        let lane = String(cString: devcontainer_build_lane())
+        let lane = GeneratedBuildIdentity.lane
         return BuildInfo(
-            version: String(cString: devcontainer_version()),
-            commit: String(cString: devcontainer_source_commit()),
+            version: GeneratedBuildIdentity.version,
+            commit: GeneratedBuildIdentity.commit,
             lane: lane,
             buildType: lane == "development" ? "development" : "release",
             architecture: compiledArchitecture

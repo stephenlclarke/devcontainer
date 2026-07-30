@@ -3,14 +3,14 @@
 ## Current status
 
 > [!IMPORTANT]
-> This repository is a functional development candidate, not a supported
-> release. It contains the Docker Engine compatibility service, stock Apple
-> runtime adapter, and optional Compose dispatcher. All checked-in fixtures
-> pass locally against real Docker and the custom Apple Compose stack. The
-> pinned VS Code end-to-end fixture passes against the Docker oracle. Clean,
-> isolated VS Code recordings against the exact stock Apple package and
-> Apple-Compose provider remain release blockers, so no row below is yet
-> marked `supported`.
+> Version 1.0.1 supports the exact component fingerprints below. Real Docker,
+> stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
+> provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
+> with zero normalized semantic differences and no performance failures. In
+> the exact tag run, the largest CLI ratios were 2.876x for stock Apple and
+> 4.509x for `container-compose`; the corresponding VS Code ratios were 1.232x
+> and 1.311x, all below the 10x failure threshold. Repeated-run statistics are
+> in [PERFORMANCE.md](PERFORMANCE.md).
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -31,18 +31,22 @@ startup are not compatibility evidence.
 No row may move to `supported` while a required fixture is skipped, retried
 until it passes, normalized to hide a difference, or waived.
 
+This release vocabulary applies to the fixture claim. The broader standards
+audit also uses `delegated`, `partial`, and `unverified`; see
+[CONFORMANCE.md](CONFORMANCE.md).
+
 ## Provider lanes
 
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
-| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `candidate` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `candidate` |
-| `apple-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked | `candidate` |
+| `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
+| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
+| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
 all Compose-backed Dev Container fixtures must pass through both
-`apple-stock` and `apple-compose` before a stable release.
+`apple-stock` and `container-compose` before a stable release.
 
 `container-compose` is not a Swift package dependency of the runtime-neutral
 core, is not copied into this product, and is not a service startup
@@ -52,38 +56,28 @@ or another implementation module.
 
 ## Pinned design-time provenance
 
-These pins define the initial contract-capture matrix. They do not constitute
-support until the release gates pass. Release evidence must additionally
-record the downloaded binary digest, signing identity where applicable,
-platform triple, and the output of each component's machine-readable version
-command.
+These pins define the 1.0.1 compatibility matrix. Release-bound
+evidence also records the signing identity where applicable, platform triple,
+and each component's machine-readable version output.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
-| `@devcontainers/cli` | `0.88.0` | `58be9705761d276b5076525438bbe73642f521d5` | Unmodified reference client |
-| Docker CLI | `29.6.1` | Binary digest and package provenance are not yet recorded | Unmodified client used by the reference CLI |
-| Docker Engine | `29.2.1`, API `1.53` | Binary/image digest is not yet recorded | Behavioral oracle |
-| Docker Compose | `5.3.1` | Binary digest and source commit are not yet recorded | Oracle and stock Compose client |
+| `@devcontainers/cli` | `0.88.0` | Official `v0.88.0` tag commit `f683c29f64a20109b4453e5149807e390ff65133`; npm SHA-512 SRI `sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w==` | Unmodified reference client |
+| Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
+| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
+| Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |
 | `apple/container` stable | `1.1.0` | Annotated tag object `82fc9a5ba73c34c478ce15958bb75dbb45c67e3b`; source commit `5973b9cc626a3e7a499bb316a958237ebe14e2ed` | Initial stable stock lane |
 | `apple/containerization` for `container` 1.1.0 | `0.35.0` | Apple resolution/tag object `44bec8b9933bc491d0cbf44abac90a1f6aaebf6b`; source commit `0334a3e790bbed50420de71cd0d706191bdf84d1` | Must be inherited from the Apple `container` resolution |
-| `apple/container` main evidence | No release claim | `d1d763530df3c6a326dbae7f0c0a59a335808045` | Forward-compatibility evidence only |
-| `apple/containerization` for that main commit | `0.38.0` | Source commit `d9868bb657fac3b55ed5dcec97c8eb8a08e78bf5` | Exact dependency selected by that Apple commit |
-| `apple/containerization` research head | No release claim | `74ace148ded72f7bb3c878b142e4962ae668adf4` | API research only; not mixed into an Apple release lane |
-| `container-compose` stable | `0.10.0` | Annotated tag object `1b414c36d9a66c25d86466661d738015891ab20e`; source commit `42b737dcda830f79b3f0993212e97fefe179f427` | Initial optional provider |
-| Stable provider's `stephenlclarke/container` | Revision | `ea20b242e763eb3e64d412c3dc2bbaa69639d2f4` | Exact fork dependency declared by `container-compose` 0.10.0 |
-| Stable provider's `stephenlclarke/containerization` | Revision | `6aa6e803539c59ce754c55628e5417356216b297` | Exact fork dependency declared by `container-compose` 0.10.0 |
-| `container-compose` main evidence | No release claim | `517be1f08abfc4f48849c78071d428c5b03f9b8d` | Forward provider evidence only |
-| Main provider's `stephenlclarke/container` | Revision | `221fafc24ebd19502f4553e0b5d38c14be3f2b22` | Exact fork dependency at the recorded provider commit |
-| Main provider's `stephenlclarke/containerization` | Revision | `164088e02e16ed80e536d0c59822b09931d213df` | Exact fork dependency at the recorded provider commit |
-| VS Code | `1.130.0`, arm64 stable | Commit `1b6a188127eeaf9194f945eb6eb89a657e93c54c`; official archive SHA-256 `6e16ccb1caac394daec788b65d285d30a8093cdf2db96552c53cc9d0252f24d3`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
+| `container-compose` stable | `0.10.1` | Annotated tag object `5be84c712176d745b4736e82f97b7458813cb7ec`; source commit `77d2191a75f3a15092bbead1991b0d6a37fafa91` | Optional provider |
+| Stable provider's `stephenlclarke/container` | Revision | `367430446959e3048da37f5f64d3c10e1293d3de` | Exact fork dependency declared by `container-compose` 0.10.1 |
+| Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
+| VS Code | `1.131.0`, arm64 stable | Commit `e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`; official archive SHA-256 `796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
-| macOS and Xcode | Pending exact release image | Product/build versions must be captured in the evidence manifest | Host and toolchain |
+| Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
-Pending Docker/Compose binary digests and macOS/Xcode release-image pins are
-release blockers. Moving branch heads are never stable compatibility claims.
-Evidence against a `main` commit is maintained separately from the stable
-matrix and cannot replace it. The machine-readable VS Code identities are
-authoritative in [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json).
+Moving branch heads are never stable compatibility claims and are not inputs
+to this release matrix. The machine-readable identities in
+[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) are authoritative.
 
 The Apple adapter must take `containerization` from the selected
 `apple/container` release resolution. Depending on a second independently
@@ -92,7 +86,7 @@ combination and is forbidden.
 
 ### Upstream fix ownership
 
-Any future fix required in `stephenlclarke/container`,
+Any fix required in `stephenlclarke/container`,
 `stephenlclarke/containerization`, or
 `stephenlclarke/container-compose` must be implemented in its owning
 repository, protected by a regression test there, and delivered as a focused
@@ -102,11 +96,10 @@ parity lane.
 
 This repository must never carry a patched vendor directory, copied upstream
 source, ad hoc diff, or release-only binary replacement for those projects.
-No upstream runtime fix has been required by the implementation to date.
 
 ## Docker Engine API bounds
 
-The candidate service advertises the bounded API envelope:
+The service advertises the bounded API envelope:
 
 - minimum implemented version: `1.44`;
 - maximum implemented version: `1.53`;
@@ -114,7 +107,7 @@ The candidate service advertises the bounded API envelope:
 - versions above `1.53`: out of scope until separately pinned and tested;
 - versions below `1.44`: out of scope for the initial release.
 
-A release will advertise the contiguous, tested subset `1.44...1.53`.
+Version 1.0.1 advertises the contiguous, tested subset `1.44...1.53`.
 Unversioned routes and every advertised version prefix must negotiate and
 return Docker-compatible status codes, JSON fields, headers, event ordering,
 and stream framing. Advertising a version means every endpoint needed by the
@@ -129,62 +122,83 @@ The bounded endpoint surface is:
 - exec create, start, resize, inspect, cancellation, and TTY/non-TTY streams;
 - archive upload/download and path metadata;
 - image list, inspect, pull, build, tag, and remove;
-- network and volume lifecycle needed by the fixtures;
+- network and volume lifecycle needed by the fixtures, with network attachment
+  fixed at container creation;
 - label-filtered, ordered, reconnectable events.
 
-Unsupported endpoints or request fields must fail before side effects with a
-Docker-shaped error. They must not return a successful approximation.
+Decoded unsupported endpoints and fields fail before side effects with a
+Docker-shaped error. Version 1.0.1 does not yet reject every unknown Docker
+create/build member: Swift decoding can omit fields outside the bounded DTO.
+Arbitrary `runArgs` therefore are not a blanket support surface. This known
+non-conformance and its remediation priority are recorded in
+[CONFORMANCE.md](CONFORMANCE.md).
 Buildx is reported only after its session and stream behavior passes the
-Feature, build-context, and UID-update fixtures.
+Feature and build-context fixtures.
 
 ### Stock Apple 1.1.0 create-time boundary
 
 The unmodified Apple 1.1.0 `container create` command does not expose `--hostname`, `--security-opt`, or `--privileged`. Its public `ContainerConfiguration` also has no hostname or security-option transport field. The stock adapter therefore:
 
 - accepts the normal Dev Containers path where Docker sends an empty hostname and no security options;
-- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation;
-- rejects a non-empty Docker `Hostname` or any `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
+- treats `seccomp=unconfined` as the already-native state because Apple containers do not install Docker’s default seccomp profile;
+- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation but not claiming full Docker privileged semantics;
+- rejects a non-empty Docker `Hostname` or any remaining `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
 - reports a Docker-shaped unsupported-capability response rather than claiming a weakened security approximation.
 
 The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.1.0/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
 
-## Functional support ledger
+## Certified fixture ledger
 
-Every row has an implemented parity fixture and remains a development
-`candidate` until all required candidate-bound lane evidence is complete.
+Every row is bounded by the assertions in its implemented parity fixture and
+release-bound evidence. A row does not certify every option in that broad
+technology area; [CONFORMANCE.md](CONFORMANCE.md) records the untested and
+non-conformant forms.
 
 | Area | Required behavior | Status |
 | --- | --- | --- |
-| Engine negotiation | Ping, version negotiation, versioned paths, errors | `candidate` |
-| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `candidate` |
-| Exec and streams | TTY and multiplexed streams, resize, cancellation, exit status | `candidate` |
-| Images and builds | Pull, inspect, Dockerfile options, target, failed-build stream | `candidate` |
-| Archive | Copy in/out, modes, ownership, symlinks, long paths, large files | `candidate` |
-| Networks and volumes | Lifecycle, bind and named volumes, read-only and tmpfs behavior | `candidate` |
-| Image Dev Container | Workspace, labels, keepalive, attach, reopen | `candidate` |
-| Dockerfile Dev Container | Context, target, build arguments, entrypoint/CMD, rebuild | `candidate` |
-| Users and environment | Container/remote users, UID update, environment probing | `candidate` |
-| Lifecycle hooks | Normative ordering, parallel object commands, failure gating | `candidate` |
-| Features | OCI resolution, ordering, installation, locks, frozen locks | `candidate` |
-| Ports | Publish, forward, collision handling, host/service connectivity | `candidate` |
-| Reuse and recovery | Reopen, rebuild, shutdown, crash recovery, leak-free cleanup | `candidate` |
-| Compose service | Selected service, generated overrides, workspace projection | `candidate` |
-| Compose dependencies | `runServices`, health gates, service DNS | `candidate` |
-| Compose resources | Named volumes, networks, aliases, environment files | `candidate` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `candidate` |
-| Fault recovery | Socket/backend failure, deadlines, signals, lifecycle races | `candidate` |
-| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `candidate` (Docker recorded; Apple recordings pending) |
+| Engine negotiation | Ping, version negotiation, versioned paths, errors | `supported` |
+| Container lifecycle | Create through remove, inspect, wait, idempotent cleanup | `supported` |
+| Exec and streams | TTY/non-TTY output, user/environment/workdir, 4 MiB stdin/stdout, stderr, exit status | `supported` |
+| Images and builds | Public arm64 pull/inspect, checked-in Dockerfile context/arguments/target, failed-build stream | `supported` |
+| Archive | Copy in/out, content, mode, symlink, long path, 1 MiB file | `supported` |
+| Networks and volumes | Checked-in lifecycle, bind and named volumes, read-only and tmpfs behavior | `supported` |
+| Image Dev Container | Workspace, environment, selected user, post-create command | `supported` |
+| Dockerfile Dev Container | Dockerfile/context path, target, build argument, workspace, post-create command | `supported` |
+| Users and environment | Checked-in container/remote users, environment expansion, and explicit no-UID-update path | `supported` |
+| Lifecycle hooks | Checked-in string-valued create/update/post-create/start/attach ordering | `supported` |
+| Features | Two public OCI Features, generated build, lockfile, frozen-lock rejection | `supported` |
+| Ports | TCP publishing, forward metadata, real VS Code forwarding, collision rejection, host/container connectivity | `supported` |
+| Reuse and cleanup | Same-config reuse, forced replacement, hook counts, volume/container cleanup | `supported` |
+| Compose service | Selected service, generated overrides, workspace projection | `supported` |
+| Compose dependencies | `runServices`, health gates, service DNS | `supported` |
+| Compose resources | Named volumes, networks, aliases, environment files | `supported` |
+| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
+| Fault recovery | Missing backend, bounded empty events, signal exit, concurrent start/remove convergence | `supported` |
+| VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
 
 The machine-readable source of these rows is
 [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Documentation must
-not mark a row supported before its manifest fixture is `implemented` and its
-evidence is attached to a release candidate.
+not mark a row supported before its manifest fixture is `implemented` and
+every required release-bound parity and release gate has passed.
+
+## Standards claim
+
+The fixture ledger is not a full Development Containers Specification claim.
+Version 1.0.1 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
+Docker privileged behavior, stock security options and hostname, advanced
+mount fields, image-anonymous volume semantics, and post-create network
+changes. It also has properties delegated to the official CLI or VS Code that
+are not independently certified. The complete property-by-property audit and
+known non-conformance IDs are maintained in
+[CONFORMANCE.md](CONFORMANCE.md).
 
 ## Parity definition
 
 The `docker` lane is the behavioral oracle. For a fixture to pass,
-`apple-stock` and `apple-compose` must have zero semantic differences from the
+`apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
+
+Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. A completed slowdown below `10x` is informational and does not alter semantic parity. A timeout, other non-completion, missing duration, or candidate duration of at least `10x` the Docker fixture is a parity failure; performance failures are never retried or normalized away.
 
 The harness may normalize only:
 
@@ -217,13 +231,11 @@ terminal, port forwarding, rebuild, reopen, and cleanup smoke tests.
 
 Compose provider selection is durable project state:
 
-1. Before the first mutating Compose command, the service acquires a
-   project-scoped lease and records either `stock` or `container-compose`.
-2. The key is based on the user/runtime scope and normalized Compose project
-   name. Project directory, ordered files, and configuration hashes are
-   recorded as fingerprints, not as independent ownership domains.
-3. All later mutations use the recorded provider.
-4. An unavailable claimed provider produces an explicit failure; it never
+1. Before the first resource-changing Compose command, the dispatcher consumes every supported global option, fails closed on an option it cannot classify, acquires a project-scoped lease, and records either `stock` or `container-compose`.
+2. The key is based on the local user and canonical Compose project name. An explicit `-p` or `COMPOSE_PROJECT_NAME` is validated directly; otherwise the selected provider's `config --format json` resolves file, top-level `name:`, project-directory, and current-directory precedence. The invocation project directory is retained as diagnostic metadata, not as an independent ownership domain.
+3. Every later mutation must present the recorded provider; a conflicting
+   selection fails before the provider process runs.
+4. An unavailable selected provider produces an explicit failure; it never
    falls back to the other provider.
 5. Provider reset requires explicit `down`, reconciliation proving zero live
    project resources, and an explicit reset or migration command.
@@ -236,10 +248,12 @@ operation recovery metadata; it is not a second Compose lifecycle database.
 Out-of-band `container compose` resources may be adopted only when their
 project identity and provider are unambiguous.
 
-The optional provider's `com.apple.container.compose.*` labels are projected
-to the `com.docker.compose.*` labels consumed by Dev Containers. Docker label
-filters are translated in the other direction. Conflicting native and
-projected values are reconciliation errors and are never overwritten.
+The optional `container-compose` provider's compatibility labels happen to use
+the `com.apple.container.compose.*` namespace; they do not identify an
+Apple-authored Compose product. They are projected to the
+`com.docker.compose.*` labels consumed by Dev Containers. Docker label filters
+are translated in the other direction. Conflicting native and projected values
+are reconciliation errors and are never overwritten.
 
 ## Runner and evidence requirements
 

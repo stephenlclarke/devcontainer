@@ -35,7 +35,7 @@ class ValidateManifestTests(unittest.TestCase):
 
     def test_backend_omission_is_rejected(self) -> None:
         payload = copy.deepcopy(self.payload)
-        payload["fixtures"][0]["backends"].remove("apple-compose")
+        payload["fixtures"][0]["backends"].remove("container-compose")
 
         with self.assertRaisesRegex(ManifestError, "all three required backends"):
             validate_manifest(payload)
@@ -54,6 +54,45 @@ class ValidateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "archiveSHA256"):
             validate_manifest(payload)
 
+    def test_docker_binary_digest_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["docker"]["cliSHA256"] = "not-a-digest"
+
+        with self.assertRaisesRegex(ManifestError, "docker.cliSHA256"):
+            validate_manifest(payload)
+
+    def test_devcontainers_cli_commit_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["devcontainersCli"]["commit"] = "not-a-commit"
+
+        with self.assertRaisesRegex(ManifestError, "devcontainersCli.commit"):
+            validate_manifest(payload)
+
+    def test_devcontainers_cli_source_is_upstream(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["devcontainersCli"]["source"] = (
+            "https://example.invalid/fork"
+        )
+
+        with self.assertRaisesRegex(ManifestError, "upstream repository"):
+            validate_manifest(payload)
+
+    def test_devcontainers_cli_npm_integrity_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["devcontainersCli"]["npmIntegrity"] = (
+            "not-an-integrity"
+        )
+
+        with self.assertRaisesRegex(ManifestError, "npmIntegrity"):
+            validate_manifest(payload)
+
+    def test_release_host_identity_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["releaseHost"]["macOSBuildVersion"] = ""
+
+        with self.assertRaisesRegex(ManifestError, "macOSBuildVersion"):
+            validate_manifest(payload)
+
     def test_vscode_embedded_cli_version_matches_direct_oracle(self) -> None:
         payload = copy.deepcopy(self.payload)
         payload["referencePins"]["vscode"]["devContainersExtension"][
@@ -61,6 +100,15 @@ class ValidateManifestTests(unittest.TestCase):
         ] = "different"
 
         with self.assertRaisesRegex(ManifestError, "same Dev Containers CLI version"):
+            validate_manifest(payload)
+
+    def test_vscode_embedded_cli_commit_matches_direct_oracle(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["vscode"]["devContainersExtension"][
+            "embeddedCliCommit"
+        ] = "f" * 40
+
+        with self.assertRaisesRegex(ManifestError, "same Dev Containers CLI commit"):
             validate_manifest(payload)
 
 

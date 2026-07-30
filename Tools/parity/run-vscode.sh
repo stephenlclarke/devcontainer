@@ -5,7 +5,7 @@
 # USAGE:
 #   run-vscode.sh EVIDENCE_DIR [LANE...]
 #
-# Lanes default to docker, apple-stock, and apple-compose. Set
+# Lanes default to docker, apple-stock, and container-compose. Set
 # DEVCONTAINER_VSCODE_LANES to a space-separated subset when a dedicated
 # runner owns only one runtime distribution.
 
@@ -16,7 +16,7 @@ SCRIPT_NAME="$(basename "$SELF_PATH")"
 readonly SCRIPT_NAME
 REPOSITORY_ROOT="$(cd "$(dirname "$SELF_PATH")/../.." && pwd -P)"
 readonly REPOSITORY_ROOT
-readonly ALL_LANES=(docker apple-stock apple-compose)
+readonly ALL_LANES=(docker apple-stock container-compose)
 
 # Print command usage without starting a VS Code session.
 usage() {

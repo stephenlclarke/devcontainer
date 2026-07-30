@@ -26,6 +26,7 @@ jobs:
       - name: Generate and enforce Swift coverage
         env:
           SWIFT_COVERAGE_BASE: ${{ github.event.before }}
+          SWIFT_TEST_TIMEOUT_SECONDS: "1200"
         run: make coverage-check
 
       - name: Detect SonarQube credentials
@@ -149,6 +150,44 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_QUALITYGATE_WAIT: "true"
         run: make sonar-scan
+
+      - name: Require a clean SonarQube project
+        if: steps.sonar_credentials.outputs.configured == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          issues="$(
+            curl --fail --silent --show-error \
+              --user "${SONAR_TOKEN}:" \
+              --get \
+              --data-urlencode componentKeys=stephenlclarke_devcontainer \
+              --data-urlencode resolved=false \
+              --data-urlencode ps=100 \
+              https://sonarcloud.io/api/issues/search
+          )"
+          hotspots="$(
+            curl --fail --silent --show-error \
+              --user "${SONAR_TOKEN}:" \
+              --get \
+              --data-urlencode projectKey=stephenlclarke_devcontainer \
+              --data-urlencode ps=100 \
+              https://sonarcloud.io/api/hotspots/search
+          )"
+          if ! jq -e '.total == 0' <<<"${issues}" >/dev/null; then
+            jq -r '
+              .issues[] |
+              "\(.severity) \(.rule) \(.component):\(.line // 0) \(.message)"
+            ' <<<"${issues}" >&2
+            exit 1
+          fi
+          if ! jq -e '.paging.total == 0' <<<"${hotspots}" >/dev/null; then
+            jq -r '
+              .hotspots[] |
+              "\(.vulnerabilityProbability) \(.component):\(.line // 0) \(.message)"
+            ' <<<"${hotspots}" >&2
+            exit 1
+          fi
 
       - name: Upload coverage evidence
         if: always()

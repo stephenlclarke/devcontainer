@@ -12,10 +12,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-REQUIRED_BACKENDS = {"docker", "apple-stock", "apple-compose"}
+REQUIRED_BACKENDS = {"docker", "apple-stock", "container-compose"}
 IMPLEMENTED_STATUS = "implemented"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+SHA512_SRI = re.compile(r"^sha512-[A-Za-z0-9+/]{86}==$")
 
 
 class ManifestError(ValueError):
@@ -34,6 +35,58 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
 
     references = payload.get("referencePins")
     _require(isinstance(references, dict), "referencePins must be an object")
+    devcontainers = references.get("devcontainersCli")
+    _require(
+        isinstance(devcontainers, dict),
+        "referencePins.devcontainersCli must be an object",
+    )
+    _require(
+        devcontainers.get("source") == "https://github.com/devcontainers/cli",
+        "referencePins.devcontainersCli.source must identify the upstream repository",
+    )
+    _require(
+        GIT_COMMIT.fullmatch(str(devcontainers.get("commit", ""))) is not None,
+        "referencePins.devcontainersCli.commit must be a full Git commit",
+    )
+    _require(
+        SHA512_SRI.fullmatch(str(devcontainers.get("npmIntegrity", ""))) is not None,
+        "referencePins.devcontainersCli.npmIntegrity must be a SHA-512 SRI digest",
+    )
+    docker = references.get("docker")
+    _require(isinstance(docker, dict), "referencePins.docker must be an object")
+    for field in (
+        "cliSHA256",
+        "cliBottleSHA256",
+        "engineSHA256",
+        "composeSHA256",
+        "composeBottleSHA256",
+    ):
+        _require(
+            SHA256.fullmatch(str(docker.get(field, ""))) is not None,
+            f"referencePins.docker.{field} must be a SHA-256 digest",
+        )
+
+    release_host = references.get("releaseHost")
+    _require(
+        isinstance(release_host, dict),
+        "referencePins.releaseHost must be an object",
+    )
+    _require(
+        release_host.get("architecture") == "arm64",
+        "the release host must use arm64",
+    )
+    for field in (
+        "macOSProductVersion",
+        "macOSBuildVersion",
+        "xcodeVersion",
+        "xcodeBuildVersion",
+        "swiftVersion",
+    ):
+        _require(
+            isinstance(release_host.get(field), str) and release_host[field],
+            f"referencePins.releaseHost.{field} is required",
+        )
+
     vscode = references.get("vscode")
     _require(isinstance(vscode, dict), "referencePins.vscode must be an object")
     _require(
@@ -68,8 +121,12 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
     )
     _require(
         extension.get("embeddedCliVersion")
-        == references.get("devcontainersCli", {}).get("version"),
+        == devcontainers.get("version"),
         "VS Code and direct parity must use the same Dev Containers CLI version",
+    )
+    _require(
+        extension.get("embeddedCliCommit") == devcontainers.get("commit"),
+        "VS Code and direct parity must use the same Dev Containers CLI commit",
     )
 
     policy = payload.get("releasePolicy")
@@ -80,14 +137,14 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
     )
     _require(
         set(policy.get("requiredBackends", [])) == REQUIRED_BACKENDS,
-        "releasePolicy.requiredBackends must contain docker, apple-stock, and apple-compose",
+        "releasePolicy.requiredBackends must contain docker, apple-stock, and container-compose",
     )
 
     backends = payload.get("backends")
     _require(isinstance(backends, dict), "backends must be an object")
     _require(
         set(backends) == REQUIRED_BACKENDS,
-        "backends must define exactly docker, apple-stock, and apple-compose",
+        "backends must define exactly docker, apple-stock, and container-compose",
     )
     _require(
         backends["docker"].get("role") == "oracle",
