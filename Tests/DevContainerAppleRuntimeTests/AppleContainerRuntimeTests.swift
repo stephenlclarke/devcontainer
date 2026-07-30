@@ -28,6 +28,43 @@ import Testing
 @Suite(.serialized)
 struct AppleContainerRuntimeTests {
     @Test
+    func `native build DNS arguments use valid resolver nameservers`() {
+        let configuration = """
+        # Generated resolver configuration
+        nameserver 192.0.2.53
+        nameserver 2001:db8::53
+        nameserver fe80::1%en0
+        nameserver 192.0.2.53
+        nameserver invalid.example
+        search example.test
+
+        """
+
+        #expect(
+            AppleContainerRuntime.buildDNSArguments(
+                resolverConfiguration: configuration
+            ) == [
+                "--dns", "192.0.2.53",
+                "--dns", "2001:db8::53",
+                "--dns", "fe80::1%en0"
+            ]
+        )
+        #expect(
+            AppleContainerRuntime.requiresHostDNS(
+                ContainerSpec(
+                    name: "buildx_buildkit_devcontainer0",
+                    image: "moby/buildkit:buildx-stable-1"
+                )
+            )
+        )
+        #expect(
+            !AppleContainerRuntime.requiresHostDNS(
+                ContainerSpec(name: "application", image: "buildkit-client:latest")
+            )
+        )
+    }
+
+    @Test
     func `managed hosts replacement preserves unmanaged entries`() {
         let original = """
         127.0.0.1 localhost
@@ -806,7 +843,7 @@ struct FakeAppleCLI {
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
         let createHelp = enhancedCreateOptions
-            ? "--hostname\\n--publish\\n--privileged\\n--security-opt"
+            ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
         return """
         #!/bin/sh
@@ -1023,6 +1060,10 @@ struct FakeAppleCLI {
             printf '%s\\n' 'load-progress'
             ;;
           "build --file")
+            if grep -q '^ADD context.tar /tmp/build-features/$' "$3"; then
+              test -f "$(dirname "$3")/context.tar"
+              printf '%s\n' prepared-feature-context >> "$LOG"
+            fi
             printf '%s\\n' 'build-progress'
             ;;
           "start fixture")

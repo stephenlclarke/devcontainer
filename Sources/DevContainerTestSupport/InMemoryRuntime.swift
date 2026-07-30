@@ -286,11 +286,14 @@ public actor InMemoryRuntime: DevContainerRuntime {
 
     public func waitContainer(
         id: String,
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) throws -> Int32 {
         let snapshot = try container(id: id)
         guard snapshot.state != .running else {
             throw DevContainerError(.conflict, message: "test container \(id) is still running")
+        }
+        if snapshot.spec.autoRemove {
+            try removeContainer(id: id, force: true, context: context)
         }
         return snapshot.exitCode ?? 0
     }

@@ -14,8 +14,10 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
+import DevContainerState
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -48,6 +50,65 @@ private func makeEdgeFixture(name: String = "edge") async throws -> EdgeFixture 
         context: context,
         identifier: container.dockerID.rawValue
     )
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `auto removed container releases resource and empty project claim`() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "devcontainer-router-auto-remove-\(UUID().uuidString)",
+            isDirectory: true
+        )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(
+        path: directory.appendingPathComponent("state.sqlite")
+    )
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:auto-remove",
+            references: ["fixture:latest"],
+            createdAt: Date(timeIntervalSince1970: 1),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store)
+    )
+    let body = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "fixture:latest",
+            "HostConfig": ["AutoRemove": true]
+        ]
+    )
+    let created = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=auto-remove",
+            body: body
+        )
+    )
+    let object = try #require(
+        JSONSerialization.jsonObject(
+            with: responseBytes(created)
+        ) as? [String: Any]
+    )
+    let id = try #require(object["Id"] as? String)
+    let project = try #require(await store.listProjects().first)
+    #expect(try await store.resources(project: project.key).count == 1)
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/\(id)/wait"
+        )
+    )
+    _ = try await responseStreamBytes(response)
+
+    #expect(try await store.resources(project: project.key).isEmpty)
+    #expect(try await store.listProjects().isEmpty)
 }
 
 @Test

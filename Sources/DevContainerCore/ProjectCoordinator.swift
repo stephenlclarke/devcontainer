@@ -284,6 +284,23 @@ public actor ProjectCoordinator {
         try await store.removeResource(runtimeID: runtimeID)
     }
 
+    public func reconcileRemovedResource(
+        runtimeID: RuntimeID,
+        project: ProjectKey,
+        releaseProjectWhenEmpty: Bool
+    ) async throws {
+        let lockKey = project.rawValue
+        await acquireMutationLock(lockKey)
+        defer { releaseMutationLock(lockKey) }
+        try await store.removeResource(runtimeID: runtimeID)
+        if releaseProjectWhenEmpty,
+           try await store.project(key: project) != nil,
+           try await store.resources(project: project).isEmpty
+        {
+            try await store.releaseProject(key: project)
+        }
+    }
+
     // swiftlint:disable:next function_parameter_count
     private func recordResource(
         runtimeKind: String,

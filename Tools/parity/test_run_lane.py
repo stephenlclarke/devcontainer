@@ -22,6 +22,7 @@ from run_lane import (
     LaneRunner,
     create_socket_root,
     install_cancellation_handlers,
+    resolver_nameservers,
     run_checked,
     safe_environment,
 )
@@ -253,20 +254,20 @@ class BuilderCleanupTests(unittest.TestCase):
 
             runner.configure_devcontainer_client()
             buildx = subprocess.run(
-                [runner.devcontainer_docker, "buildx", "version"],
+                [runner.docker, "buildx", "version"],
                 capture_output=True,
                 check=False,
                 text=True,
             )
             forwarded = subprocess.run(
-                [runner.devcontainer_docker, "version"],
+                [runner.docker, "version"],
                 capture_output=True,
                 check=False,
                 text=True,
             )
             legacy_build = subprocess.run(
                 [
-                    runner.devcontainer_docker,
+                    runner.docker,
                     "build",
                     "--progress",
                     "plain",
@@ -285,11 +286,33 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(legacy_build.returncode, 0)
         self.assertEqual(legacy_build.stdout.strip(), "forwarded:build .")
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
+        self.assertEqual(
+            runner.environment["DEVCONTAINER_DOCKER_BIN"],
+            runner.devcontainer_docker,
+        )
+        self.assertEqual(runner.docker, runner.devcontainer_docker)
 
-    def test_builder_disables_unsupported_restart_policy(self) -> None:
+    def test_resolver_nameservers_rejects_invalid_and_duplicate_entries(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolver_nameservers(
+                """
+                nameserver 192.0.2.53
+                nameserver 2001:db8::53
+                nameserver fe80::1%en0
+                nameserver 192.0.2.53
+                nameserver invalid.example
+                search example.test
+                """
+            ),
+            ["192.0.2.53", "2001:db8::53", "fe80::1%en0"],
+        )
+
+    def test_provider_builder_disables_restart_and_uses_host_dns(self) -> None:
         with TemporaryDirectory() as temporary:
             runner = LaneRunner.__new__(LaneRunner)
-            runner.lane = "apple-stock"
+            runner.lane = "container-compose"
             runner.repository = Path("/repository")
             runner.environment = {"PATH": "/usr/bin:/bin"}
             runner.docker = "/usr/bin/docker"
@@ -309,6 +332,10 @@ class BuilderCleanupTests(unittest.TestCase):
                     "run_lane.subprocess.run",
                     side_effect=completed,
                 ) as run,
+                mock.patch(
+                    "run_lane.Path.read_text",
+                    return_value="nameserver 192.0.2.53\n",
+                ),
                 mock.patch("run_lane.os.getpid", return_value=123),
             ):
                 runner.prepare_builder()
@@ -320,21 +347,52 @@ class BuilderCleanupTests(unittest.TestCase):
                 "buildx",
                 "create",
                 "--name",
-                "devcontainer-parity-apple-stock-123",
+                "devcontainer-parity-container-compose-123",
                 "--driver",
                 "docker-container",
                 "--driver-opt",
                 "restart-policy=no",
+                "--buildkitd-config",
+                str(Path(temporary) / "buildkitd.toml"),
             ],
         )
         self.assertEqual(
             runner.environment["BUILDX_BUILDER"],
-            "devcontainer-parity-apple-stock-123",
+            "devcontainer-parity-container-compose-123",
         )
         self.assertEqual(
             runner.builder_container_ids,
             {"builder-container-id"},
         )
+
+    def test_docker_builder_uses_daemon_integrated_buildkit(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = None
+
+            with mock.patch(
+                "run_lane.subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout="ready", stderr=""),
+            ) as run:
+                runner.prepare_builder()
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "/usr/bin/docker",
+                "buildx",
+                "inspect",
+                "--bootstrap",
+                "default",
+            ],
+        )
+        self.assertEqual(runner.environment["BUILDX_BUILDER"], "default")
+        self.assertIsNone(runner.builder_name)
 
     def test_builder_cleanup_reports_and_removes_exact_leaked_container(
         self,

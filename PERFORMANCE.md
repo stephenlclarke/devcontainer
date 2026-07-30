@@ -330,12 +330,12 @@ removal. The focused Apple and provider lanes subsequently passed with zero
 cleanup differences. The original timing samples retain their recorded cleanup
 status and should be refreshed before using them as release evidence.
 
-The complete 18-fixture matrix also remains blocked locally: the Docker
-oracle's isolated BuildKit container cannot verify the Docker Hub certificate
-for D02, D03, D05, and E04 (`x509: certificate signed by unknown authority`).
-Resolve that host BuildKit trust issue before treating these timings as a
-release-performance result. The three warm samples here are also below the
-five-cold/ten-warm repetition requirement.
+The Docker-oracle blocker was subsequently corrected in the parity harness.
+The Docker lane now selects the daemon-integrated default BuildKit, preserving
+the daemon's trust store, rather than creating a Docker-container builder that
+cannot verify the locally intercepted Docker Hub certificate. The complete
+one-run matrix is recorded in the closeout section below. The earlier three
+warm samples remain below the five-cold/ten-warm repetition requirement.
 
 ## Optimization measurement protocol
 
@@ -494,3 +494,64 @@ The remaining priority order is:
 5. Complete the E06 phase-level investigation because both final observations
    remain above `2.50x`; distinguish product-owned round trips from ordinary
    VM cleanup variance.
+
+## 2026-07-30 integration closeout
+
+The performance branch integration exposed and corrected seven additional
+parity blockers:
+
+- ordinary HTTP input half-close now allows an in-flight response to complete;
+- a completed hijack releases both connection trackers, preventing rejection
+  after 64 sequential exec or attach streams;
+- the bounded request limit admits real Buildx image archives up to 512 MiB,
+  with a separate 1 GiB aggregate retained-body budget;
+- valid streaming tar archives are padded only after validation so macOS
+  `tar` can extract them;
+- the stock Apple native builder receives Feature content through a tar
+  `ADD` staging context because its scratch-stage `COPY` dropped nested files;
+- stock and provider BuildKit containers receive valid host resolver
+  nameservers without claiming general Dev Container DNS-option support;
+- auto-removed containers reconcile their durable resource row and release an
+  empty non-Compose project claim.
+
+The Docker reference harness also moved from an isolated Docker-container
+builder to the daemon-integrated BuildKit after the isolated builder failed
+Docker Hub certificate verification. That failure remains environment
+evidence and its incomplete timings are excluded.
+
+### Complete local CLI matrix
+
+All 54 fixture-lane executions completed successfully with zero semantic and
+cleanup differences:
+
+| Lane | Summed time | Ratio to Docker |
+| --- | ---: | ---: |
+| Docker oracle | 163.599s | 1.000x |
+| Stock Apple 1.1.0 | 158.780s | 0.971x |
+| `container-compose` provider | 154.025s | 0.941x |
+
+These aggregate ratios meet the `<=1.00x` objective in this one run, but they
+are not an optimisation acceptance result. The lanes ran sequentially with
+different cache state: Docker D05 took 98.015s, while stock and provider D05
+took 39.252s and 42.074s. The repeated cold/warm protocol remains required.
+
+The completed per-fixture results above `2.50x` Docker and therefore requiring
+investigation are:
+
+| Fixture | Stock/Docker | Provider/Docker | Immediate interpretation |
+| --- | ---: | ---: | --- |
+| C04 Compose lifecycle | 2.849x | 1.960x | Stock lifecycle round trips |
+| D04 lifecycle hooks | 2.158x | 2.611x | Provider fixed overhead |
+| D06 ports | 2.304x | 2.683x | Provider forwarding setup |
+| D07 reuse and cleanup | 3.055x | 3.164x | Both lanes repeat inspect, rebuild, and cleanup work |
+| E04 image build | 25.883x | 6.760x | Cache-sensitive Docker denominator; rerun cold and warm before attribution |
+
+E06 completed at 2.305x stock and 2.392x provider, below the investigation
+trigger in this run but still outside the `<=1.00x` objective. Every other
+completed result above `1.00x` also misses the objective even when it does not
+trigger the `2.50x` investigation rule.
+
+This local matrix certifies the corrected worktree's CLI behaviour only.
+Hosted exact-head CLI and real VS Code evidence remains required before merge,
+and the five-cold/ten-warm protocol remains required before claiming a
+performance improvement.

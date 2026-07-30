@@ -572,7 +572,7 @@ func assertAdvancedKillWaitAndRemove(
     #expect(
         await router.respond(
             to: DockerHTTPRequest(method: .delete, target: "/containers/\(containerID)?force=1")
-        ).status == 204
+        ).status == 404
     )
 }
 

@@ -45,6 +45,13 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let hostname: Bool
         let privileged: Bool
         let securityOptions: Bool
+        let dns: Bool
+    }
+
+    private struct NativeBuildInput {
+        let contextRoot: URL
+        let dockerfile: URL
+        let temporary: TemporaryDirectory?
     }
 
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
@@ -484,7 +491,8 @@ public extension AppleContainerRuntime {
         let support = CreateOptionSupport(
             hostname: help.contains("--hostname"),
             privileged: help.contains("--privileged"),
-            securityOptions: help.contains("--security-opt")
+            securityOptions: help.contains("--security-opt"),
+            dns: help.contains("--dns")
         )
         createOptionSupport = support
         return support
@@ -540,8 +548,16 @@ public extension AppleContainerRuntime {
         arguments += spec.capabilitiesToAdd.flatMap { ["--cap-add", $0] }
         arguments += spec.capabilitiesToDrop.flatMap { ["--cap-drop", $0] }
         arguments += spec.securityOptions.flatMap { ["--security-opt", $0] }
+        if optionSupport.dns, Self.requiresHostDNS(spec) {
+            arguments += Self.hostBuildDNSArguments()
+        }
         arguments += Self.optionalArgument("--entrypoint", value: spec.entrypoint.first)
         return arguments
+    }
+
+    static func requiresHostDNS(_ spec: ContainerSpec) -> Bool {
+        spec.name.hasPrefix("buildx_buildkit_")
+            && spec.image.contains("buildkit")
     }
 
     private static func optionalArgument(_ flag: String, value: String?) -> [String] {
@@ -665,7 +681,7 @@ public extension AppleContainerRuntime {
         guard archive.count <= 1_073_741_824 else {
             throw DevContainerError(.invalidRequest, message: "archive exceeds the 1 GiB request limit")
         }
-        try TarArchiveValidator.validate(archive)
+        let extractionInput = try TarArchiveValidator.validatedForExtraction(archive)
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
         try await withContainerRunningForArchiveTransfer(
@@ -678,7 +694,7 @@ public extension AppleContainerRuntime {
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
                 arguments: ["-xf", "-", "-C", temporary.url.path],
                 environment: environment,
-                input: archive
+                input: extractionInput
             )
             try requireSuccess(extractResult, operation: "archive extraction")
             let staging = "/tmp/.devcontainer-copy-\(UUID().uuidString.lowercased())"
@@ -896,20 +912,37 @@ public extension AppleContainerRuntime {
         request: ImageBuildRequest,
         context _: RuntimeRequestContext
     ) async throws -> AsyncThrowingStream<Data, any Error> {
-        try TarArchiveValidator.validate(request.context)
+        let extractionInput = try TarArchiveValidator.validatedForExtraction(
+            request.context
+        )
         let temporary = try TemporaryDirectory()
         let extractResult = try await AppleCommandRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
             arguments: ["-xf", "-", "-C", temporary.url.path],
             environment: environment,
-            input: request.context
+            input: extractionInput
         )
         try requireSuccess(extractResult, operation: "build context extraction")
         let dockerfile = try buildDockerfile(
             request.dockerfile,
             contextRoot: temporary.url
         )
-        var arguments = ["build", "--file", dockerfile.path, "--progress", "plain"]
+        let buildInput = try await nativeBuildInput(
+            dockerfile: dockerfile,
+            contextRoot: temporary.url
+        )
+        defer {
+            buildInput.temporary?.remove()
+            temporary.remove()
+        }
+        var arguments = [
+            "build",
+            "--file",
+            buildInput.dockerfile.path,
+            "--progress",
+            "plain"
+        ]
+        arguments += Self.hostBuildDNSArguments()
         for tag in request.tags {
             arguments += ["--tag", tag]
         }
@@ -922,14 +955,104 @@ public extension AppleContainerRuntime {
         for (key, value) in request.labels.sorted(by: { $0.key < $1.key }) {
             arguments += ["--label", "\(key)=\(value)"]
         }
-        arguments.append(temporary.url.path)
+        arguments.append(buildInput.contextRoot.path)
         let result = try await command(arguments)
-        temporary.remove()
         try requireSuccess(result, operation: "image build")
         return AsyncThrowingStream { continuation in
             continuation.yield(result.standardOutput)
             continuation.finish()
         }
+    }
+
+    static func buildDNSArguments(
+        resolverConfiguration: String
+    ) -> [String] {
+        var seen: Set<String> = []
+        var arguments: [String] = []
+        for line in resolverConfiguration.split(whereSeparator: \.isNewline) {
+            let fields = line.split(whereSeparator: \.isWhitespace)
+            guard fields.count >= 2, fields[0] == "nameserver" else {
+                continue
+            }
+            let nameserver = String(fields[1])
+            guard isIPAddress(nameserver), seen.insert(nameserver).inserted else {
+                continue
+            }
+            arguments += ["--dns", nameserver]
+        }
+        return arguments
+    }
+
+    private static func hostBuildDNSArguments() -> [String] {
+        guard
+            let resolverConfiguration = try? String(
+                contentsOfFile: "/etc/resolv.conf",
+                encoding: .utf8
+            )
+        else {
+            return []
+        }
+        return buildDNSArguments(
+            resolverConfiguration: resolverConfiguration
+        )
+    }
+
+    private static func isIPAddress(_ value: String) -> Bool {
+        let address = value.split(separator: "%", maxSplits: 1).first.map(String.init) ?? value
+        var ipv4 = in_addr()
+        if value.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+            return true
+        }
+        var ipv6 = in6_addr()
+        return address.withCString { inet_pton(AF_INET6, $0, &ipv6) } == 1
+    }
+
+    private func nativeBuildInput(
+        dockerfile: URL,
+        contextRoot: URL
+    ) async throws -> NativeBuildInput {
+        guard try isFeatureContentStagingDockerfile(dockerfile) else {
+            return NativeBuildInput(
+                contextRoot: contextRoot,
+                dockerfile: dockerfile,
+                temporary: nil
+            )
+        }
+        let prepared = try TemporaryDirectory()
+        let archive = prepared.url.appendingPathComponent("context.tar")
+        let archiveResult = try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", archive.path, "-C", contextRoot.path, "."],
+            environment: environment
+        )
+        try requireSuccess(
+            archiveResult,
+            operation: "Feature content archive creation"
+        )
+        let preparedDockerfile = prepared.url.appendingPathComponent("Dockerfile")
+        try Data(
+            "FROM scratch\nADD context.tar /tmp/build-features/\n".utf8
+        ).write(to: preparedDockerfile, options: .atomic)
+        return NativeBuildInput(
+            contextRoot: prepared.url,
+            dockerfile: preparedDockerfile,
+            temporary: prepared
+        )
+    }
+
+    private func isFeatureContentStagingDockerfile(_ dockerfile: URL) throws -> Bool {
+        let contents = try String(contentsOf: dockerfile, encoding: .utf8)
+        let instructions = contents
+            .split(whereSeparator: \.isNewline)
+            .map {
+                $0.split(whereSeparator: \.isWhitespace)
+                    .joined(separator: " ")
+            }
+            .filter { !$0.isEmpty }
+        return instructions == [
+            "FROM scratch",
+            "COPY . /tmp/build-features/"
+        ]
     }
 
     private func buildDockerfile(

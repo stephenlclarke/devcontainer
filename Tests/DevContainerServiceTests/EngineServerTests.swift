@@ -26,6 +26,18 @@ import Testing
 @Suite(.serialized)
 struct EngineServerTests {
     @Test
+    func `production request limits admit buildx image archives`() {
+        #expect(
+            EngineServerLimits.production.maximumRequestBodyBytes
+                >= 512 * 1024 * 1024
+        )
+        #expect(
+            EngineServerLimits.production.maximumProcessBufferedRequestBodyBytes
+                >= 2 * EngineServerLimits.production.maximumRequestBodyBytes
+        )
+    }
+
+    @Test
     func `server errors always use a valid Docker JSON envelope`() throws {
         let message = "quote \" slash \\ newline\ncontrol\u{0001} unicode \u{1F680}"
         let body = EngineResponseEncoding.dockerError(message)
@@ -104,6 +116,50 @@ struct EngineServerTests {
             }
             #expect(session.inputClosed)
             #expect(session.input == payload)
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
+    }
+
+    @Test
+    func `completed hijacks release the connection budget`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let runtime = InMemoryRuntime()
+        await runtime.seedImage(
+            ImageSnapshot(
+                id: "sha256:fixture",
+                references: ["alpine:3.22"],
+                createdAt: Date(timeIntervalSince1970: 1),
+                size: 42
+            )
+        )
+        let limits = EngineServerLimits(
+            maximumRequestBodyBytes: 1024,
+            maximumBufferedRequestBodyBytes: 1024,
+            maximumPendingRequests: 2,
+            maximumActiveConnections: 2
+        )
+        let server = fixture.server(
+            runtime: runtime,
+            limits: limits
+        )
+        try await server.start()
+
+        do {
+            let container = try fixture.createRunningContainer()
+            let path =
+                "/v1.53/containers/\(container)/attach"
+                    + "?stream=1&stdout=1&stderr=1"
+            for _ in 0 ..< 3 {
+                #expect(
+                    try fixture.curl(path, method: "POST").status == 200
+                )
+            }
+            #expect(try fixture.curl("/_ping").status == 200)
         } catch {
             try? await server.shutdown()
             throw error
@@ -193,21 +249,20 @@ struct EngineServerTests {
     }
 
     @Test
-    func `disconnect cancels an in flight ordinary request`() async throws {
+    func `ordinary request completes after client input half close`() async throws {
         let fixture = try ServerFixture()
         defer { fixture.cleanup() }
-        let runtime = InMemoryRuntime(descriptorDelay: .seconds(30))
+        let runtime = InMemoryRuntime(descriptorDelay: .milliseconds(100))
         let server = fixture.server(runtime: runtime)
         try await server.start()
 
-        try fixture.requestAndDisconnect(
+        let response = try fixture.requestAndHalfClose(
             "GET /v1.53/version HTTP/1.1\r\nHost: localhost\r\n\r\n"
         )
-        for _ in 0 ..< 100 where await runtime.observedRequestCancellationCount == 0 {
-            try await Task.sleep(for: .milliseconds(10))
-        }
 
-        #expect(await runtime.observedRequestCancellationCount == 1)
+        #expect(response.contains("HTTP/1.1 200 OK"))
+        #expect(response.contains("\"ApiVersion\":\"1.53\""))
+        #expect(await runtime.observedRequestCancellationCount == 0)
         try await server.shutdown()
     }
 
@@ -445,20 +500,33 @@ private struct ServerFixture {
             ?? "non-UTF-8 pipelined response"
     }
 
-    func requestAndDisconnect(_ request: String) throws {
+    func requestAndHalfClose(_ request: String) throws -> String {
         let input = Pipe()
+        let output = Pipe()
+        let error = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
         process.arguments = ["-U", socketPath]
         process.standardInput = input
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = error
         try process.run()
         input.fileHandleForWriting.write(Data(request.utf8))
-        Thread.sleep(forTimeInterval: 0.05)
-        process.terminate()
-        process.waitUntilExit()
         try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        let standardOutput = try output.fileHandleForReading.readToEnd() ?? Data()
+        let standardError = try error.fileHandleForReading.readToEnd() ?? Data()
+        guard process.terminationStatus == 0 else {
+            throw CurlError(
+                "half-closed request: "
+                    + (
+                        String(data: standardError, encoding: .utf8)
+                            ?? "non-UTF-8 nc diagnostic"
+                    )
+            )
+        }
+        return String(data: standardOutput, encoding: .utf8)
+            ?? "non-UTF-8 half-closed response"
     }
 
     func createExec(container: String) throws -> String {

@@ -82,16 +82,25 @@ their additive inventory schema instead of being decoded through stock 1.1.0
 types, and managed-host caching is invalidated after every runtime bootstrap.
 The branch's earlier E06 medians improved 16.6% on stock Apple and 17.7% on
 the custom runtime, and stock VS Code reached `1.006x` Docker. Those historical
-measurements do not certify the corrected integrated source; the fresh
-exact-head matrix below remains the authority.
+measurements do not certify the corrected integrated source.
+
+The corrected integration worktree subsequently passed all 54 CLI
+fixture-lane executions with zero semantic or cleanup differences. Its
+single-run aggregate times were 163.599s for Docker, 158.780s for stock Apple,
+and 154.025s for the provider. Cache state was not balanced across the three
+sequential lanes, so those totals are functional evidence and raw timing
+evidence, not performance certification. The full matrix and every result
+above the `2.50x` investigation trigger are recorded in
+[`PERFORMANCE.md`](PERFORMANCE.md). Exact-head hosted CLI and VS Code evidence
+remains the merge gate.
 
 ## Implementation status
 
 The implementation work below was applied to the current worktree on 30 July
-2026. “Implemented” means local production wiring and focused regression tests
-exist. It does not replace a fresh exact-head three-lane parity or performance
-run. “Partial” identifies the remaining proof or primitive rather than
-normalising it.
+2026. “Implemented” means production wiring, focused regression tests, and the
+local three-lane CLI matrix exist. It does not replace exact-head hosted CLI
+and VS Code evidence or the repeated performance protocol. “Partial”
+identifies the remaining proof or primitive rather than normalising it.
 
 | Programme item | Current status | Remaining boundary |
 | --- | --- | --- |
@@ -99,14 +108,14 @@ normalising it.
 | PAR-002 | Implemented fail-closed stock behaviour | A future tagged Apple API must preserve legal embedded `=` labels before stock support can be advertised |
 | ARC-001 | Partial: production Docker and Compose mutations use keyed coordination, ownership labels, intent records, and explicit unfinished-operation recovery state | Deterministic phase-by-phase runtime reconciliation and safe automatic resume remain required |
 | ARC-002 | Partial: correlation, deadline propagation, disconnect cancellation, hashed idempotency keys, request conflict detection, and replay are wired | Replay results must persist across service restart and be reconciled with native runtime state |
-| ENG-001 | Partial: connection, pending-request, per-connection, process-wide body, and write-buffer bounds are enforced | Build, image, and archive uploads still need private-file or byte-stream transfer and the 1 GiB/RSS acceptance test |
+| ENG-001 | Partial: connection, pending-request, 512 MiB per-request, 1 GiB process-wide body, and write-buffer bounds are enforced; completed hijacks release the shared 64-connection budget | Build, image, and archive uploads still need private-file or byte-stream transfer and the 1 GiB streamed-context/RSS acceptance test |
 | ENG-002 | Implemented with exactly-once direct session cancellation | Full live runtime process-tree evidence remains part of release certification |
 | PROC-001 | Implemented through the shared `DevContainerProcess` supervisor | None locally; live provider and runtime certification remains |
 | ENG-003 and ENG-004 | Implemented with awaited streamed writes, cancellation, byte accounting, and encoded Docker error envelopes | Slow-reader live evidence remains |
 | PAR-003 to PAR-006 | Implemented with ambiguity detection, truthful `/info`, Docker default bind semantics, and immutable image IDs | Exact live IPv6 binding observations remain open |
 | STATE-001 and STATE-002 | Implemented with explicit v2-to-v3 migration, future-version rejection, integrity checks, retention, and WAL checkpoints | None locally |
 | OBS-001 | Partial: shared privacy redaction and structured request completion measurements are wired | Native-call phase spans, CPU/RSS, cache, and round-trip counters must be retained in parity artefacts |
-| OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, and restart-safe managed-host caching are the production fast path | Image inventory and the corrected direct transfer paths still need live exact-head certification |
+| OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, and restart-safe managed-host caching passed the local three-lane CLI matrix | Hosted exact-head CLI and VS Code certification plus the repeated performance protocol remain |
 | OPT-002 | Blocked in this repository | Compose model caching belongs in `container-compose`, preserving the provider boundary |
 | OPT-003 | Implemented with immediate owned-mutation wakeups plus bounded external-writer polling | Native runtime events should replace the residual poll when a tagged stable API exists |
 | OPT-004 and OPT-005 | Partial | End-to-end upload streaming and parity-artifact resource measurements remain |
@@ -117,7 +126,7 @@ normalising it.
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
 | GOV-001 | Explicit exception | CodeQL is disabled until the owner requests re-enablement; live `main` protection currently requires `Validate` only |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
-| DOC-001 | Implemented for the changed production paths and current blockers | Exact-head live evidence must replace historical baseline text after certification |
+| DOC-001 | Implemented for the changed production paths, local matrix, and current blockers | Add the exact-head hosted run after certification |
 
 ## Priority model
 
@@ -197,7 +206,11 @@ normalising it.
 
 ### ENG-001: Request buffering permits excessive process-wide memory use
 
-**Evidence:** production limits allow a 1 GiB request and 1 GiB retained body per connection. Each body is accumulated in a `ByteBuffer`, converted to `Data`, and passed through the router. The server backlog is 256 and active connections are counted but not capped globally.
+**Evidence:** production limits allow a 512 MiB request, 512 MiB retained body
+per connection, a 1 GiB process-wide retained-body budget, and 64 active
+connections. Each body is accumulated in a `ByteBuffer`, converted to `Data`,
+and passed through the router. Buildx exported a 100,132,864-byte Feature image
+through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 **Impact:** Concurrent build contexts or image loads can exhaust memory. Large contexts incur extra copies and delay processing until the entire body arrives. A local user process can use the user-owned socket to create severe memory pressure.
 

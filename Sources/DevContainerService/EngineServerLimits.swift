@@ -15,11 +15,14 @@
 //===----------------------------------------------------------------------===//
 
 struct EngineServerLimits: Sendable {
+    /// Buildx sends the complete exported image archive to /images/load. Real
+    /// Dev Container Feature images routinely exceed 64 MiB, so keep one
+    /// bounded image-sized request and a separate aggregate connection budget.
     static let production = EngineServerLimits(
-        maximumRequestBodyBytes: 67_108_864,
-        maximumBufferedRequestBodyBytes: 67_108_864,
+        maximumRequestBodyBytes: 536_870_912,
+        maximumBufferedRequestBodyBytes: 536_870_912,
         maximumPendingRequests: 8,
-        maximumProcessBufferedRequestBodyBytes: 268_435_456,
+        maximumProcessBufferedRequestBodyBytes: 1_073_741_824,
         maximumActiveConnections: 64
     )
 

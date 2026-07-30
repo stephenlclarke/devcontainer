@@ -398,6 +398,18 @@ extension DockerRouter {
             ?? labels["com.apple.container.compose.project"]
     }
 
+    func reconcileAutomaticRemoval(_ snapshot: ContainerSnapshot) async throws {
+        guard snapshot.spec.autoRemove, let coordinator else {
+            return
+        }
+        let labels = snapshot.spec.labels
+        try await coordinator.reconcileRemovedResource(
+            runtimeID: snapshot.runtimeID,
+            project: projectKey(labels: labels),
+            releaseProjectWhenEmpty: composeProjectName(labels) == nil
+        )
+    }
+
     private static func digest(_ data: Data) -> String {
         SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }

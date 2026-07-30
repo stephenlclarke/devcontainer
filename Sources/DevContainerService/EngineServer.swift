@@ -353,11 +353,16 @@ private final class DockerHTTPHandler:
         requestBody.clear()
         pendingRequests.removeAll()
         if registeredConnection {
-            registeredConnection = false
-            resourceBudget.closeConnection()
-            connections.closed()
+            releaseRegisteredConnection()
         }
         context.fireChannelInactive()
+    }
+
+    private func releaseRegisteredConnection() {
+        guard registeredConnection else { return }
+        registeredConnection = false
+        resourceBudget.closeConnection()
+        connections.closed()
     }
 
     func userInboundEventTriggered(
@@ -368,8 +373,13 @@ private final class DockerHTTPHandler:
            channelEvent == .inputClosed
         {
             if !upgradeState.upgradeCandidate {
-                activeRouterTask?.cancel()
-                context.close(promise: nil)
+                if responseInFlight || !pendingRequests.isEmpty
+                    || requestHead != nil
+                {
+                    closeAfterResponse = true
+                } else {
+                    context.close(promise: nil)
+                }
                 return
             }
             if responseInFlight || !pendingRequests.isEmpty {
@@ -668,7 +678,7 @@ private final class DockerHTTPHandler:
             session: session,
             terminal: terminal,
             logger: logger,
-            connections: connections
+            onClose: releaseRegisteredConnection
         )
         recordActiveRequest(termination: "hijack")
         let sendableContext = SendableChannelHandlerContext(context)
@@ -897,7 +907,7 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
     private let session: any RuntimeProcessSession
     private let terminal: Bool
     private let logger: Logger
-    private let connections: EngineConnectionTracker
+    private let onClose: @Sendable () -> Void
     private let inputPump: OrderedRuntimeInputPump
     private let cancellation: RuntimeSessionCancellation
     private var outputTask: Task<Void, Never>?
@@ -908,12 +918,12 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
         session: any RuntimeProcessSession,
         terminal: Bool,
         logger: Logger,
-        connections: EngineConnectionTracker
+        onClose: @escaping @Sendable () -> Void
     ) {
         self.session = session
         self.terminal = terminal
         self.logger = logger
-        self.connections = connections
+        self.onClose = onClose
         let cancellation = RuntimeSessionCancellation(session: session)
         self.cancellation = cancellation
         inputPump = OrderedRuntimeInputPump(
@@ -974,7 +984,7 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        connections.closed()
+        onClose()
         let shouldCancel = stateLock.withLock {
             !finishedNormally
         }

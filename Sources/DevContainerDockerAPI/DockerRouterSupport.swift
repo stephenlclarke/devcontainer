@@ -542,10 +542,15 @@ extension DockerRouter {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let snapshot = try await runtime.inspectContainer(
+                        id: id,
+                        context: context
+                    )
                     let exitCode = try await runtime.waitContainer(id: id, context: context)
-                    if condition == "removed" {
+                    if condition == "removed" || snapshot.spec.autoRemove {
                         try await waitForContainerRemoval(id: id, context: context)
                     }
+                    try await reconcileAutomaticRemoval(snapshot)
                     try continuation.yield(
                         DockerJSON.encoder.encode(
                             DockerWaitResponse(statusCode: exitCode)

@@ -38,6 +38,17 @@ public enum TarArchiveValidator {
     public static let maximumEntries = 100_000
     public static let maximumExpandedSize: UInt64 = 2_147_483_648
 
+    public static func validatedForExtraction(_ archive: Data) throws -> Data {
+        try validate(archive)
+        let remainder = archive.count % 512
+        guard remainder != 0 else {
+            return archive
+        }
+        var normalized = archive
+        normalized.append(Data(repeating: 0, count: 512 - remainder))
+        return normalized
+    }
+
     @discardableResult
     public static func validate(_ archive: Data) throws -> Int {
         var state = TarValidationState()

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import platform
@@ -35,6 +36,25 @@ from parity_lib import (
     load_manifest,
     parse_observations,
 )
+
+
+def resolver_nameservers(configuration: str) -> list[str]:
+    """Return unique, valid nameservers from a resolver configuration."""
+
+    nameservers: list[str] = []
+    for line in configuration.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0] != "nameserver":
+            continue
+        candidate = fields[1]
+        address = candidate.split("%", maxsplit=1)[0]
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if candidate not in nameservers:
+            nameservers.append(candidate)
+    return nameservers
 
 
 class LaneRunner:
@@ -235,11 +255,14 @@ class LaneRunner:
             raise ParityError("stock Docker client wrapper requires a live engine")
         self.environment["DOCKER_BUILDKIT"] = "0"
         wrapper = self.socket_root / "docker-no-buildx"
+        if self.docker == str(wrapper):
+            return
+        docker = self.docker
         wrapper.write_text(
             "#!/usr/bin/env python3\n"
             "import os\n"
             "import sys\n"
-            f"docker = {json.dumps(self.docker)}\n"
+            f"docker = {json.dumps(docker)}\n"
             "arguments = sys.argv[1:]\n"
             'if arguments[:1] == ["buildx"]:\n'
             '    print("docker: unknown command: docker buildx", file=sys.stderr)\n'
@@ -267,22 +290,68 @@ class LaneRunner:
         )
         wrapper.chmod(0o700)
         self.devcontainer_docker = str(wrapper)
+        self.docker = str(wrapper)
+        self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
 
     def prepare_builder(self) -> None:
+        if self.lane == "docker":
+            self.environment["BUILDX_BUILDER"] = "default"
+            bootstrap = subprocess.run(
+                [self.docker, "buildx", "inspect", "--bootstrap", "default"],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=300,
+            )
+            (self.output / "buildx-bootstrap.log").write_text(
+                bootstrap.stdout + bootstrap.stderr,
+                encoding="utf-8",
+            )
+            if bootstrap.returncode != 0:
+                raise ParityError(
+                    "Docker daemon-integrated BuildKit did not become ready: "
+                    f"{bootstrap.stderr.strip()}"
+                )
+            return
+
         before = self.docker_container_inventory()
         self.builder_name = f"devcontainer-parity-{self.lane}-{os.getpid()}"
+        arguments = [
+            self.docker,
+            "buildx",
+            "create",
+            "--name",
+            self.builder_name,
+            "--driver",
+            "docker-container",
+            "--driver-opt",
+            "restart-policy=no",
+        ]
+        if self.lane == "container-compose":
+            try:
+                resolver_configuration = Path("/etc/resolv.conf").read_text(
+                    encoding="utf-8"
+                )
+            except OSError as error:
+                raise ParityError(
+                    "cannot read host resolver configuration for the provider builder"
+                ) from error
+            nameservers = resolver_nameservers(resolver_configuration)
+            if not nameservers:
+                raise ParityError(
+                    "host resolver configuration has no usable nameservers"
+                )
+            buildkitd_config = self.output / "buildkitd.toml"
+            encoded = ", ".join(json.dumps(value) for value in nameservers)
+            buildkitd_config.write_text(
+                f"[dns]\n  nameservers = [{encoded}]\n",
+                encoding="utf-8",
+            )
+            arguments += ["--buildkitd-config", str(buildkitd_config)]
         result = subprocess.run(
-            [
-                self.docker,
-                "buildx",
-                "create",
-                "--name",
-                self.builder_name,
-                "--driver",
-                "docker-container",
-                "--driver-opt",
-                "restart-policy=no",
-            ],
+            arguments,
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
