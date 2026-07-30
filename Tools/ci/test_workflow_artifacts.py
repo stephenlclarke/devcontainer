@@ -81,6 +81,9 @@ class WorkflowArtifactTests(unittest.TestCase):
 
     def test_hidden_build_evidence_is_explicitly_included(self) -> None:
         checked_blocks = 0
+        pinned_uploader = (
+            ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
+        ).read_text(encoding="utf-8")
 
         for workflow in WORKFLOWS.glob("*.yml"):
             contents = workflow.read_text(encoding="utf-8")
@@ -89,19 +92,55 @@ class WorkflowArtifactTests(unittest.TestCase):
 
             for start, end in zip(boundaries, boundaries[1:]):
                 block = contents[start:end]
-                if "uses: actions/upload-artifact@" not in block:
+                uses_action = "uses: actions/upload-artifact@" in block
+                uses_pinned_uploader = "upload-artifact-pinned.sh" in block
+                if not uses_action and not uses_pinned_uploader:
                     continue
                 if ".build/" not in block:
                     continue
 
                 checked_blocks += 1
-                self.assertIn(
-                    "include-hidden-files: true",
-                    block,
-                    f"{workflow.name} omits hidden .build evidence",
-                )
+                if uses_action:
+                    self.assertIn(
+                        "include-hidden-files: true",
+                        block,
+                        f"{workflow.name} omits hidden .build evidence",
+                    )
+                else:
+                    self.assertIn(
+                        "INPUT_INCLUDE-HIDDEN-FILES=true",
+                        pinned_uploader,
+                        "pinned uploader omits hidden .build evidence",
+                    )
 
         self.assertEqual(checked_blocks, 6)
+
+    def test_self_hosted_parity_lane_avoids_runner_action_downloads(self) -> None:
+        contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
+        lane = contents[contents.index("  lane:\n"):contents.index("  compare:\n")]
+
+        self.assertNotIn("\n        uses:", lane)
+        self.assertIn(
+            'git -C "${GITHUB_WORKSPACE}" fetch --no-tags --depth=1 origin',
+            lane,
+        )
+        self.assertIn("Tools/ci/upload-artifact-pinned.sh", lane)
+
+    def test_pinned_uploader_verifies_the_action_archive(self) -> None:
+        contents = (
+            ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "action_revision=043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            contents,
+        )
+        self.assertIn(
+            "archive_sha256="
+            "d14fb1cada435a236a66b448fbb370cd126564c2c2d6cb52abd14d20bcbb9748",
+            contents,
+        )
+        self.assertIn('[[ "${actual_sha256}" != "${archive_sha256}" ]]', contents)
 
     def test_hosted_workflows_cancel_superseded_runs(self) -> None:
         workflows = (
