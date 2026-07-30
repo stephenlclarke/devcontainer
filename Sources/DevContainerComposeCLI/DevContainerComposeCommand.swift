@@ -107,6 +107,7 @@ enum DevContainerComposeCommand {
             )
         }
         if result == 0, envelope.removesProject, let claim {
+            try await claim.store.removeResources(project: claim.key)
             try await claim.store.releaseProject(key: claim.key)
         }
         return result

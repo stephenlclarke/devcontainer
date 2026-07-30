@@ -40,7 +40,7 @@ extension AppleContainerRuntimeTests {
         #expect(container.spec.mounts.map(\.type) == [.bind, .volume, .tmpfs])
         #expect(
             container.spec.ports == [
-                PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0")
+                PortBinding(containerPort: 8080, hostPort: 0, hostAddress: "127.0.0.1")
             ]
         )
         #expect(
@@ -151,7 +151,7 @@ extension AppleContainerRuntimeTests {
                 RuntimeMount(type: .tmpfs, source: "", destination: "/run")
             ],
             ports: [
-                PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0"),
+                PortBinding(containerPort: 8080, hostAddress: "127.0.0.1"),
                 PortBinding(containerPort: 53, protocolName: "udp")
             ],
             networks: [
@@ -188,8 +188,7 @@ extension AppleContainerRuntimeTests {
             )
         )
         #expect(log.contains("--tmpfs /run"))
-        #expect(log.contains("--publish 0.0.0.0:18080:8080/tcp"))
-        #expect(!log.contains("--publish 127.0.0.1:0:53/udp"))
+        #expect(!log.contains("--publish"))
         #expect(log.contains("--network fixture-network fixture:latest"))
         #expect(!log.contains("fixture-network,alias="))
         #expect(log.contains("cp fixture:/etc/hosts"))

@@ -98,6 +98,34 @@ struct DevContainerComposeCommandTests {
             ["--project-name", "wait-project", "wait", "web", "--down-project"]
         ] {
             let fixture = try ComposeCommandFixture(projectName: "ignored")
+            let projectName = arguments[1]
+            let project = ProjectKey(rawValue: "\(getuid()):\(projectName)")
+            let store = try SQLiteStateStore(path: fixture.state)
+            _ = try await store.claimProject(
+                key: project,
+                provider: .containerCompose,
+                composeProject: projectName,
+                projectDirectory: fixture.root.path,
+                configurationHash: "previous"
+            )
+            let now = Date()
+            try await store.recordResource(
+                ResourceRecord(
+                    runtimeKind: "container",
+                    runtimeID: RuntimeID(rawValue: "\(projectName)-app"),
+                    dockerID: DockerID(rawValue: "\(projectName)-docker"),
+                    project: project,
+                    logicalName: "app",
+                    role: "primary",
+                    provider: .containerCompose,
+                    specificationHash: "specification",
+                    generation: 1,
+                    observedState: "running",
+                    labelsHash: "labels",
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
             #expect(
                 try await DevContainerComposeCommand.run(
                     arguments: arguments,
@@ -105,13 +133,10 @@ struct DevContainerComposeCommandTests {
                 ) == 0
             )
 
-            let store = try SQLiteStateStore(path: fixture.state)
-            let projectName = arguments[1]
             #expect(
-                try await store.project(
-                    key: ProjectKey(rawValue: "\(getuid()):\(projectName)")
-                ) == nil
+                try await store.project(key: project) == nil
             )
+            #expect(try await store.resources(project: project).isEmpty)
         }
     }
 }

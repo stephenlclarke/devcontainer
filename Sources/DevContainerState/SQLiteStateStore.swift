@@ -237,6 +237,13 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         }
     }
 
+    public func removeResources(project: ProjectKey) throws {
+        try withStatement("DELETE FROM resources WHERE project_key = ?") { statement in
+            try bind(project.rawValue, at: 1, to: statement)
+            try stepDone(statement)
+        }
+    }
+
     public func resources(project: ProjectKey) throws -> [ResourceRecord] {
         let sql = """
         SELECT runtime_kind, runtime_id, docker_id, project_key, logical_name,

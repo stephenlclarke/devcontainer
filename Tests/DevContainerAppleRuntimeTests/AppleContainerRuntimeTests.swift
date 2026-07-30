@@ -927,9 +927,9 @@ struct FakeAppleCLI {
                 ],
                 "publishedPorts":[{
                   "containerPort":"8080",
-                  "hostPort":18080,
+                  "hostPort":0,
                   "protocol":"tcp",
-                  "hostAddress":"0.0.0.0"
+                  "hostAddress":"127.0.0.1"
                 }],
                 "networks":[{
                   "network":"bridge",

@@ -27,6 +27,7 @@ public struct ProjectMutation: Sendable {
     public let requestKind: String
     public let requestHash: String
     public let resourceKey: String?
+    public let releaseProjectWhenEmpty: Bool
 
     public init(
         project: ProjectKey,
@@ -36,7 +37,8 @@ public struct ProjectMutation: Sendable {
         configurationHash: String,
         requestKind: String,
         requestHash: String,
-        resourceKey: String? = nil
+        resourceKey: String? = nil,
+        releaseProjectWhenEmpty: Bool = false
     ) {
         self.project = project
         self.provider = provider
@@ -46,6 +48,7 @@ public struct ProjectMutation: Sendable {
         self.requestKind = requestKind
         self.requestHash = requestHash
         self.resourceKey = resourceKey
+        self.releaseProjectWhenEmpty = releaseProjectWhenEmpty
     }
 
     fileprivate func operation(
@@ -151,6 +154,11 @@ public actor ProjectCoordinator {
                 generation: generation
             )
             try await store.updateOperation(id: operationID, phase: .committed, errorCode: nil)
+            if request.releaseProjectWhenEmpty,
+               try await store.resources(project: request.project).isEmpty
+            {
+                try await store.releaseProject(key: request.project)
+            }
             return result
         } catch {
             let errorCode = (error as? DevContainerError)?.code.rawValue

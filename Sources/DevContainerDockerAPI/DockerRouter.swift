@@ -315,15 +315,18 @@ extension DockerRouter {
                 + request.body
         )
         let configurationHash = Self.digest(request.body)
+        let project = projectKey(labels: labels)
+        let composeProject = composeProjectName(labels)
         return ProjectMutation(
-            project: projectKey(labels: labels),
+            project: project,
             provider: provider,
-            composeProject: composeProjectName(labels),
+            composeProject: composeProject,
             projectDirectory: labels[RuntimeLabels.devContainerLocalFolder],
             configurationHash: configurationHash,
             requestKind: "\(request.method.rawValue) \(path)",
             requestHash: requestHash,
-            resourceKey: resourceKey
+            resourceKey: resourceKey,
+            releaseProjectWhenEmpty: composeProject == nil
         )
     }
 

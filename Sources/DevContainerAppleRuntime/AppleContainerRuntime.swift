@@ -43,7 +43,6 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
-        let publish: Bool
         let privileged: Bool
         let securityOptions: Bool
     }
@@ -462,31 +461,13 @@ public extension AppleContainerRuntime {
         for mount in spec.mounts {
             arguments += try await mountArguments(mount)
         }
-        if optionSupport.publish {
-            arguments += spec.ports.compactMap(Self.nativePublishArguments).flatMap(\.self)
-        }
-        // Ephemeral host ports are resolved after the VM starts because
-        // Apple's stored configuration retains port zero rather than the
-        // listener selected by the kernel.
+        // Port publishing is owned by PortForwarding after the VM starts.
+        // This keeps fixed and ephemeral listeners consistent across stock
+        // and custom Apple container distributions.
         arguments += spec.networks.flatMap { ["--network", $0.name] }
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
-    }
-
-    static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
-        guard let hostPort = binding.hostPort, hostPort > 0 else {
-            return nil
-        }
-        let hostAddress =
-            binding.hostAddress.contains(":")
-                ? "[\(binding.hostAddress)]"
-                : binding.hostAddress
-        return [
-            "--publish",
-            "\(hostAddress):\(hostPort):\(binding.containerPort)/"
-                + binding.protocolName.lowercased()
-        ]
     }
 
     internal func supportedCreateOptions() async throws -> CreateOptionSupport {
@@ -502,7 +483,6 @@ public extension AppleContainerRuntime {
             ) ?? ""
         let support = CreateOptionSupport(
             hostname: help.contains("--hostname"),
-            publish: help.contains("--publish"),
             privileged: help.contains("--privileged"),
             securityOptions: help.contains("--security-opt")
         )

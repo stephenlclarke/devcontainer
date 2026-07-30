@@ -187,6 +187,30 @@ struct CoreBehaviorTests {
     }
 
     @Test
+    func `coordinator releases an empty configured project`() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+        let coordinator = ProjectCoordinator(store: store)
+        let key = ProjectKey(rawValue: "501:devcontainer:fixture")
+
+        _ = try await coordinator.withMutation(
+            request: ProjectMutation(
+                project: key,
+                provider: .stock,
+                configurationHash: "configuration",
+                requestKind: "remove",
+                requestHash: "configured",
+                releaseProjectWhenEmpty: true
+            )
+        ) { _ in
+            "removed"
+        }
+
+        #expect(try await coordinator.provider(for: key) == nil)
+    }
+
+    @Test
     func `coordinator serializes one project while unrelated projects remain concurrent`() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

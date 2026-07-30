@@ -214,6 +214,7 @@ public protocol ProjectStateStore: Sendable {
     func releaseProject(key: ProjectKey) async throws
     func recordResource(_ resource: ResourceRecord) async throws
     func removeResource(runtimeID: RuntimeID) async throws
+    func removeResources(project: ProjectKey) async throws
     func resources(project: ProjectKey) async throws -> [ResourceRecord]
     func beginOperation(_ operation: OperationRecord) async throws
     func updateOperation(id: OperationID, phase: OperationPhase, errorCode: String?) async throws
