@@ -20,9 +20,11 @@ import Foundation
 
 private struct ParsedComposeArguments {
     var command: String?
+    var commandIndex: Int?
     var projectName: String?
     var projectDirectory: String?
     var files: [String] = []
+    var preventsMutation = false
 
     mutating func consumeValueOption(_ option: String, value: String) {
         switch option {
@@ -30,23 +32,75 @@ private struct ParsedComposeArguments {
             projectName = value
         case "--project-directory":
             projectDirectory = value
-        default:
+        case "-f", "--file":
             files.append(value)
+        default:
+            break
         }
     }
 
-    mutating func consumeInlineOption(_ argument: String) -> Bool {
+    mutating func consumeInlineOption(_ argument: String) throws -> Bool {
         if argument.hasPrefix("--project-name=") {
             projectName = String(argument.dropFirst("--project-name=".count))
+        } else if argument.hasPrefix("-p=") {
+            projectName = String(argument.dropFirst("-p=".count))
         } else if argument.hasPrefix("--project-directory=") {
             projectDirectory = String(argument.dropFirst("--project-directory=".count))
         } else if argument.hasPrefix("--file=") {
             files.append(String(argument.dropFirst("--file=".count)))
+        } else if argument.hasPrefix("-f=") {
+            files.append(String(argument.dropFirst("-f=".count)))
+        } else if Self.ignoredInlineValueOptions.contains(where: argument.hasPrefix) {
+            return true
+        } else if let option = Self.booleanOptions.first(where: {
+            argument.hasPrefix("\($0)=")
+        }) {
+            try consumeBooleanOption(option, argument: argument)
+            return true
         } else {
             return false
         }
         return true
     }
+
+    private mutating func consumeBooleanOption(
+        _ option: String,
+        argument: String
+    ) throws {
+        let value = String(argument.dropFirst(option.count + 1))
+        let boolean: Bool
+        switch value.lowercased() {
+        case "1", "t", "true":
+            boolean = true
+        case "0", "f", "false":
+            boolean = false
+        default:
+            throw DevContainerError(
+                .invalidRequest,
+                message: "Compose option \(option) requires a Boolean value"
+            )
+        }
+        if boolean, ["--dry-run", "--help", "--version"].contains(option) {
+            preventsMutation = true
+        }
+    }
+
+    private static let ignoredInlineValueOptions = [
+        "--ansi=",
+        "--env-file=",
+        "--parallel=",
+        "--profile=",
+        "--progress="
+    ]
+
+    private static let booleanOptions = [
+        "--all-resources",
+        "--compatibility",
+        "--dry-run",
+        "--help",
+        "--verbose",
+        "--version"
+    ]
 }
 
 public struct ComposeCommandEnvelope: Equatable, Sendable {
@@ -55,6 +109,7 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
     public var projectDirectory: String?
     public var files: [String]
     public var mutating: Bool
+    public var configurationArguments: [String]
 
     public init(arguments: [String]) throws {
         let parsed = try Self.parse(arguments)
@@ -63,6 +118,10 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
         projectDirectory = parsed.projectDirectory
         files = parsed.files
         mutating = Self.mutatingCommands.contains(parsed.command ?? "")
+            && !parsed.preventsMutation
+        configurationArguments =
+            Array(arguments.prefix(parsed.commandIndex ?? arguments.count))
+                + ["config", "--format", "json"]
     }
 
     public func projectKey(userID: uid_t = getuid()) -> ProjectKey? {
@@ -80,16 +139,16 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
         while index < arguments.count {
             let argument = arguments[index]
             if optionsEnded {
-                parsed.command = parsed.command ?? argument
-                index += 1
-                continue
+                parsed.command = argument
+                parsed.commandIndex = index
+                break
             }
             if argument == "--" {
                 optionsEnded = true
                 index += 1
                 continue
             }
-            if ["-p", "--project-name", "--project-directory", "-f", "--file"].contains(argument) {
+            if valueOptions.contains(argument) {
                 guard index + 1 < arguments.count else {
                     throw DevContainerError(
                         .invalidRequest,
@@ -101,35 +160,74 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                 index += 2
                 continue
             }
-            if parsed.consumeInlineOption(argument) {
+            if try parsed.consumeInlineOption(argument) {
+                index += 1
+                continue
+            }
+            if flagOptions.contains(argument) {
+                if ["--dry-run", "--help", "--version", "-h"].contains(argument) {
+                    parsed.preventsMutation = true
+                }
                 index += 1
                 continue
             }
             if argument.hasPrefix("-") {
-                index += 1
-                continue
+                throw DevContainerError(
+                    .invalidRequest,
+                    message: "unsupported Compose global option \(argument)"
+                )
             }
             parsed.command = argument
+            parsed.commandIndex = index
             break
         }
         return parsed
     }
 
+    private static let valueOptions: Set<String> = [
+        "--ansi",
+        "--env-file",
+        "--file",
+        "--parallel",
+        "--profile",
+        "--progress",
+        "--project-directory",
+        "--project-name",
+        "-f",
+        "-p"
+    ]
+
+    private static let flagOptions: Set<String> = [
+        "--all-resources",
+        "--compatibility",
+        "--dry-run",
+        "--help",
+        "--verbose",
+        "--version",
+        "-h"
+    ]
+
     private static let mutatingCommands: Set<String> = [
         "build",
+        "commit",
+        "cp",
         "create",
         "down",
+        "exec",
         "kill",
         "pause",
+        "publish",
         "pull",
         "push",
         "restart",
         "rm",
         "run",
+        "scale",
         "start",
         "stop",
         "unpause",
-        "up"
+        "up",
+        "watch"
     ]
 }
 

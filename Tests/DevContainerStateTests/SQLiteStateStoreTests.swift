@@ -121,9 +121,23 @@ struct SQLiteStateStoreTests {
                 attributes: ["project": "demo"]
             )
             try await store.appendEvent(event)
-            #expect(try await store.events(after: 0, limit: 10) == [event])
+            let secondEvent = RuntimeEvent(
+                sequence: 2,
+                timestamp: now,
+                resourceID: "docker-2",
+                action: .start
+            )
+            try await store.appendEvent(secondEvent)
+            #expect(
+                try await store.events(after: 0, limit: 10)
+                    == [event, secondEvent]
+            )
+            #expect(try await store.recentEvents(limit: 1) == [secondEvent])
             await #expect(throws: DevContainerError.self) {
                 try await store.events(after: 0, limit: 0)
+            }
+            await #expect(throws: DevContainerError.self) {
+                try await store.recentEvents(limit: 0)
             }
         }
     }

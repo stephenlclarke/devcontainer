@@ -17,7 +17,7 @@ starts, stops, installs, or replaces a developer's Apple container runtime.
 | --- | --- |
 | Build, tests, coverage, sanitizers, and DocC | Apple-silicon macOS 15 or later, Xcode 26/Swift 6.2, Python 3, GNU Make |
 | Live stock Apple parity | Physical Apple-silicon macOS 26 host with the pinned stock `container` release |
-| Live Compose parity | Separately managed physical host with the pinned `container-compose` and its declared matched stack |
+| Live Compose parity | Reserved physical Apple-silicon host with pinned `container-compose` and its declared matched stack; the workflow serializes this lane when sharing the stock/Docker host |
 | VS Code end-to-end parity | Physical Apple-silicon host with a logged-in GUI session and the pinned VS Code/VSIX artifacts |
 
 Run the non-mutating prerequisite probe first:
@@ -36,15 +36,13 @@ The package targets enforce the provider boundary described in
 [DESIGN.md](DESIGN.md):
 
 ```text
-CDevContainerVersion
-└── DevContainerModel
-    ├── DevContainerRuntimeSPI
-    │   ├── DevContainerState
-    │   │   └── DevContainerCore
-    │   │       └── DevContainerDockerAPI
-    │   ├── DevContainerAppleRuntime
-    │   └── DevContainerComposeProvider
-    └── DevContainerTestSupport
+DevContainerVersionGenerator -> GenerateDevContainerVersion -> DevContainerModel
+DevContainerModel -> DevContainerRuntimeSPI
+DevContainerRuntimeSPI -> DevContainerState -> DevContainerCore
+DevContainerCore -> DevContainerDockerAPI
+DevContainerRuntimeSPI -> DevContainerAppleRuntime
+DevContainerRuntimeSPI -> DevContainerComposeProvider
+DevContainerDockerAPI -> DevContainerTestSupport
 ```
 
 The three executable products are:
@@ -75,9 +73,10 @@ make build-release
 ```
 
 `make build` uses exact resolved dependencies. `make build-release` injects the
-current commit and the release build lane into the generated C build-info
-target. `DEVCONTAINER_VERSION` in `Makefile` is the only editable product
-version.
+current commit and release lane through the `GenerateDevContainerVersion`
+SwiftPM build-tool plug-in. The generator declares `Makefile` as an input, so a
+version change invalidates SwiftPM's generated-source cache.
+`DEVCONTAINER_VERSION` in `Makefile` is the only editable product version.
 
 Useful direct commands are:
 
@@ -173,7 +172,7 @@ Apple service or guest binary was sanitizer-instrumented.
 Build first, then use an isolated configuration and state root:
 
 ```console
-export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.json"
+export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.toml"
 export DEVCONTAINER_STATE="$PWD/.build/manual/state.sqlite"
 export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
 
@@ -183,6 +182,8 @@ export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
   --socket "$DEVCONTAINER_SOCKET"
 .build/debug/devcontainer context --format shell
 .build/debug/devcontainer doctor --format json
+.build/debug/devcontainer diagnostics \
+  --output "$PWD/.build/manual/devcontainer-diagnostics.tar.gz"
 ```
 
 The `context` command prints an explicit `DOCKER_HOST`; it does not change the
@@ -209,7 +210,7 @@ Live lane targets are intentionally explicit:
 ```console
 make parity-docker
 make parity-apple-stock
-make parity-apple-compose
+make parity-container-compose
 make parity
 make parity-vscode
 ```
@@ -221,7 +222,11 @@ container project unless its owner has reserved the runner for that lane.
 
 The aggregate stores raw and normalized observations under
 `.build/parity`. Comparison permits only the nondeterminism defined in the
-manifest. Cleanup proof is part of a passing result.
+manifest. Cleanup proof is part of a passing result. Each fixture records
+monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
+stock and provider timings with Docker. Completed slowdowns below `10x` are
+informational; a timeout, other non-completion, missing timing, or duration of
+at least `10x` the corresponding Docker fixture fails.
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.
@@ -251,9 +256,12 @@ The arm64 archive in `dist` contains all three executables, the
 complete reviewed legal texts for every exact SwiftPM dependency, build
 metadata, and an SPDX 2.3 SBOM. The checked-in dependency-license ledger must
 match `Package.resolved` exactly. The packaging script writes a SHA-256
-checksum and machine-readable verification result. Archive entries are sorted
-and normalize ownership plus timestamps to the source commit epoch; two
-packages from identical staged bytes are byte-for-byte identical.
+checksum and machine-readable verification result. It also rewrites
+repository-relative README links to immutable file, directory, and image URLs
+for the exact packaged commit, so the installed documentation never depends on
+files outside the archive. Archive entries are sorted and normalize ownership
+plus timestamps to the source commit epoch; two packages from identical staged
+bytes are byte-for-byte identical.
 
 Render stable and Current formula candidates:
 

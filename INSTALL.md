@@ -2,13 +2,25 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: development packaging is implemented, but no supported installation is published yet. Source builds produce lane-identified archives, checksums, SPDX metadata, and validated stable/Current formula candidates. A signed and notarized GitHub Release, live tap formula, and trusted release-runner evidence are still required before the installation commands below become available.
+> Version 1.0.1 is the stable release. Its immutable GitHub archive is
+> Developer ID-signed, notarized, parity-certified, checksummed, and published
+> through the stable Homebrew formula. The Apple runtime remains a separate
+> installation.
 
-`devcontainer` will provide Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe. It will install as a standalone command and will not install, replace, relink, start, stop, or modify a container runtime.
+`devcontainer` provides Dev Containers compatibility for Apple's stock
+`container` runtime on Apple-silicon Macs running macOS Tahoe. It installs as a
+standalone command and does not install, replace, relink, start, stop, or modify
+an Apple container runtime. Its separate Homebrew service starts and stops only
+the `devcontainer-engine` compatibility endpoint.
+
+For a task-oriented walkthrough after installation, use the
+[`USER_GUIDE.md`](USER_GUIDE.md). The exact release scope and known standards
+gaps are in [`COMPATIBILITY.md`](COMPATIBILITY.md) and
+[`CONFORMANCE.md`](CONFORMANCE.md).
 
 ## Installation Contract
 
-The supported installation must preserve these boundaries:
+The supported installation preserves these boundaries:
 
 - Apple's stock `container` runtime is installed separately from Apple.
 - `devcontainer` uses the `container` executable selected by explicit configuration or `PATH`.
@@ -20,15 +32,21 @@ The supported installation must preserve these boundaries:
 - Installing `devcontainer` never removes or replaces Apple's `container`.
 - Installing `devcontainer` never installs `container-compose`.
 - Installing `devcontainer` never links a Compose plugin into Apple's install root.
+- The formula does not register itself under Apple's install root. An explicit
+  `devcontainer plugin register` command owns one reversible symlink and refuses
+  to replace a foreign registration.
 - Missing optional providers produce an actionable capability error, not an automatic installation or runtime replacement.
 
 ## Requirements
 
-The planned prebuilt and Homebrew packages will require:
+The prebuilt and Homebrew packages require:
 
 - Apple silicon (`arm64`).
-- macOS Tahoe.
-- Apple's stock `container` runtime for the Apple backend.
+- macOS Tahoe 26 or later.
+- Apple's stock `container` 1.1.0 runtime for the stock Apple backend.
+- Local Network permission for the selected runtime's
+  `container-runtime-linux` helper so published host ports can reach the
+  container VM.
 - The Docker CLI and upstream Docker Compose client used by VS Code.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
@@ -38,11 +56,14 @@ Optional integrations:
   Docker-backed execution.
 - An explicitly installed `container-compose` executable for multi-service provider experiments.
 
-The release notes and `devcontainer version --format json` will identify the exact versions used for release validation.
+The release notes and `devcontainer version --format json` identify the exact
+versions used for release validation.
 
 ## Verify The Runtime Before Installation
 
-The supported installer will not change runtime state. Users should verify their existing Apple installation first:
+The supported installer does not change runtime state. Install Apple's signed
+[`container` 1.1.0 package](https://github.com/apple/container/releases/tag/1.1.0),
+then verify it before installing this project:
 
 ```sh
 command -v container
@@ -54,24 +75,34 @@ The stock-Apple backend must reject a runtime whose provenance identifies a cust
 
 Do not remove Apple's package to install `devcontainer`. Do not install a custom runtime as a workaround for an installation check. Runtime compatibility gaps belong in the project's status ledger and issue template.
 
-## Planned Homebrew Channels
+The first published-port operation can display a macOS Local Network privacy
+prompt for the selected runtime's `container-runtime-linux` helper. Choose
+**Allow**. Stock mode uses Apple's Developer-ID-signed helper; the optional
+provider stack uses a separately installed helper. macOS can list them as
+distinct entries. This is runtime permission, not permission for
+`devcontainer` to scan the LAN.
 
-The tap will publish two explicit channels:
+## Homebrew Installation
+
+The tap provides two explicit channels:
 
 | Formula | Channel | Version form | Intended use |
 | --- | --- | --- | --- |
 | `devcontainer` | Stable | `MAJOR.MINOR.PATCH` | Default immutable release |
-| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in newest validated `main` build |
+| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in release-candidate build, when published |
 
-The planned stable installation is:
+Install the stable release:
 
 ```sh
 brew tap stephenlclarke/tap
 brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer
+/usr/local/bin/container system start
+brew services start stephenlclarke/tap/devcontainer
+devcontainer doctor --container /usr/local/bin/container
 ```
 
-The planned Current installation is:
+When a Current candidate is published, install it with:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -79,10 +110,7 @@ brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
-The formula renderer and package validation are implemented in this repository,
-but these commands will fail until the formulae and signed assets are published.
-
-Stable and Current conflict because both install the same `devcontainer` command. Switch channels explicitly rather than mixing files:
+Stable and Current cannot coexist because both install the same commands. The optional Current formula declares a conflict with `devcontainer`; switch channels explicitly rather than mixing files:
 
 ```sh
 brew uninstall --formula stephenlclarke/tap/devcontainer-current
@@ -107,7 +135,8 @@ devcontainer-MAJOR.MINOR.PATCH/
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-compose
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
-devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/container-devcontainer
+devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/config.toml
+devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
@@ -117,17 +146,72 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 ```
 
-Homebrew will install only the package payload under its own prefix and expose `bin/devcontainer`. It will not write under Apple's package prefix or `/usr/local/libexec/container-plugins`.
+The packaged `README.md` points repository files, directories, and images at
+the archive's exact source commit. Package verification rejects relative or
+mismatched source links, so installed documentation cannot silently drift with
+`main`.
 
-## Verify A Published Installation
+Homebrew installs only the package payload under its own prefix and exposes
+`bin/devcontainer`. It does not write under Apple's package prefix or
+`/usr/local/libexec/container-plugins`. Register the packaged Apple CLI plug-in
+only after selecting and starting the intended runtime:
 
-When packages exist, verify the selected binary and embedded provenance:
+```sh
+devcontainer plugin register
+container devcontainer version
+container devcontainer doctor
+```
+
+The command obtains `installRoot` from `container system status --format json`.
+Use `--container` to select a container executable or `--install-root` for an
+offline installation. If the runtime root is protected, rerun this single
+registration command with the permissions required for that root. Remove only
+the symlink owned by this package with:
+
+```sh
+devcontainer plugin unregister
+```
+
+## Use With The Official CLI And VS Code
+
+The compatibility engine listens only on its user-owned Unix socket. Select it
+for the current shell without changing Docker's default context:
+
+```sh
+eval "$(devcontainer context)"
+npx --yes @devcontainers/cli@0.88.0 up \
+  --workspace-folder /path/to/project
+```
+
+For VS Code, set the Compose wrapper and launch the workspace from the same
+configured shell:
+
+```json
+{
+  "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
+}
+```
+
+```sh
+eval "$(devcontainer context)"
+code /path/to/project
+```
+
+The wrapper selects upstream Docker Compose over the same socket by default.
+Users who intentionally select `container-compose` configure that independent
+provider as described below.
+
+## Verify The Installation
+
+Verify the selected binary and embedded provenance:
 
 ```sh
 command -v devcontainer
 devcontainer version
 devcontainer version --format json
 devcontainer --help
+devcontainer plugin status
+container devcontainer version
 ```
 
 Then verify that the Apple runtime remains the runtime the user installed:
@@ -150,9 +234,29 @@ The `devcontainer` output should show:
 selected Apple executable, detected runtime version, and optional Compose
 provider probe. Static version output does not start or inspect a runtime.
 
+Create a reviewable, privacy-redacted support archive with:
+
+```sh
+devcontainer diagnostics \
+  --container /absolute/path/to/container \
+  --compose /absolute/path/to/container-compose \
+  --output "$PWD/devcontainer-diagnostics.tar.gz"
+```
+
+The command prints its JSON manifest to standard output before writing the
+archive. The manifest lists every payload file, byte count, SHA-256 digest,
+warning, and build identity. The archive contains bounded runtime probes,
+configuration and state summaries, recent events, and bounded log tails.
+Paths below the current home directory and credential-like values are
+redacted. Inspect the manifest and archive before sharing either one.
+
 ## Verify Release Integrity
 
-Every published channel will include an archive, portable SHA-256 sidecar, SPDX SBOM, build-info file, package-verification result, and GitHub build-provenance attestation. Packaging rejects unsafe archive paths, special or privileged files, missing executables, metadata/SBOM mismatches, checksum errors, and missing required notarization evidence before publication.
+Every published channel includes an archive, portable SHA-256 sidecar, SPDX
+SBOM, build-info file, package-verification result, and GitHub build-provenance
+attestation. Packaging rejects unsafe archive paths, special or privileged
+files, missing executables, metadata/SBOM mismatches, checksum errors, and
+missing required notarization evidence before publication.
 
 For a downloaded stable archive:
 
@@ -162,14 +266,20 @@ gh attestation verify devcontainer-release-arm64.tar.gz --repo stephenlclarke/de
 tar -tzf devcontainer-release-arm64.tar.gz
 ```
 
-Release packaging has a strict mode that Developer ID signs every installed executable, verifies each signature, submits a ZIP containing the exact staged payload through a keychain profile, requires an `Accepted` response, and writes only the submission ID, status, and archive digest into the final package. The production identity/profile and first accepted package evidence are not yet provisioned. Once published, verify the extracted binary:
+Release packaging Developer ID signs every installed executable, verifies each
+signature, submits a ZIP containing the exact staged payload through a keychain
+profile, requires an `Accepted` response, and writes only the submission ID,
+status, and archive digest into the final package. Verify an extracted binary:
 
 ```sh
 codesign --verify --strict --verbose=2 devcontainer/bin/devcontainer
 codesign --display --verbose=4 devcontainer/bin/devcontainer
 ```
 
-The project must not claim that a standalone executable is stapled. Apple's stapler does not support bare Mach-O command-line binaries. Release evidence will instead include an accepted notary submission for a ZIP containing the exact signed bytes distributed in the tarball.
+The project does not claim that a standalone executable is stapled. Apple's
+stapler does not support bare Mach-O command-line binaries. Release evidence
+instead includes an accepted notary submission for a ZIP containing the exact
+signed bytes distributed in the tarball.
 
 ## Backend Selection
 
@@ -198,7 +308,7 @@ Executable paths are explicit command or environment inputs:
 devcontainer-engine --container /absolute/path/to/container
 devcontainer doctor \
   --container /absolute/path/to/container \
-  --container-compose /absolute/path/to/container-compose
+  --compose /absolute/path/to/container-compose
 
 DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
   devcontainer-compose up
@@ -223,9 +333,44 @@ prevent a provider change while owned resources remain.
 
 ## Optional container-compose Provider
 
-`container-compose` is not part of the base install. To use it, the user must install and configure it separately and accept its runtime compatibility.
+`container-compose` is not part of the base install. To use it, install and
+configure it separately and accept its runtime compatibility.
 
-The current supported `stephenlclarke/tap/container-compose` formula depends on a matched custom runtime. Installing that formula can replace the stock-Apple runtime selected by the shell. `devcontainer` must not suggest or execute that installation as an automatic fix.
+The supported `stephenlclarke/tap/container-compose` 0.10.1 formula depends on
+a matched custom runtime. Installing that formula can add a custom
+`/opt/homebrew/bin/container` alongside Apple's `/usr/local/bin/container`.
+`devcontainer` continues to prefer Apple's executable by default and never
+suggests or performs that installation as an automatic fix.
+
+Stop the compatibility service and switch the separately installed Apple
+runtime distribution before running against the Compose stack:
+
+```sh
+brew services stop stephenlclarke/tap/devcontainer
+/usr/local/bin/container system stop
+/opt/homebrew/bin/container system start
+DEVCONTAINER_CONTAINER_BIN=/opt/homebrew/bin/container \
+  /opt/homebrew/bin/devcontainer-engine
+```
+
+In another shell, select its socket and the Compose provider:
+
+```sh
+eval "$(devcontainer context)"
+DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
+DEVCONTAINER_COMPOSE_BIN=/opt/homebrew/bin/container-compose \
+  npx --yes @devcontainers/cli@0.88.0 up \
+  --workspace-folder /path/to/project
+```
+
+This foreground form makes the non-stock runtime choice visible. Stop it with
+Control-C, then restore the stock runtime and compatibility service with:
+
+```sh
+/opt/homebrew/bin/container system stop
+/usr/local/bin/container system start
+brew services start stephenlclarke/tap/devcontainer
+```
 
 Provider discovery verifies the configured executable with:
 
@@ -233,7 +378,9 @@ Provider discovery verifies the configured executable with:
 /explicit/path/to/container-compose version --format json
 ```
 
-It will also inspect the active runtime provenance. If the provider uses a custom runtime, `devcontainer` will report that fact and will not describe the result as stock-Apple compatibility.
+It also inspects the active runtime provenance. If the provider uses a custom
+runtime, `devcontainer` reports that fact and does not describe the result as
+stock-Apple compatibility.
 
 When a Dev Container configuration requires Compose and no explicit provider is usable, the command should stop before side effects with:
 
@@ -256,17 +403,18 @@ make package-release
 
 A source build does not require a custom runtime unless the developer explicitly invokes the optional Compose-provider parity target.
 
-Local development binaries will report lane `development`. They must not impersonate stable or Current packages.
+Local development binaries report lane `development`. They must not impersonate
+stable or Current packages.
 
 ## Upgrading
 
-When the formulae exist, stable users will upgrade with:
+Stable users upgrade with:
 
 ```sh
 brew upgrade stephenlclarke/tap/devcontainer
 ```
 
-Current users will upgrade with:
+Current users upgrade with:
 
 ```sh
 brew upgrade stephenlclarke/tap/devcontainer-current
@@ -276,7 +424,7 @@ An upgrade changes only `devcontainer` files in the Homebrew prefix. It must not
 
 ## Uninstalling
 
-The planned uninstall commands are:
+Uninstall the stable package with:
 
 ```sh
 brew uninstall --formula stephenlclarke/tap/devcontainer
@@ -296,6 +444,31 @@ Uninstall removes only the formula-owned `devcontainer` payload. It must not rem
 - Images, containers, networks, volumes, caches, or Dev Container project data owned by another runtime.
 
 ## Troubleshooting
+
+If an internally reachable container service resets its published host
+connection, inspect Apple's system log:
+
+```sh
+container system logs --last 5m |
+  grep -E 'forwarder|No route to host|connect failed'
+```
+
+`No route to host` from `container-runtime-linux` while the container VM
+address is directly reachable means macOS denied the selected helper's Local
+Network access. Open **System Settings → Privacy & Security → Local Network**
+and enable the relevant `container` or `container-runtime-linux` entry, then
+restart that runtime. If both stock and provider lanes are installed, authorize
+each helper separately:
+
+```sh
+container system stop
+container system start
+```
+
+Apple documents the privacy model in
+[TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
+and the expected `--publish` behavior in the
+[`apple/container` how-to](https://github.com/apple/container/blob/main/docs/how-to.md#forward-traffic-from-localhost-to-your-container).
 
 Before filing an issue, capture:
 

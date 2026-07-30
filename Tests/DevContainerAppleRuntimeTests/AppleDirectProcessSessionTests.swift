@@ -174,6 +174,55 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
+    func `direct session uses nonblocking input and blocking output drains`() async throws {
+        let input = Pipe()
+        let output = Pipe()
+        let process = EchoClientProcess(input: input, output: output)
+        let session = AppleDirectProcessSession(
+            process: process,
+            standardInput: input,
+            standardOutput: output,
+            standardError: nil
+        )
+
+        let inputFlags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
+        #expect(inputFlags >= 0)
+        #expect(inputFlags & O_NONBLOCK == O_NONBLOCK)
+        let outputFlags = fcntl(output.fileHandleForReading.fileDescriptor, F_GETFL)
+        #expect(outputFlags >= 0)
+        #expect(outputFlags & O_NONBLOCK == 0)
+
+        try await session.closeStandardInput()
+        #expect(try await session.wait() == 0)
+    }
+
+    @Test
+    func `direct session preserves four mebibytes of duplex backpressure`() async throws {
+        let input = Pipe()
+        let output = Pipe()
+        let process = EchoClientProcess(input: input, output: output)
+        let session = AppleDirectProcessSession(
+            process: process,
+            standardInput: input,
+            standardOutput: output,
+            standardError: nil
+        )
+        let payload = Data((0 ..< 4 * 1024 * 1024).lazy.map { UInt8($0 & 0xFF) })
+
+        try await session.write(payload)
+        try await session.closeStandardInput()
+
+        var echoed = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            echoed.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        #expect(echoed == payload)
+    }
+
+    @Test
     func `direct session supports detached channels and cancellation`() async throws {
         let process = MockClientProcess(exitCode: 0)
         let session = AppleDirectProcessSession(
@@ -208,7 +257,7 @@ struct AppleDirectProcessSessionTests {
 
         #expect(
             AppleDirectProcessSession.mergedEnvironment(
-                ["Z=last", "A=old", "EMPTY"],
+                ["Z=last", "A=old", "EMPTY", "A=inherited-last"],
                 overrides: ["A": "new", "B": "second"]
             ) == ["A=new", "B=second", "EMPTY=", "Z=last"]
         )
@@ -339,5 +388,47 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
             recordedInput = value
         }
         return exitCode
+    }
+}
+
+private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
+    let id = "echo-process"
+
+    private let input: FileHandle
+    private let output: FileHandle
+
+    init(input: Pipe, output: Pipe) {
+        self.input = FileHandle(
+            fileDescriptor: Darwin.dup(input.fileHandleForReading.fileDescriptor),
+            closeOnDealloc: true
+        )
+        self.output = FileHandle(
+            fileDescriptor: Darwin.dup(output.fileHandleForWriting.fileDescriptor),
+            closeOnDealloc: true
+        )
+    }
+
+    func start() async throws {}
+
+    func resize(_: Terminal.Size) async throws {}
+
+    func kill(_: Int32) async throws {
+        try? input.close()
+        try? output.close()
+    }
+
+    func wait() async throws -> Int32 {
+        let input = input
+        let output = output
+        return try await Task.detached {
+            defer {
+                try? input.close()
+                try? output.close()
+            }
+            while let data = try input.read(upToCount: 16 * 1024), !data.isEmpty {
+                try output.write(contentsOf: data)
+            }
+            return 0
+        }.value
     }
 }

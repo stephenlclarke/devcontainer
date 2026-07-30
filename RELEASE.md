@@ -2,9 +2,17 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Status: implementation in progress. The authoritative version, selector resolver, Current version formatter, deterministic package, checksums, SBOM, formula renderer, hosted CI, quality, CodeQL, dependency review, OpenSSF Scorecard, Homebrew, SonarQube, and DocC workflows are implemented. Stable/Current publication, signing, notarization, tap promotion, and the trusted release runner remain release blockers; later sections distinguish the implemented foundation from those required publication controls.
+> Version 1.0.1 uses the release process in this document. Its authoritative
+> version, deterministic signed package, notarization evidence, checksums, SBOM,
+> GitHub attestation, hosted and physical parity gates, Homebrew promotion,
+> SonarQube analysis, and DocC publication are bound to one immutable release
+> commit and signed tag.
 
-This document defines how `devcontainer` will validate and publish an arm64 macOS command-line tool for Apple's stock `container` runtime. Docker is the behavioral oracle, stock Apple `container` is the required runtime, and `container-compose` is an optional provider tested in a separate, explicitly identified parity lane.
+This document defines how `devcontainer` validates and publishes an arm64
+macOS command-line tool for Apple's stock `container` runtime. Docker is the
+behavioral oracle, stock Apple `container` is the required runtime, and
+`container-compose` is an optional provider tested in a separate, explicitly
+identified parity lane.
 
 ## Release Principles
 
@@ -34,13 +42,19 @@ The version mechanism deliberately follows `container-compose`'s current release
 - Stable publication requires the checked-in product version to equal the semantic tag.
 - Stable tags are annotated, SSH-signed, pushed, and verified by GitHub before package publication.
 
-The `devcontainer` adaptation removes `container-compose`'s duplicated version literals. The only tracked product-version declaration will be:
+The `devcontainer` adaptation removes `container-compose`'s duplicated version
+literals. The only tracked product-version declaration is:
 
 ```makefile
-DEVCONTAINER_VERSION ?= 0.1.0
+DEVCONTAINER_VERSION ?= 1.0.1
 ```
 
-Source code must not contain a second editable copy. Build and package targets will read `DEVCONTAINER_VERSION` and generate an untracked build-info resource. The executable's `version` command will read that generated resource, with an explicit `development` fallback for an unpackaged local build.
+Source code does not contain a second editable copy. The
+`GenerateDevContainerVersion` SwiftPM build-tool plug-in declares `Makefile` as
+an input and generates the Swift build identity. Packaging writes the same
+authoritative values into `build-info.json`. The executable's `version` command
+uses an explicit `development` lane unless a release build supplies its commit
+and lane.
 
 The implemented helper layout is:
 
@@ -61,13 +75,13 @@ Tools/release/write-notarization-evidence.py
 
 `Tools/release/release-version.py` is the reusable implementation of selector parsing and validation. It:
 
-- Read `DEVCONTAINER_VERSION` from `Makefile`.
-- List only tags matching `[0-9]+\.[0-9]+\.[0-9]+`.
-- Sort numeric components rather than lexical strings.
-- Resolve an explicit version or exactly one `+` in a three-character selector.
-- Reject a requested version that is not newer than the newest stable tag.
-- Reject a requested version lower than the checked-in product version.
-- Update only the Makefile declaration during stable release preparation.
+- reads `DEVCONTAINER_VERSION` from `Makefile`;
+- lists only tags matching `[0-9]+\.[0-9]+\.[0-9]+`;
+- sorts numeric components rather than lexical strings;
+- resolves an explicit version or exactly one `+` in a three-character selector;
+- rejects a requested version that is not newer than the newest stable tag;
+- rejects a requested version lower than the checked-in product version;
+- updates only the Makefile declaration during stable release preparation.
 
 Selectors retain `container-compose` semantics:
 
@@ -90,14 +104,6 @@ Stable release preparation is the only version target that mutates the Makefile:
 make prepare-release VERSION_SELECTOR=-+-
 ```
 
-The final stable release orchestration entry point will be:
-
-```sh
-DEVCONTAINER_RELEASE_INTENT=milestone make release VERSION_SELECTOR=-+-
-```
-
-`milestone`, `maintenance`, and `security` will be the accepted intents. Maintenance is a documented patch release. Security requires an advisory or incident reference. Milestone releases will require the selected Current build to have soaked for seven days unless an explicit, recorded milestone-only override is authorized. No override may bypass validation, signing, notarization, parity, or exact-commit authority.
-
 ### Current Channel
 
 Every eligible successful CI run for the newest `main` commit may refresh:
@@ -108,7 +114,7 @@ Every eligible successful CI run for the newest `main` commit may refresh:
 - Formula: `devcontainer-current.rb`
 - Homebrew version: `current.<github_run_number>.<sha12>`
 
-The formula version will use the same validated algorithm as `container-compose`:
+The formula version uses the same validated algorithm as `container-compose`:
 
 ```text
 current.418.0123456789ab
@@ -165,11 +171,11 @@ An existing stable release is immutable. Recovery may recreate only a missing or
   "buildType": "release",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "containerDistribution": "apple",
-  "containerVersion": "0.7.0",
+  "containerVersion": "1.1.0",
   "lane": "stable",
   "provider": "none",
   "source": "stephenlclarke/devcontainer",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
 ```
 
@@ -183,13 +189,13 @@ The implemented workflow split is:
 
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
-| `ci.yml` | Ubuntu and `macos-26` | Source checks, unit tests, coverage, CLI smoke, package structure, and Sonar |
-| `codeql.yml` | Appropriate hosted runner | Exact-commit CodeQL analysis |
+| `ci.yml` | `macos-26`, Ubuntu aggregate | Format/lint, unit/contract/integration tests, both coverage gates, build, CLI smoke, and `Validate` aggregation |
+| `codeql.yml` | `macos-26` | Exact-commit Swift CodeQL analysis |
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
-| `quality.yml` | Hosted macOS | Sanitizers, style, and scheduled deeper checks |
+| `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |
 | `docs.yml` | `macos-26`, then Ubuntu | Build and publish DocC Pages |
-| `homebrew.yml` | `macos-26` | Render fixture formulae, `ruby -c`, `brew style`, audit, install, and test |
+| `homebrew.yml` | `macos-26` | Render the candidate package/formula, check Ruby syntax and formula style, and upload evidence |
 | `parity.yml` | Trusted bare-metal Apple silicon | Live Docker, stock Apple, and Compose-provider parity |
 | `stable-release-gate.yml` | Ubuntu and hosted macOS | Resolve immutable candidate and record release authority |
 | `prebuilt-binaries.yml` | Trusted bare-metal Apple silicon | Sign, notarize, package, attest, release, and update the tap |
@@ -209,11 +215,7 @@ flowchart TD
     Docker --> Parity["Normalized three-lane parity report"]
     Apple --> Parity
     Compose --> Parity
-    Parity --> Current["Stage signed and notarized Current assets"]
-    Current --> CurrentTap["Update and verify devcontainer-current formula"]
-    CurrentTap --> MoveCurrent["Move current tag and finalize prerelease"]
-    MoveCurrent --> Soak["Current soak and release intent"]
-    Soak --> SignedTag["Prepare version and create verified SSH-signed semver tag"]
+    Parity --> SignedTag["Create verified SSH-signed semantic tag"]
     SignedTag --> HostedGate["Hosted immutable stable gate"]
     HostedGate --> Authority["Stable Release Authority check on candidate SHA"]
     Authority --> StableBuild["Rebuild tagged source on trusted release runner"]
@@ -224,7 +226,7 @@ flowchart TD
 
 ### Stable Aggregate Checks
 
-Branch protection should require stable context names:
+Branch protection requires stable context names:
 
 - `Validate`
 - `CodeQL`
@@ -236,7 +238,7 @@ Every release resolver must query runs by exact commit and inspect final job and
 
 ### Candidate-Bound Stable Authority
 
-`stable-release-gate.yml` will:
+`stable-release-gate.yml`:
 
 1. Validate the bare semantic input.
 2. Resolve the signed tag to a 40-character commit.
@@ -244,13 +246,16 @@ Every release resolver must query runs by exact commit and inspect final job and
 4. Verify exact-commit CI, CodeQL, documentation, and parity authorities.
 5. Checkout the candidate and release-control revision separately.
 6. Run the hosted release gate without live virtualization.
-7. Create `Stable Release Authority (MAJOR.MINOR.PATCH)` on the candidate commit with the gate run as its details URL.
+7. Upload `stable-authority-MAJOR.MINOR.PATCH-SHA`, containing the candidate,
+   tag, workflow, and run identifiers.
 
-The package workflow must find that exact named check on the selected commit and verify its source workflow, event, completion, and successful conclusion.
+The package workflow downloads that exact authority artifact and verifies its
+payload, source workflow, event, completion, and successful conclusion.
 
 ## GitHub Actions Supply-Chain Policy
 
-Actions must be pinned to full commit SHAs. The initial implementation may reuse the currently reviewed pins from the sibling release workflows:
+Actions are pinned to full commit SHAs. The workflow uses the reviewed pins
+shown below:
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -262,7 +267,8 @@ Actions must be pinned to full commit SHAs. The initial implementation may reuse
 - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
 ```
 
-Dependabot should update the grouped GitHub Actions ecosystem weekly. Any new action must be reviewed and pinned before merge.
+Dependabot updates the grouped GitHub Actions ecosystem weekly. Any new action
+is reviewed and pinned before merge.
 
 Permissions begin at read-only and escalate per job. The attestation job alone receives `id-token: write` and `attestations: write`; the release job alone receives `contents: write`; the stable-authority job alone receives `checks: write`; and the Pages deployment receives `pages: write` and `id-token: write`.
 
@@ -298,7 +304,12 @@ The three lanes are:
 | Stock Apple | Apple-signed `container` | None | Required core compatibility |
 | Compose provider | Explicitly supplied runtime and `container-compose` | Required | Optional multi-service integration evidence |
 
-The provider lane must state whether its underlying runtime is `apple` or `custom`. Current supported `stephenlclarke/tap/container-compose` depends on a custom matched runtime, so installing that formula is forbidden in the stock lane. Until the provider works against stock Apple, its live evidence is valid only as a separately labelled provider comparison and cannot be used to claim stock-Apple Compose support.
+The provider lane must state whether its underlying runtime is `apple` or
+`custom`. Current supported `stephenlclarke/tap/container-compose` depends on a
+custom matched runtime, so installing that formula is forbidden in the stock
+lane. Until the provider works against stock Apple, its live evidence is valid
+only as a separately labelled provider comparison and cannot be used to claim
+that Apple supplies Compose support.
 
 Each lane uses:
 
@@ -309,19 +320,26 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
+- Per-fixture monotonic durations and candidate/Docker timing ratios; only non-completion or a duration of at least `10x` the matching Docker fixture is a performance failure.
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.
 
 ### Upstream Stephen-Stack Defects
 
-Future parity work may identify a defect owned by `stephenlclarke/container`, `stephenlclarke/containerization`, `stephenlclarke/container-builder-shim`, or `stephenlclarke/container-compose`. Fix and test that defect through a focused pull request in the owning repository. `devcontainer` may consume the result only by recording and validating the exact reviewed commit.
+Parity may identify a defect owned by `stephenlclarke/container`,
+`stephenlclarke/containerization`, `stephenlclarke/container-builder-shim`, or
+`stephenlclarke/container-compose`. Fix and test that defect through a focused
+pull request in the owning repository. `devcontainer` consumes the result only
+by recording and validating the exact reviewed commit.
 
 Never carry a silent local patch, unpublished worktree state, or ad hoc fork modification in a parity or release build. Never publish an unreviewed cross-repository change from `devcontainer` release automation. Cross-repository source promotion remains the owning repository's reviewed responsibility.
 
 ## Documentation And DocC Pages
 
-`docs.yml` will build the package's DocC site on `macos-26`. Pull requests build and upload an ordinary artifact. Only protected `main` in `stephenlclarke/devcontainer` may upload and deploy the Pages artifact.
+`docs.yml` builds the package's DocC site on `macos-26`. Pull requests build
+and upload an ordinary artifact. Only protected `main` in
+`stephenlclarke/devcontainer` uploads and deploys the Pages artifact.
 
 Use full-SHA pins:
 
@@ -331,7 +349,9 @@ Use full-SHA pins:
 - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
 ```
 
-The workflow should use a stable `Documentation` aggregate context and a deployment environment named `github-pages`. Documentation publication is independent of package publication but remains exact-commit evidence for stable releases.
+The workflow uses a stable `Documentation` context and a deployment environment
+named `github-pages`. Documentation publication is independent of package
+publication but remains exact-commit evidence for stable releases.
 
 ## Signing And Notarization
 
@@ -345,14 +365,19 @@ Source identity and binary identity are separate requirements:
 
 The release runner should hold signing and notarization material in the macOS keychain. Private keys, certificates, API keys, and notary credentials must not be copied into pull-request workflows, logs, artifacts, repository files, or generic Actions secrets.
 
-Planned verification includes:
+Verification includes:
 
 ```sh
 codesign --verify --strict --verbose=2 /path/to/devcontainer
 xcrun notarytool submit /path/to/notarization.zip --keychain-profile devcontainer-release --wait
 ```
 
-A standalone Mach-O executable cannot be stapled like an app, pkg, or dmg. The release must not claim stapling unless the final distribution format changes to one supported by `stapler`. For the planned tarball, submit a ZIP containing the exact signed binary for notarization, then create the release tarball from those unchanged signed bytes. Record the notary submission identifier and accepted status in release evidence without publishing credentials.
+A standalone Mach-O executable cannot be stapled like an app, pkg, or dmg. The
+release does not claim stapling unless the distribution format changes to one
+supported by `stapler`. For the tarball, automation submits a ZIP containing
+the exact signed binaries for notarization, then creates the release tarball
+from those unchanged signed bytes. Release evidence records the notary
+submission identifier and accepted status without publishing credentials.
 
 After downloading the published asset, validate the signature again and run an appropriate Gatekeeper assessment on a clean test account or host.
 
@@ -372,9 +397,12 @@ ledger assigns a reviewed Apache-compatible SPDX license to every pin; any
 missing or stale entry fails packaging. Release archives also contain complete
 root license and notice texts for all pins. Package validation rejects
 dependency, version, revision, source, license, relationship, notice,
-provenance, or normalized-archive-metadata drift.
+provenance, normalized-archive-metadata drift, and packaged README links that
+are relative or bound to a different source commit.
 
-`actions/attest-build-provenance` will attest the final archive, checksum, SBOM, and build-info assets. The release notes will show the `gh attestation verify` command for the published repository.
+`actions/attest-build-provenance` attests the final archive, checksum, SBOM, and
+build-info assets. Release verification uses `gh attestation verify` against
+the published repository.
 
 Checksums are calculated only after signing and notarization, because those bytes are the distributed identity. Formula rendering downloads the published archive and checksum again, verifies both, checks required archive entries, and derives the Homebrew SHA from that verified archive.
 
@@ -396,34 +424,43 @@ Stable formula:
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/0.1.0/devcontainer-release-arm64.tar.gz"
-  version "0.1.0"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
   depends_on arch: :arm64
+  depends_on "docker"
+  depends_on "docker-compose"
   depends_on macos: :tahoe
 
   def install
     bin.install "bin/devcontainer"
+    bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-compose"
+    libexec.install "libexec/container"
+    pkgshare.install "share/devcontainer"
   end
 
   def caveats
     <<~EOS
-      This formula installs only devcontainer.
+      This formula installs devcontainer and requires the upstream Docker CLI
+      and Docker Compose protocol clients.
       Install Apple's stock container runtime separately from Apple.
-      Docker and container-compose are optional comparison/providers and are not installed or replaced.
+      Register the optional Apple CLI plugin explicitly:
+        devcontainer plugin register
     EOS
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/devcontainer version --short")
-    assert_match "Usage", shell_output("#{bin}/devcontainer --help")
+    assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
+    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end
 end
 ```
 
-The Current formula uses `DevcontainerCurrent`, a commit-identified URL, and `current.<run>.<sha12>`. Stable and Current formulae must conflict because both install `devcontainer`.
+Homebrew infers the stable version from the immutable tag-bearing URL, so the stable formula does not repeat a redundant `version` declaration. The Current formula uses `DevcontainerCurrent`, a commit-identified URL, an explicit `current.<run>.<sha12>` version, and a conflict with `devcontainer` because both channels install the same commands. Users must uninstall the active channel before switching.
 
 The formula must not:
 
@@ -436,62 +473,33 @@ The formula must not:
 
 Tap updates are serialized and use a dedicated token. Automation verifies the tap push remote, commits only the intended formula, pushes one Conventional Commit, waits for tap CI, installs the formula, runs `brew test`, and compares the installed binary's build info with the selected commit.
 
-## Make Target Roadmap
+## Release Operator Commands
 
-```text
-all
-workflow
-ci
-ci-fast
-check
-lint
-format
-test
-coverage
-coverage-check
-build
-build-release
-cli-smoke
-cli-smoke-built
-docs
-package
-package-release
-package-debug
-package-validate
-parity-docker
-parity-apple
-parity-compose-provider
-parity-report
-release-gate
-release-gate-hosted
-release-plan
-release
-sonar-scan
-clean
+The checked-in Make targets are the local release authority:
+
+```console
+make check
+make test-asan
+make test-tsan
+make parity-release
+make release-gate-hosted
+make package-release
 ```
 
-Actions invoke these targets instead of duplicating release logic in YAML.
+For stable 1.0.1 publication:
 
-## Implementation Readiness Checklist
+1. Push the exact candidate to protected `main` and require every workflow in
+   the stable gate to succeed for that commit.
+2. Run the serialized three-lane parity workflow and retain its raw, normalized,
+   VS Code, and cleanup evidence.
+3. Create and push the annotated SSH-signed `1.0.1` tag.
+4. Dispatch `stable-release-gate.yml` with `ref=1.0.1`.
+5. After its candidate-bound authority artifact is present, dispatch
+   `prebuilt-binaries.yml` with `ref=1.0.1`.
+6. Verify the finalized GitHub release, attestations, tap commit, fresh
+   `brew install stephenlclarke/tap/devcontainer`, formula test, build identity,
+   and a stock-runtime smoke.
 
-- [x] Add `DEVCONTAINER_VERSION` to `Makefile` as the sole tracked version.
-- [x] Implement and test exact selector behavior.
-- [x] Implement and test monotonic Current formula versions.
-- [x] Implement generated build-info and `version --format json`.
-- [x] Add immutable Current and stable package naming.
-- [x] Add exact-commit CI and CodeQL workflows.
-- [x] Add exact-range dependency review and OpenSSF Scorecard workflows.
-- [ ] Add the trusted three-lane bare-metal parity runner and strict preflight.
-- [x] Add DocC build and Pages deployment.
-- [x] Add strict Developer ID signing, notarization, and sanitized evidence tooling.
-- [ ] Provision the release identity/profile and record an accepted package submission.
-- [x] Add deterministic SPDX SBOM generation, portable checksums, and strict package verification.
-- [x] Add GitHub artifact attestation to the trusted publication workflow.
-- [x] Add formula template, local renderer, syntax validation, and style validation.
-- [x] Add immutable stable and staged/finalized Current publication workflows.
-- [x] Add serialized tap formula and managed README promotion.
-- [ ] Protect `main` with signed commits and stable required contexts.
-- [x] Enable Dependabot security updates, vulnerability alerts, secret scanning, push protection, and private vulnerability reporting.
-- [x] Add a private-reporting security policy.
-- [ ] Publish the first Current build.
-- [ ] Soak and promote the first stable release.
+The publication workflow performs Developer ID signing, notarization, staged
+release upload, formula rendering, strict audit/fetch/install/test, tested tap
+push, and final release promotion as one fail-closed transaction.

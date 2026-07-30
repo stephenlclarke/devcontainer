@@ -2,7 +2,7 @@
 set -euo pipefail
 
 required=(swift python3 make git)
-optional=(markdownlint swiftlint swiftformat shellcheck jq)
+optional=(markdownlint swiftlint swiftformat shellcheck jq vhs)
 
 for tool in "${required[@]}"; do
   command -v "$tool" >/dev/null || {
