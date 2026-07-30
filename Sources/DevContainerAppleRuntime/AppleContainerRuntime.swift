@@ -40,6 +40,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     }
 
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
+    private static let nativeResourceRoleLabel = "com.apple.container.resource.role"
+    private static let nativePluginLabel = "com.apple.container.plugin"
 
     public let executable: URL
     let environment: [String: String]
@@ -60,8 +62,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
     var managedHostsState: [String: AppleManagedHostsState] = [:]
-    var eventGeneration: UInt64 = 0
-    var eventWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    var eventPollerState: AppleEventPoller?
 
     public init(
         executable: URL,
@@ -156,6 +157,7 @@ public extension AppleContainerRuntime {
 
     /// Releases all host-side compatibility resources owned by this adapter.
     func shutdown() async {
+        await eventPollerState?.shutdown()
         await portForwarding.stopAll()
     }
 
@@ -167,6 +169,20 @@ public extension AppleContainerRuntime {
         if useDirectContainerAPI {
             return try await listContainersDirect(all: all, labels: labels)
         }
+        let snapshots = try await loadContainerInventory(all: all)
+        return snapshots.filter { snapshot in
+            labels.allSatisfy { key, expected in
+                guard let actual = snapshot.spec.labels[key] else {
+                    return false
+                }
+                return expected.isEmpty || actual == expected
+            }
+        }
+    }
+
+    private func loadContainerInventory(
+        all: Bool
+    ) async throws -> [DevContainerModel.ContainerSnapshot] {
         var arguments = ["list"]
         if all {
             arguments.append("--all")
@@ -176,108 +192,35 @@ public extension AppleContainerRuntime {
         try requireSuccess(result, operation: "container list")
         let values = try parseJSONObjectArray(result.standardOutput)
         var snapshots: [DevContainerModel.ContainerSnapshot] = []
+        snapshots.reserveCapacity(values.count)
         var observedRuntimeIDs = Set<String>()
+        let metadata = try await containerMetadataByRuntimeID()
         for value in values {
-            let snapshot = try await containerSnapshotWithMetadata(value)
-            observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
-            guard
-                labels.allSatisfy({ key, expected in
-                    guard let actual = snapshot.spec.labels[key] else {
-                        return false
-                    }
-                    return expected.isEmpty || actual == expected
-                })
-            else {
+            let observed = try containerSnapshot(value)
+            guard !Self.isInternalBuilderResource(observed) else {
                 continue
             }
+            let snapshot = try await containerSnapshotWithMetadata(
+                observed,
+                metadata: metadata[observed.runtimeID.rawValue]
+            )
+            observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
             snapshots.append(snapshot)
         }
         if all {
             try await removeOrphanedContainerMetadata(
-                observedRuntimeIDs: observedRuntimeIDs
+                observedRuntimeIDs: observedRuntimeIDs,
+                metadata: metadata
             )
         }
         return snapshots
     }
 
-    internal func containerSnapshotWithMetadata(
-        _ value: [String: Any]
-    ) async throws -> DevContainerModel.ContainerSnapshot {
-        try await containerSnapshotWithMetadata(containerRecord(value))
-    }
-
-    internal func containerSnapshotWithMetadata(
-        _ record: AppleContainerRecord
-    ) async throws -> DevContainerModel.ContainerSnapshot {
-        var snapshot = containerSnapshot(record)
-        if snapshot.state == .stopped,
-           let exit = containerExits[snapshot.runtimeID.rawValue]
-        {
-            snapshot.exitCode = exit.code
-            snapshot.finishedAt = exit.finishedAt
-        }
-        guard let metadataStore else {
-            return snapshot
-        }
-        if let metadata = try await metadataStore.containerMetadata(
-            id: snapshot.runtimeID.rawValue
-        ) {
-            if Self.sameContainerIncarnation(
-                metadataCreatedAt: metadata.createdAt,
-                observedCreatedAt: snapshot.createdAt
-            ) {
-                return apply(metadata: metadata, to: snapshot)
-            }
-            // Native Compose may recreate a stable name. Never project the
-            // previous Docker identity onto that new native container.
-            try await metadataStore.removeContainerMetadata(
-                id: snapshot.runtimeID.rawValue
-            )
-        }
-        if snapshot.spec.labels[Self.dockerIDLabel] != nil {
-            return snapshot
-        }
-        let metadata = RuntimeContainerMetadata(
-            runtimeID: snapshot.runtimeID,
-            dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
-            spec: snapshot.spec,
-            createdAt: snapshot.createdAt,
-            startedAt: snapshot.startedAt
-        )
-        try await metadataStore.recordContainerMetadata(metadata)
-        return apply(metadata: metadata, to: snapshot)
-    }
-
-    private static func syntheticDockerIdentifier() -> String {
-        let first = UUID().uuidString.replacingOccurrences(
-            of: "-",
-            with: ""
-        ).lowercased()
-        let second = UUID().uuidString.replacingOccurrences(
-            of: "-",
-            with: ""
-        ).lowercased()
-        return first + second
-    }
-
-    internal func removeOrphanedContainerMetadata(
-        observedRuntimeIDs: Set<String>
-    ) async throws {
-        guard let metadataStore else {
-            return
-        }
-        for metadata in try await metadataStore.listContainerMetadata()
-            where !observedRuntimeIDs.contains(metadata.runtimeID.rawValue)
-        {
-            try await metadataStore.removeContainerMetadata(
-                id: metadata.runtimeID.rawValue
-            )
-            discardContainerState(
-                id: metadata.runtimeID.rawValue,
-                dockerID: metadata.dockerID.rawValue,
-                name: metadata.spec.name
-            )
-        }
+    static func isInternalBuilderResource(
+        _ snapshot: DevContainerModel.ContainerSnapshot
+    ) -> Bool {
+        snapshot.spec.labels[nativeResourceRoleLabel] == "builder"
+            && snapshot.spec.labels[nativePluginLabel] == "builder"
     }
 
     func inspectContainer(
@@ -290,6 +233,13 @@ public extension AppleContainerRuntime {
             return exact
         }
         let matches = try await listContainers(all: true, labels: [:], context: context)
+        return try resolvedContainerSnapshot(id: id, in: matches)
+    }
+
+    internal func resolvedContainerSnapshot(
+        id: String,
+        in matches: [DevContainerModel.ContainerSnapshot]
+    ) throws -> DevContainerModel.ContainerSnapshot {
         if let exact = matches.first(where: {
             $0.runtimeID.rawValue == id || $0.dockerID.rawValue == id || $0.spec.name == id
         }) {
@@ -317,7 +267,7 @@ public extension AppleContainerRuntime {
             spec: spec,
             createdAt: nil
         )
-        signalEventPollers()
+        await signalEventPollers()
         let snapshot = try await inspectContainer(id: spec.name, context: context)
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         return snapshot

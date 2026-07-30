@@ -272,7 +272,19 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertLess(push, finalize)
         self.assertIn("mode=stable-stage", contents)
         self.assertIn("mode=stable-finalize", contents)
-        self.assertIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
+        self.assertIn(
+            'formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"',
+            contents,
+        )
+        self.assertIn(
+            'test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"',
+            contents,
+        )
+        self.assertIn("export HOMEBREW_NO_AUTO_UPDATE=1", contents)
+        self.assertIn('brew tap-new --no-git "${test_tap}"', contents)
+        self.assertIn('brew install --formula "${test_tap}/${formula}"', contents)
+        self.assertNotIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
+        self.assertNotIn('brew untap "stephenlclarke/tap"', contents)
 
     def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")

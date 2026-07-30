@@ -19,14 +19,6 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-struct AppleEventPollRequest: Sendable {
-    let initial: [String: ContainerSnapshot]
-    let since: Date?
-    let until: Date?
-    let labels: [String: String]
-    let context: RuntimeRequestContext
-}
-
 struct AppleContainerRecord {
     let id: String
     let dockerID: String

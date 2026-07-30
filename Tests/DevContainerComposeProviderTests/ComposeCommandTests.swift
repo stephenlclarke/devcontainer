@@ -37,6 +37,14 @@ func `command envelope finds project and mutation`() throws {
     #expect(envelope.files == ["compose.yaml"])
     #expect(envelope.mutating)
     #expect(envelope.projectKey(userID: 501) == ProjectKey(rawValue: "501:demo"))
+    #expect(
+        envelope.configurationArguments == [
+            "--project-directory", "/workspace",
+            "-f", "compose.yaml",
+            "--project-name=Demo",
+            "config", "--format", "json"
+        ]
+    )
 }
 
 @Test
@@ -84,7 +92,12 @@ func `command envelope accepts every global option spelling and separator`() thr
             "-p", "Demo",
             "--project-directory=/workspace",
             "--file=first.yaml",
-            "--unknown",
+            "--env-file", ".env",
+            "--profile=debug",
+            "--parallel", "2",
+            "--progress=plain",
+            "--ansi", "never",
+            "--compatibility",
             "-f", "second.yaml",
             "--",
             "up",
@@ -97,9 +110,74 @@ func `command envelope accepts every global option spelling and separator`() thr
     #expect(split.files == ["first.yaml", "second.yaml"])
     #expect(split.mutating)
 
+    let shortInline = try ComposeCommandEnvelope(
+        arguments: ["-p=demo", "-f=compose.yaml", "scale", "web=2"]
+    )
+    #expect(shortInline.projectName == "demo")
+    #expect(shortInline.files == ["compose.yaml"])
+    #expect(shortInline.command == "scale")
+    #expect(shortInline.mutating)
+
     let empty = try ComposeCommandEnvelope(arguments: [])
     #expect(empty.command == nil)
     #expect(!empty.mutating)
+
+    #expect(throws: DevContainerError.self) {
+        _ = try ComposeCommandEnvelope(arguments: ["--future-option", "value", "up"])
+    }
+    #expect(throws: DevContainerError.self) {
+        _ = try ComposeCommandEnvelope(arguments: ["--dry-run=maybe", "up"])
+    }
+}
+
+@Test
+func `non executing Boolean options do not require provider claims`() throws {
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["--dry-run=true", "up"]
+        ).mutating
+    )
+    #expect(
+        try ComposeCommandEnvelope(
+            arguments: ["--dry-run=false", "up"]
+        ).mutating
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["--help=true", "up"]
+        ).mutating
+    )
+    #expect(
+        try ComposeCommandEnvelope(
+            arguments: ["--compatibility=true", "up"]
+        ).mutating
+    )
+}
+
+@Test(arguments: [
+    "build",
+    "commit",
+    "cp",
+    "create",
+    "down",
+    "exec",
+    "kill",
+    "pause",
+    "publish",
+    "pull",
+    "push",
+    "restart",
+    "rm",
+    "run",
+    "scale",
+    "start",
+    "stop",
+    "unpause",
+    "up",
+    "watch"
+])
+func `resource changing commands require a provider claim`(_ command: String) throws {
+    #expect(try ComposeCommandEnvelope(arguments: [command]).mutating)
 }
 
 @Test

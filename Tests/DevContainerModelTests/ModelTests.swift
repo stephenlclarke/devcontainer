@@ -20,7 +20,24 @@ import Testing
 
 @Test
 func `build info uses makefile owned version`() throws {
-    #expect(BuildInfo.current.version == "1.0.0")
+    let repositoryRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let makefile = try String(
+        contentsOf: repositoryRoot.appendingPathComponent("Makefile"),
+        encoding: .utf8
+    )
+    let assignment = try #require(
+        makefile.split(separator: "\n").first {
+            $0.hasPrefix("DEVCONTAINER_VERSION ?= ")
+        }
+    )
+    let expectedVersion = try #require(
+        assignment.split(separator: " ").last.map(String.init)
+    )
+
+    #expect(BuildInfo.current.version == expectedVersion)
     #expect(BuildInfo.current.source == "stephenlclarke/devcontainer")
     #expect(!BuildInfo.current.lane.isEmpty)
     #expect(BuildInfo.current.buildType == "development")

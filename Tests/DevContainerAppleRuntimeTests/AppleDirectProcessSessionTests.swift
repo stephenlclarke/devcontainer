@@ -257,7 +257,7 @@ struct AppleDirectProcessSessionTests {
 
         #expect(
             AppleDirectProcessSession.mergedEnvironment(
-                ["Z=last", "A=old", "EMPTY"],
+                ["Z=last", "A=old", "EMPTY", "A=inherited-last"],
                 overrides: ["A": "new", "B": "second"]
             ) == ["A=new", "B=second", "EMPTY=", "Z=last"]
         )

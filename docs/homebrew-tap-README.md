@@ -143,7 +143,7 @@ Stable and Current tap updates share one non-cancelling concurrency group so the
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.0/devcontainer-release-arm64.tar.gz"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
@@ -195,7 +195,7 @@ class Devcontainer < Formula
   end
 
   test do
-    assert_match "1.0.0", shell_output("#{bin}/devcontainer version --short")
+    assert_match "1.0.1", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?

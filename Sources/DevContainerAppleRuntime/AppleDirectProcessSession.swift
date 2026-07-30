@@ -322,19 +322,15 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         _ inherited: [String],
         overrides: [String: String]
     ) -> [String] {
-        var environment = Dictionary(
-            uniqueKeysWithValues: inherited.map { value in
-                let parts = value.split(
-                    separator: "=",
-                    maxSplits: 1,
-                    omittingEmptySubsequences: false
-                )
-                return (
-                    String(parts[0]),
-                    parts.count == 2 ? String(parts[1]) : ""
-                )
-            }
-        )
+        var environment = inherited.reduce(into: [String: String]()) { environment, value in
+            let parts = value.split(
+                separator: "=",
+                maxSplits: 1,
+                omittingEmptySubsequences: false
+            )
+            environment[String(parts[0])] =
+                parts.count == 2 ? String(parts[1]) : ""
+        }
         environment.merge(overrides) { _, new in new }
         return environment.keys.sorted().map { "\($0)=\(environment[$0] ?? "")" }
     }

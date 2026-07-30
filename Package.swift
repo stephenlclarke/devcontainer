@@ -39,6 +39,7 @@ let package = Package(
         .package(url: "https://github.com/apple/container.git", exact: "1.1.0"),
         .package(url: "https://github.com/apple/containerization.git", exact: "0.35.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
@@ -128,8 +129,10 @@ let package = Package(
                 "DevContainerRuntimeSPI",
                 "DevContainerState",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "DequeModule", package: "swift-collections"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
             ]
@@ -198,6 +201,14 @@ let package = Package(
                 "DevContainerComposeProvider",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI"
+            ]
+        ),
+        .testTarget(
+            name: "DevContainerComposeCLITests",
+            dependencies: [
+                "DevContainerComposeCLI",
+                "DevContainerModel",
+                "DevContainerState"
             ]
         ),
         .testTarget(

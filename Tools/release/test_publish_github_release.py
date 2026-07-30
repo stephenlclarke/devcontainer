@@ -40,10 +40,12 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 'printf "%s\\n" "$*" >> "$GH_TRACE"\n'
                 'if [[ "${1:-}" == api ]]; then\n'
                 f"  if [[ {'1' if release_exists else '0'} == 1 ]]; then\n"
-                "    printf "
+                '    if [[ "${2:-}" != --silent ]]; then\n'
+                "      printf "
                 f"'{{\"tag_name\":\"%s\",\"draft\":false,\"prerelease\":"
                 f"{'true' if prerelease else 'false'}}}\\n' "
                 '"$RELEASE_TAG"\n'
+                "    fi\n"
                 "    exit 0\n"
                 "  fi\n"
                 "  printf 'HTTP 404: Not Found\\n' >&2\n"

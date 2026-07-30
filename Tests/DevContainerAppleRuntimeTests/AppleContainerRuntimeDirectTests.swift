@@ -243,15 +243,7 @@ extension AppleContainerRuntimeTests {
             ).code == .runtimeUnavailable
         )
 
-        let generation = await runtime.eventGeneration
-        let waiter = Task {
-            await runtime.waitForEventChange(after: generation)
-        }
-        try await Task.sleep(for: .milliseconds(10))
         await runtime.signalEventPollers()
-        await waiter.value
-        #expect(await runtime.eventGeneration == generation + 1)
-        await runtime.waitForEventChange(after: generation)
 
         assertInvalidDirectRuntime(fixture: fixture)
     }

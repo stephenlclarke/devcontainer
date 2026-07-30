@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.0 is the stable release. Its immutable GitHub archive is
+> Version 1.0.1 is the stable release. Its immutable GitHub archive is
 > Developer ID-signed, notarized, parity-certified, checksummed, and published
 > through the stable Homebrew formula. The Apple runtime remains a separate
 > installation.

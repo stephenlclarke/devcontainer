@@ -205,6 +205,31 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
+    func `internal Apple builder is excluded and stale metadata is removed`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("internal-builder")
+        let store = TestMetadataStore()
+        await store.recordContainerMetadata(
+            RuntimeContainerMetadata(
+                runtimeID: RuntimeID(rawValue: "buildkit"),
+                dockerID: DockerID(rawValue: "docker-buildkit"),
+                spec: ContainerSpec(name: "buildkit", image: "builder:latest"),
+                createdAt: Date(timeIntervalSince1970: 1)
+            )
+        )
+        let runtime = try fixture.runtime(metadataStore: store)
+
+        let containers = try await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        )
+
+        #expect(containers.isEmpty)
+        #expect(await store.containerMetadata(id: "buildkit") == nil)
+    }
+
+    @Test
     func `native compose containers receive stable Docker identities`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setMode("recreated")
@@ -265,6 +290,44 @@ struct AppleContainerRuntimeTests {
         #expect(
             await store.containerMetadata(id: "externally-removed") == nil
         )
+    }
+
+    @Test
+    func `container listing batches metadata reads`() async throws {
+        let fixture = try FakeAppleCLI()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store)
+
+        _ = try await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        )
+        await store.resetAccessCounts()
+
+        _ = try await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        )
+
+        let counts = await store.accessCounts()
+        #expect(counts.list == 1)
+        #expect(counts.lookup == 0)
+    }
+
+    @Test
+    func `container listing excludes missing label values`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+
+        let containers = try await runtime.listContainers(
+            all: true,
+            labels: ["missing": "yes"],
+            context: RuntimeRequestContext()
+        )
+
+        #expect(containers.isEmpty)
     }
 
     @Test
@@ -729,6 +792,30 @@ struct FakeAppleCLI {
               }]'
               exit 0
             fi
+            if [ "$mode" = internal-builder ]; then
+              printf '%s\\n' '[{
+                "id":"buildkit",
+                "configuration":{
+                  "image":{"reference":"builder:latest"},
+                  "initProcess":{
+                    "executable":"buildkitd",
+                    "arguments":[],
+                    "environment":[],
+                    "workingDirectory":"/",
+                    "terminal":false
+                  },
+                  "labels":{
+                    "com.apple.container.resource.role":"builder",
+                    "com.apple.container.plugin":"builder"
+                  },
+                  "mounts":[],
+                  "publishedPorts":[],
+                  "creationDate":"2026-07-29T17:31:09Z"
+                },
+                "status":{"state":"stopped"}
+              }]'
+              exit 0
+            fi
             if [ "$state" = stopped ] || [ "$state" = created ]; then
               cstate=stopped
             else
@@ -741,7 +828,7 @@ struct FakeAppleCLI {
                 "initProcess":{
                   "executable":"/bin/sleep",
                   "arguments":["infinity"],
-                  "environment":["A=1","EMPTY="],
+                  "environment":["A=1","EMPTY=","A=last"],
                   "workingDirectory":"/workspace",
                   "terminal":true,
                   "user":{"id":{"uid":501,"gid":20}},
@@ -902,59 +989,4 @@ struct FakeAppleCLI {
     private func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
-}
-
-actor TestMetadataStore: RuntimeMetadataStore {
-    private var values: [String: RuntimeContainerMetadata] = [:]
-
-    func recordContainerMetadata(
-        _ metadata: RuntimeContainerMetadata
-    ) {
-        values[metadata.runtimeID.rawValue] = metadata
-    }
-
-    func containerMetadata(
-        id: String
-    ) -> RuntimeContainerMetadata? {
-        values[id]
-            ?? values.values.first(where: { $0.dockerID.rawValue == id })
-    }
-
-    func listContainerMetadata() -> [RuntimeContainerMetadata] {
-        Array(values.values)
-    }
-
-    func markContainerStarted(id: String, at date: Date) {
-        values[id]?.startedAt = date
-    }
-
-    func removeContainerMetadata(id: String) {
-        values[id] = nil
-    }
-}
-
-private enum MetadataTestError: Error {
-    case writeFailed
-}
-
-private actor FailingMetadataStore: RuntimeMetadataStore {
-    func recordContainerMetadata(
-        _: RuntimeContainerMetadata
-    ) throws {
-        throw MetadataTestError.writeFailed
-    }
-
-    func containerMetadata(
-        id _: String
-    ) -> RuntimeContainerMetadata? {
-        nil
-    }
-
-    func listContainerMetadata() -> [RuntimeContainerMetadata] {
-        []
-    }
-
-    func markContainerStarted(id _: String, at _: Date) {}
-
-    func removeContainerMetadata(id _: String) {}
 }

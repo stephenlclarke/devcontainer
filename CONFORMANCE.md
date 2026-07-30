@@ -2,14 +2,14 @@
 
 <!-- markdownlint-disable MD013 -->
 
-This document states exactly where `devcontainer` 1.0.0 conforms to, delegates, partially implements, does not implement, or has not verified the Development Containers standards. It is intentionally broader than the release fixture ledger in [COMPATIBILITY.md](COMPATIBILITY.md).
+This document states exactly where `devcontainer` 1.0.1 conforms to, delegates, partially implements, does not implement, or has not verified the Development Containers standards. It is intentionally broader than the release fixture ledger in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Audit basis
 
 The audit was completed on 29 July 2026 against:
 
 - [`devcontainers/spec` commit `c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421`](https://github.com/devcontainers/spec/tree/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421), including the [`devcontainer.json` property reference](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md), [base schema](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/schemas/devContainer.base.schema.json), [Feature specification](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-features.md), [image metadata](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/image-metadata.md), [lockfiles](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-lockfile.md), [declarative secrets](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/declarative-secrets.md), and [GPU host requirements](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/gpu-host-requirement.md);
-- official [`@devcontainers/cli` 0.88.0 at commit `f683c29f64a20109b4453e5149807e390ff65133`](https://github.com/devcontainers/cli/tree/f683c29f64a20109b4453e5149807e390ff65133), which is the unmodified parser and lifecycle implementation used by the 1.0.0 release;
+- official [`@devcontainers/cli` 0.88.0 at commit `f683c29f64a20109b4453e5149807e390ff65133`](https://github.com/devcontainers/cli/tree/f683c29f64a20109b4453e5149807e390ff65133), which is the unmodified parser and lifecycle implementation used by the 1.0.1 release;
 - the complete [Dev Containers GitHub organization](https://github.com/devcontainers), including [Features](https://github.com/devcontainers/features), [Templates](https://github.com/devcontainers/templates), [Images](https://github.com/devcontainers/images), and [CI tooling](https://github.com/devcontainers/ci);
 - stock [`apple/container` 1.1.0](https://github.com/apple/container/tree/1.1.0) and its resolved [`apple/containerization` 0.35.0](https://github.com/apple/containerization/tree/0.35.0);
 - the three release lanes and fixtures defined by [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json).
@@ -23,38 +23,38 @@ The specification is a moving upstream branch. This audit is reproducible becaus
 | `certified` | The exact behavior is in a release-bound real-Docker, stock-Apple, and optional-provider parity fixture with zero semantic differences. |
 | `delegated` | The official CLI, VS Code, or another supporting tool owns the behavior; the bridge is not the parser or user-interface implementation. |
 | `partial` | A useful subset works, but at least one standard form is unsupported or behavior differs. |
-| `unsupported` | Version 1.0.0 cannot provide the required behavior. |
+| `unsupported` | Version 1.0.1 cannot provide the required behavior. |
 | `unverified` | Code may pass the request, or the official client may own it, but no release-bound fixture proves the behavior. No support claim is made. |
 
 `delegated` does not automatically mean `certified`. A delegated client feature can still depend on Docker runtime behavior that the bridge does not implement.
 
 ## Executive conclusion
 
-Version 1.0.0 is conformant only for the bounded configurations exercised by its 18 CLI fixtures and real VS Code fixture. It is not a complete implementation of every `devcontainer.json` property, every Feature requirement, every Docker Compose configuration, or every Docker `run`/`build` option allowed by the standard.
+Version 1.0.1 is conformant only for the bounded configurations exercised by its 18 CLI fixtures and real VS Code fixture. It is not a complete implementation of every `devcontainer.json` property, every Feature requirement, every Docker Compose configuration, or every Docker `run`/`build` option allowed by the standard.
 
 The official CLI provides standards parsing, metadata merging, variable expansion, Feature resolution, and lifecycle orchestration. This project provides a Docker-compatible transport and Apple runtime adapter for a tested subset. The distinction matters: accepting a JSON property in the official CLI does not prove that every Docker request produced by that property is enforced by stock Apple `container`.
 
-## Known 1.0.0 non-conformances
+## Known 1.0.1 non-conformances
 
 These are confirmed implementation differences, not merely missing tests.
 
-| ID | Standard or required behavior | 1.0.0 behavior | Impact and workaround |
+| ID | Standard or required behavior | 1.0.1 behavior | Impact and workaround |
 | --- | --- | --- | --- |
 | NC-001 | `runArgs` accepts Docker CLI run arguments | The bridge decodes an allowlisted subset of Docker create fields. Other Docker request members are ignored by Swift decoding instead of being rejected, so an unsupported argument can appear to succeed without being enforced. | Do not use arbitrary `runArgs`. Restrict configurations to the certified fields below and verify security/resource behavior inside the container. Future work must add strict unknown-field validation and explicit translations. |
-| NC-002 | `hostRequirements.gpu` causes the reference CLI to request a GPU, normally through Docker `--gpus all` | Docker sends `HostConfig.DeviceRequests`; 1.0.0 does not decode or transport it. Stock Apple `container` 1.1.0 also has no certified GPU path. | GPU-required configurations and GPU-dependent Features are unsupported. There is no stock workaround in 1.0.0. |
+| NC-002 | `hostRequirements.gpu` causes the reference CLI to request a GPU, normally through Docker `--gpus all` | Docker sends `HostConfig.DeviceRequests`; 1.0.1 does not decode or transport it. Stock Apple `container` 1.1.0 also has no certified GPU path. | GPU-required configurations and GPU-dependent Features are unsupported. There is no stock workaround in 1.0.1. |
 | NC-003 | `privileged: true` means Docker `--privileged` semantics | Stock Apple 1.1.0 has no `--privileged`. The adapter maps the request to `--cap-add ALL` inside the per-container VM. That is not full Docker privileged mode and does not supply arbitrary host devices, host namespaces, or Docker-in-Docker semantics. | Treat stock privileged mode as partial. Do not use it for Docker-in-Docker, host-device access, or a Feature that requires exact Docker privileged behavior. |
 | NC-004 | `securityOpt` values must be applied | `seccomp=unconfined` is a semantic no-op because Apple containers do not install Docker’s default seccomp profile. Other supported Docker forms, including `no-new-privileges`, cannot be transported by stock Apple 1.1.0 and are rejected. Unrecognized forms are rejected by the router. | The common debugger setting `seccomp=unconfined` works as the already-native state. Other security options require a separately fingerprinted runtime that advertises and enforces them; they are outside the stock claim. |
 | NC-005 | Docker run arguments and Compose may set an explicit container hostname | Stock Apple `container` 1.1.0 exposes no hostname field. The bridge rejects non-empty Docker `Hostname` before runtime creation. | Remove `runArgs: ["--hostname", ...]` and Compose `hostname` from stock configurations. Network service aliases used by the certified Compose fixtures remain supported. |
-| NC-006 | String-valued `mounts` and `workspaceMount` accept Docker `--mount` fields | 1.0.0 represents type, source, target, and read-only state. It does not represent bind propagation, consistency modes, volume `nocopy`, tmpfs size/mode, or other nested Docker mount options. Unknown nested fields are ignored. | Use basic bind, volume, tmpfs, and read-only forms only. Advanced mount semantics are unsupported even when the create request succeeds. |
+| NC-006 | String-valued `mounts` and `workspaceMount` accept Docker `--mount` fields | 1.0.1 represents type, source, target, and read-only state. It does not represent bind propagation, consistency modes, volume `nocopy`, tmpfs size/mode, or other nested Docker mount options. Unknown nested fields are ignored. | Use basic bind, volume, tmpfs, and read-only forms only. Advanced mount semantics are unsupported even when the create request succeeds. |
 | NC-007 | Image-declared anonymous `VOLUME` entries have Docker anonymous-volume lifecycle and storage semantics | The adapter projects anonymous volumes in inspect data but leaves their content on Apple’s native writable root filesystem instead of allocating a separate managed volume. | Do not rely on Docker anonymous-volume persistence, sharing, or cleanup semantics for image-declared `VOLUME` paths. Declare a named volume explicitly when persistence matters. |
 | NC-008 | A Docker-compatible runtime can attach or detach a running container from a network when the client requires it | Stock Apple requires networks and aliases at create time. The bridge rejects `network connect` and `network disconnect` after creation. | The certified Dev Container and Compose paths supply networks at creation. Configurations or Compose flows that dynamically change attachments are unsupported. |
-| NC-009 | Resource, namespace, device, DNS, host mapping, restart, and similar Docker run options supplied through `runArgs` are applied | Fields such as memory/CPU constraints, shared-memory size, devices, device cgroup rules, extra hosts, DNS settings, PID/IPC/UTS/user namespaces, read-only root, sysctls, restart policy, and stop policy are not part of the 1.0.0 create DTO even where a selected Apple runtime may expose a related flag. | These options are outside the 1.0.0 claim and can be silently omitted because of NC-001. There is no blanket pass-through. Add an explicit parity fixture and translation before treating any one of them as supported. |
+| NC-009 | Resource, namespace, device, DNS, host mapping, restart, and similar Docker run options supplied through `runArgs` are applied | Fields such as memory/CPU constraints, shared-memory size, devices, device cgroup rules, extra hosts, DNS settings, PID/IPC/UTS/user namespaces, read-only root, sysctls, restart policy, and stop policy are not part of the 1.0.1 create DTO even where a selected Apple runtime may expose a related flag. | These options are outside the 1.0.1 claim and can be silently omitted because of NC-001. There is no blanket pass-through. Add an explicit parity fixture and translation before treating any one of them as supported. |
 
 Features contribute `privileged`, `capAdd`, `securityOpt`, mounts, lifecycle commands, and other metadata to the merged configuration. A Feature inherits every applicable non-conformance above; a successful installation of the two certified public Features is not a blanket claim for the Feature catalog.
 
 ## Platform support boundary
 
-Version 1.0.0 supports Linux `arm64` containers on Apple silicon with macOS
+Version 1.0.1 supports Linux `arm64` containers on Apple silicon with macOS
 Tahoe. Windows containers, Intel Macs, Linux hosts, remote engines, and
 cross-architecture execution are outside the implementation. This is an
 explicit product support limitation, not a violation of the Development
@@ -65,7 +65,7 @@ hosts and image platforms.
 
 The following ledger covers every root property in the audited base schema. Related fields are grouped where they share an implementation boundary.
 
-| Property | Status | 1.0.0 evidence and boundary |
+| Property | Status | 1.0.1 evidence and boundary |
 | --- | --- | --- |
 | `$schema`, `additionalProperties` | `delegated` | JSONC parsing, schema selection, comments, and tool-specific extra properties are owned by the official CLI or supporting tool. The bridge never reads `devcontainer.json`. |
 | `name` | `delegated` | Display metadata is owned by the official CLI/VS Code. Names exist in certified fixtures but are not a runtime semantic claim. |
@@ -115,7 +115,7 @@ The following ledger covers every root property in the audited base schema. Rela
 
 ## Ports, networks, and Compose boundary
 
-The standard deliberately uses Docker Compose as the multi-container orchestrator. The 1.0.0 claim therefore names a tested Compose subset, not the complete Compose Specification.
+The standard deliberately uses Docker Compose as the multi-container orchestrator. The 1.0.1 claim therefore names a tested Compose subset, not the complete Compose Specification.
 
 Certified:
 

@@ -253,6 +253,86 @@ the 10x failure threshold and an absolute difference of 6.002s. The run
 therefore confirms the race fix without changing the optimization priorities
 derived from the three-run matrix.
 
+## 2026-07-29 targeted current-worktree comparison
+
+The uncommitted runtime optimizations were compared with pre-change
+`d593111090d5aab72b0e432f91480268c3ee79c3` on this Mac. This is a focused,
+three-run warm comparison, not a replacement for the release matrix or the
+optimization acceptance protocol below.
+
+The workload contains the four fixtures that exercise the changed paths:
+
+- C04 Compose lifecycle;
+- E02 container lifecycle;
+- E06 network and volume inventory;
+- F01 concurrent lifecycle and `/events` handling.
+
+Each run used the same debug parity engine, pinned Dev Containers CLI, fixture
+sources, and local Docker oracle. The Apple lane used the installed custom
+Homebrew `container` distribution with `DEVCONTAINER_ALLOW_CUSTOM_STOCK=1`;
+it must not be described as a measurement of an unmodified Apple release.
+
+### Aggregate timings
+
+Raw samples are total fixture wall-clock seconds for each four-fixture lane.
+The median is the middle of three samples; ranges are included to show the
+observed variation.
+
+| Lane | Pre-change samples | Current samples | Pre-change median | Current median | Median change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Custom Apple runtime | 26.236, 24.610, 25.042s | 25.450, 21.526, 23.440s | 25.042s | 23.440s | -1.602s (-6.4%) |
+| `container-compose` provider | 26.426, 25.641, 23.844s | 22.449, 22.267, 21.780s | 25.641s | 22.267s | -3.374s (-13.2%) |
+
+### Per-fixture timings
+
+Samples are sorted ascending for compact range inspection. Per-fixture medians
+do not sum to the aggregate median because each lane run has different
+within-run timings.
+
+| Lane | Fixture | Pre-change samples | Current samples | Pre-change median | Current median | Median change |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Custom Apple runtime | C04 Compose lifecycle | 8.690, 10.083, 12.869s | 8.515, 10.847, 12.608s | 10.083s | 10.847s | +0.764s (+7.6%) |
+| Custom Apple runtime | E02 container lifecycle | 2.278, 2.345, 3.847s | 2.118, 2.147, 2.197s | 2.345s | 2.147s | -0.198s (-8.4%) |
+| Custom Apple runtime | E06 network/volume | 6.345, 6.376, 9.490s | 6.153, 6.452, 6.462s | 6.376s | 6.452s | +0.076s (+1.2%) |
+| Custom Apple runtime | F01 lifecycle/events | 4.085, 4.713, 4.767s | 3.984, 4.272, 4.661s | 4.713s | 4.272s | -0.441s (-9.4%) |
+| `container-compose` provider | C04 Compose lifecycle | 10.135, 12.717, 13.153s | 8.644, 8.650, 9.043s | 12.717s | 8.650s | -4.067s (-32.0%) |
+| `container-compose` provider | E02 container lifecycle | 2.185, 2.218, 2.306s | 2.161, 2.389, 2.752s | 2.218s | 2.389s | +0.171s (+7.7%) |
+| `container-compose` provider | E06 network/volume | 6.129, 6.587, 6.671s | 6.085, 6.266, 6.952s | 6.587s | 6.266s | -0.321s (-4.9%) |
+| `container-compose` provider | F01 lifecycle/events | 4.380, 4.577, 4.853s | 4.065, 4.703, 4.786s | 4.577s | 4.703s | +0.126s (+2.8%) |
+
+The provider's aggregate improvement is principally the C04 lifecycle change.
+The Apple aggregate improvement comes from E02 and F01; C04 and E06 did not
+improve in this small sample. It is therefore evidence of a promising targeted
+improvement, not proof that every optimized path is faster.
+
+### Functional result and original measurement limits
+
+For all three current runs, all four fixture observations matched the Docker
+oracle with no fixture-level semantic differences. The current Docker oracle
+also passed all three focused runs.
+
+The original timing runs recorded a lane-level cleanup failure because the
+adapter re-adopted Apple's stopped internal `buildkit` resource as a Docker
+container after the isolated BuildKit builder was removed. That was a runtime
+state-cleanup defect, not a difference that could be waived.
+
+The correction excludes only resources carrying both reserved labels
+`com.apple.container.resource.role=builder` and
+`com.apple.container.plugin=builder` from the Docker inventory. It also prunes
+any previously stored metadata for that resource. A live `buildx create`,
+bootstrap, and removal probe confirmed that the builder remains available while
+active, then leaves both `docker ps -a` and `runtime_containers` empty after
+removal. The focused Apple and provider lanes subsequently passed with zero
+cleanup differences. The original timing samples retain their recorded cleanup
+status and should be refreshed before using them as release evidence.
+
+The complete 18-fixture matrix also remains blocked locally: the Docker
+oracle's isolated BuildKit container cannot verify the Docker Hub certificate
+for D02, D03, D05, and E04 (`x509: certificate signed by unknown authority`).
+Resolve that host BuildKit trust issue before treating these timings as a
+release-performance result. The three warm samples here are also below the
+five-cold/ten-warm repetition requirement.
+
 ## Optimization measurement protocol
 
 For each candidate change:

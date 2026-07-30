@@ -100,6 +100,86 @@ struct EngineServerTests {
         try await server.shutdown()
     }
 
+    @Test
+    func `server serializes pipelined HTTP responses`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let server = fixture.server(runtime: InMemoryRuntime())
+        try await server.start()
+
+        do {
+            let response = try fixture.pipelined(
+                "GET /v1.53/version HTTP/1.1\r\n"
+                    + "Host: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n\r\n"
+            )
+            let version = try #require(response.range(of: "\"ApiVersion\""))
+            let ping = try #require(response.range(of: "\r\n\r\nOK"))
+            #expect(version.lowerBound < ping.lowerBound)
+            #expect(response.components(separatedBy: "HTTP/1.1 200 OK").count == 3)
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
+    }
+
+    @Test
+    func `server bounds request and pipeline buffering`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let limits = EngineServerLimits(
+            maximumRequestBodyBytes: 64,
+            maximumBufferedRequestBodyBytes: 64,
+            maximumPendingRequests: 1
+        )
+        let server = fixture.server(
+            runtime: InMemoryRuntime(),
+            limits: limits
+        )
+        try await server.start()
+
+        do {
+            let oversized = try fixture.curl(
+                "/_ping",
+                method: "POST",
+                body: String(repeating: "x", count: 65)
+            )
+            #expect(oversized.status == 413)
+
+            let body = String(repeating: "x", count: 40)
+            let boundedBodies = try fixture.pipelined(
+                "POST /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\n\r\n"
+                    + body
+                    + "POST /_ping HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\n\r\n"
+                    + body
+            )
+            #expect(
+                boundedBodies.components(separatedBy: "HTTP/1.1").count < 3
+            )
+
+            let boundedQueue = try fixture.pipelined(
+                "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    + "GET /_ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            )
+            #expect(
+                boundedQueue.components(separatedBy: "HTTP/1.1").count < 4
+            )
+        } catch {
+            try? await server.shutdown()
+            throw error
+        }
+
+        try await server.shutdown()
+    }
+
     private func exerciseServer(_ fixture: ServerFixture) throws {
         let ping = try fixture.curl("/_ping")
         #expect(ping.status == 200)
@@ -208,11 +288,15 @@ private struct ServerFixture {
         )
     }
 
-    func server(runtime: InMemoryRuntime) -> EngineServer {
+    func server(
+        runtime: InMemoryRuntime,
+        limits: EngineServerLimits = .production
+    ) -> EngineServer {
         EngineServer(
             router: DockerRouter(runtime: runtime),
             socketPath: socketPath,
-            logger: Logger(label: "devcontainer-engine-tests")
+            logger: Logger(label: "devcontainer-engine-tests"),
+            limits: limits
         )
     }
 
@@ -298,6 +382,35 @@ private struct ServerFixture {
             throw CurlError("container start returned \(start.status): \(start.body)")
         }
         return identifier
+    }
+
+    func pipelined(_ request: String) throws -> String {
+        let input = Pipe()
+        let output = Pipe()
+        let error = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        process.arguments = ["-U", socketPath]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = error
+        try process.run()
+        input.fileHandleForWriting.write(Data(request.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        let standardOutput = try output.fileHandleForReading.readToEnd() ?? Data()
+        let standardError = try error.fileHandleForReading.readToEnd() ?? Data()
+        guard process.terminationStatus == 0 else {
+            throw CurlError(
+                "pipelined request: "
+                    + (
+                        String(data: standardError, encoding: .utf8)
+                            ?? "non-UTF-8 nc diagnostic"
+                    )
+            )
+        }
+        return String(data: standardOutput, encoding: .utf8)
+            ?? "non-UTF-8 pipelined response"
     }
 
     func createExec(container: String) throws -> String {

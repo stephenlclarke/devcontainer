@@ -114,10 +114,17 @@ extension AppleContainerRuntime {
         }
 
         var snapshots: [DevContainerModel.ContainerSnapshot] = []
+        snapshots.reserveCapacity(values.count)
         var observedRuntimeIDs = Set<String>()
+        let metadata = try await containerMetadataByRuntimeID()
         for value in values {
+            let observed = try containerSnapshot(containerRecord(value))
+            guard !Self.isInternalBuilderResource(observed) else {
+                continue
+            }
             let snapshot = try await containerSnapshotWithMetadata(
-                containerRecord(value)
+                observed,
+                metadata: metadata[observed.runtimeID.rawValue]
             )
             observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
             guard all || snapshot.state == .running else {
@@ -137,7 +144,8 @@ extension AppleContainerRuntime {
         }
         if all {
             try await removeOrphanedContainerMetadata(
-                observedRuntimeIDs: observedRuntimeIDs
+                observedRuntimeIDs: observedRuntimeIDs,
+                metadata: metadata
             )
         }
         return snapshots
@@ -159,8 +167,13 @@ extension AppleContainerRuntime {
         } catch {
             throw directAPIError(error, operation: "container inspect")
         }
+        let observed = try containerSnapshot(containerRecord(value))
+        let metadata = try await metadataStore?.containerMetadata(
+            id: observed.runtimeID.rawValue
+        )
         let snapshot = try await containerSnapshotWithMetadata(
-            containerRecord(value)
+            observed,
+            metadata: metadata
         )
         guard
             snapshot.runtimeID.rawValue == id

@@ -15,12 +15,14 @@
 //===----------------------------------------------------------------------===//
 
 import Darwin
+import DequeModule
 import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 import Logging
 import NIOCore
+import NIOFoundationCompat
 import NIOHTTP1
 import NIOPosix
 
@@ -29,16 +31,23 @@ final class EngineServer: @unchecked Sendable {
     private let router: DockerRouter
     private let socketPath: String
     private let logger: Logger
+    private let limits: EngineServerLimits
     private let connections = EngineConnectionTracker()
     private var channel: Channel?
     private var lockFileDescriptor: Int32 = -1
     private var ownsSocket = false
 
-    init(router: DockerRouter, socketPath: String, logger: Logger) {
+    init(
+        router: DockerRouter,
+        socketPath: String,
+        logger: Logger,
+        limits: EngineServerLimits = .production
+    ) {
         group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         self.router = router
         self.socketPath = socketPath
         self.logger = logger
+        self.limits = limits
     }
 
     func start() async throws {
@@ -73,6 +82,7 @@ final class EngineServer: @unchecked Sendable {
         let router = router
         let logger = logger
         let connections = connections
+        let limits = limits
         return ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -90,7 +100,8 @@ final class EngineServer: @unchecked Sendable {
                     responseEncoder: responseEncoder,
                     requestDecoder: requestDecoder,
                     upgradeState: upgradeState,
-                    inputCloseBarrier: inputCloseBarrier
+                    inputCloseBarrier: inputCloseBarrier,
+                    limits: limits
                 )
                 do {
                     try channel.pipeline.syncOperations.addHandler(responseEncoder)
@@ -297,6 +308,12 @@ private final class DockerInputCloseBarrier:
     }
 }
 
+private struct DockerHTTPPendingRequest {
+    let head: HTTPRequestHead
+    let request: DockerHTTPRequest?
+    let bodyBytes: Int
+}
+
 private final class DockerHTTPHandler:
     ChannelInboundHandler,
     RemovableChannelHandler,
@@ -305,8 +322,6 @@ private final class DockerHTTPHandler:
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
-    private static let maximumRequestBody = 1_073_741_824
-
     private let router: DockerRouter
     private let logger: Logger
     private let connections: EngineConnectionTracker
@@ -314,8 +329,13 @@ private final class DockerHTTPHandler:
     private let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
     private let upgradeState: DockerUpgradeState
     private let inputCloseBarrier: DockerInputCloseBarrier
+    private let limits: EngineServerLimits
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
+    private var activeRequestHead: HTTPRequestHead?
+    private var activeRequestBodyBytes = 0
+    private var pendingRequests = Deque<DockerHTTPPendingRequest>()
+    private var retainedRequestBodyBytes = 0
     private var responseInFlight = false
     private var closeAfterResponse = false
 
@@ -326,7 +346,8 @@ private final class DockerHTTPHandler:
         responseEncoder: HTTPResponseEncoder,
         requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>,
         upgradeState: DockerUpgradeState,
-        inputCloseBarrier: DockerInputCloseBarrier
+        inputCloseBarrier: DockerInputCloseBarrier,
+        limits: EngineServerLimits
     ) {
         self.router = router
         self.logger = logger
@@ -335,6 +356,7 @@ private final class DockerHTTPHandler:
         self.requestDecoder = requestDecoder
         self.upgradeState = upgradeState
         self.inputCloseBarrier = inputCloseBarrier
+        self.limits = limits
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -354,7 +376,7 @@ private final class DockerHTTPHandler:
         if let channelEvent = event as? ChannelEvent,
            channelEvent == .inputClosed
         {
-            if responseInFlight {
+            if responseInFlight || !pendingRequests.isEmpty {
                 closeAfterResponse = true
             } else {
                 context.close(promise: nil)
@@ -367,22 +389,49 @@ private final class DockerHTTPHandler:
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case let .head(head):
+            guard requestHead == nil else {
+                context.close(promise: nil)
+                return
+            }
+            if responseInFlight,
+               activeRequestHead?.headers.contains(name: "Upgrade") == true
+            {
+                // The active response is about to replace the HTTP pipeline
+                // with a raw Docker stream, so no later HTTP request can be
+                // represented safely on this connection.
+                context.close(promise: nil)
+                return
+            }
+            if head.headers.contains(name: "Upgrade"),
+               responseInFlight || !pendingRequests.isEmpty
+            {
+                // An HTTP upgrade consumes the connection. It cannot be queued
+                // behind or ahead of another HTTP response safely.
+                context.close(promise: nil)
+                return
+            }
             upgradeState.beginRequest(head)
             requestHead = head
             requestBody.clear()
         case var .body(buffer):
-            guard requestBody.readableBytes + buffer.readableBytes <= Self.maximumRequestBody else {
+            guard canBufferRequestBody(buffer.readableBytes) else {
+                guard !responseInFlight, pendingRequests.isEmpty else {
+                    // A standalone error response would overtake an earlier
+                    // pipelined response, so reject this connection instead.
+                    context.close(promise: nil)
+                    return
+                }
                 writeError(
                     context: context,
                     status: .payloadTooLarge,
-                    message: "request body exceeds the 1 GiB limit"
+                    message: "request body exceeds the configured buffering limit"
                 )
                 context.close(promise: nil)
                 return
             }
             requestBody.writeBuffer(&buffer)
         case .end:
-            handleRequest(context: context)
+            enqueueRequest(context: context)
         }
     }
 
@@ -391,35 +440,85 @@ private final class DockerHTTPHandler:
         context.close(promise: nil)
     }
 
-    private func handleRequest(context: ChannelHandlerContext) {
-        guard let head = requestHead, let method = DockerHTTPMethod(rawValue: head.method.rawValue) else {
-            writeError(context: context, status: .methodNotAllowed, message: "unsupported HTTP method")
+    private func enqueueRequest(context: ChannelHandlerContext) {
+        guard let head = requestHead else {
+            context.close(promise: nil)
             return
         }
-        let body = Data(
-            requestBody.getBytes(
-                at: requestBody.readerIndex,
-                length: requestBody.readableBytes
-            ) ?? []
-        )
+        guard pendingRequests.count < limits.maximumPendingRequests else {
+            context.close(promise: nil)
+            return
+        }
+        let bodyBytes = requestBody.readableBytes
+        let body = requestBody.readData(
+            length: bodyBytes,
+            byteTransferStrategy: .noCopy
+        ) ?? Data()
+        requestBody = ByteBuffer()
+        retainedRequestBodyBytes += body.count
         let headers = Dictionary(
             head.headers.map { ($0.name, $0.value) },
             uniquingKeysWith: { _, latest in latest }
         )
-        let request = DockerHTTPRequest(
-            method: method,
-            target: head.uri,
-            headers: headers,
-            body: body
+        let request = DockerHTTPMethod(rawValue: head.method.rawValue).map {
+            DockerHTTPRequest(
+                method: $0,
+                target: head.uri,
+                headers: headers,
+                body: body
+            )
+        }
+        requestHead = nil
+        pendingRequests.append(
+            DockerHTTPPendingRequest(
+                head: head,
+                request: request,
+                bodyBytes: body.count
+            )
         )
-        let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
+        processNextRequest(context: context)
+    }
+
+    private func canBufferRequestBody(_ additionalBytes: Int) -> Bool {
+        let (requestBytes, requestOverflow) = requestBody.readableBytes
+            .addingReportingOverflow(additionalBytes)
+        guard
+            !requestOverflow,
+            requestBytes <= limits.maximumRequestBodyBytes
+        else {
+            return false
+        }
+        let (totalBytes, totalOverflow) = retainedRequestBodyBytes
+            .addingReportingOverflow(requestBytes)
+        return !totalOverflow
+            && totalBytes <= limits.maximumBufferedRequestBodyBytes
+    }
+
+    private func processNextRequest(context: ChannelHandlerContext) {
+        guard !responseInFlight, let pending = pendingRequests.popFirst() else {
+            return
+        }
         responseInFlight = true
+        activeRequestHead = pending.head
+        activeRequestBodyBytes = pending.bodyBytes
+        upgradeState.beginRequest(pending.head)
+        guard let request = pending.request else {
+            releaseActiveRequestBody()
+            writeError(
+                context: context,
+                status: .methodNotAllowed,
+                message: "unsupported HTTP method"
+            )
+            return
+        }
+        let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
         let sendableContext = SendableChannelHandlerContext(context)
         promise.completeWithTask {
             await self.router.respond(to: request)
         }
         promise.futureResult.whenComplete { result in
             let context = sendableContext.value
+            self.releaseActiveRequestBody()
             switch result {
             case let .success(response):
                 self.write(response, context: context)
@@ -431,6 +530,11 @@ private final class DockerHTTPHandler:
                 )
             }
         }
+    }
+
+    private func releaseActiveRequestBody() {
+        retainedRequestBodyBytes -= activeRequestBodyBytes
+        activeRequestBodyBytes = 0
     }
 
     private func write(_ response: DockerHTTPResponse, context: ChannelHandlerContext) {
@@ -500,11 +604,11 @@ private final class DockerHTTPHandler:
         headers: inout HTTPHeaders,
         context: ChannelHandlerContext
     ) {
-        let requestedUpgrade = requestHead?.headers.contains(name: "Upgrade") ?? false
+        let requestedUpgrade = activeRequestHead?.headers.contains(name: "Upgrade") ?? false
         logger.debug(
             "Engine connection takeover requested",
             metadata: [
-                "request-target": .string(requestHead?.uri ?? "unknown"),
+                "request-target": .string(activeRequestHead?.uri ?? "unknown"),
                 "upgrade": .stringConvertible(requestedUpgrade)
             ]
         )
@@ -666,8 +770,11 @@ private final class DockerHTTPHandler:
         let sendableContext = SendableChannelHandlerContext(context)
         future.whenComplete { _ in
             self.responseInFlight = false
-            if self.closeAfterResponse {
+            self.activeRequestHead = nil
+            if self.closeAfterResponse, self.pendingRequests.isEmpty {
                 sendableContext.value.close(promise: nil)
+            } else {
+                self.processNextRequest(context: sendableContext.value)
             }
         }
     }
