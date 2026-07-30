@@ -3,15 +3,15 @@
 ## Current status
 
 > [!IMPORTANT]
-> Version 1.0.1 supports the exact component fingerprints below. Real Docker,
-> stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
-> provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
-> with zero normalized semantic differences and complete timing evidence. In
-> the exact tag run, the largest CLI ratios were 2.876x for stock Apple and
-> 4.509x for `container-compose`; the corresponding VS Code ratios were 1.232x
-> and 1.311x. The CLI results above 2.50x require further investigation under
-> the current policy. Repeated-run statistics are in
-> [PERFORMANCE.md](PERFORMANCE.md).
+> Version 1.0.1 remains the latest immutable stable compatibility baseline. In
+> its exact tag run, real Docker, stock Apple `container` 1.1.0, and the
+> separate `container-compose` 0.10.1 provider passed all 18 CLI fixtures and
+> the real VS Code end-to-end fixture with zero normalized semantic
+> differences. The largest CLI ratios were 2.876x for stock Apple and 4.509x
+> for `container-compose`; the corresponding VS Code ratios were 1.232x and
+> 1.311x. The current source candidate is bound to the newer exact fingerprints
+> below; they do not retroactively change the 1.0.1 tag evidence. Repeated-run
+> statistics are in [PERFORMANCE.md](PERFORMANCE.md).
 
 The project's north-star goal is 100% behavioural parity with Docker-based Development Containers and comparable or better performance. This document remains the narrower current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the work and evidence required to reach the north star.
 
@@ -57,17 +57,18 @@ prerequisite. Its adapter discovers and launches an explicitly configured
 executable using argv-based process creation. It must not import `ComposeCore`
 or another implementation module.
 
-## Pinned design-time provenance
+## Pinned candidate provenance
 
-These pins define the 1.0.1 compatibility matrix. Release-bound
-evidence also records the signing identity where applicable, platform triple,
-and each component's machine-readable version output.
+These pins define the current source candidate's compatibility matrix.
+Release-bound evidence also records the signing identity where applicable,
+platform triple, and each component's machine-readable version output. The
+immutable 1.0.1 matrix remains available from that tag.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
 | `@devcontainers/cli` | `0.88.0` | Official `v0.88.0` tag commit `f683c29f64a20109b4453e5149807e390ff65133`; npm SHA-512 SRI `sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w==` | Unmodified reference client |
 | Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
-| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
+| Docker Engine | `29.5.2`, API `1.54`, build `568f755` | Executable SHA-256 `eb4bf018da78f7b9d01d69209d0944d1fe995869ac3caefa5c93e4552e181301` | Behavioral oracle |
 | Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |
 | `apple/container` stable | `1.1.0` | Annotated tag object `82fc9a5ba73c34c478ce15958bb75dbb45c67e3b`; source commit `5973b9cc626a3e7a499bb316a958237ebe14e2ed` | Initial stable stock lane |
 | `apple/containerization` for `container` 1.1.0 | `0.35.0` | Apple resolution/tag object `44bec8b9933bc491d0cbf44abac90a1f6aaebf6b`; source commit `0334a3e790bbed50420de71cd0d706191bdf84d1` | Must be inherited from the Apple `container` resolution |
@@ -76,7 +77,7 @@ and each component's machine-readable version output.
 | Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
 | VS Code | `1.131.0`, arm64 stable | Commit `e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`; official archive SHA-256 `796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
-| Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
+| Release host | macOS `26.5.1` (`25F80`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
 Moving branch heads are never stable compatibility claims and are not inputs
 to this release matrix. The machine-readable identities in
@@ -106,7 +107,7 @@ The service advertises the bounded API envelope:
 
 - minimum implemented version: `1.44`;
 - maximum implemented version: `1.53`;
-- pinned oracle version: `1.53`, from Docker Engine `29.2.1`;
+- pinned oracle version: `1.54`, from Docker Engine `29.5.2`;
 - versions above `1.53`: out of scope until separately pinned and tested;
 - versions below `1.44`: out of scope for the initial release.
 

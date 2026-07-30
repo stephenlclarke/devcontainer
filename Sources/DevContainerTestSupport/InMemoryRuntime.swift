@@ -358,7 +358,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func startExec(
         id: ExecID,
         context _: RuntimeRequestContext
-    ) throws -> any RuntimeProcessSession {
+    ) async throws -> any RuntimeProcessSession {
         guard var exec = execs[id] else {
             throw DevContainerError(.notFound, message: "exec \(id) was not found")
         }
@@ -368,14 +368,25 @@ public actor InMemoryRuntime: DevContainerRuntime {
         exec.running = false
         exec.exitCode = 0
         execs[id] = exec
+        let session: any RuntimeProcessSession
         if let execSession {
-            return execSession
+            session = execSession
+        } else {
+            let text = exec.spec.command.joined(separator: " ") + "\n"
+            session = InMemoryProcessSession(
+                frames: [RuntimeIOFrame(channel: .standardOutput, data: Data(text.utf8))],
+                exitCode: 0
+            )
         }
-        let text = exec.spec.command.joined(separator: " ") + "\n"
-        return InMemoryProcessSession(
-            frames: [RuntimeIOFrame(channel: .standardOutput, data: Data(text.utf8))],
-            exitCode: 0
-        )
+        if exec.spec.terminal,
+           let width = exec.spec.terminalWidth,
+           let height = exec.spec.terminalHeight,
+           width > 0,
+           height > 0
+        {
+            try await session.resize(width: width, height: height)
+        }
+        return session
     }
 
     public func inspectExec(

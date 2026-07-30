@@ -497,6 +497,10 @@ The remaining priority order is:
 
 ## 2026-07-30 integration closeout
 
+This closeout ran on `ULTUK2M30000`: macOS 26.5.1 (`25F80`), Docker
+Engine 29.5.2/API 1.54, Xcode 26.6, Swift 6.3.3, and arm64. The reference
+manifest now binds release parity to that exact local host and Docker daemon.
+
 The performance branch integration exposed and corrected seven additional
 parity blockers:
 
@@ -551,7 +555,78 @@ trigger in this run but still outside the `<=1.00x` objective. Every other
 completed result above `1.00x` also misses the objective even when it does not
 trigger the `2.50x` investigation rule.
 
-This local matrix certifies the corrected worktree's CLI behaviour only.
-Hosted exact-head CLI and real VS Code evidence remains required before merge,
-and the five-cold/ten-warm protocol remains required before claiming a
-performance improvement.
+That intermediate matrix certified the corrected worktree's CLI behaviour
+only; it did not itself satisfy the hosted merge gate. The five-cold/ten-warm
+protocol remains required before claiming a performance improvement.
+
+### Final-source local validation
+
+After the remaining real VS Code and provider-provenance fixes, the complete candidate was rerun locally on the same `ULTUK2M30000` host. The directly used Homebrew tooling was current for this run: Docker CLI 29.6.2, BuildKit 0.32.0, and Docker Buildx 0.36.0. The stock lane used unmodified Apple `container` 1.1.0. The provider lane used the stable `container-compose` 0.10.1 stack through exact `/opt/homebrew/opt` paths rather than the independently installed `current` lane.
+
+The final-source changes add Docker `ConsoleSize` handling, PTY-backed
+interactive exec and resize, deterministic exec completion state, effective
+native user/environment metadata, a shell-first stock Docker wrapper that
+remains compatible with VS Code's `node-pty`, and exact provider runtime
+selection through `CONTAINER_COMPOSE_CONTAINER`.
+
+The first exact-source rerun exposed a further intermittent E03 failure. Stock
+Apple's 4 MiB duplex `cat` exec timed out after 302.539s, and focused stress
+reproduced the stall through both the CLI-owned and typed process paths. Both
+paths closed a pipe to signal EOF, which depends on every copied descriptor
+being closed. Apple process descriptor transfer can retain a copy, leaving the
+guest blocked after all input bytes have been written.
+
+Non-terminal direct exec now uses a Unix socket pair for standard input and
+signals EOF with `shutdown(SHUT_WR)`. A socket half-close is visible to the
+guest even while a copied host descriptor remains open. Terminal exec remains
+on the PTY-backed CLI path. A focused regression test retains a descriptor
+copy and proves that the peer still receives EOF. Ten consecutive live stock
+E03 runs then passed byte-exactly in 3.189–3.593s before the complete matrix
+below.
+
+All 54 CLI fixture-lane executions again passed with zero semantic and cleanup differences:
+
+| Lane | Summed time | Ratio to Docker | Performance result |
+| --- | ---: | ---: | --- |
+| Docker oracle | 76.807s | 1.000x | Reference |
+| Stock Apple 1.1.0 | 168.097s | 2.189x | Objective missed |
+| `container-compose` provider | 385.353s | 5.017x | Objective missed |
+
+The 14 CLI fixtures with at least one completed result above the `2.50x`
+investigation trigger were:
+
+| Fixture | Stock/Docker | Provider/Docker |
+| --- | ---: | ---: |
+| C01 Compose service | 4.590x | 7.104x |
+| C04 Compose lifecycle | 3.968x | 4.801x |
+| D01 image configuration | 3.252x | 5.953x |
+| D02 Dockerfile configuration | 3.033x | 8.254x |
+| D03 users and environment | 3.103x | 16.356x |
+| D04 lifecycle hooks | 2.534x | 7.446x |
+| D05 Features | 1.318x | 8.887x |
+| D06 ports | 3.464x | 8.775x |
+| D07 reuse and cleanup | 3.329x | 8.134x |
+| E01 engine negotiation | 2.670x | 1.011x |
+| E03 exec streams | 1.210x | 3.911x |
+| E04 image build | 24.138x | 18.351x |
+| E06 network and volume | 2.829x | 5.874x |
+| F01 fault recovery | 1.688x | 2.831x |
+
+The real VS Code open, attach, server, lifecycle, terminal, port-forward, rebuild, reopen, and cleanup journey passed in all three lanes:
+
+| Lane | End-to-end time | Ratio to Docker | Performance result |
+| --- | ---: | ---: | --- |
+| Docker oracle | 40.379s | 1.000x | Reference |
+| Stock Apple 1.1.0 | 55.053s | 1.363x | Objective missed |
+| `container-compose` provider | 110.625s | 2.740x | Investigate |
+
+The provider VS Code result crossed the `2.50x` investigation trigger. Both
+candidate lanes missed the comparable-or-better objective.
+
+These are final-source functional and raw timing results, not performance
+certification. The lanes ran sequentially with existing caches: Docker E04
+completed in 0.564s, making its ratios unsuitable for attribution, while the
+provider D05 path took 98.899s. The five-cold/ten-warm paired protocol remains
+required before accepting or rejecting an optimisation. The hosted workflow
+independently requires the same exact candidate to retain complete CLI and real
+VS Code evidence.

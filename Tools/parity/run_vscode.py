@@ -252,6 +252,7 @@ def vscode_settings(
 
 VSCODE_ENVIRONMENT_KEYS = frozenset(
     {
+        "CONTAINER_COMPOSE_CONTAINER",
         "DEVELOPER_DIR",
         "DEVCONTAINER_CONFIG",
         "DEVCONTAINER_SOCKET",

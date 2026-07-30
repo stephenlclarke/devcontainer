@@ -30,9 +30,10 @@ jobs:
             compose-bin: ""
           - lane: container-compose
             runner: devcontainer-container-compose
-            container-bin: /opt/homebrew/bin/container
-            compose-bin: /opt/homebrew/bin/container-compose
-    runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner }}"]
+            container-bin: /opt/homebrew/opt/container/bin/container
+            compose-bin: /opt/homebrew/opt/container-compose/bin/container-compose
+    runs-on:
+      [self-hosted, macOS, ARM64, devcontainer-ultuk2m30000, "${{ matrix.runner }}"]
     timeout-minutes: 240
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer

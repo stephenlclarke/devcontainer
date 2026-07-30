@@ -784,6 +784,7 @@ struct DockerCreateExecRequest: Decodable {
     var attachStdin: Bool?
     var attachStdout: Bool?
     var attachStderr: Bool?
+    var consoleSize: [UInt]?
     var detachKeys: String?
     var tty: Bool?
     var env: [String]?
@@ -797,6 +798,7 @@ struct DockerCreateExecRequest: Decodable {
         case attachStdin = "AttachStdin"
         case attachStdout = "AttachStdout"
         case cmd = "Cmd"
+        case consoleSize = "ConsoleSize"
         case detachKeys = "DetachKeys"
         case env = "Env"
         case privileged = "Privileged"
@@ -815,10 +817,12 @@ struct DockerCreateExecResponse: Encodable {
 }
 
 struct DockerStartExecRequest: Decodable {
+    var consoleSize: [UInt]?
     var detach: Bool?
     var tty: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case consoleSize = "ConsoleSize"
         case detach = "Detach"
         case tty = "Tty"
     }

@@ -94,6 +94,22 @@ above the `2.50x` investigation trigger are recorded in
 [`PERFORMANCE.md`](PERFORMANCE.md). Exact-head hosted CLI and VS Code evidence
 remains the merge gate.
 
+The final source then passed a fresh 54-execution CLI matrix and the real VS
+Code journey in all three lanes on `ULTUK2M30000`. The CLI aggregates were
+76.807s for Docker, 168.097s for stock Apple, and 385.353s for the provider.
+The VS Code times were 40.379s, 55.053s, and 110.625s respectively.
+Behavioural parity passed with zero semantic or cleanup differences. The raw
+aggregate ratios missed the comparable-or-better objective, 14 CLI fixtures
+crossed the `2.50x` investigation trigger, and provider VS Code reached
+`2.740x`. Cache state was not balanced, so the results are not performance
+certification; [`PERFORMANCE.md`](PERFORMANCE.md) records the complete matrix
+and limits.
+
+That run includes the final E03 reliability correction. Non-terminal direct
+exec uses a socket half-close so Apple descriptor copies cannot suppress stdin
+EOF; terminal exec retains the PTY-backed path. Ten consecutive live 4 MiB
+duplex stress runs and the complete matrix passed after this change.
+
 ## Implementation status
 
 The implementation work below was applied to the current worktree on 30 July
@@ -115,7 +131,7 @@ identifies the remaining proof or primitive rather than normalising it.
 | PAR-003 to PAR-006 | Implemented with ambiguity detection, truthful `/info`, Docker default bind semantics, and immutable image IDs | Exact live IPv6 binding observations remain open |
 | STATE-001 and STATE-002 | Implemented with explicit v2-to-v3 migration, future-version rejection, integrity checks, retention, and WAL checkpoints | None locally |
 | OBS-001 | Partial: shared privacy redaction and structured request completion measurements are wired | Native-call phase spans, CPU/RSS, cache, and round-trip counters must be retained in parity artefacts |
-| OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, and restart-safe managed-host caching passed the local three-lane CLI matrix | Hosted exact-head CLI and VS Code certification plus the repeated performance protocol remain |
+| OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, restart-safe managed-host caching, and PTY-backed interactive exec passed the final local three-lane CLI and real VS Code matrices | The hosted workflow must retain exact-head evidence; the repeated performance protocol remains |
 | OPT-002 | Blocked in this repository | Compose model caching belongs in `container-compose`, preserving the provider boundary |
 | OPT-003 | Implemented with immediate owned-mutation wakeups plus bounded external-writer polling | Native runtime events should replace the residual poll when a tagged stable API exists |
 | OPT-004 and OPT-005 | Partial | End-to-end upload streaming and parity-artifact resource measurements remain |
@@ -126,7 +142,7 @@ identifies the remaining proof or primitive rather than normalising it.
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
 | GOV-001 | Explicit exception | CodeQL is disabled until the owner requests re-enablement; live `main` protection currently requires `Validate` only |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
-| DOC-001 | Implemented for the changed production paths, local matrix, and current blockers | Add the exact-head hosted run after certification |
+| DOC-001 | Implemented for the changed production paths, final local CLI and VS Code matrices, and current blockers | Retain the exact-head hosted artefacts with the merge and release evidence |
 
 ## Priority model
 

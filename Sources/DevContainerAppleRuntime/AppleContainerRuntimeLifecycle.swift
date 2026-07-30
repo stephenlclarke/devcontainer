@@ -450,10 +450,12 @@ public extension AppleContainerRuntime {
         for (key, value) in exec.spec.environment.sorted(by: { $0.key < $1.key }) {
             arguments += ["--env", "\(key)=\(value)"]
         }
-        if let workingDirectory = exec.spec.workingDirectory {
+        if let workingDirectory = exec.spec.workingDirectory,
+           !workingDirectory.isEmpty
+        {
             arguments += ["--workdir", workingDirectory]
         }
-        if let user = exec.spec.user {
+        if let user = exec.spec.user, !user.isEmpty {
             arguments += ["--user", user]
         }
         if exec.spec.terminal {
@@ -468,28 +470,60 @@ public extension AppleContainerRuntime {
         execs[id] = exec
         let session: any RuntimeProcessSession
         do {
-            session =
-                if useDirectProcessAPI {
-                    try await startDirectProcess(
-                        containerID: exec.containerID.rawValue,
-                        spec: exec.spec
-                    )
-                } else {
-                    try process(arguments)
-                }
+            session = try await execProcessSession(
+                exec,
+                arguments: arguments
+            )
         } catch {
             finishExec(id: id, exitCode: 255)
             throw error
         }
-        Task {
-            do {
-                let exitCode = try await session.wait()
-                self.finishExec(id: id, exitCode: exitCode)
-            } catch {
-                self.finishExec(id: id, exitCode: 255)
-            }
+        try await applyInitialTerminalSize(session, exec: exec, id: id)
+        return TrackedAppleProcessSession(session: session) { [weak self] exitCode in
+            await self?.finishExec(id: id, exitCode: exitCode)
         }
-        return session
+    }
+
+    private func execProcessSession(
+        _ exec: ExecSnapshot,
+        arguments: [String]
+    ) async throws -> any RuntimeProcessSession {
+        // Use Apple's typed process API for non-terminal exec, including
+        // duplex streams. The CLI intermittently fails to propagate stdin EOF
+        // after large writes. Terminal exec instead needs the host PTY wrapper
+        // so VS Code receives Docker-compatible TTY and resize behaviour.
+        if useDirectProcessAPI, !exec.spec.terminal {
+            return try await startDirectProcess(
+                containerID: exec.containerID.rawValue,
+                spec: exec.spec
+            )
+        }
+        if useDirectProcessAPI, exec.spec.terminal {
+            return try terminalProcess(arguments)
+        }
+        return try process(arguments)
+    }
+
+    private func applyInitialTerminalSize(
+        _ session: any RuntimeProcessSession,
+        exec: ExecSnapshot,
+        id: ExecID
+    ) async throws {
+        guard exec.spec.terminal,
+              let width = exec.spec.terminalWidth,
+              let height = exec.spec.terminalHeight,
+              width > 0,
+              height > 0
+        else {
+            return
+        }
+        do {
+            try await session.resize(width: width, height: height)
+        } catch {
+            await session.cancel()
+            finishExec(id: id, exitCode: 255)
+            throw error
+        }
     }
 
     private func startDirectProcess(
@@ -497,7 +531,9 @@ public extension AppleContainerRuntime {
         spec: ExecSpec
     ) async throws -> AppleDirectProcessSession {
         let previous = directProcessLaunchTail
-        let client = apiClient
+        // Each direct process owns an independent XPC connection so its
+        // transferred standard-I/O descriptors cannot share client state.
+        let client = ContainerClient()
         let launch = Task {
             await previous?.value
             return try await AppleDirectProcessSession.create(

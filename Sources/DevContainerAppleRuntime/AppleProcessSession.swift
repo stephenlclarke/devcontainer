@@ -21,6 +21,52 @@ import DevContainerProcess
 import DevContainerRuntimeSPI
 import Foundation
 
+final class TrackedAppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
+    let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
+
+    private let session: any RuntimeProcessSession
+    private let completion: Task<Int32, any Error>
+
+    init(
+        session: any RuntimeProcessSession,
+        onCompletion: @escaping @Sendable (Int32) async -> Void
+    ) {
+        self.session = session
+        frames = session.frames
+        completion = Task {
+            do {
+                let exitCode = try await session.wait()
+                await onCompletion(exitCode)
+                return exitCode
+            } catch {
+                await onCompletion(255)
+                throw error
+            }
+        }
+    }
+
+    func write(_ data: Data) async throws {
+        try await session.write(data)
+    }
+
+    func closeStandardInput() async throws {
+        try await session.closeStandardInput()
+    }
+
+    func resize(width: UInt16, height: UInt16) async throws {
+        try await session.resize(width: width, height: height)
+    }
+
+    func wait() async throws -> Int32 {
+        try await completion.value
+    }
+
+    func cancel() async {
+        completion.cancel()
+        await session.cancel()
+    }
+}
+
 private struct ProcessSessionIO: @unchecked Sendable {
     let standardInput = Pipe()
     let standardOutput = Pipe()
@@ -111,7 +157,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         frames: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
     ) -> ProcessPipeMonitor {
         ProcessPipeMonitor(
-            pipe: pipe,
+            handle: pipe.fileHandleForReading,
             channel: channel,
             end: end,
             frames: frames
@@ -205,18 +251,42 @@ final class ProcessInputWriter: @unchecked Sendable {
     private let handle: FileHandle
     private let descriptor: Int32
     private let queue: DispatchQueue
+    private let requiresHalfClose: Bool
     private var closed = false
 
-    init(
+    convenience init(
         pipe: Pipe,
         label: String = "io.github.stephenlclarke.devcontainer.cli-process-input"
     ) {
-        handle = pipe.fileHandleForWriting
+        self.init(handle: pipe.fileHandleForWriting, label: label)
+    }
+
+    convenience init(
+        channel: AppleProcessInputChannel,
+        label: String
+    ) {
+        self.init(
+            handle: channel.hostEnd,
+            label: label,
+            requiresHalfClose: channel.requiresHalfClose
+        )
+    }
+
+    init(
+        handle: FileHandle,
+        label: String,
+        nonBlocking: Bool = true,
+        requiresHalfClose: Bool = false
+    ) {
+        self.handle = handle
         descriptor = handle.fileDescriptor
         queue = DispatchQueue(label: label, qos: .userInitiated)
-        let flags = fcntl(descriptor, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        self.requiresHalfClose = requiresHalfClose
+        if nonBlocking {
+            let flags = fcntl(descriptor, F_GETFL)
+            if flags >= 0 {
+                _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+            }
         }
         _ = fcntl(descriptor, F_SETNOSIGPIPE, 1)
     }
@@ -298,6 +368,9 @@ final class ProcessInputWriter: @unchecked Sendable {
                 }
                 closed = true
                 do {
+                    if requiresHalfClose {
+                        _ = Darwin.shutdown(descriptor, SHUT_WR)
+                    }
                     try handle.close()
                     continuation.resume()
                 } catch {
@@ -313,6 +386,9 @@ final class ProcessInputWriter: @unchecked Sendable {
                 return
             }
             closed = true
+            if requiresHalfClose {
+                _ = Darwin.shutdown(descriptor, SHUT_RDWR)
+            }
             try? handle.close()
         }
     }
@@ -321,7 +397,7 @@ final class ProcessInputWriter: @unchecked Sendable {
 /// Drains a launched CLI process on dedicated OS threads. stdout and stderr can
 /// block independently without occupying Swift's cooperative executor or
 /// relying on a one-shot readiness edge while a child performs duplex I/O.
-private final class ProcessPipeMonitor: @unchecked Sendable {
+final class ProcessPipeMonitor: @unchecked Sendable {
     private let handle: FileHandle
     private let descriptor: Int32
     private let channel: RuntimeIOChannel
@@ -330,10 +406,12 @@ private final class ProcessPipeMonitor: @unchecked Sendable {
         RuntimeIOFrame,
         any Error
     >.Continuation
+    private let endOnEIO: Bool
+    private let closeHandleOnFinish: Bool
     private let stateLock = NSLock()
     private var finished = false
 
-    init(
+    convenience init(
         pipe: Pipe,
         channel: RuntimeIOChannel,
         end: AsyncStream<Void>.Continuation,
@@ -342,11 +420,32 @@ private final class ProcessPipeMonitor: @unchecked Sendable {
             any Error
         >.Continuation
     ) {
-        handle = pipe.fileHandleForReading
+        self.init(
+            handle: pipe.fileHandleForReading,
+            channel: channel,
+            end: end,
+            frames: frames
+        )
+    }
+
+    init(
+        handle: FileHandle,
+        channel: RuntimeIOChannel,
+        end: AsyncStream<Void>.Continuation,
+        frames: AsyncThrowingStream<
+            RuntimeIOFrame,
+            any Error
+        >.Continuation,
+        endOnEIO: Bool = false,
+        closeHandleOnFinish: Bool = true
+    ) {
+        self.handle = handle
         descriptor = handle.fileDescriptor
         self.channel = channel
         self.end = end
         self.frames = frames
+        self.endOnEIO = endOnEIO
+        self.closeHandleOnFinish = closeHandleOnFinish
         Thread.detachNewThread { [self] in
             Thread.current.name =
                 "io.github.stephenlclarke.devcontainer.cli-process-\(channel)"
@@ -380,6 +479,9 @@ private final class ProcessPipeMonitor: @unchecked Sendable {
             if errno == EINTR {
                 continue
             }
+            if errno == EIO, endOnEIO {
+                return
+            }
             if stateLock.withLock({ finished }) {
                 return
             }
@@ -400,7 +502,9 @@ private final class ProcessPipeMonitor: @unchecked Sendable {
         guard shouldFinish else {
             return
         }
-        try? handle.close()
+        if closeHandleOnFinish {
+            try? handle.close()
+        }
         end.finish()
     }
 }

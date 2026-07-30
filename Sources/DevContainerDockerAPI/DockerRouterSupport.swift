@@ -154,6 +154,25 @@ extension DockerRouter {
         return result
     }
 
+    func consoleSize(
+        _ values: [UInt]?,
+        name: String
+    ) throws -> (width: UInt16, height: UInt16)? {
+        guard let values else {
+            return nil
+        }
+        guard values.count == 2,
+              let height = UInt16(exactly: values[0]),
+              let width = UInt16(exactly: values[1])
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "\(name) must contain 16-bit unsigned [height,width] values"
+            )
+        }
+        return (width: width, height: height)
+    }
+
     func validateSecurityOptions(_ options: [String]) throws -> [String] {
         var result: [String] = []
         for option in options {
@@ -295,7 +314,14 @@ extension DockerRouter {
         ] where value?.isEmpty == false {
             try unsupportedCreateField(field)
         }
-        if host.consoleSize?.contains(where: { $0 != 0 }) == true {
+        let initialConsoleSize = try consoleSize(
+            host.consoleSize,
+            name: "HostConfig.ConsoleSize"
+        )
+        if request.tty == true,
+           let initialConsoleSize,
+           initialConsoleSize.width != 0 || initialConsoleSize.height != 0
+        {
             try unsupportedCreateField("HostConfig.ConsoleSize")
         }
         if host.logConfig?.type?.isEmpty == false

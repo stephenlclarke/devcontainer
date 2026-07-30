@@ -480,6 +480,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
     public var workingDirectory: String?
     public var user: String?
     public var terminal: Bool
+    public var terminalWidth: UInt16?
+    public var terminalHeight: UInt16?
     public var attachStandardInput: Bool
     public var attachStandardOutput: Bool
     public var attachStandardError: Bool
@@ -490,6 +492,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
         workingDirectory: String? = nil,
         user: String? = nil,
         terminal: Bool = false,
+        terminalWidth: UInt16? = nil,
+        terminalHeight: UInt16? = nil,
         attachStandardInput: Bool = false,
         attachStandardOutput: Bool = true,
         attachStandardError: Bool = true
@@ -499,6 +503,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
         self.workingDirectory = workingDirectory
         self.user = user
         self.terminal = terminal
+        self.terminalWidth = terminalWidth
+        self.terminalHeight = terminalHeight
         self.attachStandardInput = attachStandardInput
         self.attachStandardOutput = attachStandardOutput
         self.attachStandardError = attachStandardError

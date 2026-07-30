@@ -30,12 +30,13 @@ Run VS Code-compatible Development Containers on Apple silicon through stock [`a
 The project's north-star goal is 100% behavioural parity with Docker-based Development Containers, with comparable or better user-visible performance. Current releases make narrower evidence-bound claims until the complete specification and performance objectives are proved. The audited findings and solution designs are in the [full parity and performance roadmap](PARITY-ROADMAP.md).
 
 > [!IMPORTANT]
-> Version 1.0.1 supports the exact component fingerprints in
-> [COMPATIBILITY.md](COMPATIBILITY.md). Release certification ran all 18 CLI
-> fixtures plus the real VS Code end-to-end fixture against real Docker,
-> unmodified Apple `container` 1.1.0, and the separately maintained
-> `container-compose` 0.10.1 provider stack with zero normalized semantic
-> differences.
+> Version 1.0.1 is the latest immutable stable baseline. Its exact tag
+> certification ran all 18 CLI fixtures plus the real VS Code end-to-end
+> fixture against real Docker, unmodified Apple `container` 1.1.0, and the
+> separately maintained `container-compose` 0.10.1 provider stack with zero
+> normalized semantic differences. [COMPATIBILITY.md](COMPATIBILITY.md)
+> records the newer exact fingerprints required by the current source
+> candidate without rewriting that historical release evidence.
 
 ## See it work
 

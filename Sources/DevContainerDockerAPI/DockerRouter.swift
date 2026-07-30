@@ -855,13 +855,19 @@ extension DockerRouter {
         }
     }
 
-    private func execSpec(from request: DockerCreateExecRequest) -> ExecSpec {
-        ExecSpec(
+    private func execSpec(from request: DockerCreateExecRequest) throws -> ExecSpec {
+        let initialConsoleSize = try consoleSize(
+            request.consoleSize,
+            name: "ConsoleSize"
+        )
+        return ExecSpec(
             command: request.cmd,
             environment: environmentDictionary(request.env ?? []),
             workingDirectory: request.workingDir,
             user: request.user,
             terminal: request.tty ?? false,
+            terminalWidth: initialConsoleSize?.width,
+            terminalHeight: initialConsoleSize?.height,
             attachStandardInput: request.attachStdin ?? false,
             attachStandardOutput: request.attachStdout ?? true,
             attachStandardError: request.attachStderr ?? true
@@ -1034,8 +1040,22 @@ extension DockerRouter {
             from: request.body,
             schema: .startExec
         )
+        let startConsoleSize = try consoleSize(
+            options.consoleSize,
+            name: "ConsoleSize"
+        )
         let exec = try await runtime.inspectExec(id: id, context: context)
         let session = try await runtime.startExec(id: id, context: context)
+        if options.tty ?? exec.spec.terminal,
+           let startConsoleSize,
+           startConsoleSize.width > 0,
+           startConsoleSize.height > 0
+        {
+            try await session.resize(
+                width: startConsoleSize.width,
+                height: startConsoleSize.height
+            )
+        }
         let registration = await execSessions.register(session, id: id)
         Task {
             _ = try? await session.wait()

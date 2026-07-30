@@ -392,6 +392,60 @@ struct AppleContainerRuntimeDirectTests {
                 "systempaths=unconfined"
             ]
         )
+        let effective = AppleContainerRuntime.effectiveContainerSpec(
+            requested: ContainerSpec(
+                name: "requested",
+                image: "fixture:latest",
+                environment: ["REQUESTED": "yes"],
+                labels: ["requested": "yes"]
+            ),
+            observed: ContainerSpec(
+                name: "native",
+                image: "fixture:latest",
+                environment: ["PATH": "/usr/bin", "REQUESTED": "yes"],
+                labels: ["native": "yes"],
+                workingDirectory: "/workspace",
+                user: "1000:1000",
+                hostname: "native-host"
+            )
+        )
+        #expect(effective.name == "requested")
+        #expect(effective.environment == [
+            "PATH": "/usr/bin",
+            "REQUESTED": "yes"
+        ])
+        #expect(effective.workingDirectory == nil)
+        #expect(effective.user == "1000:1000")
+        #expect(effective.hostname == "native-host")
+        #expect(effective.labels == [
+            "native": "yes",
+            "requested": "yes"
+        ])
+        let requestedOverrides = AppleContainerRuntime.effectiveContainerSpec(
+            requested: ContainerSpec(
+                name: "requested",
+                image: "fixture:latest",
+                environment: ["PATH": "/requested/bin"],
+                workingDirectory: "/requested",
+                user: "requested-user",
+                hostname: "requested-host"
+            ),
+            observed: ContainerSpec(
+                name: "native",
+                image: "fixture:latest",
+                environment: ["PATH": "/native/bin", "IMAGE_ONLY": "yes"],
+                workingDirectory: "/native",
+                user: "native-user",
+                hostname: "native-host"
+            )
+        )
+        #expect(requestedOverrides.environment == [
+            "IMAGE_ONLY": "yes",
+            "PATH": "/requested/bin"
+        ])
+        #expect(requestedOverrides.workingDirectory == "/requested")
+        #expect(requestedOverrides.user == "requested-user")
+        #expect(requestedOverrides.hostname == "requested-host")
         #expect(
             AppleContainerRuntime.filteredEnvironment([
                 "HOME": "/fixture",

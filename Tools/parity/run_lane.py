@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import socket
@@ -82,6 +83,28 @@ class LaneRunner:
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
+        self.configure_runtime_path()
+
+    def configure_runtime_path(self) -> None:
+        """Prefer explicitly selected provider binaries throughout the lane."""
+
+        if self.lane != "container-compose":
+            return
+        container = os.environ.get("DEVCONTAINER_CONTAINER_BIN")
+        if container:
+            self.environment["CONTAINER_COMPOSE_CONTAINER"] = container
+        directories = [
+            str(Path(value).parent)
+            for value in (
+                container,
+                os.environ.get("DEVCONTAINER_COMPOSE_BIN"),
+            )
+            if value
+        ]
+        directories.extend(self.environment.get("PATH", "").split(os.pathsep))
+        self.environment["PATH"] = os.pathsep.join(
+            dict.fromkeys(value for value in directories if value)
+        )
 
     def run(self) -> int:
         if self.lane not in LANES:
@@ -258,34 +281,42 @@ class LaneRunner:
         if self.docker == str(wrapper):
             return
         docker = self.docker
-        wrapper.write_text(
-            "#!/usr/bin/env python3\n"
+        build_filter = (
             "import os\n"
             "import sys\n"
-            f"docker = {json.dumps(docker)}\n"
-            "arguments = sys.argv[1:]\n"
-            'if arguments[:1] == ["buildx"]:\n'
-            '    print("docker: unknown command: docker buildx", file=sys.stderr)\n'
-            "    raise SystemExit(1)\n"
-            'if arguments[:1] == ["build"]:\n'
-            "    filtered = []\n"
-            "    index = 0\n"
-            "    while index < len(arguments):\n"
-            "        argument = arguments[index]\n"
-            '        if argument == "--load":\n'
-            "            index += 1\n"
-            "            continue\n"
-            '        if argument == "--progress":\n'
-            "            index += 2\n"
-            "            continue\n"
-            '        if argument.startswith("--progress="):\n'
-            "            index += 1\n"
-            "            continue\n"
-            "        filtered.append(argument)\n"
+            "docker = sys.argv[1]\n"
+            "arguments = sys.argv[2:]\n"
+            "filtered = []\n"
+            "index = 0\n"
+            "while index < len(arguments):\n"
+            "    argument = arguments[index]\n"
+            '    if argument == "--load":\n'
             "        index += 1\n"
-            "    arguments = filtered\n"
-            '    os.environ["DOCKER_BUILDKIT"] = "0"\n'
-            "os.execv(docker, [docker, *arguments])\n",
+            "        continue\n"
+            '    if argument == "--progress":\n'
+            "        index += 2\n"
+            "        continue\n"
+            '    if argument.startswith("--progress="):\n'
+            "        index += 1\n"
+            "        continue\n"
+            "    filtered.append(argument)\n"
+            "    index += 1\n"
+            'os.environ["DOCKER_BUILDKIT"] = "0"\n'
+            "os.execv(docker, [docker, *filtered])\n"
+        )
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            f"docker={shlex.quote(docker)}\n"
+            'if [ "${1-}" = "buildx" ]; then\n'
+            '    printf "%s\\n" "docker: unknown command: docker buildx" >&2\n'
+            "    exit 1\n"
+            "fi\n"
+            'if [ "${1-}" = "build" ]; then\n'
+            "    exec /usr/bin/env python3 -c "
+            f"{shlex.quote(build_filter)} \"$docker\" \"$@\"\n"
+            "fi\n"
+            'exec "$docker" "$@"\n',
             encoding="utf-8",
         )
         wrapper.chmod(0o700)

@@ -162,6 +162,7 @@ indirect enum DockerRequestSchema: Sendable {
         "AttachStdin": .value,
         "AttachStdout": .value,
         "Cmd": .value,
+        "ConsoleSize": .array(.value),
         "DetachKeys": .value,
         "Env": .value,
         "Privileged": .value,
@@ -171,6 +172,7 @@ indirect enum DockerRequestSchema: Sendable {
     ])
 
     static let startExec: DockerRequestSchema = .object([
+        "ConsoleSize": .array(.value),
         "Detach": .value,
         "Tty": .value
     ])

@@ -260,6 +260,25 @@ extension AppleContainerRuntime {
         )
     }
 
+    static func effectiveContainerSpec(
+        requested: ContainerSpec,
+        observed: ContainerSpec
+    ) -> ContainerSpec {
+        var spec = requested
+        spec.environment = observed.environment
+        spec.environment.merge(requested.environment) { _, requestedValue in
+            requestedValue
+        }
+        if requested.user?.isEmpty ?? true {
+            spec.user = observed.user
+        }
+        if requested.hostname?.isEmpty ?? true {
+            spec.hostname = observed.hostname
+        }
+        spec.labels.merge(observed.labels) { _, observedValue in observedValue }
+        return spec
+    }
+
     static func networkAttachments(
         _ configuration: [String: Any]
     ) -> [NetworkAttachment] {
@@ -280,9 +299,10 @@ extension AppleContainerRuntime {
         to observed: DevContainerModel.ContainerSnapshot
     ) -> DevContainerModel.ContainerSnapshot {
         var snapshot = observed
-        var spec = metadata.spec
-        spec.labels.merge(observed.spec.labels) { _, observedValue in observedValue }
-        snapshot.spec = spec
+        snapshot.spec = Self.effectiveContainerSpec(
+            requested: metadata.spec,
+            observed: observed.spec
+        )
         snapshot.dockerID = metadata.dockerID
         snapshot.imageID = metadata.imageID
         snapshot.createdAt = metadata.createdAt

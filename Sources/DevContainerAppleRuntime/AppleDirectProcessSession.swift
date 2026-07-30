@@ -23,7 +23,7 @@ import DevContainerRuntimeSPI
 import Foundation
 
 private struct DirectProcessStreams: @unchecked Sendable {
-    let standardInput: Pipe?
+    let standardInput: AppleProcessInputChannel?
     let standardOutput: Pipe?
     let standardError: Pipe?
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
@@ -35,7 +35,7 @@ private struct DirectProcessStreams: @unchecked Sendable {
     let drainState: PipeDrainState
 
     init(
-        standardInput: Pipe?,
+        standardInput: AppleProcessInputChannel?,
         standardOutput: Pipe?,
         standardError: Pipe?
     ) {
@@ -71,21 +71,35 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
     private let startup: Task<Void, any Error>
     private let completion: Task<Int32, any Error>
 
-    init(
+    convenience init(
         process: any ClientProcess,
         standardInput: Pipe?,
         standardOutput: Pipe?,
         standardError: Pipe?
     ) {
+        self.init(
+            process: process,
+            inputChannel: standardInput.map(AppleProcessInputChannel.init),
+            standardOutput: standardOutput,
+            standardError: standardError
+        )
+    }
+
+    private init(
+        process: any ClientProcess,
+        inputChannel: AppleProcessInputChannel?,
+        standardOutput: Pipe?,
+        standardError: Pipe?
+    ) {
         self.process = process
         let streams = DirectProcessStreams(
-            standardInput: standardInput,
+            standardInput: inputChannel,
             standardOutput: standardOutput,
             standardError: standardError
         )
         let inputWriter = streams.standardInput.map {
             ProcessInputWriter(
-                pipe: $0,
+                channel: $0,
                 label: "io.github.stephenlclarke.devcontainer.direct-process-input"
             )
         }
@@ -150,7 +164,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         Task {
             do {
                 try await startup.value
-                try? streams.standardInput?.fileHandleForReading.close()
+                try? streams.standardInput?.processEnd.close()
                 try? streams.standardOutput?.fileHandleForWriting.close()
                 try? streams.standardError?.fileHandleForWriting.close()
                 let exitCode = try await process.wait()
@@ -245,7 +259,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         }
         configuration.terminal = spec.terminal
 
-        let standardInput = spec.attachStandardInput ? Pipe() : nil
+        let standardInput =
+            try spec.attachStandardInput ? AppleProcessInputChannel.socketPair() : nil
         let attachTerminalOutput =
             spec.terminal && (spec.attachStandardOutput || spec.attachStandardError)
         let standardOutput =
@@ -254,7 +269,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
             (!spec.terminal && spec.attachStandardError) ? Pipe() : nil
         let standardIO = try AppleXPCFileHandleTransfer.copies(
             of: [
-                standardInput?.fileHandleForReading,
+                standardInput?.processEnd,
                 standardOutput?.fileHandleForWriting,
                 standardError?.fileHandleForWriting
             ]
@@ -267,7 +282,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         )
         let session = AppleDirectProcessSession(
             process: process,
-            standardInput: standardInput,
+            inputChannel: standardInput,
             standardOutput: standardOutput,
             standardError: standardError
         )

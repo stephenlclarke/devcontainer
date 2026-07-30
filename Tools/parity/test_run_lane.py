@@ -60,6 +60,50 @@ class SafeEnvironmentTests(unittest.TestCase):
         )
 
 
+class RuntimePathTests(unittest.TestCase):
+    def test_provider_explicit_binaries_are_first_on_child_path(self) -> None:
+        environment = {
+            "DEVCONTAINER_CONTAINER_BIN": "/stable/container/bin/container",
+            "DEVCONTAINER_COMPOSE_BIN": "/stable/compose/bin/container-compose",
+            "HOME": "/Users/operator",
+            "PATH": "/current/bin:/usr/bin:/stable/container/bin",
+        }
+        with (
+            mock.patch.dict("run_lane.os.environ", environment, clear=True),
+            mock.patch(
+                "run_lane.load_manifest",
+                return_value={
+                    "referencePins": {
+                        "devcontainersCli": {
+                            "version": "0.88.0",
+                        },
+                    },
+                },
+            ),
+            mock.patch(
+                "run_lane.shutil.which",
+                side_effect=["/current/bin/docker", "/current/bin/npx"],
+            ),
+        ):
+            runner = LaneRunner(
+                "container-compose",
+                Path("/repository"),
+                Path("/evidence"),
+            )
+
+        self.assertEqual(
+            runner.environment["PATH"],
+            (
+                "/stable/container/bin:/stable/compose/bin:"
+                "/current/bin:/usr/bin"
+            ),
+        )
+        self.assertEqual(
+            runner.environment["CONTAINER_COMPOSE_CONTAINER"],
+            "/stable/container/bin/container",
+        )
+
+
 class CancellationHandlerTests(unittest.TestCase):
     def test_workflow_termination_becomes_a_catchable_cleanup_error(self) -> None:
         with mock.patch("run_lane.signal.signal") as register:
@@ -278,6 +322,7 @@ class BuilderCleanupTests(unittest.TestCase):
                 check=False,
                 text=True,
             )
+            wrapper_source = Path(runner.docker).read_text(encoding="utf-8")
 
         self.assertNotEqual(buildx.returncode, 0)
         self.assertIn("unknown command", buildx.stderr)
@@ -285,6 +330,8 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
         self.assertEqual(legacy_build.returncode, 0)
         self.assertEqual(legacy_build.stdout.strip(), "forwarded:build .")
+        self.assertTrue(wrapper_source.startswith("#!/bin/sh\n"))
+        self.assertTrue(wrapper_source.endswith('exec "$docker" "$@"\n'))
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
         self.assertEqual(
             runner.environment["DEVCONTAINER_DOCKER_BIN"],

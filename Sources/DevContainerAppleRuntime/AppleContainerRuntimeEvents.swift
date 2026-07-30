@@ -852,6 +852,16 @@ extension AppleContainerRuntime {
         )
     }
 
+    func terminalProcess(
+        _ arguments: [String]
+    ) throws -> AppleTerminalProcessSession {
+        try AppleTerminalProcessSession(
+            executable: executable,
+            arguments: arguments,
+            environment: environment
+        )
+    }
+
     func requireSuccess(
         _ result: AppleCommandResult,
         operation: String
@@ -906,9 +916,11 @@ extension AppleContainerRuntime {
             exitCode: record.exitCode,
             networkAddresses: record.networkAddresses
         )
-        if var requestedSpec {
-            requestedSpec.labels.merge(snapshot.spec.labels) { _, observedValue in observedValue }
-            snapshot.spec = requestedSpec
+        if let requestedSpec {
+            snapshot.spec = Self.effectiveContainerSpec(
+                requested: requestedSpec,
+                observed: snapshot.spec
+            )
         }
         return snapshot
     }

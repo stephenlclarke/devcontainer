@@ -183,6 +183,55 @@ struct AppleRuntimeStreamTests {
         #expect(standardError == Data("large-stream-stderr".utf8))
     }
 
+    @Test
+    func `terminal session survives immediate resize and preserves output`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf terminal-output"],
+            environment: [:]
+        )
+
+        try session.resize(width: 132, height: 43)
+        var output = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        let text = try #require(String(data: output, encoding: .utf8))
+        #expect(text.contains("terminal-output"))
+    }
+
+    @Test
+    func `terminal session supports duplex input closure and completed guards`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                "IFS= read -r line; cat >/dev/null; printf 'received:%s' \"$line\""
+            ],
+            environment: [:]
+        )
+
+        try session.resize(width: 0, height: 43)
+        try await session.write(Data("hello\n".utf8))
+        try await session.closeStandardInput()
+        var output = Data()
+        for try await frame in session.frames {
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        let text = try #require(String(data: output, encoding: .utf8))
+        #expect(text.contains("received:hello"))
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
+        }
+        try await session.closeStandardInput()
+        session.cancel()
+    }
+
     private static func processExists(_ identifier: pid_t) -> Bool {
         errno = 0
         return Darwin.kill(identifier, 0) == 0 || errno != ESRCH

@@ -262,7 +262,7 @@ extension AppleContainerRuntimeTests {
         }
         #expect(try await session.wait() == 0)
         #expect(String(data: output, encoding: .utf8) == "exec-output\n")
-        let completed = try await waitForExec(runtime, id: exec.id, context: context)
+        let completed = try await runtime.inspectExec(id: exec.id, context: context)
         #expect(!completed.running)
         #expect(completed.exitCode == 0)
         await #expect(throws: DevContainerError.self) {
