@@ -19,9 +19,9 @@ reference consumer.
 
 - Stock Apple: Docker CLI and Docker Compose use the local compatibility
   socket backed by a tagged `apple/container` runtime.
-- Apple Compose: the configured Compose wrapper invokes the separate
-  `container-compose` executable while inspection and exec continue through
-  the compatibility socket.
+- `container-compose` provider: the configured Compose wrapper invokes Stephen
+  Clarke's separately maintained executable while inspection and exec continue
+  through the compatibility socket. Apple does not supply this provider.
 - Docker oracle: the same fixtures run against a pinned real Docker Engine and
   establish expected behavior.
 
@@ -29,9 +29,12 @@ reference consumer.
 
 ### Essentials
 
+- <doc:UserGuide>
 - <doc:Architecture>
 - <doc:Compatibility>
+- <doc:Conformance>
 - <doc:Testing>
+- <doc:Performance>
 - ``DevContainerConfiguration``
 - ``DevContainerConfigurationStore``
 - ``RuntimeLabels``

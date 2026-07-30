@@ -142,12 +142,12 @@ enum DefaultPaths {
             return configured
         }
         for candidate in [
-            "/opt/homebrew/bin/container",
             "/usr/local/bin/container",
+            "/opt/homebrew/bin/container",
             "/usr/bin/container"
         ] where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
-        return "/opt/homebrew/bin/container"
+        return "/usr/local/bin/container"
     }
 }

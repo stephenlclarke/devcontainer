@@ -5,7 +5,10 @@ The parity suite treats a pinned real Docker Engine plus the official [`@devcont
 The checked-in [`manifest.json`](manifest.json) is the release contract.
 `python3 Tools/parity/validate_manifest.py --release` fails closed if a fixture
 or required pin is incomplete. A stable release cannot bypass the
-candidate-bound runtime recordings and comparison.
+candidate-bound runtime recordings and comparison. The runner preflight
+matches the direct `@devcontainers/cli` package's npm SHA-512 integrity value
+as well as its version; runtime fingerprints retain the exact tag commit and
+integrity pin with every lane.
 
 Each implemented CLI fixture contains:
 
@@ -23,3 +26,5 @@ observations without patching the Microsoft extension.
 Runtime jobs retain raw output, normalized observation JSON, JUnit results, a
 Markdown matrix, backend fingerprints, cleanup evidence, and diagnostics for
 every difference.
+
+Every fixture result also records monotonic wall-clock `durationSeconds`. The comparison JSON and Markdown matrix show stock-Apple/Docker and provider/Docker ratios for the same fixture. Timing is not an exact-equivalence assertion: a completed candidate remains passing when it is slower by less than one order of magnitude. A timeout, other non-completion, missing timing evidence, or duration of at least `10x` the Docker oracle fails the parity gate. The harness does not retry or normalize a performance failure.

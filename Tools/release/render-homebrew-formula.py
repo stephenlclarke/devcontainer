@@ -30,8 +30,8 @@ def validate_identity(
     if formula_class == "Devcontainer":
         if formula_version != product_version:
             raise ValueError("stable formula version must equal the product version")
-        if conflict != "devcontainer-current":
-            raise ValueError("stable formula must conflict with devcontainer-current")
+        if conflict:
+            raise ValueError("stable formula must not conflict with an optional formula")
         expected_url = (
             f"{RELEASE_ROOT}/{product_version}/devcontainer-release-arm64.tar.gz"
         )
@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument("--formula-version")
     parser.add_argument("--formula-class", default="Devcontainer")
     parser.add_argument("--url", required=True)
-    parser.add_argument("--conflicts-with", required=True)
+    parser.add_argument("--conflicts-with", default="")
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -81,13 +81,21 @@ def main() -> int:
     except ValueError as error:
         raise SystemExit(str(error)) from error
     digest = hashlib.sha256(args.archive.read_bytes()).hexdigest()
+    conflict_declaration = "\n"
+    version_declaration = ""
+    if args.formula_class == "DevcontainerCurrent":
+        conflict_declaration = (
+            f'  conflicts_with "{args.conflicts_with}", '
+            'because: "both install devcontainer commands"\n\n'
+        )
+        version_declaration = f'  version "{formula_version}"\n'
     values = {
-        "CONFLICTS_WITH": args.conflicts_with,
+        "CONFLICT_DECLARATION": conflict_declaration,
         "FORMULA_CLASS": args.formula_class,
-        "FORMULA_VERSION": formula_version,
         "PRODUCT_VERSION": args.product_version,
         "SHA256": digest,
         "URL": args.url,
+        "VERSION_DECLARATION": version_declaration,
     }
     rendered = args.template.read_text(encoding="utf-8")
     for name, value in values.items():

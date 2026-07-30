@@ -2,7 +2,12 @@
 
 ## Status and decision
 
-This document is the implementation blueprint for `devcontainer`. The project will provide unmodified VS Code Dev Containers compatibility by placing a Docker Engine API compatibility service in front of Apple-native runtime providers. A companion `container devcontainer` CLI manages configuration and diagnostics; it does not replace or fork the Dev Container specification engine.
+This document describes the implemented `devcontainer` architecture. The
+project provides unmodified VS Code Dev Containers compatibility by placing a
+Docker Engine API compatibility service in front of Apple-native runtime
+providers. A companion `container devcontainer` CLI manages configuration and
+diagnostics; it does not replace or fork the Dev Container specification
+engine.
 
 The product has two first-class runtime modes:
 
@@ -32,6 +37,13 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Kubernetes orchestration, production container scheduling, or Linux host support.
 - Hiding unsupported stock-Apple primitives behind success responses.
 - Treating the current matched `container-compose` fork stack as stock Apple.
+
+Version 1.0.1 has one known exception to the fail-explicitly goal: Docker
+create/build members absent from the bounded Swift DTO can be ignored during
+decoding. This means arbitrary `runArgs` are not fail-closed. The confirmed
+cases, user impact, and remediation priorities are maintained in
+[`CONFORMANCE.md`](CONFORMANCE.md); no design or compatibility claim should
+hide that exception.
 
 ## Normative and implementation references
 
@@ -85,7 +97,7 @@ service and Compose-dispatch executables:
 
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
-| `container-devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, `configure`, `context`, and durable `backend` ownership |
+| `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, privacy-redacted `diagnostics`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
 | `devcontainer-engine` | Normal executable | Docker Engine HTTP API on a user-owned Unix socket, stock Apple translation, state reconciliation, and event handling |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
@@ -128,7 +140,7 @@ The runtime SPI is capability-driven and asynchronous. Its initial protocol grou
 - `EventRuntime`: ordered lifecycle/image/network/volume/exec events with resumable cursors.
 - `ComposeProvider`: version/capability probe, config, build, up, stop, down, and primary-service discovery.
 
-Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Unsupported behavior returns a typed `unsupportedCapability` error before resources are created.
+Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Decoded unsupported behavior returns a typed `unsupportedCapability` error before resources are created. Docker create fields outside the current request model are an explicit conformance gap and can be ignored by Swift decoding; see [CONFORMANCE.md](CONFORMANCE.md).
 
 The Apple adapter also probes `container create --help` once per selected executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged switches: privileged requests map to the stock capability model, while explicit hostname or security-option requests fail before mount or container side effects. A separately fingerprinted enhanced runtime uses its native switches. Capability discovery is behavioral and never inferred from an install path or attributed across provider lanes.
 
@@ -146,7 +158,9 @@ The service advertises only the Docker API versions proven by the parity suite. 
 | Resources | volume and network create/list/inspect/connect/disconnect/remove |
 | Events | label-filtered, ordered JSON event stream with reconnect cursor |
 
-Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and UID-update fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
+Each HTTP/1.1 connection has a 1 GiB aggregate retained-body budget and a bounded pending-request queue. Large request bodies transfer from SwiftNIO storage into `Data` without copying the bytes, and a client that exceeds either the per-request, aggregate-byte, or queue bound is rejected without allowing a later pipelined response to overtake an earlier one.
+
+Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and Dockerfile-build fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
 
 ## Identity and label projection
 
@@ -159,7 +173,12 @@ Every project resource carries:
 - project-owned labels recording backend kind, configuration digest, project identifier, and schema version;
 - native Apple labels needed by the selected provider.
 
-`container-compose` currently uses Apple-specific Compose labels. The provider adapter and inspection layer project those into `com.docker.compose.*` labels and translate Docker label filters back to native discovery queries. A projected label never overwrites conflicting runtime data; conflict is a reconciliation error.
+`container-compose` currently uses provider-owned compatibility labels in the
+`com.apple.container.compose.*` namespace. These labels do not represent an
+Apple-authored Compose product. The provider adapter and inspection layer
+project them into `com.docker.compose.*` labels and translate Docker label
+filters back to native discovery queries. A projected label never overwrites
+conflicting runtime data; conflict is a reconciliation error.
 
 ## Provider selection
 
@@ -176,7 +195,9 @@ container-compose
   inspect/exec     -> Docker API bridge -> runtime discovery
 ```
 
-The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `apple-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
+Before every resource-changing Compose command, the dispatcher consumes the complete supported global-option grammar, including inline Boolean forms, and fails closed on an option it cannot classify. Dry-run, help, and version requests do not acquire an ownership claim. Explicit project names are validated against the Compose naming contract; otherwise the selected Compose implementation resolves the canonical name through `config --format json`, preserving the official `-f`, `COMPOSE_FILE`, top-level `name:`, project-directory, and current-directory precedence. The canonical name, rather than an invocation directory alias, keys the immutable provider claim.
+
+The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `container-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
 
 ## Single-container request sequence
 
@@ -231,7 +252,7 @@ sequenceDiagram
     S->>R: inspect and process operations
 ```
 
-The bridge does not maintain a second Compose lifecycle database. Project leases store only provider selection and the configuration digest; live state is reconciled from runtime resources.
+The bridge does not maintain a second Compose lifecycle database. Project leases store provider selection, canonical Compose identity, and diagnostic invocation metadata; live state is reconciled from runtime resources.
 
 ## Lifecycle and reconciliation
 
@@ -304,7 +325,7 @@ See [SECURITY.md](SECURITY.md) and [QUALITY.md](QUALITY.md) for disclosure and r
 
 ## Configuration and state
 
-Planned user configuration lives in `~/.config/devcontainer/config.toml`:
+User configuration lives in `~/.config/devcontainer/config.toml`:
 
 ```toml
 backend = "stock"
@@ -321,32 +342,33 @@ Per-project provider choice and configuration digest live in the service databas
 
 ## Observability
 
-Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. There is no outbound telemetry in the initial product.
+Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time; slowdowns below `10x` are informational, while non-completion or a duration of at least `10x` fails the gate. There is no outbound telemetry in the initial product.
 
 `container devcontainer diagnostics` creates a reviewable archive containing versions, capability probes, redacted logs, runtime resource summaries, config hashes, and recent event state. The command prints the archive manifest before writing it.
 
 ## Packaging
 
-The release archive contains both Apple plug-in directories, wrapper executables, build metadata, license, notices, SBOM, configuration schema, and shell completions. The Homebrew formula installs this project without forcing either Apple runtime distribution. Registration is explicit so an official Apple package and Stephen's Homebrew runtime can be tested independently.
+The release archive contains a valid Apple CLI plug-in directory, standalone
+executables, build metadata, license, notices, SBOM, and service definition.
+The Homebrew formula installs this project without forcing either Apple runtime
+distribution. `devcontainer plugin register` creates the one explicit symlink
+under the active runtime's reported installation root; it is idempotent and
+refuses to replace a foreign file, directory, or link. Registration can
+therefore be tested independently against an official Apple package and
+Stephen's Homebrew runtime.
 
-Stable formulae use immutable semantic release assets. A future `devcontainer-current` formula is optional and will be added only when there is demonstrated demand.
-
-## Delivery phases
-
-1. **Bootstrap:** documentation, DocC Pages, parity manifest, strict hosted CI, CodeQL, license, and quality policy.
-2. **Wire contract:** Docker API router over a Unix socket, fake runtime, Docker CLI black-box tests, stream framing, state migrations, and diagnostics.
-3. **Stock single-container:** official Apple tagged/main adapters for images, lifecycle, exec, archives, mounts, ports, events, and cleanup.
-4. **Reference Dev Containers:** image and Dockerfile scenarios, metadata labels, UID rewrite, Features, lifecycle commands, and VS Code attach.
-5. **Compose:** Docker Compose over the stock bridge, followed by the separately installed `container-compose` provider and Docker-label projection.
-6. **Hardening:** failures, cancellation, reconciliation, ASan/TSan, performance budgets, security review, Homebrew install, signing/notarization, and real VS Code E2E.
-7. **Stable release:** zero functional parity differences for every claimed fixture in all required lanes and complete candidate-bound release evidence.
+Stable formulae use immutable semantic release assets. The generated
+`devcontainer-current` formula uses a monotonically increasing
+`current.RUN.SHA12` version and a commit-identified asset; publication remains
+fail-closed until the trusted release runner, signing, notarization, and tap
+promotion controls described in [RELEASE.md](RELEASE.md) are provisioned.
 
 ## Release definition of done
 
 A stable tag is prohibited until:
 
 - every fixture in `Tests/Parity/manifest.json` is implemented;
-- Docker oracle, stock Apple stable/main, and Compose stable/main recordings pass;
+- Docker oracle, stock Apple 1.1.0, and `container-compose` 0.10.1 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
 - hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;
@@ -357,7 +379,7 @@ A stable tag is prohibited until:
 
 | Risk | Consequence | Mitigation |
 | --- | --- | --- |
-| Apple package source instability | Adapter fails after minor upgrades | Exact stable pin, main compatibility lane, isolated adapter target, capability probe |
+| Apple package source instability | Adapter fails after minor upgrades | Exact stable pin, isolated adapter target, capability probe |
 | Docker wire-semantic mismatch | VS Code fails despite successful native calls | Raw protocol tests and Docker/Dev Containers black-box oracle |
 | Missing Apple primitive | Requested configuration cannot be represented | Typed fail-fast capability error, upstream issue, no false success |
 | Compose label/model mismatch | Primary service cannot be discovered or reused | Native-to-Docker label projection and filter translation |

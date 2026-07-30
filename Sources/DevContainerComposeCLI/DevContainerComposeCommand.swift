@@ -34,7 +34,16 @@ enum DevContainerComposeCommand {
     }
 
     static func run(arguments: [String]) async throws -> Int32 {
-        let environment = ProcessInfo.processInfo.environment
+        try await run(
+            arguments: arguments,
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    static func run(
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> Int32 {
         let paths = Paths(environment: environment)
         let configuration = try DevContainerConfigurationStore.load(
             from: paths.configuration,
@@ -44,26 +53,16 @@ enum DevContainerComposeCommand {
             .flatMap(ComposeProviderKind.init(rawValue:))
             ?? configuration.composeProvider
         let envelope = try ComposeCommandEnvelope(arguments: arguments)
-        let projectName = envelope.projectName
-            ?? environment["COMPOSE_PROJECT_NAME"]
-            ?? URL(
-                fileURLWithPath: envelope.projectDirectory
-                    ?? FileManager.default.currentDirectoryPath,
-                isDirectory: true
-            ).lastPathComponent.lowercased()
-        let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
-        let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
-        let store = try SQLiteStateStore(path: paths.state)
-        try await claimIfNeeded(
-            envelope: envelope,
-            projectKey: projectKey,
-            projectName: projectName,
-            backend: backend,
-            store: store
-        )
         let child = childCommand(
             provider: provider,
             arguments: arguments,
+            paths: paths,
+            environment: environment,
+            socket: configuration.socket
+        )
+        let claim = try await claimIfNeeded(
+            envelope: envelope,
+            provider: provider,
             paths: paths,
             environment: environment,
             socket: configuration.socket
@@ -74,22 +73,32 @@ enum DevContainerComposeCommand {
             arguments: child.arguments,
             environment: child.environment
         )
-        if result == 0, envelope.command == "down" {
-            try await store.releaseProject(key: projectKey)
+        if result == 0, envelope.command == "down", let claim {
+            try await claim.store.releaseProject(key: claim.key)
         }
         return result
     }
 
     private static func claimIfNeeded(
         envelope: ComposeCommandEnvelope,
-        projectKey: ProjectKey,
-        projectName: String,
-        backend: BackendProvider,
-        store: SQLiteStateStore
-    ) async throws {
+        provider: ComposeProviderKind,
+        paths: Paths,
+        environment: [String: String],
+        socket: String
+    ) async throws -> ComposeProjectClaim? {
         guard envelope.mutating else {
-            return
+            return nil
         }
+        let projectName = try await resolvedProjectName(
+            envelope: envelope,
+            provider: provider,
+            paths: paths,
+            environment: environment,
+            socket: socket
+        )
+        let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
+        let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
+        let store = try SQLiteStateStore(path: paths.state)
         _ = try await store.claimProject(
             key: projectKey,
             provider: backend,
@@ -98,6 +107,70 @@ enum DevContainerComposeCommand {
                 ?? FileManager.default.currentDirectoryPath,
             configurationHash: nil
         )
+        return ComposeProjectClaim(key: projectKey, store: store)
+    }
+
+    private static func resolvedProjectName(
+        envelope: ComposeCommandEnvelope,
+        provider: ComposeProviderKind,
+        paths: Paths,
+        environment: [String: String],
+        socket: String
+    ) async throws -> String {
+        if let explicit = envelope.projectName ?? environment["COMPOSE_PROJECT_NAME"] {
+            return try validatedProjectName(explicit)
+        }
+        let child = childCommand(
+            provider: provider,
+            arguments: envelope.configurationArguments,
+            paths: paths,
+            environment: environment,
+            socket: socket
+        )
+        let result = try await executeCaptured(
+            executable: child.executable,
+            arguments: child.arguments,
+            environment: child.environment
+        )
+        guard result.exitCode == 0 else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "cannot resolve Compose project name: \(boundedError(result.standardError))"
+            )
+        }
+        let configuration: ComposeConfiguration
+        do {
+            configuration = try JSONDecoder().decode(
+                ComposeConfiguration.self,
+                from: result.standardOutput
+            )
+        } catch {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "Compose config returned invalid project JSON: \(error)"
+            )
+        }
+        return try validatedProjectName(configuration.name)
+    }
+
+    private static func validatedProjectName(_ value: String) throws -> String {
+        let scalars = value.unicodeScalars
+        let validFirst = scalars.first.map {
+            (97 ... 122).contains($0.value) || (48 ... 57).contains($0.value)
+        } ?? false
+        let validBody = scalars.allSatisfy {
+            (97 ... 122).contains($0.value)
+                || (48 ... 57).contains($0.value)
+                || $0 == "-"
+                || $0 == "_"
+        }
+        guard validFirst, validBody else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "invalid Compose project name \(value)"
+            )
+        }
+        return value
     }
 
     private static func childCommand(
@@ -138,12 +211,7 @@ enum DevContainerComposeCommand {
         arguments: [String],
         environment: [String: String]
     ) async throws -> Int32 {
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-            throw DevContainerError(
-                .runtimeUnavailable,
-                message: "required executable is missing at \(executable.path)"
-            )
-        }
+        try requireExecutable(executable)
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -162,6 +230,76 @@ enum DevContainerComposeCommand {
                 process.terminate()
             }
         }
+    }
+
+    private static func executeCaptured(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> CapturedProcessResult {
+        try requireExecutable(executable)
+        let process = Process()
+        let standardOutput = Pipe()
+        let standardError = Pipe()
+        process.executableURL = executable
+        process.arguments = arguments
+        process.environment = environment
+        process.currentDirectoryURL = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        process.standardOutput = standardOutput
+        process.standardError = standardError
+        let (termination, continuation) = AsyncStream<Int32>.makeStream()
+        process.terminationHandler = { process in
+            continuation.yield(process.terminationStatus)
+            continuation.finish()
+        }
+        do {
+            try process.run()
+        } catch {
+            continuation.finish()
+            throw DevContainerError(
+                .runtimeUnavailable,
+                message: "cannot launch \(executable.path): \(error)"
+            )
+        }
+        let outputTask = Task.detached {
+            standardOutput.fileHandleForReading.readDataToEndOfFile()
+        }
+        let errorTask = Task.detached {
+            standardError.fileHandleForReading.readDataToEndOfFile()
+        }
+        let exitCode = await withTaskCancellationHandler {
+            for await status in termination {
+                return status
+            }
+            return 255
+        } onCancel: {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        return await CapturedProcessResult(
+            standardOutput: outputTask.value,
+            standardError: errorTask.value,
+            exitCode: exitCode
+        )
+    }
+
+    private static func requireExecutable(_ executable: URL) throws {
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw DevContainerError(
+                .runtimeUnavailable,
+                message: "required executable is missing at \(executable.path)"
+            )
+        }
+    }
+
+    private static func boundedError(_ data: Data) -> String {
+        let message = String(bytes: data.prefix(4096), encoding: .utf8)
+            ?? "non-UTF-8 diagnostic output"
+        return message.isEmpty ? "no diagnostic output" : message
     }
 
     private static func run(_ process: Process, executable: URL) async -> Int32 {
@@ -190,6 +328,21 @@ enum DevContainerComposeCommand {
                 && key != "ENV"
         }
     }
+}
+
+private struct ComposeProjectClaim {
+    let key: ProjectKey
+    let store: SQLiteStateStore
+}
+
+private struct ComposeConfiguration: Decodable {
+    let name: String
+}
+
+private struct CapturedProcessResult {
+    let standardOutput: Data
+    let standardError: Data
+    let exitCode: Int32
 }
 
 private struct ComposeChildCommand {

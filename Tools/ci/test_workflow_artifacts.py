@@ -33,6 +33,33 @@ class WorkflowArtifactTests(unittest.TestCase):
 
         self.assertGreater(checked, 20)
 
+    def test_repeated_external_actions_use_one_revision(self) -> None:
+        uses_pattern = re.compile(r"^\s+uses:\s+([^@\s]+)@([^\s#]+)", re.MULTILINE)
+        revisions: dict[str, set[str]] = {}
+        occurrences: dict[str, int] = {}
+
+        for workflow in WORKFLOWS.glob("*.yml"):
+            for action, revision in uses_pattern.findall(
+                workflow.read_text(encoding="utf-8")
+            ):
+                if action.startswith("./"):
+                    continue
+                revisions.setdefault(action, set()).add(revision)
+                occurrences[action] = occurrences.get(action, 0) + 1
+
+        repeated = {
+            action: values
+            for action, values in revisions.items()
+            if occurrences[action] > 1
+        }
+        self.assertTrue(repeated)
+        for action, values in repeated.items():
+            self.assertEqual(
+                len(values),
+                1,
+                f"{action} uses inconsistent immutable revisions: {sorted(values)}",
+            )
+
     def test_supply_chain_workflows_are_fail_closed(self) -> None:
         dependency_review = (
             WORKFLOWS / "dependency-review.yml"
@@ -91,6 +118,15 @@ class WorkflowArtifactTests(unittest.TestCase):
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
             self.assertIn("\nconcurrency:\n", contents, name)
             self.assertIn("  cancel-in-progress: true\n", contents, name)
+
+    def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
+        for name in ("ci.yml", "quality.yml", "sonar.yml"):
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            self.assertEqual(
+                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "1200"'),
+                1,
+                name,
+            )
 
     def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
         contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
@@ -198,6 +234,26 @@ class WorkflowArtifactTests(unittest.TestCase):
             dependabot,
         )
 
+    def test_parity_comparison_survives_failed_lanes(self) -> None:
+        contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
+        compare = contents[contents.index("  compare:\n"):]
+
+        self.assertIn("    if: ${{ always() }}\n", compare)
+        self.assertIn("          status=0\n", compare)
+        self.assertIn(
+            "compare_results.py .build/parity || status=1",
+            compare,
+        )
+        self.assertIn(
+            "compare_results.py .build/parity/vscode || status=1",
+            compare,
+        )
+        self.assertIn(
+            "validate_manifest.py --release || status=1",
+            compare,
+        )
+        self.assertIn('          exit "${status}"\n', compare)
+
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
         contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
             encoding="utf-8"
@@ -216,7 +272,19 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertLess(push, finalize)
         self.assertIn("mode=stable-stage", contents)
         self.assertIn("mode=stable-finalize", contents)
-        self.assertIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
+        self.assertIn(
+            'formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"',
+            contents,
+        )
+        self.assertIn(
+            'test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"',
+            contents,
+        )
+        self.assertIn("export HOMEBREW_NO_AUTO_UPDATE=1", contents)
+        self.assertIn('brew tap-new --no-git "${test_tap}"', contents)
+        self.assertIn('brew install --formula "${test_tap}/${formula}"', contents)
+        self.assertNotIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
+        self.assertNotIn('brew untap "stephenlclarke/tap"', contents)
 
     def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
