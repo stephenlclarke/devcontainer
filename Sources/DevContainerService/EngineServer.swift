@@ -87,26 +87,26 @@ final class EngineServer: @unchecked Sendable {
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
-                let responseEncoder = HTTPResponseEncoder()
                 let upgradeState = DockerUpgradeState()
-                let inputCloseBarrier = DockerInputCloseBarrier(state: upgradeState)
-                let requestDecoder = ByteToMessageHandler(
-                    HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)
+                let pipeline = DockerHTTPPipeline(
+                    responseEncoder: HTTPResponseEncoder(),
+                    requestDecoder: ByteToMessageHandler(
+                        HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)
+                    ),
+                    upgradeState: upgradeState,
+                    inputCloseBarrier: DockerInputCloseBarrier(state: upgradeState)
                 )
                 let handler = DockerHTTPHandler(
                     router: router,
                     logger: logger,
                     connections: connections,
-                    responseEncoder: responseEncoder,
-                    requestDecoder: requestDecoder,
-                    upgradeState: upgradeState,
-                    inputCloseBarrier: inputCloseBarrier,
+                    pipeline: pipeline,
                     limits: limits
                 )
                 do {
-                    try channel.pipeline.syncOperations.addHandler(responseEncoder)
-                    try channel.pipeline.syncOperations.addHandler(inputCloseBarrier)
-                    try channel.pipeline.syncOperations.addHandler(requestDecoder)
+                    try channel.pipeline.syncOperations.addHandler(pipeline.responseEncoder)
+                    try channel.pipeline.syncOperations.addHandler(pipeline.inputCloseBarrier)
+                    try channel.pipeline.syncOperations.addHandler(pipeline.requestDecoder)
                     try channel.pipeline.syncOperations.addHandler(handler)
                     return channel.eventLoop.makeSucceededVoidFuture()
                 } catch {
@@ -314,6 +314,13 @@ private struct DockerHTTPPendingRequest {
     let bodyBytes: Int
 }
 
+private struct DockerHTTPPipeline {
+    let responseEncoder: HTTPResponseEncoder
+    let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
+    let upgradeState: DockerUpgradeState
+    let inputCloseBarrier: DockerInputCloseBarrier
+}
+
 private final class DockerHTTPHandler:
     ChannelInboundHandler,
     RemovableChannelHandler,
@@ -343,19 +350,16 @@ private final class DockerHTTPHandler:
         router: DockerRouter,
         logger: Logger,
         connections: EngineConnectionTracker,
-        responseEncoder: HTTPResponseEncoder,
-        requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>,
-        upgradeState: DockerUpgradeState,
-        inputCloseBarrier: DockerInputCloseBarrier,
+        pipeline: DockerHTTPPipeline,
         limits: EngineServerLimits
     ) {
         self.router = router
         self.logger = logger
         self.connections = connections
-        self.responseEncoder = responseEncoder
-        self.requestDecoder = requestDecoder
-        self.upgradeState = upgradeState
-        self.inputCloseBarrier = inputCloseBarrier
+        responseEncoder = pipeline.responseEncoder
+        requestDecoder = pipeline.requestDecoder
+        upgradeState = pipeline.upgradeState
+        inputCloseBarrier = pipeline.inputCloseBarrier
         self.limits = limits
     }
 
