@@ -91,6 +91,30 @@ struct DevContainerComposeCommandTests {
         }
         #expect(try fixture.invocations().isEmpty)
     }
+
+    @Test
+    func `successful project removal releases the provider claim`() async throws {
+        for arguments in [
+            ["--project-name", "down-project", "down"],
+            ["--project-name", "wait-project", "wait", "web", "--down-project"]
+        ] {
+            let fixture = try ComposeCommandFixture(projectName: "ignored")
+            #expect(
+                try await DevContainerComposeCommand.run(
+                    arguments: arguments,
+                    environment: fixture.environment
+                ) == 0
+            )
+
+            let store = try SQLiteStateStore(path: fixture.state)
+            let projectName = arguments[1]
+            #expect(
+                try await store.project(
+                    key: ProjectKey(rawValue: "\(getuid()):\(projectName)")
+                ) == nil
+            )
+        }
+    }
 }
 
 private final class ComposeCommandFixture {

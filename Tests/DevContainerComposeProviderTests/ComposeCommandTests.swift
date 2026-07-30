@@ -36,6 +36,7 @@ func `command envelope finds project and mutation`() throws {
     #expect(envelope.projectDirectory == "/workspace")
     #expect(envelope.files == ["compose.yaml"])
     #expect(envelope.mutating)
+    #expect(!envelope.removesProject)
     #expect(envelope.projectKey(userID: 501) == ProjectKey(rawValue: "501:demo"))
     #expect(
         envelope.configurationArguments == [
@@ -52,10 +53,38 @@ func `read only and malformed commands are handled`() throws {
     let version = try ComposeCommandEnvelope(arguments: ["version"])
     #expect(version.command == "version")
     #expect(!version.mutating)
+    #expect(!version.removesProject)
     #expect(version.projectKey(userID: 501) == nil)
     #expect(throws: DevContainerError.self) {
         _ = try ComposeCommandEnvelope(arguments: ["--project-name"])
     }
+}
+
+@Test
+func `project removing commands release provider ownership`() throws {
+    #expect(
+        try ComposeCommandEnvelope(arguments: ["down"]).removesProject
+    )
+    #expect(
+        try ComposeCommandEnvelope(
+            arguments: ["wait", "web", "--down-project"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["wait", "--down-project=false", "web"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["wait", "--", "--down-project"]
+        ).removesProject
+    )
+    #expect(
+        try !ComposeCommandEnvelope(
+            arguments: ["--dry-run", "down"]
+        ).removesProject
+    )
 }
 
 @Test

@@ -109,6 +109,7 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
     public var projectDirectory: String?
     public var files: [String]
     public var mutating: Bool
+    public var removesProject: Bool
     public var configurationArguments: [String]
 
     public init(arguments: [String]) throws {
@@ -119,6 +120,18 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
         files = parsed.files
         mutating = Self.mutatingCommands.contains(parsed.command ?? "")
             && !parsed.preventsMutation
+        removesProject = mutating
+            && (
+                parsed.command == "down"
+                    || (
+                        parsed.command == "wait"
+                            && Self.commandFlag(
+                                "--down-project",
+                                isEnabledIn: arguments,
+                                after: parsed.commandIndex
+                            )
+                    )
+            )
         configurationArguments =
             Array(arguments.prefix(parsed.commandIndex ?? arguments.count))
                 + ["config", "--format", "json"]
@@ -182,6 +195,36 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
             break
         }
         return parsed
+    }
+
+    private static func commandFlag(
+        _ option: String,
+        isEnabledIn arguments: [String],
+        after commandIndex: Int?
+    ) -> Bool {
+        guard let commandIndex else {
+            return false
+        }
+        var enabled = false
+        for argument in arguments.dropFirst(commandIndex + 1) {
+            if argument == "--" {
+                break
+            }
+            if argument == option {
+                enabled = true
+                continue
+            }
+            guard argument.hasPrefix("\(option)=") else {
+                continue
+            }
+            let value = argument.dropFirst(option.count + 1).lowercased()
+            if ["1", "t", "true"].contains(value) {
+                enabled = true
+            } else if ["0", "f", "false"].contains(value) {
+                enabled = false
+            }
+        }
+        return enabled
     }
 
     private static let valueOptions: Set<String> = [

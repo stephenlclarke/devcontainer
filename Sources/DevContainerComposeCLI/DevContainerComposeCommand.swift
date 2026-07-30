@@ -73,7 +73,7 @@ enum DevContainerComposeCommand {
             arguments: child.arguments,
             environment: child.environment
         )
-        if result == 0, envelope.command == "down", let claim {
+        if result == 0, envelope.removesProject, let claim {
             try await claim.store.releaseProject(key: claim.key)
         }
         return result
