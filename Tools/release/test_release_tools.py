@@ -293,6 +293,93 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.run_tool(*arguments)
 
+    def test_package_readme_links_target_the_exact_source_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "README.md"
+            output = root / "packaged" / "README.md"
+            (root / "docs").mkdir()
+            (root / "Examples" / "hello").mkdir(parents=True)
+            (root / "GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+            (root / "docs" / "demo.gif").write_bytes(b"GIF89a")
+            source.write_text(
+                '<img src="docs/demo.gif" />\n'
+                "<a href='GUIDE.md'>HTML guide</a>\n"
+                "[Guide](GUIDE.md#install)\n"
+                "[Example](Examples/hello)\n"
+                "![Demo](docs/demo.gif)\n"
+                "[Section](#section)\n"
+                "[Upstream](https://github.com/devcontainers)\n",
+                encoding="utf-8",
+            )
+            revision = "0123456789abcdef0123456789abcdef01234567"
+
+            self.run_tool(
+                "render-package-readme.py",
+                "--source",
+                str(source),
+                "--repository-root",
+                str(root),
+                "--repository",
+                "stephenlclarke/devcontainer",
+                "--revision",
+                revision,
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            source_root = (
+                "https://github.com/stephenlclarke/devcontainer"
+            )
+            raw_root = (
+                "https://raw.githubusercontent.com/"
+                "stephenlclarke/devcontainer"
+            )
+            self.assertIn(
+                f"{source_root}/blob/{revision}/GUIDE.md#install",
+                rendered,
+            )
+            self.assertIn(
+                f"href='{source_root}/blob/{revision}/GUIDE.md'",
+                rendered,
+            )
+            self.assertIn(
+                f"{source_root}/tree/{revision}/Examples/hello",
+                rendered,
+            )
+            self.assertEqual(
+                rendered.count(f"{raw_root}/{revision}/docs/demo.gif"),
+                2,
+            )
+            self.assertIn("[Section](#section)", rendered)
+            self.assertIn(
+                "[Upstream](https://github.com/devcontainers)",
+                rendered,
+            )
+
+    def test_package_readme_rejects_a_missing_source_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "README.md"
+            source.write_text("[Missing](MISSING.md)\n", encoding="utf-8")
+
+            arguments = (
+                "render-package-readme.py",
+                "--source",
+                str(source),
+                "--repository-root",
+                str(root),
+                "--repository",
+                "stephenlclarke/devcontainer",
+                "--revision",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--output",
+                str(root / "output.md"),
+            )
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_tool(*arguments)
+
     def test_homebrew_formula_embeds_version_and_archive_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
@@ -303,9 +390,9 @@ class ReleaseToolTests(unittest.TestCase):
             template.write_text(
                 "class @FORMULA_CLASS@\n"
                 'url "@URL@"\n'
-                'version "@FORMULA_VERSION@"\n'
+                "@VERSION_DECLARATION@\n"
                 'product "@PRODUCT_VERSION@"\n'
-                'conflict "@CONFLICTS_WITH@"\n'
+                "@CONFLICT_DECLARATION@\n"
                 'sha256 "@SHA256@"\n',
                 encoding="utf-8",
             )
@@ -346,11 +433,56 @@ class ReleaseToolTests(unittest.TestCase):
             )
             self.assertIn('version "current.418.0123456789ab"', rendered)
             self.assertIn('product "1.2.3"', rendered)
-            self.assertIn('conflict "devcontainer"', rendered)
+            self.assertIn(
+                'conflicts_with "devcontainer", because: '
+                '"both install devcontainer commands"',
+                rendered,
+            )
             self.assertIn(
                 f'sha256 "{hashlib.sha256(archive.read_bytes()).hexdigest()}"',
                 rendered,
             )
+
+    def test_stable_homebrew_formula_uses_url_version_without_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            archive = temporary_root / "devcontainer.tar.gz"
+            template = temporary_root / "formula.rb.in"
+            output = temporary_root / "devcontainer.rb"
+            archive.write_bytes(b"release-archive")
+            template.write_text(
+                "class @FORMULA_CLASS@\n"
+                'url "@URL@"\n'
+                "@VERSION_DECLARATION@\n"
+                "@CONFLICT_DECLARATION@\n"
+                'sha256 "@SHA256@"\n',
+                encoding="utf-8",
+            )
+
+            self.run_tool(
+                "render-homebrew-formula.py",
+                "--product-version",
+                "1.2.3",
+                "--formula-class",
+                "Devcontainer",
+                "--url",
+                (
+                    "https://github.com/stephenlclarke/devcontainer/"
+                    "releases/download/1.2.3/"
+                    "devcontainer-release-arm64.tar.gz"
+                ),
+                "--archive",
+                str(archive),
+                "--template",
+                str(template),
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            self.assertIn("class Devcontainer", rendered)
+            self.assertNotIn("version ", rendered)
+            self.assertNotIn("conflicts_with", rendered)
 
     def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

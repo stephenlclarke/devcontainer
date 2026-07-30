@@ -12,6 +12,9 @@ executable and never links its implementation into this package.
 
 Project provider claims are durable and immutable while resources exist. This
 prevents stock and custom runtime operations from creating split-brain projects.
+The dispatcher classifies the complete supported Compose global-option surface
+before execution and uses the selected provider's canonical configuration output
+when explicit project identity is absent.
 
 For the complete diagrams and decisions, see the repository
 [software design](https://github.com/stephenlclarke/devcontainer/blob/main/DESIGN.md).

@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -47,9 +48,8 @@ class LaneRunner:
         self.manifest = load_manifest(
             repository / "Tests" / "Parity" / "manifest.json"
         )
-        self.cli_version = self.manifest["referencePins"]["devcontainersCli"][
-            "version"
-        ]
+        self.cli_reference = self.manifest["referencePins"]["devcontainersCli"]
+        self.cli_version = self.cli_reference["version"]
         self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
             "docker"
         )
@@ -147,13 +147,12 @@ class LaneRunner:
                 ["swift", "build", "--disable-automatic-resolution"],
                 cwd=self.repository,
                 environment=self.environment,
+                timeout_seconds=1800,
             )
         if self.runtime_root.exists():
             shutil.rmtree(self.runtime_root)
         self.runtime_root.mkdir(parents=True)
-        self.socket_root = Path(
-            tempfile.mkdtemp(prefix=f"devcontainer-{self.lane}-socket-")
-        )
+        self.socket_root = create_socket_root()
         socket_path = self.socket_root / "docker.sock"
         state_path = self.runtime_root / "state.sqlite"
         container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
@@ -361,7 +360,9 @@ class LaneRunner:
             )
             return
         try:
-            with sqlite3.connect(f"file:{state}?mode=ro", uri=True) as database:
+            with closing(
+                sqlite3.connect(f"file:{state}?mode=ro", uri=True)
+            ) as database:
                 projects = int(
                     database.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
                 )
@@ -446,7 +447,7 @@ class LaneRunner:
                 "--format",
                 "json",
             ]
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             commands["containerCompose"] = [
                 os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",
@@ -457,6 +458,7 @@ class LaneRunner:
             "backend": self.lane,
             "machine": platform.machine(),
             "platform": platform.platform(),
+            "devcontainersReference": self.cli_reference,
             "commands": {},
         }
         for name, command in commands.items():
@@ -637,16 +639,27 @@ class LaneRunner:
 
     def validate_ports(self, raw: Path) -> dict[str, str]:
         body = ""
-        for _ in range(50):
+        attempts: list[str] = []
+        for attempt in range(1, 51):
             try:
                 with urllib.request.urlopen(
                     "http://127.0.0.1:49277/",
                     timeout=2,
                 ) as response:
                     body = response.read().decode(errors="replace").strip()
+                attempts.append(
+                    f"attempt {attempt}: HTTP success; body={body!r}"
+                )
                 break
-            except (OSError, urllib.error.URLError):
+            except (OSError, urllib.error.URLError) as error:
+                attempts.append(
+                    f"attempt {attempt}: {type(error).__name__}: {error}"
+                )
                 time.sleep(0.1)
+        (raw / "host-connectivity.log").write_text(
+            "\n".join(attempts) + "\n",
+            encoding="utf-8",
+        )
 
         collision_name = f"dcparity-port-collision-{os.getpid()}"
         collision = subprocess.run(
@@ -1053,7 +1066,7 @@ class LaneRunner:
 
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1124,7 +1137,7 @@ class LaneRunner:
         timeout: int,
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(self.environment)
-        if self.lane == "apple-compose":
+        if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1308,6 +1321,8 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "LC_CTYPE",
         "NO_COLOR",
         "PATH",
+        # Preserve GitHub's orphan-process cleanup marker on self-hosted runners.
+        "RUNNER_TRACKING_ID",
         "SDKROOT",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
@@ -1328,11 +1343,25 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def create_socket_root() -> Path:
+    """Create a private root whose Docker socket fits Darwin's path limit."""
+
+    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
+    socket_path = root / "docker.sock"
+    if len(os.fsencode(socket_path)) >= 104:
+        shutil.rmtree(root)
+        raise ParityError(
+            f"compatibility socket exceeds Darwin's 103-byte limit: {socket_path}"
+        )
+    return root
+
+
 def run_checked(
     command: Sequence[str],
     *,
     cwd: Path | None = None,
     environment: dict[str, str],
+    timeout_seconds: int = 60,
 ) -> subprocess.CompletedProcess[str]:
     """Run a bounded command and surface its diagnostic on failure."""
 
@@ -1343,7 +1372,7 @@ def run_checked(
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        timeout=timeout_seconds,
     )
     if result.returncode != 0:
         raise ParityError(
@@ -1403,6 +1432,23 @@ def write_junit(
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
 
 
+def install_cancellation_handlers() -> None:
+    """Turn workflow cancellation into a catchable failure with cleanup."""
+
+    handled = False
+
+    def cancel(signum: int, _frame: Any) -> None:
+        nonlocal handled
+        if handled:
+            return
+        handled = True
+        name = signal.Signals(signum).name
+        raise ParityError(f"CLI parity interrupted by {name}")
+
+    signal.signal(signal.SIGINT, cancel)
+    signal.signal(signal.SIGTERM, cancel)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=LANES)
@@ -1415,6 +1461,7 @@ def main() -> int:
     repository = Path(__file__).resolve().parents[2]
     evidence = args.evidence.resolve()
     try:
+        install_cancellation_handlers()
         return LaneRunner(args.lane, repository, evidence).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)

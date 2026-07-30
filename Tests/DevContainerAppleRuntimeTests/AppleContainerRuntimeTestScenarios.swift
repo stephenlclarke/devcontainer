@@ -36,6 +36,7 @@ extension AppleContainerRuntimeTests {
         #expect(container.state == .running)
         #expect(container.startedAt != nil)
         #expect(container.spec.user == "501:20")
+        #expect(container.spec.environment == ["A": "last", "EMPTY": ""])
         #expect(container.spec.mounts.map(\.type) == [.bind, .volume, .tmpfs])
         #expect(
             container.spec.ports == [
@@ -187,7 +188,7 @@ extension AppleContainerRuntimeTests {
             )
         )
         #expect(log.contains("--tmpfs /run"))
-        #expect(!log.contains("--publish 0.0.0.0:18080:8080/tcp"))
+        #expect(log.contains("--publish 0.0.0.0:18080:8080/tcp"))
         #expect(!log.contains("--publish 127.0.0.1:0:53/udp"))
         #expect(log.contains("--network fixture-network fixture:latest"))
         #expect(!log.contains("fixture-network,alias="))

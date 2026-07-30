@@ -34,7 +34,10 @@ def update_readme(readme: str, section: str) -> str:
         return readme.rstrip() + "\n\n" + block + "\n"
     start = readme.index(START_MARKER)
     end = readme.index(END_MARKER, start) + len(END_MARKER)
-    return readme[:start] + block + readme[end:].lstrip("\n")
+    suffix = readme[end:].lstrip("\n")
+    if suffix:
+        return readme[:start] + block + "\n\n" + suffix
+    return readme[:start] + block + "\n"
 
 
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:

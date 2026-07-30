@@ -2,17 +2,14 @@ class @FORMULA_CLASS@ < Formula
   desc "VS Code Dev Containers compatibility for Apple container"
   homepage "https://github.com/stephenlclarke/devcontainer"
   url "@URL@"
-  version "@FORMULA_VERSION@"
-  sha256 "@SHA256@"
+@VERSION_DECLARATION@  sha256 "@SHA256@"
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on macos: :tahoe
   depends_on "docker"
   depends_on "docker-compose"
-  conflicts_with "@CONFLICTS_WITH@", because: "both install devcontainer commands"
-
-  def install
+  depends_on macos: :tahoe
+@CONFLICT_DECLARATION@  def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-compose"
@@ -33,19 +30,31 @@ class @FORMULA_CLASS@ < Formula
       Install either the stock Apple container package or a compatible
       container distribution before starting the service.
 
+      Start Apple's stock runtime:
+        /usr/local/bin/container system start
+
+      When macOS requests Local Network access for the selected runtime's
+      container-runtime-linux helper, choose Allow. Stock and custom runtime
+      helpers may appear as separate permission entries.
+
       Start the compatibility engine:
-        brew services start devcontainer
+        brew services start #{name}
 
       Use it without changing your default Docker context:
         eval "$(devcontainer context)"
 
       Configure VS Code's Dev Containers extension to use:
         #{opt_bin}/devcontainer-compose
+
+      Register the optional Apple container CLI plug-in explicitly:
+        devcontainer plugin register
     EOS
   end
 
   test do
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
+    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end
 end

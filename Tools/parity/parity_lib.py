@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-LANES = ("docker", "apple-stock", "apple-compose")
+LANES = ("docker", "apple-stock", "container-compose")
 OBSERVATION_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 
 

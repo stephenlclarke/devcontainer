@@ -23,6 +23,10 @@ readonly FAKE_CONTAINER="$TEMPORARY_DIRECTORY/container"
 readonly FAKE_DOCKER="$TEMPORARY_DIRECTORY/docker"
 readonly FAKE_COMPOSE="$TEMPORARY_DIRECTORY/container-compose"
 readonly INVALID_UTF8_MARKER="$TEMPORARY_DIRECTORY/invalid-utf8"
+readonly PLUGIN_PAYLOAD="$TEMPORARY_DIRECTORY/plugin-payload"
+readonly CONTAINER_INSTALL_ROOT="$TEMPORARY_DIRECTORY/container-root"
+readonly DIAGNOSTIC_LOG="$TEMPORARY_DIRECTORY/devcontainer.log"
+readonly DIAGNOSTIC_ARCHIVE="$TEMPORARY_DIRECTORY/diagnostics.tar.gz"
 
 for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
@@ -62,6 +66,9 @@ printf '%s\n' \
   'set -euo pipefail' \
   'case "$*" in' \
   '  "system version --format json") printf "%s\n" '\''{"version":"fixture"}'\'' ;;' \
+  '  "system status --format json")' \
+  "    printf '%s\n' '{\"status\":\"running\",\"installRoot\":\"$CONTAINER_INSTALL_ROOT\"}'" \
+  '    ;;' \
   '  "system status")' \
   "    if [[ -f '$INVALID_UTF8_MARKER' ]]; then" \
   '      printf "\377" >&2' \
@@ -69,6 +76,11 @@ printf '%s\n' \
   '    fi' \
   '    printf "%s\n" "running"' \
   '    ;;' \
+  '  "create --help") printf "%s\n" "Usage: container create" ;;' \
+  '  "list --all --format json") printf "%s\n" "[]" ;;' \
+  '  "image list --format json") printf "%s\n" "[]" ;;' \
+  '  "network list --format json") printf "%s\n" "[]" ;;' \
+  '  "volume list --format json") printf "%s\n" "[]" ;;' \
   '  *) exit 64 ;;' \
   'esac' >"$FAKE_CONTAINER"
 
@@ -93,6 +105,11 @@ printf '%s\n' \
   >"$FAKE_DOCKER"
 
 chmod 700 "$FAKE_CONTAINER" "$FAKE_COMPOSE" "$FAKE_DOCKER"
+mkdir -p "$PLUGIN_PAYLOAD/bin" "$CONTAINER_INSTALL_ROOT"
+printf '%s\n' 'abstract = "coverage fixture"' >"$PLUGIN_PAYLOAD/config.toml"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$PLUGIN_PAYLOAD/bin/devcontainer"
+printf '%s\n' 'token=coverage-secret' >"$DIAGNOSTIC_LOG"
+chmod 700 "$PLUGIN_PAYLOAD/bin/devcontainer"
 
 readonly COMMON_ENV=(
   "DEVCONTAINER_CONFIG=$CONFIGURATION"
@@ -135,6 +152,16 @@ run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" backend show \
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" backend set \
   --project fixture --state "$STATE_DATABASE" invalid
 
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin register \
+  --container "$FAKE_CONTAINER" \
+  --plugin "$PLUGIN_PAYLOAD"
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin status \
+  --install-root "$CONTAINER_INSTALL_ROOT" \
+  --plugin "$PLUGIN_PAYLOAD"
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" plugin unregister \
+  --install-root "$CONTAINER_INSTALL_ROOT" \
+  --plugin "$PLUGIN_PAYLOAD"
+
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER" \
   --socket "$TEMPORARY_DIRECTORY/missing.sock" \
@@ -145,6 +172,25 @@ run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --socket "$TEMPORARY_DIRECTORY/missing.sock" \
   --compose "$FAKE_COMPOSE" \
   --format json
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --compose "$FAKE_COMPOSE" \
+  --config "$CONFIGURATION" \
+  --state "$STATE_DATABASE" \
+  --socket "$TEMPORARY_DIRECTORY/missing.sock" \
+  --log "$DIAGNOSTIC_LOG" \
+  --event-limit 1 \
+  --output "$DIAGNOSTIC_ARCHIVE"
+[[ -f "$DIAGNOSTIC_ARCHIVE" ]]
+run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --event-limit 0 \
+  --output "$TEMPORARY_DIRECTORY/invalid-diagnostics.tar.gz"
+run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" diagnostics \
+  --container "$FAKE_CONTAINER" \
+  --config "$CONFIGURATION" \
+  --state "$STATE_DATABASE" \
+  --output "$DIAGNOSTIC_ARCHIVE"
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER" --format invalid
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" doctor \
