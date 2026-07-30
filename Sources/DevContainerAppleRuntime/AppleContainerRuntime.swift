@@ -432,7 +432,6 @@ public extension AppleContainerRuntime {
     ) async throws -> ContainerSnapshot {
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
         containerExits.removeValue(forKey: spec.name)
-        try validateNativeLabels(spec.labels)
         let image = try await inspectImage(reference: spec.image, context: context)
         let result = try await command(containerCreateArguments(spec))
         try requireSuccess(result, operation: "container create")
@@ -449,7 +448,6 @@ public extension AppleContainerRuntime {
     }
 
     private func containerCreateArguments(_ spec: ContainerSpec) async throws -> [String] {
-        try validateNativeLabels(spec.labels)
         let optionSupport = try await supportedCreateOptions()
         var arguments = try containerConfigurationArguments(
             spec,
@@ -468,19 +466,6 @@ public extension AppleContainerRuntime {
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
-    }
-
-    private func validateNativeLabels(_ labels: [String: String]) throws {
-        if let unsupported = labels.first(where: {
-            $0.key.contains("=") || $0.value.contains("=")
-        }) {
-            throw DevContainerError(
-                .unsupportedCapability,
-                message:
-                "stock apple/container 1.1 cannot preserve Docker label "
-                    + "\(unsupported.key) because its key or value contains '='"
-            )
-        }
     }
 
     static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
@@ -551,7 +536,9 @@ public extension AppleContainerRuntime {
         var arguments = ["create", "--name", spec.name]
         arguments += spec.environment.sorted { $0.key < $1.key }
             .flatMap { ["--env", "\($0.key)=\($0.value)"] }
-        arguments += spec.labels.sorted { $0.key < $1.key }
+        arguments += spec.labels.filter {
+            !$0.key.contains("=") && !$0.value.contains("=")
+        }.sorted { $0.key < $1.key }
             .flatMap { ["--label", "\($0.key)=\($0.value)"] }
         arguments += Self.optionalArgument("--workdir", value: spec.workingDirectory)
         arguments += Self.optionalArgument("--user", value: spec.user)
@@ -932,7 +919,11 @@ public extension AppleContainerRuntime {
             input: request.context
         )
         try requireSuccess(extractResult, operation: "build context extraction")
-        var arguments = ["build", "--file", request.dockerfile, "--progress", "plain"]
+        let dockerfile = try buildDockerfile(
+            request.dockerfile,
+            contextRoot: temporary.url
+        )
+        var arguments = ["build", "--file", dockerfile.path, "--progress", "plain"]
         for tag in request.tags {
             arguments += ["--tag", tag]
         }
@@ -953,6 +944,35 @@ public extension AppleContainerRuntime {
             continuation.yield(result.standardOutput)
             continuation.finish()
         }
+    }
+
+    private func buildDockerfile(
+        _ path: String,
+        contextRoot: URL
+    ) throws -> URL {
+        guard !path.isEmpty, !path.hasPrefix("/") else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "Dockerfile path must be relative to the build context"
+            )
+        }
+        let root = contextRoot.resolvingSymlinksInPath().standardizedFileURL
+        let candidate = contextRoot.appendingPathComponent(path)
+            .resolvingSymlinksInPath().standardizedFileURL
+        var isDirectory = ObjCBool(false)
+        guard candidate.path.hasPrefix(root.path + "/"),
+              FileManager.default.fileExists(
+                  atPath: candidate.path,
+                  isDirectory: &isDirectory
+              ),
+              !isDirectory.boolValue
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "Dockerfile does not exist inside the build context: \(path)"
+            )
+        }
+        return candidate
     }
 
     func tagImage(

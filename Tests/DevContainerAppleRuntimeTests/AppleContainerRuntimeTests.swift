@@ -553,12 +553,14 @@ struct AppleContainerRuntimeTests {
 
         try assertLifecycleLog(fixture.log())
 
-        _ = try await runtime.createContainer(
+        let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
+        let metadataContainer = try await runtime.createContainer(
             spec: ContainerSpec(
                 name: "fixture",
                 image: "fixture",
                 command: ["printf ok"],
-                entrypoint: ["/bin/sh", "-c"]
+                entrypoint: ["/bin/sh", "-c"],
+                labels: ["devcontainer.metadata": metadata]
             ),
             context: context
         )
@@ -567,20 +569,10 @@ struct AppleContainerRuntimeTests {
                 "create --name fixture --entrypoint /bin/sh fixture -c printf ok"
             )
         )
-
-        let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
-        let logBeforeRejectedCreate = try fixture.log()
-        await #expect(throws: DevContainerError.self) {
-            _ = try await runtime.createContainer(
-                spec: ContainerSpec(
-                    name: "fixture",
-                    image: "fixture",
-                    labels: ["devcontainer.metadata": metadata]
-                ),
-                context: context
-            )
-        }
-        #expect(try fixture.log() == logBeforeRejectedCreate)
+        #expect(try !fixture.log().contains("devcontainer.metadata"))
+        #expect(
+            metadataContainer.spec.labels["devcontainer.metadata"] == metadata
+        )
         try await runtime.renameContainer(id: "fixture", name: "renamed", context: context)
         #expect(
             try await runtime.inspectContainer(id: "renamed", context: context).spec.name

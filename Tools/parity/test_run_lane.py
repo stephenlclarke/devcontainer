@@ -264,11 +264,26 @@ class BuilderCleanupTests(unittest.TestCase):
                 check=False,
                 text=True,
             )
+            legacy_build = subprocess.run(
+                [
+                    runner.devcontainer_docker,
+                    "build",
+                    "--progress",
+                    "plain",
+                    "--load",
+                    ".",
+                ],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
 
         self.assertNotEqual(buildx.returncode, 0)
         self.assertIn("unknown command", buildx.stderr)
         self.assertEqual(forwarded.returncode, 0)
         self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
+        self.assertEqual(legacy_build.returncode, 0)
+        self.assertEqual(legacy_build.stdout.strip(), "forwarded:build .")
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
 
     def test_builder_disables_unsupported_restart_policy(self) -> None:

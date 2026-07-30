@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import platform
-import shlex
 import shutil
 import signal
 import socket
@@ -237,12 +236,33 @@ class LaneRunner:
         self.environment["DOCKER_BUILDKIT"] = "0"
         wrapper = self.socket_root / "docker-no-buildx"
         wrapper.write_text(
-            "#!/bin/sh\n"
-            'if [ "${1:-}" = "buildx" ]; then\n'
-            "  printf '%s\\n' 'docker: unknown command: docker buildx' >&2\n"
-            "  exit 1\n"
-            "fi\n"
-            f"exec {shlex.quote(self.docker)} \"$@\"\n",
+            "#!/usr/bin/env python3\n"
+            "import os\n"
+            "import sys\n"
+            f"docker = {json.dumps(self.docker)}\n"
+            "arguments = sys.argv[1:]\n"
+            'if arguments[:1] == ["buildx"]:\n'
+            '    print("docker: unknown command: docker buildx", file=sys.stderr)\n'
+            "    raise SystemExit(1)\n"
+            'if arguments[:1] == ["build"]:\n'
+            "    filtered = []\n"
+            "    index = 0\n"
+            "    while index < len(arguments):\n"
+            "        argument = arguments[index]\n"
+            '        if argument == "--load":\n'
+            "            index += 1\n"
+            "            continue\n"
+            '        if argument == "--progress":\n'
+            "            index += 2\n"
+            "            continue\n"
+            '        if argument.startswith("--progress="):\n'
+            "            index += 1\n"
+            "            continue\n"
+            "        filtered.append(argument)\n"
+            "        index += 1\n"
+            "    arguments = filtered\n"
+            '    os.environ["DOCKER_BUILDKIT"] = "0"\n'
+            "os.execv(docker, [docker, *arguments])\n",
             encoding="utf-8",
         )
         wrapper.chmod(0o700)

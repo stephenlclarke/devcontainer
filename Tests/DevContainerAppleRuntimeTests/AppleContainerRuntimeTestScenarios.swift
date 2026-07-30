@@ -292,6 +292,7 @@ extension AppleContainerRuntimeTests {
         #expect(String(data: loaded, encoding: .utf8) == "load-progress\n")
         let request = ImageBuildRequest(
             context: minimalTar(),
+            dockerfile: "file.txt",
             tags: ["fixture:built"],
             buildArguments: ["MODE": "debug"],
             target: "development",
