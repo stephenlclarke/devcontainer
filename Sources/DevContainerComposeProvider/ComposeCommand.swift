@@ -25,6 +25,7 @@ private struct ParsedComposeArguments {
     var projectDirectory: String?
     var files: [String] = []
     var preventsMutation = false
+    var configurationArguments: [String] = []
 
     mutating func consumeValueOption(_ option: String, value: String) {
         switch option {
@@ -133,8 +134,7 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                     )
             )
         configurationArguments =
-            Array(arguments.prefix(parsed.commandIndex ?? arguments.count))
-                + ["config", "--format", "json"]
+            parsed.configurationArguments + ["config", "--format", "json"]
     }
 
     public func projectKey(userID: uid_t = getuid()) -> ProjectKey? {
@@ -161,27 +161,11 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                 index += 1
                 continue
             }
-            if valueOptions.contains(argument) {
-                guard index + 1 < arguments.count else {
-                    throw DevContainerError(
-                        .invalidRequest,
-                        message: "Compose option \(argument) requires a value"
-                    )
-                }
-                let value = arguments[index + 1]
-                parsed.consumeValueOption(argument, value: value)
-                index += 2
-                continue
-            }
-            if try parsed.consumeInlineOption(argument) {
-                index += 1
-                continue
-            }
-            if flagOptions.contains(argument) {
-                if ["--dry-run", "--help", "--version", "-h"].contains(argument) {
-                    parsed.preventsMutation = true
-                }
-                index += 1
+            if try consumeGlobalOption(
+                from: arguments,
+                at: &index,
+                into: &parsed
+            ) {
                 continue
             }
             if argument.hasPrefix("-") {
@@ -192,9 +176,71 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
             }
             parsed.command = argument
             parsed.commandIndex = index
+            try parseInheritedOptions(
+                arguments,
+                startingAt: index + 1,
+                into: &parsed
+            )
             break
         }
         return parsed
+    }
+
+    private static func consumeGlobalOption(
+        from arguments: [String],
+        at index: inout Int,
+        into parsed: inout ParsedComposeArguments
+    ) throws -> Bool {
+        let argument = arguments[index]
+        if valueOptions.contains(argument) {
+            guard index + 1 < arguments.count else {
+                throw DevContainerError(
+                    .invalidRequest,
+                    message: "Compose option \(argument) requires a value"
+                )
+            }
+            let value = arguments[index + 1]
+            parsed.consumeValueOption(argument, value: value)
+            parsed.configurationArguments.append(contentsOf: [argument, value])
+            index += 2
+            return true
+        }
+        if try parsed.consumeInlineOption(argument) {
+            parsed.configurationArguments.append(argument)
+            index += 1
+            return true
+        }
+        guard flagOptions.contains(argument) else {
+            return false
+        }
+        if ["--dry-run", "--help", "--version", "-h"].contains(argument) {
+            parsed.preventsMutation = true
+        }
+        parsed.configurationArguments.append(argument)
+        index += 1
+        return true
+    }
+
+    private static func parseInheritedOptions(
+        _ arguments: [String],
+        startingAt startIndex: Int,
+        into parsed: inout ParsedComposeArguments
+    ) throws {
+        var index = startIndex
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" {
+                return
+            }
+            if try consumeGlobalOption(
+                from: arguments,
+                at: &index,
+                into: &parsed
+            ) {
+                continue
+            }
+            index += 1
+        }
     }
 
     private static func commandFlag(

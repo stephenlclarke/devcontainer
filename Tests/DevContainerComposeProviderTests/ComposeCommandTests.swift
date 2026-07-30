@@ -160,6 +160,45 @@ func `command envelope accepts every global option spelling and separator`() thr
 }
 
 @Test
+func `inherited global options are normalized after the command`() throws {
+    let mutating = try ComposeCommandEnvelope(
+        arguments: [
+            "up",
+            "--project-name", "after-command",
+            "--profile=debug",
+            "--detach"
+        ]
+    )
+    #expect(mutating.projectName == "after-command")
+    #expect(mutating.mutating)
+    #expect(
+        mutating.configurationArguments == [
+            "--project-name", "after-command",
+            "--profile=debug",
+            "config", "--format", "json"
+        ]
+    )
+
+    let dryRun = try ComposeCommandEnvelope(
+        arguments: ["down", "--dry-run"]
+    )
+    #expect(!dryRun.mutating)
+    #expect(!dryRun.removesProject)
+
+    let help = try ComposeCommandEnvelope(
+        arguments: ["down", "--help"]
+    )
+    #expect(!help.mutating)
+    #expect(!help.removesProject)
+
+    let separator = try ComposeCommandEnvelope(
+        arguments: ["run", "web", "--", "--project-name", "process-argument"]
+    )
+    #expect(separator.projectName == nil)
+    #expect(separator.configurationArguments == ["config", "--format", "json"])
+}
+
+@Test
 func `non executing Boolean options do not require provider claims`() throws {
     #expect(
         try !ComposeCommandEnvelope(
