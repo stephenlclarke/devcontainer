@@ -281,7 +281,13 @@ live validation:
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
 
-All workflows use explicit least-privilege `permissions`, pinned action SHAs, concurrency groups, timeouts, deterministic tool pins, dependency caching keyed by lockfiles/toolchains, and artifact names containing the candidate SHA. Scripts contain the substantial logic so it can be run and tested locally.
+Swift build and test jobs on hosted `macos-26` explicitly select Xcode 26.6,
+matching the development and live-parity host instead of inheriting a moving
+runner-image default. All workflows use explicit least-privilege `permissions`,
+pinned action SHAs, concurrency groups, timeouts, deterministic tool pins,
+dependency caching keyed by lockfiles/toolchains, and artifact names containing
+the candidate SHA. Scripts contain the substantial logic so it can be run and
+tested locally.
 
 Path filtering is an optimization, not authority. Changes to workflow policy, dependency resolution, shared CI scripts, parity manifests, normalizers, packaging, or release verification run every affected downstream gate.
 

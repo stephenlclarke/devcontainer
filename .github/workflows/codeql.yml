@@ -28,6 +28,8 @@ jobs:
        github.event.pull_request.draft == false)
     runs-on: macos-26
     timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     permissions:
       contents: read
       security-events: write
