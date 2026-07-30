@@ -126,19 +126,26 @@ struct DockerCreateContainerRequest: Decodable {
     var attachStdin: Bool?
     var attachStdout: Bool?
     var attachStderr: Bool?
+    var argsEscaped: Bool?
     var tty: Bool?
     var openStdin: Bool?
+    var stdinOnce: Bool?
     var env: [String]?
     var cmd: [String]?
     var image: String
+    var exposedPorts: [String: EmptyObject]?
     var volumes: [String: EmptyObject]?
     var workingDir: String?
     var entrypoint: StringOrArray?
     var labels: [String: String]?
+    var macAddress: String?
     var healthcheck: DockerHealthcheck?
     var hostConfig: DockerHostConfig?
     var mounts: [DockerMountRequest]?
     var networkingConfig: DockerNetworkingConfig?
+    var networkDisabled: Bool?
+    var onBuild: [String]?
+    var shell: [String]?
     var stopSignal: String?
     var stopTimeout: Int?
 
@@ -148,18 +155,25 @@ struct DockerCreateContainerRequest: Decodable {
         case attachStderr = "AttachStderr"
         case attachStdin = "AttachStdin"
         case attachStdout = "AttachStdout"
+        case argsEscaped = "ArgsEscaped"
         case cmd = "Cmd"
         case domainname = "Domainname"
         case entrypoint = "Entrypoint"
         case env = "Env"
+        case exposedPorts = "ExposedPorts"
         case hostConfig = "HostConfig"
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
         case image = "Image"
         case labels = "Labels"
+        case macAddress = "MacAddress"
         case mounts = "Mounts"
+        case networkDisabled = "NetworkDisabled"
         case networkingConfig = "NetworkingConfig"
+        case onBuild = "OnBuild"
         case openStdin = "OpenStdin"
+        case shell = "Shell"
+        case stdinOnce = "StdinOnce"
         case stopSignal = "StopSignal"
         case stopTimeout = "StopTimeout"
         case tty = "Tty"
@@ -209,15 +223,27 @@ enum StringOrArray: Decodable {
 }
 
 struct DockerHostConfig: Decodable {
+    var annotations: [String: String]?
     var binds: [String]?
+    var blkioDeviceReadBPS: [EmptyObject]?
+    var blkioDeviceReadIOPS: [EmptyObject]?
+    var blkioDeviceWriteBPS: [EmptyObject]?
+    var blkioDeviceWriteIOPS: [EmptyObject]?
+    var blkioWeight: UInt16?
+    var blkioWeightDevice: [EmptyObject]?
     var mounts: [DockerMountRequest]?
     var portBindings: [String: [DockerPortBindingRequest]]?
     var privileged: Bool?
+    var publishAllPorts: Bool?
     var autoRemove: Bool?
     var initProcess: Bool?
     var capabilitiesToAdd: [String]?
     var capabilitiesToDrop: [String]?
+    var cgroup: String?
+    var cgroupParent: String?
     var securityOptions: [String]?
+    var consoleSize: [UInt]?
+    var containerIDFile: String?
     var networkMode: String?
     var deviceRequests: [DockerDeviceRequest]?
     var devices: [DockerDeviceMapping]?
@@ -226,8 +252,12 @@ struct DockerHostConfig: Decodable {
     var memoryReservation: Int64?
     var nanoCPUs: Int64?
     var cpuShares: Int64?
+    var cpuCount: Int64?
     var cpuPeriod: Int64?
+    var cpuPercent: Int64?
     var cpuQuota: Int64?
+    var cpuRealtimePeriod: Int64?
+    var cpuRealtimeRuntime: Int64?
     var cpusetCPUs: String?
     var cpusetMems: String?
     var pidsLimit: Int64?
@@ -237,6 +267,12 @@ struct DockerHostConfig: Decodable {
     var dnsSearch: [String]?
     var extraHosts: [String]?
     var groupAdd: [String]?
+    var ioMaximumBandwidth: UInt64?
+    var ioMaximumIOPS: UInt64?
+    var isolation: String?
+    var links: [String]?
+    var logConfig: DockerLogConfig?
+    var memorySwappiness: Int64?
     var sysctls: [String: String]?
     var readOnlyRootFilesystem: Bool?
     var oomKillDisable: Bool?
@@ -247,19 +283,41 @@ struct DockerHostConfig: Decodable {
     var utsMode: String?
     var cgroupNamespaceMode: String?
     var restartPolicy: DockerRestartPolicy?
+    var runtime: String?
+    var storageOptions: [String: String]?
+    var tmpfs: [String: String]?
     var ulimits: [DockerUlimit]?
     var deviceCgroupRules: [String]?
     var maskedPaths: [String]?
     var readOnlyPaths: [String]?
+    var volumeDriver: String?
+    var volumesFrom: [String]?
+
+    struct EmptyObject: Decodable {}
 
     enum CodingKeys: String, CodingKey {
+        case annotations = "Annotations"
         case autoRemove = "AutoRemove"
         case binds = "Binds"
+        case blkioDeviceReadBPS = "BlkioDeviceReadBps"
+        case blkioDeviceReadIOPS = "BlkioDeviceReadIOps"
+        case blkioDeviceWriteBPS = "BlkioDeviceWriteBps"
+        case blkioDeviceWriteIOPS = "BlkioDeviceWriteIOps"
+        case blkioWeight = "BlkioWeight"
+        case blkioWeightDevice = "BlkioWeightDevice"
         case capabilitiesToAdd = "CapAdd"
         case capabilitiesToDrop = "CapDrop"
+        case cgroup = "Cgroup"
+        case cgroupParent = "CgroupParent"
         case cgroupNamespaceMode = "CgroupnsMode"
+        case consoleSize = "ConsoleSize"
+        case containerIDFile = "ContainerIDFile"
+        case cpuCount = "CpuCount"
         case cpuPeriod = "CpuPeriod"
+        case cpuPercent = "CpuPercent"
         case cpuQuota = "CpuQuota"
+        case cpuRealtimePeriod = "CpuRealtimePeriod"
+        case cpuRealtimeRuntime = "CpuRealtimeRuntime"
         case cpuShares = "CpuShares"
         case cpusetCPUs = "CpusetCpus"
         case cpusetMems = "CpusetMems"
@@ -272,11 +330,17 @@ struct DockerHostConfig: Decodable {
         case extraHosts = "ExtraHosts"
         case groupAdd = "GroupAdd"
         case initProcess = "Init"
+        case ioMaximumBandwidth = "IOMaximumBandwidth"
+        case ioMaximumIOPS = "IOMaximumIOps"
         case ipcMode = "IpcMode"
+        case isolation = "Isolation"
+        case links = "Links"
+        case logConfig = "LogConfig"
         case maskedPaths = "MaskedPaths"
         case memory = "Memory"
         case memoryReservation = "MemoryReservation"
         case memorySwap = "MemorySwap"
+        case memorySwappiness = "MemorySwappiness"
         case nanoCPUs = "NanoCpus"
         case mounts = "Mounts"
         case networkMode = "NetworkMode"
@@ -286,16 +350,28 @@ struct DockerHostConfig: Decodable {
         case pidsLimit = "PidsLimit"
         case portBindings = "PortBindings"
         case privileged = "Privileged"
+        case publishAllPorts = "PublishAllPorts"
         case readOnlyPaths = "ReadonlyPaths"
         case readOnlyRootFilesystem = "ReadonlyRootfs"
         case restartPolicy = "RestartPolicy"
+        case runtime = "Runtime"
         case securityOptions = "SecurityOpt"
         case shmSize = "ShmSize"
+        case storageOptions = "StorageOpt"
         case sysctls = "Sysctls"
+        case tmpfs = "Tmpfs"
         case ulimits = "Ulimits"
         case userNamespaceMode = "UsernsMode"
         case utsMode = "UTSMode"
+        case volumeDriver = "VolumeDriver"
+        case volumesFrom = "VolumesFrom"
     }
+}
+
+struct DockerLogConfig: Decodable {
+    var type: String?
+    var config: [String: String]?
+    enum CodingKeys: String, CodingKey { case config = "Config", type = "Type" }
 }
 
 struct DockerDeviceRequest: Decodable {

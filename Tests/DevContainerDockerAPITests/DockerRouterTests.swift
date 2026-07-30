@@ -323,6 +323,32 @@ func `known unsupported create fields fail before runtime side effects`() async 
     )
     let router = DockerRouter(runtime: runtime)
     let containerRequests = [
+        (#"{"Image":"alpine:test","ArgsEscaped":true}"#, "ArgsEscaped"),
+        (
+            #"{"Image":"alpine:test","ExposedPorts":{"8080/tcp":{}}}"#,
+            "ExposedPorts"
+        ),
+        (#"{"Image":"alpine:test","MacAddress":"02:42:ac:11:00:02"}"#, "MacAddress"),
+        (#"{"Image":"alpine:test","NetworkDisabled":true}"#, "NetworkDisabled"),
+        (#"{"Image":"alpine:test","OnBuild":["RUN true"]}"#, "OnBuild"),
+        (#"{"Image":"alpine:test","Shell":["/bin/sh","-c"]}"#, "Shell"),
+        (#"{"Image":"alpine:test","StdinOnce":true}"#, "StdinOnce"),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"PublishAllPorts":true}}"#,
+            "HostConfig.PublishAllPorts"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"LogConfig":{"Type":"json-file","Config":{}}}}"#,
+            "HostConfig.LogConfig"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"MemorySwappiness":0}}"#,
+            "HostConfig.MemorySwappiness"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"ConsoleSize":[24,80]}}"#,
+            "HostConfig.ConsoleSize"
+        ),
         (#"{"Image":"alpine:test","HostConfig":{"Memory":1048576}}"#, "HostConfig.Memory"),
         (
             #"{"Image":"alpine:test","HostConfig":{"DeviceRequests":[{"Count":-1,"Capabilities":[["gpu"]]}]}}"#,
@@ -413,6 +439,76 @@ func `known unsupported create fields fail before runtime side effects`() async 
     #expect(await runtime.listNetworks(context: RuntimeRequestContext()).isEmpty)
     #expect(await runtime.listVolumes(context: RuntimeRequestContext()).isEmpty)
 }
+
+@Test
+func `neutral Docker client metadata is accepted`() async {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:test"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let response = await DockerRouter(runtime: runtime).respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=neutral",
+            body: neutralDockerClientMetadata
+        )
+    )
+
+    #expect(response.status == 201)
+    #expect(await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    ).count == 1)
+}
+
+private let neutralDockerClientMetadata = Data(
+    #"""
+    {
+      "Image":"alpine:test",
+      "ArgsEscaped":false,
+      "ExposedPorts":{},
+      "MacAddress":"",
+      "NetworkDisabled":false,
+      "OnBuild":[],
+      "Shell":[],
+      "StdinOnce":false,
+      "HostConfig":{
+        "Annotations":{},
+        "BlkioDeviceReadBps":[],
+        "BlkioDeviceReadIOps":[],
+        "BlkioDeviceWriteBps":[],
+        "BlkioDeviceWriteIOps":[],
+        "BlkioWeight":0,
+        "BlkioWeightDevice":[],
+        "Cgroup":"",
+        "CgroupParent":"",
+        "ConsoleSize":[0,0],
+        "ContainerIDFile":"",
+        "CpuCount":0,
+        "CpuPercent":0,
+        "CpuRealtimePeriod":0,
+        "CpuRealtimeRuntime":0,
+        "IOMaximumBandwidth":0,
+        "IOMaximumIOps":0,
+        "Isolation":"",
+        "Links":[],
+        "LogConfig":{"Config":{},"Type":""},
+        "PublishAllPorts":false,
+        "Runtime":"",
+        "StorageOpt":{},
+        "Tmpfs":{},
+        "VolumeDriver":"",
+        "VolumesFrom":[]
+      }
+    }
+    """#.utf8
+)
 
 @Test
 // swiftlint:disable:next function_body_length

@@ -184,6 +184,27 @@ extension DockerRouter {
         if request.domainname?.isEmpty == false {
             try unsupportedCreateField("Domainname")
         }
+        if request.argsEscaped == true {
+            try unsupportedCreateField("ArgsEscaped")
+        }
+        if request.exposedPorts?.isEmpty == false {
+            try unsupportedCreateField("ExposedPorts")
+        }
+        if request.macAddress?.isEmpty == false {
+            try unsupportedCreateField("MacAddress")
+        }
+        if request.networkDisabled == true {
+            try unsupportedCreateField("NetworkDisabled")
+        }
+        if request.onBuild?.isEmpty == false {
+            try unsupportedCreateField("OnBuild")
+        }
+        if request.shell?.isEmpty == false {
+            try unsupportedCreateField("Shell")
+        }
+        if request.stdinOnce == true {
+            try unsupportedCreateField("StdinOnce")
+        }
         if request.stopSignal?.isEmpty == false {
             try unsupportedCreateField("StopSignal")
         }
@@ -207,8 +228,12 @@ extension DockerRouter {
             ("HostConfig.MemoryReservation", host.memoryReservation),
             ("HostConfig.NanoCpus", host.nanoCPUs),
             ("HostConfig.CpuShares", host.cpuShares),
+            ("HostConfig.CpuCount", host.cpuCount),
             ("HostConfig.CpuPeriod", host.cpuPeriod),
+            ("HostConfig.CpuPercent", host.cpuPercent),
             ("HostConfig.CpuQuota", host.cpuQuota),
+            ("HostConfig.CpuRealtimePeriod", host.cpuRealtimePeriod),
+            ("HostConfig.CpuRealtimeRuntime", host.cpuRealtimeRuntime),
             ("HostConfig.PidsLimit", host.pidsLimit),
             ("HostConfig.ShmSize", host.shmSize)
         ]
@@ -227,17 +252,68 @@ extension DockerRouter {
         if host.devices?.isEmpty == false {
             try unsupportedCreateField("HostConfig.Devices")
         }
+        if host.blkioWeight != nil && host.blkioWeight != 0 {
+            try unsupportedCreateField("HostConfig.BlkioWeight")
+        }
+        for (field, values) in [
+            ("HostConfig.BlkioWeightDevice", host.blkioWeightDevice),
+            ("HostConfig.BlkioDeviceReadBps", host.blkioDeviceReadBPS),
+            ("HostConfig.BlkioDeviceWriteBps", host.blkioDeviceWriteBPS),
+            ("HostConfig.BlkioDeviceReadIOps", host.blkioDeviceReadIOPS),
+            ("HostConfig.BlkioDeviceWriteIOps", host.blkioDeviceWriteIOPS)
+        ] where values?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
         for (field, values) in [
             ("HostConfig.Dns", host.dns),
             ("HostConfig.DnsOptions", host.dnsOptions),
             ("HostConfig.DnsSearch", host.dnsSearch),
             ("HostConfig.ExtraHosts", host.extraHosts),
             ("HostConfig.GroupAdd", host.groupAdd),
+            ("HostConfig.Links", host.links),
             ("HostConfig.DeviceCgroupRules", host.deviceCgroupRules),
             ("HostConfig.MaskedPaths", host.maskedPaths),
-            ("HostConfig.ReadonlyPaths", host.readOnlyPaths)
+            ("HostConfig.ReadonlyPaths", host.readOnlyPaths),
+            ("HostConfig.VolumesFrom", host.volumesFrom)
         ] where values?.isEmpty == false {
             try unsupportedCreateField(field)
+        }
+        for (field, values) in [
+            ("HostConfig.Annotations", host.annotations),
+            ("HostConfig.StorageOpt", host.storageOptions),
+            ("HostConfig.Tmpfs", host.tmpfs)
+        ] where values?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        for (field, value) in [
+            ("HostConfig.Cgroup", host.cgroup),
+            ("HostConfig.CgroupParent", host.cgroupParent),
+            ("HostConfig.ContainerIDFile", host.containerIDFile),
+            ("HostConfig.Isolation", host.isolation),
+            ("HostConfig.Runtime", host.runtime),
+            ("HostConfig.VolumeDriver", host.volumeDriver)
+        ] where value?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        if host.consoleSize?.contains(where: { $0 != 0 }) == true {
+            try unsupportedCreateField("HostConfig.ConsoleSize")
+        }
+        if host.logConfig?.type?.isEmpty == false
+            || host.logConfig?.config?.isEmpty == false
+        {
+            try unsupportedCreateField("HostConfig.LogConfig")
+        }
+        if host.memorySwappiness != nil {
+            try unsupportedCreateField("HostConfig.MemorySwappiness")
+        }
+        if (host.ioMaximumBandwidth ?? 0) != 0 {
+            try unsupportedCreateField("HostConfig.IOMaximumBandwidth")
+        }
+        if (host.ioMaximumIOPS ?? 0) != 0 {
+            try unsupportedCreateField("HostConfig.IOMaximumIOps")
+        }
+        if host.publishAllPorts == true {
+            try unsupportedCreateField("HostConfig.PublishAllPorts")
         }
         if host.sysctls?.isEmpty == false {
             try unsupportedCreateField("HostConfig.Sysctls")
