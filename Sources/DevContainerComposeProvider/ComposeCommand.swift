@@ -227,6 +227,7 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
         "stop",
         "unpause",
         "up",
+        "wait",
         "watch"
     ]
 }

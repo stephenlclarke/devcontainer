@@ -174,6 +174,7 @@ func `non executing Boolean options do not require provider claims`() throws {
     "stop",
     "unpause",
     "up",
+    "wait",
     "watch"
 ])
 func `resource changing commands require a provider claim`(_ command: String) throws {
