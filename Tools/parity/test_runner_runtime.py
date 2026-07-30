@@ -40,6 +40,10 @@ case "${1:-} ${2:-}" in
     printf '{"status":"%s"}\\n' "$value"
     ;;
   "system start")
+    if [[ "${MOCK_START_FAIL_ONCE:-0}" == "1" && ! -f "${state}.failed" ]]; then
+      : > "${state}.failed"
+      exit 17
+    fi
     printf 'running\\n' > "$state"
     ;;
   "system stop")
@@ -55,7 +59,12 @@ esac
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         return executable
 
-    def run_script(self, operation: str, lane: str) -> subprocess.CompletedProcess[str]:
+    def run_script(
+        self,
+        operation: str,
+        lane: str,
+        extra_environment: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment.update(
             {
@@ -65,6 +74,7 @@ esac
                 "MOCK_RUNTIME_LOG": str(self.log),
             }
         )
+        environment.update(extra_environment or {})
         return subprocess.run(
             [str(SCRIPT), operation, lane],
             cwd=ROOT,
@@ -98,6 +108,21 @@ esac
             (self.root / "compose.state").read_text().strip(),
             "unregistered",
         )
+
+    def test_retries_an_interrupted_runtime_start(self) -> None:
+        result = self.run_script(
+            "start",
+            "container-compose",
+            {"MOCK_START_FAIL_ONCE": "1"},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "compose.state").read_text().strip(),
+            "running",
+        )
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertEqual(operations.count("compose system start"), 2)
 
     def test_rejects_unknown_lane_without_runtime_changes(self) -> None:
         result = self.run_script("start", "unknown")

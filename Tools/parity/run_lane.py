@@ -232,6 +232,8 @@ class LaneRunner:
                 self.builder_name,
                 "--driver",
                 "docker-container",
+                "--driver-opt",
+                "restart-policy=no",
             ],
             cwd=self.repository,
             env=self.environment,

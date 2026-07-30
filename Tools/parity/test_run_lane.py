@@ -234,6 +234,56 @@ class CleanupFixtureTests(unittest.TestCase):
 
 
 class BuilderCleanupTests(unittest.TestCase):
+    def test_builder_disables_unsupported_restart_policy(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.repository = Path("/repository")
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            completed = [
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+
+            with (
+                mock.patch.object(
+                    runner,
+                    "docker_container_inventory",
+                    side_effect=[set(), {"builder-container-id"}],
+                ),
+                mock.patch(
+                    "run_lane.subprocess.run",
+                    side_effect=completed,
+                ) as run,
+                mock.patch("run_lane.os.getpid", return_value=123),
+            ):
+                runner.prepare_builder()
+
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            [
+                "/usr/bin/docker",
+                "buildx",
+                "create",
+                "--name",
+                "devcontainer-parity-apple-stock-123",
+                "--driver",
+                "docker-container",
+                "--driver-opt",
+                "restart-policy=no",
+            ],
+        )
+        self.assertEqual(
+            runner.environment["BUILDX_BUILDER"],
+            "devcontainer-parity-apple-stock-123",
+        )
+        self.assertEqual(
+            runner.builder_container_ids,
+            {"builder-container-id"},
+        )
+
     def test_builder_cleanup_reports_and_removes_exact_leaked_container(
         self,
     ) -> None:
