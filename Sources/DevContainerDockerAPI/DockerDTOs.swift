@@ -425,28 +425,10 @@ struct DockerUlimit: Decodable {
 }
 
 struct DockerNetworkingConfig: Decodable {
-    var endpointsConfig: [String: DockerEndpointConfig]?
+    var endpointsConfig: [String: DockerNetworkEndpointConfig]?
 
     enum CodingKeys: String, CodingKey {
         case endpointsConfig = "EndpointsConfig"
-    }
-}
-
-struct DockerEndpointConfig: Decodable {
-    var aliases: [String]?
-    var links: [String]?
-    var ipamConfig: DockerEndpointIPAMConfig?
-    var macAddress: String?
-    var driverOptions: [String: String]?
-    var gatewayPriority: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case aliases = "Aliases"
-        case driverOptions = "DriverOpts"
-        case gatewayPriority = "GwPriority"
-        case ipamConfig = "IPAMConfig"
-        case links = "Links"
-        case macAddress = "MacAddress"
     }
 }
 

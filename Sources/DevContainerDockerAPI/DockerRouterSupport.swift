@@ -408,11 +408,7 @@ extension DockerRouter {
             return
         }
         try validateEndpointFields(
-            links: endpoint.links,
-            ipam: endpoint.ipamConfig,
-            macAddress: endpoint.macAddress,
-            driverOptions: endpoint.driverOptions,
-            gatewayPriority: endpoint.gatewayPriority,
+            endpoint,
             prefix: "EndpointConfig"
         )
     }
@@ -422,42 +418,53 @@ extension DockerRouter {
     ) throws {
         for (name, endpoint) in networking?.endpointsConfig ?? [:] {
             try validateEndpointFields(
-                links: endpoint.links,
-                ipam: endpoint.ipamConfig,
-                macAddress: endpoint.macAddress,
-                driverOptions: endpoint.driverOptions,
-                gatewayPriority: endpoint.gatewayPriority,
+                endpoint,
                 prefix: "NetworkingConfig.EndpointsConfig.\(name)"
             )
         }
     }
 
-    // swiftlint:disable:next function_parameter_count
     private func validateEndpointFields(
-        links: [String]?,
-        ipam: DockerEndpointIPAMConfig?,
-        macAddress: String?,
-        driverOptions: [String: String]?,
-        gatewayPriority: Int?,
+        _ endpoint: DockerNetworkEndpointConfig,
         prefix: String
     ) throws {
-        if links?.isEmpty == false {
+        if endpoint.links?.isEmpty == false {
             try unsupportedCreateField("\(prefix).Links")
         }
-        if ipam?.ipv4Address?.isEmpty == false
-            || ipam?.ipv6Address?.isEmpty == false
-            || ipam?.linkLocalIPs?.isEmpty == false
+        if endpoint.ipamConfig?.ipv4Address?.isEmpty == false
+            || endpoint.ipamConfig?.ipv6Address?.isEmpty == false
+            || endpoint.ipamConfig?.linkLocalIPs?.isEmpty == false
         {
             try unsupportedCreateField("\(prefix).IPAMConfig")
         }
-        if macAddress?.isEmpty == false {
+        if endpoint.macAddress?.isEmpty == false {
             try unsupportedCreateField("\(prefix).MacAddress")
         }
-        if driverOptions?.isEmpty == false {
+        if endpoint.driverOptions?.isEmpty == false {
             try unsupportedCreateField("\(prefix).DriverOpts")
         }
-        if let gatewayPriority, gatewayPriority != 0 {
+        if let gatewayPriority = endpoint.gatewayPriority, gatewayPriority != 0 {
             try unsupportedCreateField("\(prefix).GwPriority")
+        }
+        let unsupportedStrings: [(String, String?)] = [
+            ("NetworkID", endpoint.networkID),
+            ("EndpointID", endpoint.endpointID),
+            ("Gateway", endpoint.gateway),
+            ("IPAddress", endpoint.ipAddress),
+            ("IPv6Gateway", endpoint.ipv6Gateway),
+            ("GlobalIPv6Address", endpoint.globalIPv6Address)
+        ]
+        if let (field, _) = unsupportedStrings.first(where: { $0.1?.isEmpty == false }) {
+            try unsupportedCreateField("\(prefix).\(field)")
+        }
+        if let prefixLength = endpoint.ipPrefixLength, prefixLength != 0 {
+            try unsupportedCreateField("\(prefix).IPPrefixLen")
+        }
+        if let prefixLength = endpoint.globalIPv6PrefixLength, prefixLength != 0 {
+            try unsupportedCreateField("\(prefix).GlobalIPv6PrefixLen")
+        }
+        if endpoint.dnsNames?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).DNSNames")
         }
     }
 

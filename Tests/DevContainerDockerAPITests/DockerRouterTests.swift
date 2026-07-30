@@ -392,6 +392,19 @@ func `known unsupported create fields fail before runtime side effects`() async 
             }
             """#,
             "NetworkingConfig.EndpointsConfig.bridge.IPAMConfig"
+        ),
+        (
+            #"""
+            {
+              "Image":"alpine:test",
+              "NetworkingConfig":{
+                "EndpointsConfig":{
+                  "bridge":{"Gateway":"172.20.0.1"}
+                }
+              }
+            }
+            """#,
+            "NetworkingConfig.EndpointsConfig.bridge.Gateway"
         )
     ]
     for (body, field) in containerRequests {
@@ -505,6 +518,21 @@ private let neutralDockerClientMetadata = Data(
         "Tmpfs":{},
         "VolumeDriver":"",
         "VolumesFrom":[]
+      },
+      "NetworkingConfig":{
+        "EndpointsConfig":{
+          "default":{
+            "DNSNames":[],
+            "EndpointID":"",
+            "Gateway":"",
+            "GlobalIPv6Address":"",
+            "GlobalIPv6PrefixLen":0,
+            "IPAddress":"",
+            "IPPrefixLen":0,
+            "IPv6Gateway":"",
+            "NetworkID":""
+          }
+        }
       }
     }
     """#.utf8

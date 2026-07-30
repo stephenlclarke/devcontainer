@@ -576,6 +576,21 @@ func assertAdvancedKillWaitAndRemove(
     )
 }
 
+private func neutralEndpointConfig(aliases: [String]) -> [String: Any] {
+    [
+        "Aliases": aliases,
+        "DNSNames": [],
+        "EndpointID": "",
+        "Gateway": "",
+        "GlobalIPv6Address": "",
+        "GlobalIPv6PrefixLen": 0,
+        "IPAddress": "",
+        "IPPrefixLen": 0,
+        "IPv6Gateway": "",
+        "NetworkID": ""
+    ]
+}
+
 func connectFixtureNetwork(
     router: DockerRouter,
     container: ContainerSnapshot
@@ -591,7 +606,7 @@ func connectFixtureNetwork(
     let connect = try JSONSerialization.data(
         withJSONObject: [
             "Container": container.dockerID.rawValue,
-            "EndpointConfig": ["Aliases": ["app", "api"]]
+            "EndpointConfig": neutralEndpointConfig(aliases: ["app", "api"])
         ]
     )
     #expect(

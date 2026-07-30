@@ -129,11 +129,20 @@ indirect enum DockerRequestSchema: Sendable {
         "NetworkingConfig": .object([
             "EndpointsConfig": .dictionary(.object([
                 "Aliases": .value,
+                "DNSNames": .value,
                 "DriverOpts": .dictionary(.value),
+                "EndpointID": .value,
+                "Gateway": .value,
+                "GlobalIPv6Address": .value,
+                "GlobalIPv6PrefixLen": .value,
                 "GwPriority": .value,
                 "IPAMConfig": .endpointIPAM,
+                "IPAddress": .value,
+                "IPPrefixLen": .value,
+                "IPv6Gateway": .value,
                 "Links": .value,
-                "MacAddress": .value
+                "MacAddress": .value,
+                "NetworkID": .value
             ]))
         ]),
         "OnBuild": .value,
@@ -197,11 +206,20 @@ indirect enum DockerRequestSchema: Sendable {
         "Container": .value,
         "EndpointConfig": .object([
             "Aliases": .value,
+            "DNSNames": .value,
             "DriverOpts": .dictionary(.value),
+            "EndpointID": .value,
+            "Gateway": .value,
+            "GlobalIPv6Address": .value,
+            "GlobalIPv6PrefixLen": .value,
             "GwPriority": .value,
             "IPAMConfig": .endpointIPAM,
+            "IPAddress": .value,
+            "IPPrefixLen": .value,
+            "IPv6Gateway": .value,
             "Links": .value,
-            "MacAddress": .value
+            "MacAddress": .value,
+            "NetworkID": .value
         ])
     ])
 

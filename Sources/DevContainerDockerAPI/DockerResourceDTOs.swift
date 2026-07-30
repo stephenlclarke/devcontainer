@@ -102,19 +102,37 @@ struct DockerNetworkConnectRequest: Decodable {
 
 struct DockerNetworkEndpointConfig: Decodable {
     var aliases: [String]?
+    var dnsNames: [String]?
     var links: [String]?
     var ipamConfig: DockerEndpointIPAMConfig?
     var macAddress: String?
     var driverOptions: [String: String]?
+    var endpointID: String?
+    var gateway: String?
     var gatewayPriority: Int?
+    var globalIPv6Address: String?
+    var globalIPv6PrefixLength: Int?
+    var ipAddress: String?
+    var ipPrefixLength: Int?
+    var ipv6Gateway: String?
+    var networkID: String?
 
     enum CodingKeys: String, CodingKey {
         case aliases = "Aliases"
+        case dnsNames = "DNSNames"
         case driverOptions = "DriverOpts"
+        case endpointID = "EndpointID"
+        case gateway = "Gateway"
         case gatewayPriority = "GwPriority"
+        case globalIPv6Address = "GlobalIPv6Address"
+        case globalIPv6PrefixLength = "GlobalIPv6PrefixLen"
         case ipamConfig = "IPAMConfig"
+        case ipAddress = "IPAddress"
+        case ipPrefixLength = "IPPrefixLen"
+        case ipv6Gateway = "IPv6Gateway"
         case links = "Links"
         case macAddress = "MacAddress"
+        case networkID = "NetworkID"
     }
 }
 
