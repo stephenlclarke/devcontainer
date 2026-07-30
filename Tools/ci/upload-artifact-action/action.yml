@@ -1,0 +1,14 @@
+name: Pinned artifact uploader
+description: Run the digest-verified artifact uploader as a local Node action
+
+inputs:
+  name:
+    description: Artifact name
+    required: true
+  path:
+    description: Newline-separated artifact paths
+    required: true
+
+runs:
+  using: node24
+  main: index.js

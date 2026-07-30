@@ -93,7 +93,9 @@ class WorkflowArtifactTests(unittest.TestCase):
             for start, end in zip(boundaries, boundaries[1:]):
                 block = contents[start:end]
                 uses_action = "uses: actions/upload-artifact@" in block
-                uses_pinned_uploader = "upload-artifact-pinned.sh" in block
+                uses_pinned_uploader = (
+                    "uses: ./Tools/ci/upload-artifact-action" in block
+                )
                 if not uses_action and not uses_pinned_uploader:
                     continue
                 if ".build/" not in block:
@@ -119,12 +121,12 @@ class WorkflowArtifactTests(unittest.TestCase):
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
         lane = contents[contents.index("  lane:\n"):contents.index("  compare:\n")]
 
-        self.assertNotIn("\n        uses:", lane)
+        self.assertNotRegex(lane, r"\n        uses:\s+[^./]")
         self.assertIn(
             'git -C "${GITHUB_WORKSPACE}" fetch --no-tags --depth=1 origin',
             lane,
         )
-        self.assertIn("Tools/ci/upload-artifact-pinned.sh", lane)
+        self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
 
     def test_pinned_uploader_verifies_the_action_archive(self) -> None:
         contents = (
@@ -141,6 +143,16 @@ class WorkflowArtifactTests(unittest.TestCase):
             contents,
         )
         self.assertIn('[[ "${actual_sha256}" != "${archive_sha256}" ]]', contents)
+
+        action = (
+            ROOT / "Tools" / "ci" / "upload-artifact-action" / "action.yml"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "Tools" / "ci" / "upload-artifact-action" / "index.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("using: node24", action)
+        self.assertIn("'upload-artifact-pinned.sh'", wrapper)
+        self.assertIn("env: process.env", wrapper)
 
     def test_hosted_workflows_cancel_superseded_runs(self) -> None:
         workflows = (

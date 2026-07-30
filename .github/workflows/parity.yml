@@ -75,14 +75,12 @@ jobs:
         run: Tools/parity/runner-runtime.sh stop "${{ matrix.lane }}"
       - name: Upload lane evidence
         if: always()
-        env:
-          ARTIFACT_NAME: "parity-${{ matrix.lane }}"
-          ARTIFACT_PATHS: |
+        uses: ./Tools/ci/upload-artifact-action
+        with:
+          name: "parity-${{ matrix.lane }}"
+          path: |
             .build/parity/${{ matrix.lane }}
             .build/parity/vscode/${{ matrix.lane }}
-        run: >-
-          Tools/ci/upload-artifact-pinned.sh
-          "${ARTIFACT_NAME}" "${ARTIFACT_PATHS}"
 
   compare:
     if: ${{ always() }}
