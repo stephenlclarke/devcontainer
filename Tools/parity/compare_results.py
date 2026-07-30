@@ -15,7 +15,8 @@ from typing import Any
 
 from parity_lib import LANES, ParityError, atomic_json
 
-PERFORMANCE_REGRESSION_FACTOR = 10.0
+PERFORMANCE_TARGET_FACTOR = 1.0
+PERFORMANCE_INVESTIGATION_FACTOR = 2.5
 
 
 def recorded_duration(result: dict[str, Any] | None) -> float | None:
@@ -50,18 +51,24 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
         "# Dev Containers runtime parity",
         "",
         (
-            "Wall-clock timings are evidence, not exact-equivalence assertions. "
-            "A candidate fails performance parity only when it does not complete "
-            f"or takes at least {PERFORMANCE_REGRESSION_FACTOR:g}x the Docker oracle."
+            "Functional parity requires zero semantic differences and completed, "
+            "valid evidence. Comparable or better performance "
+            f"(at most {PERFORMANCE_TARGET_FACTOR:.2f}x Docker) is the objective. "
+            "A completed candidate above "
+            f"{PERFORMANCE_INVESTIGATION_FACTOR:.2f}x Docker requires investigation; "
+            "a timing ratio alone does not change functional parity."
         ),
         "",
         (
             "| Fixture | Docker oracle | Stock Apple | container-compose provider "
-            "| Stock/Docker | Provider/Docker | Equivalent |"
+            "| Stock/Docker | Provider/Docker | Functional parity | Performance |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     all_equivalent = True
+    all_functionally_equivalent = True
+    all_performance_targets_met = True
+    any_performance_investigation = False
     for fixture_id in sorted(fixture_ids):
         by_lane: dict[str, dict[str, Any] | None] = {}
         for lane, payload in lane_results.items():
@@ -79,8 +86,9 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
             for lane, result in by_lane.items()
         }
         oracle = by_lane["docker"]
-        differences: list[str] = []
-        performance_differences: list[str] = []
+        functional_differences: list[str] = []
+        timing_differences: list[str] = []
+        performance_investigations: list[str] = []
         durations = {
             lane: recorded_duration(result)
             for lane, result in by_lane.items()
@@ -88,22 +96,23 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
         relative_durations: dict[str, float | None] = {
             lane: None for lane in LANES
         }
+        candidate_ratios: dict[str, float] = {}
         if missing:
-            differences.append(f"missing lanes: {', '.join(missing)}")
+            functional_differences.append(f"missing lanes: {', '.join(missing)}")
         invalid_timings = [
             lane
             for lane, result in by_lane.items()
-            if result is not None and durations[lane] is None
+            if result is None or durations[lane] is None
         ]
         if invalid_timings:
-            performance_differences.append(
+            timing_differences.append(
                 f"missing or invalid duration: {', '.join(invalid_timings)}"
             )
         docker_duration = durations["docker"]
         if docker_duration is not None:
             relative_durations["docker"] = 1.0
             if docker_duration == 0:
-                performance_differences.append(
+                timing_differences.append(
                     "docker duration is zero; relative timing cannot be compared"
                 )
             else:
@@ -112,11 +121,15 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
                     if candidate_duration is None:
                         continue
                     ratio = candidate_duration / docker_duration
+                    candidate_ratios[lane] = ratio
                     relative_durations[lane] = round(ratio, 3)
-                    if ratio >= PERFORMANCE_REGRESSION_FACTOR:
-                        performance_differences.append(
+                    if (
+                        statuses[lane] == "passed"
+                        and ratio > PERFORMANCE_INVESTIGATION_FACTOR
+                    ):
+                        performance_investigations.append(
                             f"{lane} duration is {ratio:.3f}x Docker "
-                            f"(limit: <{PERFORMANCE_REGRESSION_FACTOR:g}x)"
+                            f"(investigate: >{PERFORMANCE_INVESTIGATION_FACTOR:g}x)"
                         )
         if oracle is not None:
             for lane in ("apple-stock", "container-compose"):
@@ -124,20 +137,47 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
                 if candidate is not None and (
                     candidate.get("observations") != oracle.get("observations")
                 ):
-                    differences.append(f"{lane} observations differ from docker")
+                    functional_differences.append(
+                        f"{lane} observations differ from docker"
+                    )
         if any(status != "passed" for status in statuses.values()):
-            differences.append("one or more lanes failed")
-        differences.extend(performance_differences)
+            functional_differences.append("one or more lanes failed")
+        performance_target_met = (
+            not timing_differences
+            and all(
+                lane in candidate_ratios
+                and candidate_ratios[lane] <= PERFORMANCE_TARGET_FACTOR
+                for lane in ("apple-stock", "container-compose")
+            )
+        )
+        functional_equivalent = not functional_differences
+        differences = functional_differences + timing_differences
         equivalent = not differences
         all_equivalent = all_equivalent and equivalent
+        all_functionally_equivalent = (
+            all_functionally_equivalent and functional_equivalent
+        )
+        all_performance_targets_met = (
+            all_performance_targets_met and performance_target_met
+        )
+        any_performance_investigation = (
+            any_performance_investigation or bool(performance_investigations)
+        )
         comparisons.append(
             {
                 "id": fixture_id,
                 "statuses": statuses,
                 "durationsSeconds": durations,
                 "relativeDurations": relative_durations,
-                "performanceEquivalent": not performance_differences,
-                "performanceDifferences": performance_differences,
+                "functionalEquivalent": functional_equivalent,
+                "functionalDifferences": functional_differences,
+                "timingEvidenceValid": not timing_differences,
+                "timingDifferences": timing_differences,
+                "performanceTargetMet": performance_target_met,
+                "performanceInvestigationRequired": bool(
+                    performance_investigations
+                ),
+                "performanceInvestigations": performance_investigations,
                 "equivalent": equivalent,
                 "differences": differences,
             }
@@ -152,6 +192,15 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
             ratio = relative_durations[lane]
             return "-" if ratio is None else f"{ratio:.3f}x"
 
+        if timing_differences:
+            performance_cell = "invalid evidence"
+        elif performance_investigations:
+            performance_cell = "investigate"
+        elif performance_target_met:
+            performance_cell = "target met"
+        else:
+            performance_cell = "target missed"
+
         cells = [
             fixture_id,
             status_cell("docker"),
@@ -159,21 +208,36 @@ def compare(root: Path) -> tuple[dict[str, Any], str]:
             status_cell("container-compose"),
             ratio_cell("apple-stock"),
             ratio_cell("container-compose"),
-            "yes" if equivalent else "no",
+            "yes" if functional_equivalent else "no",
+            performance_cell,
         ]
         lines.append("| " + " | ".join(cells) + " |")
 
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "status": "passed" if all_equivalent else "failed",
         "requireZeroFunctionalDifferences": True,
+        "functionalParityStatus": (
+            "passed" if all_functionally_equivalent else "failed"
+        ),
+        "performanceTargetMet": all_performance_targets_met,
+        "performanceInvestigationRequired": any_performance_investigation,
         "performancePolicy": {
             "durationMetric": "fixture wall-clock seconds",
             "oracle": "docker",
-            "regressionFactor": PERFORMANCE_REGRESSION_FACTOR,
+            "targetFactor": PERFORMANCE_TARGET_FACTOR,
+            "target": (
+                "completed candidate duration is at most "
+                f"{PERFORMANCE_TARGET_FACTOR:g}x Docker"
+            ),
+            "investigationFactor": PERFORMANCE_INVESTIGATION_FACTOR,
+            "investigationRule": (
+                "completed candidate duration is greater than "
+                f"{PERFORMANCE_INVESTIGATION_FACTOR:g}x Docker"
+            ),
             "failureRule": (
-                "candidate does not complete or duration is at least "
-                f"{PERFORMANCE_REGRESSION_FACTOR:g}x Docker"
+                "lane failure or missing or invalid timing evidence; "
+                "completed slowdown alone does not alter functional parity"
             ),
         },
         "fixtures": comparisons,

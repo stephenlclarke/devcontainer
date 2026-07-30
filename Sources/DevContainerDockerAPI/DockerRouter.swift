@@ -14,41 +14,120 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import CryptoKit
+import Darwin
 import DevContainerCore
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+// Route families are being separated under TEST-005; retain the current
+// extension while its strict DTO and ownership changes settle.
+// swiftlint:disable file_length
+
 public struct DockerRouter: Sendable {
     public let runtime: any DevContainerRuntime
     private let execSessions: ExecSessionRegistry
+    private let mutationReplays: DockerMutationReplayRegistry
     let healthChecks: ContainerHealthRegistry
+    private let coordinator: ProjectCoordinator?
+    private let provider: BackendProvider
+    private let requestTimeout: TimeInterval
 
-    public init(runtime: any DevContainerRuntime) {
+    public init(
+        runtime: any DevContainerRuntime,
+        coordinator: ProjectCoordinator? = nil,
+        provider: BackendProvider = .stock,
+        requestTimeout: TimeInterval = 5 * 60
+    ) {
+        precondition(requestTimeout > 0)
         self.runtime = runtime
+        self.coordinator = coordinator
+        self.provider = provider
+        self.requestTimeout = requestTimeout
         execSessions = ExecSessionRegistry()
+        mutationReplays = DockerMutationReplayRegistry()
         healthChecks = ContainerHealthRegistry()
     }
 
     public func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        if let key = idempotencyKey(for: request),
+           isReplayableMutation(request)
+        {
+            do {
+                let requestHash = Self.digest(
+                    Data("\(request.method.rawValue)\n\(request.target)\n".utf8)
+                        + request.body
+                )
+                let task = try await mutationReplays.task(
+                    key: Self.digest(Data(key.utf8)),
+                    requestHash: requestHash
+                ) {
+                    await respondOnce(to: request)
+                }
+                return await task.value
+            } catch let error as DevContainerError {
+                return errorResponse(error)
+            } catch {
+                return errorResponse(
+                    DevContainerError(
+                        .runtimeUnavailable,
+                        message: "idempotency coordination failed: \(error)"
+                    )
+                )
+            }
+        }
+        return await respondOnce(to: request)
+    }
+
+    private func respondOnce(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        let context = requestContext(for: request)
         do {
-            return try await route(request)
+            var response = try await RuntimeRequestScope.$context.withValue(context) {
+                if let coordinator,
+                   let mutation = try await mutation(for: request, context: context)
+                {
+                    return try await coordinator.withMutation(
+                        request: mutation,
+                        context: context
+                    ) { mutationContext in
+                        try await RuntimeRequestScope.$context.withValue(
+                            mutationContext
+                        ) {
+                            try await route(request, context: mutationContext)
+                        }
+                    }
+                }
+                return try await route(request, context: context)
+            }
+            response.headers["X-Request-ID"] = context.correlationID
+            return response
         } catch let error as DevContainerError {
-            return errorResponse(error)
+            var response = errorResponse(error)
+            response.headers["X-Request-ID"] = context.correlationID
+            return response
         } catch let error as DecodingError {
-            return errorResponse(
+            var response = errorResponse(
                 DevContainerError(.invalidRequest, message: "invalid Docker request: \(error)")
             )
+            response.headers["X-Request-ID"] = context.correlationID
+            return response
         } catch {
-            return errorResponse(
+            var response = errorResponse(
                 DevContainerError(.runtimeUnavailable, message: "runtime request failed: \(error)")
             )
+            response.headers["X-Request-ID"] = context.correlationID
+            return response
         }
     }
 }
 
 extension DockerRouter {
-    private func route(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {
+    private func route(
+        _ request: DockerHTTPRequest,
+        context: RuntimeRequestContext
+    ) async throws -> DockerHTTPResponse {
+        try context.checkActive()
         let target = try ParsedTarget(request.target)
         let path = stripAPIVersion(target.path)
         let route = DockerRoute(
@@ -56,7 +135,7 @@ extension DockerRouter {
             target: target,
             path: path,
             segments: path.split(separator: "/", omittingEmptySubsequences: true).map(String.init),
-            context: RuntimeRequestContext()
+            context: context
         )
 
         if let response = try await daemonResponse(route) {
@@ -79,6 +158,247 @@ extension DockerRouter {
             .notFound,
             message: "page not found"
         )
+    }
+
+    private func requestContext(
+        for request: DockerHTTPRequest
+    ) -> RuntimeRequestContext {
+        let requestedCorrelation = request.header("X-Request-ID")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let correlation = requestedCorrelation.flatMap {
+            $0.isEmpty || $0.utf8.count > 128 ? nil : $0
+        } ?? UUID().uuidString.lowercased()
+        let operationID = idempotencyKey(for: request).map {
+            OperationID(rawValue: Self.digest(Data($0.utf8)))
+        } ?? .random()
+        return RuntimeRequestContext(
+            operationID: operationID,
+            correlationID: correlation,
+            deadline: Date().addingTimeInterval(requestTimeout)
+        )
+    }
+
+    private func idempotencyKey(for request: DockerHTTPRequest) -> String? {
+        guard let value = request.header("Idempotency-Key")
+            ?? request.header("X-Idempotency-Key")
+        else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return String(trimmed.prefix(256))
+    }
+
+    private func isReplayableMutation(_ request: DockerHTTPRequest) -> Bool {
+        guard request.method == .post
+            || request.method == .put
+            || request.method == .delete,
+            let target = try? ParsedTarget(request.target)
+        else {
+            return false
+        }
+        let path = stripAPIVersion(target.path)
+        if path == "/containers/create"
+            || path == "/networks/create"
+            || path == "/volumes/create"
+        {
+            return true
+        }
+        let segments = path.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        ).map(String.init)
+        if segments.first == "containers", segments.count >= 2 {
+            return request.method == .delete
+                || ["start", "stop", "restart", "kill", "rename", "exec", "archive"]
+                .contains(segments.last ?? "")
+        }
+        if segments.first == "networks" || segments.first == "volumes" {
+            return true
+        }
+        if segments.first == "images" {
+            return request.method == .delete || segments.last == "tag"
+        }
+        return false
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func mutation(
+        for request: DockerHTTPRequest,
+        context: RuntimeRequestContext
+    ) async throws -> ProjectMutation? {
+        guard request.method == .post
+            || request.method == .put
+            || request.method == .delete
+        else {
+            return nil
+        }
+        let target = try ParsedTarget(request.target)
+        let path = stripAPIVersion(target.path)
+        let segments = path.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        ).map(String.init)
+        guard isJournalledMutation(
+            method: request.method,
+            path: path,
+            segments: segments
+        ) else {
+            return nil
+        }
+
+        var labels = requestLabels(request.body)
+        var resourceKey = path
+        if segments.first == "containers",
+           segments.count >= 2,
+           segments[1] != "create"
+        {
+            let snapshot = try await runtime.inspectContainer(
+                id: segments[1],
+                context: context
+            )
+            labels.merge(snapshot.spec.labels) { current, _ in current }
+            resourceKey = snapshot.runtimeID.rawValue
+        } else if segments.first == "exec", segments.count >= 2 {
+            let exec = try await runtime.inspectExec(
+                id: ExecID(rawValue: segments[1]),
+                context: context
+            )
+            let snapshot = try await runtime.inspectContainer(
+                id: exec.containerID.rawValue,
+                context: context
+            )
+            labels.merge(snapshot.spec.labels) { current, _ in current }
+            resourceKey = snapshot.runtimeID.rawValue
+        } else if segments.first == "networks",
+                  segments.count >= 2,
+                  segments[1] != "create"
+        {
+            if let container = requestContainerIdentifier(request.body) {
+                let snapshot = try await runtime.inspectContainer(
+                    id: container,
+                    context: context
+                )
+                labels.merge(snapshot.spec.labels) { current, _ in current }
+            } else {
+                let network = try await runtime.inspectNetwork(
+                    id: segments[1],
+                    context: context
+                )
+                labels.merge(network.spec.labels) { current, _ in current }
+                resourceKey = network.id
+            }
+        } else if segments.first == "volumes",
+                  segments.count >= 2,
+                  segments[1] != "create"
+        {
+            let volume = try await runtime.inspectVolume(
+                name: segments[1],
+                context: context
+            )
+            labels.merge(volume.spec.labels) { current, _ in current }
+            resourceKey = volume.name
+        }
+
+        if let requestedProvider = labels[RuntimeLabels.provider],
+           requestedProvider != provider.rawValue
+        {
+            throw DevContainerError(
+                .conflict,
+                message: "resource ownership selects provider \(requestedProvider), not \(provider.rawValue)"
+            )
+        }
+        let requestHash = Self.digest(
+            Data("\(request.method.rawValue)\n\(request.target)\n".utf8)
+                + request.body
+        )
+        let configurationHash = Self.digest(request.body)
+        return ProjectMutation(
+            project: projectKey(labels: labels),
+            provider: provider,
+            composeProject: composeProjectName(labels),
+            projectDirectory: labels[RuntimeLabels.devContainerLocalFolder],
+            configurationHash: configurationHash,
+            requestKind: "\(request.method.rawValue) \(path)",
+            requestHash: requestHash,
+            resourceKey: resourceKey
+        )
+    }
+
+    private func isJournalledMutation(
+        method: DockerHTTPMethod,
+        path: String,
+        segments: [String]
+    ) -> Bool {
+        if path == "/_ping" || path == "/auth" {
+            return false
+        }
+        if method == .post,
+           segments.first == "containers",
+           ["wait", "attach"].contains(segments.last ?? "")
+        {
+            return false
+        }
+        if method == .post,
+           segments.first == "exec",
+           segments.last == "resize"
+        {
+            return false
+        }
+        return true
+    }
+
+    private func requestLabels(_ body: Data) -> [String: String] {
+        guard !body.isEmpty,
+              let object = try? JSONSerialization.jsonObject(with: body)
+              as? [String: Any],
+              let labels = object["Labels"] as? [String: String]
+        else {
+            return [:]
+        }
+        return labels
+    }
+
+    private func requestContainerIdentifier(_ body: Data) -> String? {
+        guard !body.isEmpty,
+              let object = try? JSONSerialization.jsonObject(with: body)
+              as? [String: Any]
+        else {
+            return nil
+        }
+        return object["Container"] as? String
+    }
+
+    private func projectKey(labels: [String: String]) -> ProjectKey {
+        if let explicit = labels[RuntimeLabels.project], !explicit.isEmpty {
+            return ProjectKey(rawValue: explicit)
+        }
+        if let compose = composeProjectName(labels), !compose.isEmpty {
+            return ProjectKey(rawValue: "\(getuid()):\(compose.lowercased())")
+        }
+        let identity = [
+            labels[RuntimeLabels.devContainerLocalFolder],
+            labels[RuntimeLabels.devContainerConfigFile]
+        ].compactMap(\.self).joined(separator: "\n")
+        if !identity.isEmpty {
+            return ProjectKey(
+                rawValue: "\(getuid()):devcontainer:\(Self.digest(Data(identity.utf8)).prefix(24))"
+            )
+        }
+        return ProjectKey(rawValue: "\(getuid()):docker-api")
+    }
+
+    private func composeProjectName(_ labels: [String: String]) -> String? {
+        labels["com.docker.compose.project"]
+            ?? labels["com.apple.container.compose.project"]
+    }
+
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     private func daemonResponse(_ route: DockerRoute) async throws -> DockerHTTPResponse? {
@@ -345,14 +665,27 @@ extension DockerRouter {
 
         if request.method == .post, path == "/containers/create" {
             let name = target.first("name") ?? ""
-            let decoded = try DockerJSON.decoder.decode(
-                DockerCreateContainerRequest.self, from: request.body
+            let decoded = try DockerJSON.decode(
+                DockerCreateContainerRequest.self,
+                from: request.body,
+                schema: .createContainer
             )
+            try validateCreateContainerRequest(decoded)
             var spec = try containerSpec(from: decoded, requestedName: name)
+            try applyOwnershipLabels(to: &spec, context: context)
             if spec.labels[RuntimeLabels.dockerID] == nil {
                 spec.labels[RuntimeLabels.dockerID] = Self.dockerIdentifier()
             }
             let snapshot = try await runtime.createContainer(spec: spec, context: context)
+            if let coordinator {
+                try await coordinator.recordContainer(
+                    snapshot,
+                    provider: provider,
+                    context: context,
+                    specificationHash: context.configurationHash ?? "",
+                    labelsHash: labelsHash(spec.labels)
+                )
+            }
             return try .json(
                 DockerCreateContainerResponse(id: snapshot.dockerID.rawValue, warnings: []),
                 status: 201
@@ -440,7 +773,11 @@ extension DockerRouter {
                 )
             )
         case (.post, "exec"):
-            let decoded = try DockerJSON.decoder.decode(DockerCreateExecRequest.self, from: request.body)
+            let decoded = try DockerJSON.decode(
+                DockerCreateExecRequest.self,
+                from: request.body,
+                schema: .createExec
+            )
             guard decoded.privileged != true else {
                 throw DevContainerError(
                     .unsupportedCapability,
@@ -577,13 +914,63 @@ extension DockerRouter {
             return nil
         }
         let id = segments[1]
+        let snapshot = try await runtime.inspectContainer(id: id, context: context)
         try await runtime.removeContainer(
             id: id,
             force: target.first("force").map(Self.boolValue) ?? false,
             context: context
         )
+        try await coordinator?.removeResource(runtimeID: snapshot.runtimeID)
         await healthChecks.remove(id: id)
         return .empty(status: 204)
+    }
+
+    private func applyOwnershipLabels(
+        to spec: inout ContainerSpec,
+        context: RuntimeRequestContext
+    ) throws {
+        spec.labels = try applyingOwnershipLabels(
+            to: spec.labels,
+            context: context
+        )
+    }
+
+    private func applyingOwnershipLabels(
+        to labels: [String: String],
+        context: RuntimeRequestContext
+    ) throws -> [String: String] {
+        guard let project = context.project,
+              let generation = context.generation,
+              let configurationHash = context.configurationHash
+        else {
+            return labels
+        }
+        var result = labels
+        let ownership = RuntimeLabels.projectLabels(
+            project: project,
+            provider: provider,
+            generation: generation,
+            operation: context.operationID,
+            configurationHash: configurationHash
+        )
+        for (key, value) in ownership {
+            if let existing = result[key], existing != value {
+                throw DevContainerError(
+                    .conflict,
+                    message: "request label \(key) conflicts with mutation ownership"
+                )
+            }
+            result[key] = value
+        }
+        return result
+    }
+
+    private func labelsHash(_ labels: [String: String]) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: labels,
+            options: [.sortedKeys]
+        )
+        return Self.digest(data)
     }
 
     private func execResponse(
@@ -627,7 +1014,11 @@ extension DockerRouter {
         id: ExecID,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse {
-        let options = try DockerJSON.decoder.decode(DockerStartExecRequest.self, from: request.body)
+        let options = try DockerJSON.decode(
+            DockerStartExecRequest.self,
+            from: request.body,
+            schema: .startExec
+        )
         let exec = try await runtime.inspectExec(id: id, context: context)
         let session = try await runtime.startExec(id: id, context: context)
         let registration = await execSessions.register(session, id: id)
@@ -766,6 +1157,7 @@ extension DockerRouter {
         return nil
     }
 
+    // swiftlint:disable:next function_body_length
     private func networkCollectionResponse(
         request: DockerHTTPRequest,
         target: ParsedTarget,
@@ -790,24 +1182,40 @@ extension DockerRouter {
             )
         }
         if request.method == .post, path == "/networks/create" {
-            let decoded = try DockerJSON.decoder.decode(
-                DockerNetworkCreateRequest.self, from: request.body
+            let decoded = try DockerJSON.decode(
+                DockerNetworkCreateRequest.self,
+                from: request.body,
+                schema: .createNetwork
             )
+            try validateNetworkCreateRequest(decoded)
             guard decoded.driver == nil || decoded.driver == "" || decoded.driver == "bridge" else {
                 throw DevContainerError(
                     .unsupportedCapability,
                     message: "network driver \(decoded.driver ?? "") is not supported"
                 )
             }
+            let labels = try applyingOwnershipLabels(
+                to: decoded.labels ?? [:],
+                context: context
+            )
             let network = try await runtime.createNetwork(
                 spec: NetworkSpec(
                     name: decoded.name,
-                    labels: decoded.labels ?? [:],
+                    labels: labels,
                     driver: decoded.driver.flatMap { $0.isEmpty ? nil : $0 } ?? "bridge",
                     internalNetwork: decoded.internalNetwork ?? false
                 ),
                 context: context
             )
+            if let coordinator {
+                try await coordinator.recordNetwork(
+                    network,
+                    provider: provider,
+                    context: context,
+                    specificationHash: context.configurationHash ?? "",
+                    labelsHash: labelsHash(labels)
+                )
+            }
             return try .json(
                 DockerNetworkCreateResponse(id: network.id, warning: ""),
                 status: 201
@@ -831,9 +1239,12 @@ extension DockerRouter {
                 networkInspect(runtime.inspectNetwork(id: id, context: context))
             )
         case (.post, "connect"):
-            let decoded = try DockerJSON.decoder.decode(
-                DockerNetworkConnectRequest.self, from: request.body
+            let decoded = try DockerJSON.decode(
+                DockerNetworkConnectRequest.self,
+                from: request.body,
+                schema: .connectNetwork
             )
+            try validateEndpointConfiguration(decoded.endpointConfig)
             try await runtime.connectNetwork(
                 id: id,
                 containerID: decoded.container,
@@ -842,8 +1253,10 @@ extension DockerRouter {
             )
             return .empty(status: 200)
         case (.post, "disconnect"):
-            let decoded = try DockerJSON.decoder.decode(
-                DockerNetworkDisconnectRequest.self, from: request.body
+            let decoded = try DockerJSON.decode(
+                DockerNetworkDisconnectRequest.self,
+                from: request.body,
+                schema: .disconnectNetwork
             )
             try await runtime.disconnectNetwork(
                 id: id,
@@ -853,13 +1266,18 @@ extension DockerRouter {
             )
             return .empty(status: 200)
         case (.delete, ""):
+            let network = try await runtime.inspectNetwork(id: id, context: context)
             try await runtime.removeNetwork(id: id, context: context)
+            try await coordinator?.removeResource(
+                runtimeID: RuntimeID(rawValue: network.id)
+            )
             return .empty(status: 204)
         default:
             return nil
         }
     }
 
+    // swiftlint:disable:next function_body_length
     private func volumeCollectionResponse(
         request: DockerHTTPRequest,
         target: ParsedTarget,
@@ -884,9 +1302,12 @@ extension DockerRouter {
             )
         }
         if request.method == .post, path == "/volumes/create" {
-            let decoded = try DockerJSON.decoder.decode(
-                DockerVolumeCreateRequest.self, from: request.body
+            let decoded = try DockerJSON.decode(
+                DockerVolumeCreateRequest.self,
+                from: request.body,
+                schema: .createVolume
             )
+            try validateVolumeCreateRequest(decoded)
             let name =
                 decoded.name.flatMap { $0.isEmpty ? nil : $0 }
                     ?? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())"
@@ -896,14 +1317,27 @@ extension DockerRouter {
                     message: "volume driver \(decoded.driver ?? "") is not supported"
                 )
             }
+            let labels = try applyingOwnershipLabels(
+                to: decoded.labels ?? [:],
+                context: context
+            )
             let volume = try await runtime.createVolume(
                 spec: VolumeSpec(
                     name: name,
-                    labels: decoded.labels ?? [:],
+                    labels: labels,
                     driver: decoded.driver ?? "local"
                 ),
                 context: context
             )
+            if let coordinator {
+                try await coordinator.recordVolume(
+                    volume,
+                    provider: provider,
+                    context: context,
+                    specificationHash: context.configurationHash ?? "",
+                    labelsHash: labelsHash(labels)
+                )
+            }
             return try .json(volumeInspect(volume), status: 201)
         }
         return nil
@@ -925,10 +1359,14 @@ extension DockerRouter {
                 volumeInspect(runtime.inspectVolume(name: name, context: context))
             )
         case .delete:
+            let volume = try await runtime.inspectVolume(name: name, context: context)
             try await runtime.removeVolume(
                 name: name,
                 force: target.first("force").map(Self.boolValue) ?? false,
                 context: context
+            )
+            try await coordinator?.removeResource(
+                runtimeID: RuntimeID(rawValue: volume.name)
             )
             return .empty(status: 204)
         default:

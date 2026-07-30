@@ -17,8 +17,12 @@
 import DevContainerModel
 import Foundation
 
-struct DockerErrorEnvelope: Encodable {
-    let message: String
+public struct DockerErrorEnvelope: Codable, Equatable, Sendable {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
 }
 
 struct DockerVersionResponse: Encodable {
@@ -77,7 +81,7 @@ struct DockerInfoResponse: Encodable {
     let containersStopped: Int
     let images: Int
     let driver = "apple-container"
-    let memoryLimit = true
+    let memoryLimit = false
     let swapLimit = false
     let cpuCfsPeriod = false
     let cpuCfsQuota = false
@@ -117,6 +121,7 @@ struct DockerInfoResponse: Encodable {
 
 struct DockerCreateContainerRequest: Decodable {
     var hostname: String?
+    var domainname: String?
     var user: String?
     var attachStdin: Bool?
     var attachStdout: Bool?
@@ -134,6 +139,8 @@ struct DockerCreateContainerRequest: Decodable {
     var hostConfig: DockerHostConfig?
     var mounts: [DockerMountRequest]?
     var networkingConfig: DockerNetworkingConfig?
+    var stopSignal: String?
+    var stopTimeout: Int?
 
     struct EmptyObject: Decodable {}
 
@@ -142,6 +149,7 @@ struct DockerCreateContainerRequest: Decodable {
         case attachStdin = "AttachStdin"
         case attachStdout = "AttachStdout"
         case cmd = "Cmd"
+        case domainname = "Domainname"
         case entrypoint = "Entrypoint"
         case env = "Env"
         case hostConfig = "HostConfig"
@@ -152,6 +160,8 @@ struct DockerCreateContainerRequest: Decodable {
         case mounts = "Mounts"
         case networkingConfig = "NetworkingConfig"
         case openStdin = "OpenStdin"
+        case stopSignal = "StopSignal"
+        case stopTimeout = "StopTimeout"
         case tty = "Tty"
         case user = "User"
         case volumes = "Volumes"
@@ -209,18 +219,132 @@ struct DockerHostConfig: Decodable {
     var capabilitiesToDrop: [String]?
     var securityOptions: [String]?
     var networkMode: String?
+    var deviceRequests: [DockerDeviceRequest]?
+    var devices: [DockerDeviceMapping]?
+    var memory: Int64?
+    var memorySwap: Int64?
+    var memoryReservation: Int64?
+    var nanoCPUs: Int64?
+    var cpuShares: Int64?
+    var cpuPeriod: Int64?
+    var cpuQuota: Int64?
+    var cpusetCPUs: String?
+    var cpusetMems: String?
+    var pidsLimit: Int64?
+    var shmSize: Int64?
+    var dns: [String]?
+    var dnsOptions: [String]?
+    var dnsSearch: [String]?
+    var extraHosts: [String]?
+    var groupAdd: [String]?
+    var sysctls: [String: String]?
+    var readOnlyRootFilesystem: Bool?
+    var oomKillDisable: Bool?
+    var oomScoreAdjustment: Int?
+    var ipcMode: String?
+    var pidMode: String?
+    var userNamespaceMode: String?
+    var utsMode: String?
+    var cgroupNamespaceMode: String?
+    var restartPolicy: DockerRestartPolicy?
+    var ulimits: [DockerUlimit]?
+    var deviceCgroupRules: [String]?
+    var maskedPaths: [String]?
+    var readOnlyPaths: [String]?
 
     enum CodingKeys: String, CodingKey {
         case autoRemove = "AutoRemove"
         case binds = "Binds"
         case capabilitiesToAdd = "CapAdd"
         case capabilitiesToDrop = "CapDrop"
+        case cgroupNamespaceMode = "CgroupnsMode"
+        case cpuPeriod = "CpuPeriod"
+        case cpuQuota = "CpuQuota"
+        case cpuShares = "CpuShares"
+        case cpusetCPUs = "CpusetCpus"
+        case cpusetMems = "CpusetMems"
+        case deviceCgroupRules = "DeviceCgroupRules"
+        case deviceRequests = "DeviceRequests"
+        case devices = "Devices"
+        case dns = "Dns"
+        case dnsOptions = "DnsOptions"
+        case dnsSearch = "DnsSearch"
+        case extraHosts = "ExtraHosts"
+        case groupAdd = "GroupAdd"
         case initProcess = "Init"
+        case ipcMode = "IpcMode"
+        case maskedPaths = "MaskedPaths"
+        case memory = "Memory"
+        case memoryReservation = "MemoryReservation"
+        case memorySwap = "MemorySwap"
+        case nanoCPUs = "NanoCpus"
         case mounts = "Mounts"
         case networkMode = "NetworkMode"
+        case oomKillDisable = "OomKillDisable"
+        case oomScoreAdjustment = "OomScoreAdj"
+        case pidMode = "PidMode"
+        case pidsLimit = "PidsLimit"
         case portBindings = "PortBindings"
         case privileged = "Privileged"
+        case readOnlyPaths = "ReadonlyPaths"
+        case readOnlyRootFilesystem = "ReadonlyRootfs"
+        case restartPolicy = "RestartPolicy"
         case securityOptions = "SecurityOpt"
+        case shmSize = "ShmSize"
+        case sysctls = "Sysctls"
+        case ulimits = "Ulimits"
+        case userNamespaceMode = "UsernsMode"
+        case utsMode = "UTSMode"
+    }
+}
+
+struct DockerDeviceRequest: Decodable {
+    var driver: String?
+    var count: Int?
+    var deviceIDs: [String]?
+    var capabilities: [[String]]?
+    var options: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case capabilities = "Capabilities"
+        case count = "Count"
+        case deviceIDs = "DeviceIDs"
+        case driver = "Driver"
+        case options = "Options"
+    }
+}
+
+struct DockerDeviceMapping: Decodable {
+    var pathOnHost: String?
+    var pathInContainer: String?
+    var cgroupPermissions: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cgroupPermissions = "CgroupPermissions"
+        case pathInContainer = "PathInContainer"
+        case pathOnHost = "PathOnHost"
+    }
+}
+
+struct DockerRestartPolicy: Decodable {
+    var name: String?
+    var maximumRetryCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case maximumRetryCount = "MaximumRetryCount"
+        case name = "Name"
+    }
+}
+
+struct DockerUlimit: Decodable {
+    var name: String?
+    var soft: Int64?
+    var hard: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case hard = "Hard"
+        case name = "Name"
+        case soft = "Soft"
     }
 }
 
@@ -234,9 +358,31 @@ struct DockerNetworkingConfig: Decodable {
 
 struct DockerEndpointConfig: Decodable {
     var aliases: [String]?
+    var links: [String]?
+    var ipamConfig: DockerEndpointIPAMConfig?
+    var macAddress: String?
+    var driverOptions: [String: String]?
+    var gatewayPriority: Int?
 
     enum CodingKeys: String, CodingKey {
         case aliases = "Aliases"
+        case driverOptions = "DriverOpts"
+        case gatewayPriority = "GwPriority"
+        case ipamConfig = "IPAMConfig"
+        case links = "Links"
+        case macAddress = "MacAddress"
+    }
+}
+
+struct DockerEndpointIPAMConfig: Decodable {
+    var ipv4Address: String?
+    var ipv6Address: String?
+    var linkLocalIPs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case ipv4Address = "IPv4Address"
+        case ipv6Address = "IPv6Address"
+        case linkLocalIPs = "LinkLocalIPs"
     }
 }
 
@@ -255,12 +401,70 @@ struct DockerMountRequest: Decodable {
     var source: String?
     var target: String
     var readOnly: Bool?
+    var consistency: String?
+    var bindOptions: DockerBindOptions?
+    var volumeOptions: DockerVolumeOptions?
+    var tmpfsOptions: DockerTmpfsOptions?
 
     enum CodingKeys: String, CodingKey {
+        case bindOptions = "BindOptions"
+        case consistency = "Consistency"
         case readOnly = "ReadOnly"
         case source = "Source"
         case target = "Target"
         case type = "Type"
+        case tmpfsOptions = "TmpfsOptions"
+        case volumeOptions = "VolumeOptions"
+    }
+}
+
+struct DockerBindOptions: Decodable {
+    var propagation: String?
+    var nonRecursive: Bool?
+    var createMountpoint: Bool?
+    var readOnlyNonRecursive: Bool?
+    var readOnlyForceRecursive: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case createMountpoint = "CreateMountpoint"
+        case nonRecursive = "NonRecursive"
+        case propagation = "Propagation"
+        case readOnlyForceRecursive = "ReadOnlyForceRecursive"
+        case readOnlyNonRecursive = "ReadOnlyNonRecursive"
+    }
+}
+
+struct DockerVolumeOptions: Decodable {
+    var noCopy: Bool?
+    var labels: [String: String]?
+    var subpath: String?
+    var driverConfiguration: DockerVolumeDriverConfiguration?
+
+    enum CodingKeys: String, CodingKey {
+        case driverConfiguration = "DriverConfig"
+        case labels = "Labels"
+        case noCopy = "NoCopy"
+        case subpath = "Subpath"
+    }
+}
+
+struct DockerVolumeDriverConfiguration: Decodable {
+    var name: String?
+    var options: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+        case options = "Options"
+    }
+}
+
+struct DockerTmpfsOptions: Decodable {
+    var sizeBytes: Int64?
+    var mode: UInt32?
+
+    enum CodingKeys: String, CodingKey {
+        case mode = "Mode"
+        case sizeBytes = "SizeBytes"
     }
 }
 
@@ -669,146 +873,6 @@ struct DockerImageDeleteResponse: Encodable {
     enum CodingKeys: String, CodingKey {
         case deleted = "Deleted"
         case untagged = "Untagged"
-    }
-}
-
-struct DockerNetworkCreateRequest: Decodable {
-    var name: String
-    var driver: String?
-    var internalNetwork: Bool?
-    var labels: [String: String]?
-
-    enum CodingKeys: String, CodingKey {
-        case driver = "Driver"
-        case internalNetwork = "Internal"
-        case labels = "Labels"
-        case name = "Name"
-    }
-}
-
-struct DockerNetworkCreateResponse: Encodable {
-    let id: String
-    let warning: String
-
-    enum CodingKeys: String, CodingKey {
-        case id = "Id"
-        case warning = "Warning"
-    }
-}
-
-struct DockerNetworkConnectRequest: Decodable {
-    let container: String
-    let endpointConfig: DockerNetworkEndpointConfig?
-
-    enum CodingKeys: String, CodingKey {
-        case container = "Container"
-        case endpointConfig = "EndpointConfig"
-    }
-}
-
-struct DockerNetworkEndpointConfig: Decodable {
-    var aliases: [String]?
-
-    enum CodingKeys: String, CodingKey {
-        case aliases = "Aliases"
-    }
-}
-
-struct DockerNetworkDisconnectRequest: Decodable {
-    let container: String
-    let force: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case container = "Container"
-        case force = "Force"
-    }
-}
-
-struct DockerNetworkInspect: Encodable {
-    let name: String
-    let id: String
-    let created: String
-    let scope = "local"
-    let driver: String
-    let enableIPv6 = true
-    let internalNetwork: Bool
-    let attachable = true
-    let ingress = false
-    let containers: [String: DockerNetworkContainer]
-    let options: [String: String] = [:]
-    let labels: [String: String]
-
-    enum CodingKeys: String, CodingKey {
-        case attachable = "Attachable"
-        case containers = "Containers"
-        case created = "Created"
-        case driver = "Driver"
-        case enableIPv6 = "EnableIPv6"
-        case id = "Id"
-        case ingress = "Ingress"
-        case internalNetwork = "Internal"
-        case labels = "Labels"
-        case name = "Name"
-        case options = "Options"
-        case scope = "Scope"
-    }
-}
-
-struct DockerNetworkContainer: Encodable {
-    let name: String
-    let endpointID = ""
-    let macAddress = ""
-    let ipv4Address: String
-    let ipv6Address = ""
-
-    enum CodingKeys: String, CodingKey {
-        case endpointID = "EndpointID"
-        case ipv4Address = "IPv4Address"
-        case ipv6Address = "IPv6Address"
-        case macAddress = "MacAddress"
-        case name = "Name"
-    }
-}
-
-struct DockerVolumeCreateRequest: Decodable {
-    var name: String?
-    var driver: String?
-    var labels: [String: String]?
-
-    enum CodingKeys: String, CodingKey {
-        case driver = "Driver"
-        case labels = "Labels"
-        case name = "Name"
-    }
-}
-
-struct DockerVolumeListResponse: Encodable {
-    let volumes: [DockerVolumeInspect]
-    let warnings: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case volumes = "Volumes"
-        case warnings = "Warnings"
-    }
-}
-
-struct DockerVolumeInspect: Encodable {
-    let createdAt: String
-    let driver: String
-    let labels: [String: String]
-    let mountpoint: String
-    let name: String
-    let options: [String: String] = [:]
-    let scope = "local"
-
-    enum CodingKeys: String, CodingKey {
-        case createdAt = "CreatedAt"
-        case driver = "Driver"
-        case labels = "Labels"
-        case mountpoint = "Mountpoint"
-        case name = "Name"
-        case options = "Options"
-        case scope = "Scope"
     }
 }
 

@@ -4,9 +4,13 @@
 
 This report analyzes three complete, successful parity runs surrounding the 1.0.0 release. It compares every CLI and real VS Code fixture against the corresponding real-Docker oracle, identifies stable overhead, and defines evidence-backed optimization targets.
 
+## Objective
+
+The project's performance goal is user-visible performance comparable to or better than Docker while preserving exact functional parity. The target is at most `1.00x` the matching Docker oracle. Any completed result above `2.50x` requires further investigation; that trigger is not a performance pass criterion and does not, by itself, change functional parity. A timeout, other non-completion, or missing or invalid timing evidence remains a hard evidence failure. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the aggregate, VS Code, per-fixture, tail-latency, resource-use, and regression objectives.
+
 ## Result
 
-All 162 CLI fixture-lane executions and all nine real VS Code lane executions completed successfully with zero normalized semantic differences and zero performance failures. No candidate fixture timed out or reached the `10x` Docker failure threshold.
+All 162 CLI fixture-lane executions and all nine real VS Code lane executions completed successfully with zero normalized semantic differences and complete timing evidence. No candidate fixture timed out. The historical results are interpreted below using the current objective and investigation trigger.
 
 Across the 18 sequential CLI fixtures:
 
@@ -24,7 +28,7 @@ For the real VS Code fixture:
 | Stock Apple | 41.965s | 38.885–46.912s | 1.091x | 3.488s |
 | `container-compose` provider | 51.931s | 49.910–55.081s | 1.350x | 13.454s |
 
-The result is functionally passing and performance-passing. It is not exact timing parity.
+The result is functionally passing. Both Apple lanes miss the comparable-or-better objective in the aggregate CLI and real VS Code means. The repeated-run means for stock C01 and E06, and provider C01, D03, D06, and E06, are above `2.50x` and require further investigation.
 
 ## Evidence set
 
@@ -36,7 +40,7 @@ The result is functionally passing and performance-passing. It is not exact timi
 
 Every run used the same release runtime fingerprints: real Docker Engine 29.2.1, Docker CLI 29.6.2, Docker Compose 5.3.1, official `@devcontainers/cli` 0.88.0, stock Apple `container` 1.1.0, `container-compose` 0.10.1 with its exact matched custom runtime, VS Code 1.130.0, and Dev Containers extension 0.467.0.
 
-The analysis uses downloaded `parity-comparison`, Docker, stock, and provider artifacts. Each fixture duration is monotonic wall time stored in lane JSON and JUnit. The comparison JSON is the authoritative source for ratios and pass/fail policy.
+The analysis uses downloaded `parity-comparison`, Docker, stock, and provider artifacts. Each fixture duration is monotonic wall time stored in lane JSON and JUnit. The historical comparison JSON is the authoritative source for recorded ratios and the status produced at the time; this document applies the current performance objective and investigation policy.
 
 ## Method
 
@@ -99,7 +103,7 @@ The VS Code fixture is naturally noisier:
 
 The largest per-fixture variability is stock C01 (28.3% coefficient of variation) and provider D03 (28.5%). Their single-run maximum ratios should not be treated as stable regressions. By contrast, the aggregate CLI totals and provider VS Code total are consistent enough to prioritize.
 
-Across all three runs, the largest observed stock ratio was 4.314x on E06 and the largest observed provider ratio was 4.509x on D03. Both completed well below the 10x failure boundary.
+Across all three runs, the largest observed stock ratio was 4.314x on E06 and the largest observed provider ratio was 4.509x on D03. Both completed, and both exceed the current `2.50x` investigation trigger.
 
 ## Absolute overhead hotspots
 
@@ -203,7 +207,7 @@ E01 engine negotiation is effectively equal (1.048x stock, 1.077x provider). D05
 
 ## Changes not justified by the data
 
-- Raising the 10x threshold: no evidence requires it.
+- Raising the investigation trigger to avoid surfacing current results: no evidence justifies it.
 - Adding retries: retries would hide hangs or regressions and violate the parity policy.
 - Parallelizing the 18 top-level fixtures: that would distort per-fixture comparison and cause resource contention; use parallelism only inside a fixture when the product contract permits it.
 - Removing cleanup or semantic probes: their time is intentionally part of the user-observable and leak-free contract.
@@ -231,7 +235,7 @@ Pre-commit live validation after the change comprised:
 - 10 consecutive provider E01-E03 sequences, all passing;
 - E03 durations of 1.993-2.241s in nine runs and 5.326s in one run;
 - one complete 18-fixture provider lane with E03 at 2.005s and no semantic,
-  cleanup, timeout, or performance failure.
+  cleanup, timeout, or timing-evidence failure.
 
 These observations validate the reliability fix; they do not replace the
 historical three-run matrix above or claim a statistically significant speed
@@ -248,10 +252,10 @@ then passed the complete
 | E03 byte-exact duplex exec | 1.776s | 2.010s (1.132x) | 2.030s (1.143x) |
 
 All semantic, cleanup, CLI, VS Code, and comparison gates passed. The largest
-single provider ratio was C01 at 4.618x (7.661s versus 1.659s), still well below
-the 10x failure threshold and an absolute difference of 6.002s. The run
-therefore confirms the race fix without changing the optimization priorities
-derived from the three-run matrix.
+single provider ratio was C01 at 4.618x (7.661s versus 1.659s), an absolute
+difference of 6.002s and a result requiring further investigation under the
+current policy. The run confirms the race fix without changing the optimization
+priorities derived from the three-run matrix.
 
 ## 2026-07-29 targeted current-worktree comparison
 
@@ -343,14 +347,14 @@ For each candidate change:
 4. report median, minimum, maximum, p90, and median absolute overhead;
 5. compare the candidate with a same-host baseline interleaved closely enough to limit thermal/background drift;
 6. require zero semantic differences and zero cleanup differences;
-7. treat a timeout, non-completion, or `>=10x` Docker duration as a failure;
-8. treat smaller slowdowns as informational, not a failure;
+7. treat a timeout, other non-completion, or missing or invalid timing evidence as a hard failure;
+8. mark every completed candidate above `2.50x` Docker for further investigation and every result above `1.00x` as missing the performance objective;
 9. accept an optimization only when the median improvement exceeds ordinary baseline variation and does not worsen the p90 materially;
 10. rerun the complete three-lane CLI and VS Code matrix before publication.
 
 The repository already records durations in machine-readable JSON, JUnit, and the human comparison matrix. Future phase instrumentation should supplement those artifacts rather than replace the end-to-end metric.
 
-## Current priority order
+## Priority order before the July 2026 E06 work
 
 1. Provider VS Code first attach.
 2. Stock E06 network/volume request sequence.
@@ -359,4 +363,134 @@ The repository already records durations in machine-readable JSON, JUnit, and th
 5. D07 reuse/rebuild/cleanup.
 6. Re-measure D03 provider variability before changing it.
 
-This order balances user-visible seconds, repeatability, and ownership. It does not change the performance pass policy.
+This historical order selected the E06 work described below. It does not
+change the performance pass policy.
+
+## July 2026 Apple runtime optimization
+
+The `perf/devcontainer-speedups` work implements the highest-priority stock
+E06 optimization and the subsequently identified E05 archive-copy fast path
+in the Devcontainer adapter itself. The final candidate:
+
+- reuses one Apple `ContainerClient` and `NetworkClient` per engine process;
+- uses Apple’s typed API for stock container inventory and exact inspection,
+  while retaining the enhanced runtime's additive CLI inventory schema;
+- uses distribution-safe direct clients for network operations and archive
+  transfer;
+- resolves Docker IDs through durable metadata before issuing a filtered
+  runtime lookup;
+- maps typed Apple snapshots directly instead of serializing them through an
+  intermediate JSON object;
+- wakes event polling immediately after authoritative in-process mutations
+  while retaining the 200ms fallback for out-of-process changes;
+- copies the managed `/etc/hosts` block through the direct API and skips the
+  transfer when the container incarnation and desired block are unchanged;
+- invalidates the managed-host cache after every runtime bootstrap, including
+  stop/start and transient archive starts, and on recreation, removal, or
+  archive upload.
+
+Container stop, kill, and delete deliberately remain on the CLI path. A
+candidate that moved those mutations to the direct API improved the median but
+caused materially worse cleanup tails with the custom runtime, so it was
+rejected.
+
+### Same-host comparison
+
+The final source was selected using real E06 parity probes on the same Mac,
+with an unmodified `main` engine and candidate engine alternated or run under
+the same consecutive-load pattern. Each probe created a real network, managed
+volume, bind and tmpfs mounts, two long-running containers, a transient
+auto-remove container, DNS traffic, exec traffic, persistence checks, inspect
+calls, and complete cleanup.
+
+| Runtime | Sample | Baseline median | Candidate median | Median improvement | Baseline mean | Candidate mean | Baseline p90 | Candidate p90 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 10 + 10 sustained runs | 5.584s | 4.655s | 16.6% | 6.650s | 5.566s | 8.670s | 7.776s |
+| Matched custom `container` used by `container-compose` 0.10.1 | 10 + 10 sustained runs | 5.697s | 4.691s | 17.7% | 5.674s | 4.976s | 5.788s | 5.231s |
+
+All 40 observations passed their semantic and cleanup contracts. The
+candidate improved the stock mean by 16.3% and p90 by 10.3%; it improved the
+custom-runtime mean by 12.3% and p90 by 9.6%. Periodic VM cleanup tails remain
+visible in both baseline and candidate samples, but the accepted candidate
+does not worsen them.
+
+These are focused local A/B measurements, not a replacement for the hosted
+three-lane release matrix. Full Docker, stock Apple, custom-runtime, and real
+VS Code parity remain publication gates.
+
+### Final-source confirmation
+
+After the client protocols were made injectable for deterministic unit tests,
+the exact final source completed ten additional E06 runs per Apple runtime.
+All 20 runs passed their semantic and cleanup contracts:
+
+| Runtime | Sample | Median | Mean | p90 | Maximum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 10 | 4.307s | 5.188s | 7.355s | 7.381s |
+| Matched custom `container` | 10 | 4.620s | 5.297s | 7.879s | 8.092s |
+
+Most observations were close to the median. The slower observations coincided
+with periodic VM cleanup and did not change semantics or leave resources.
+
+The archive fast path removes two `container cp` process launches by calling
+the same official typed copy API directly. Three focused E05 runs per runtime
+all preserved content, executable mode, symbolic links, a 110-character path,
+and a 1 MiB binary:
+
+| Runtime | Sample | Median | Minimum | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Stock Apple `container` 1.1.0 | 3 | 1.664s | 1.576s | 1.808s |
+| Matched custom `container` | 3 | 1.703s | 1.630s | 1.833s |
+
+In the final complete matrix, E05 took 1.606s on stock and 1.700s on the
+custom runtime, compared with Docker's 1.290s. The earlier custom-runtime
+matrix observation before this fast path was 4.896s.
+
+### Final acceptance matrix
+
+The exact final source passed all 54 CLI fixture-lane executions with zero
+normalized semantic or cleanup differences:
+
+| Matrix | Docker | Stock Apple | Custom runtime |
+| --- | ---: | ---: | ---: |
+| 18-fixture total | 81.957s | 120.979s | 114.792s |
+| E05 archive copy | 1.290s | 1.606s (1.245x) | 1.700s (1.318x) |
+| E06 network and volume | 1.766s | 4.453s (2.522x) | 4.422s (2.504x) |
+
+The stock total includes a 48.454s Feature build and a 12.449s Compose
+lifecycle observation; neither path was changed by this work. Stock E06 at
+`2.522x` and custom E06 at `2.504x` both exceed the current `2.50x`
+investigation trigger. They remain functionally passing, miss the
+comparable-or-better objective, and require phase-level investigation.
+
+The authenticated real VS Code Dev Containers attach, command, rebuild,
+reopen, and cleanup workflow also passed on every lane:
+
+| Docker | Stock Apple | Custom runtime |
+| ---: | ---: | ---: |
+| 39.497s | 39.733s (1.006x) | 53.687s (1.359x) |
+
+### Rejected lower-layer changes
+
+An operation-static client-reuse change was also measured in
+`container-compose`. It was neutral within ordinary variation because each
+Compose CLI invocation is a new process. The change was removed. A 50ms event
+polling experiment added four times as many inventory requests without a
+stable improvement and was also removed.
+
+The optimization therefore requires no source change in `container-compose`,
+the custom `container` fork, or the custom `containerization` fork. Dedicated
+`perf/devcontainer-speedups` branches exist in those repositories so later
+Compose-stack work can be reconciled without colliding with concurrent
+development, but they intentionally remain source-identical to their
+respective main branches.
+
+The remaining priority order is:
+
+1. Provider VS Code first attach.
+2. Stock/provider C04 Compose lifecycle.
+3. D07 reuse/rebuild/cleanup.
+4. Re-measure D03 provider variability before changing it.
+5. Complete the E06 phase-level investigation because both final observations
+   remain above `2.50x`; distinguish product-owned round trips from ordinary
+   VM cleanup variance.

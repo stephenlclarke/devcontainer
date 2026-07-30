@@ -11,9 +11,11 @@ evidence for all 18 CLI fixtures and the real VS Code fixture.
 | Stock Apple | 106.733s | 1.316x | 41.965s | 1.091x |
 | `container-compose` provider | 116.573s | 1.438x | 51.931s | 1.350x |
 
-Every run has zero semantic differences and zero performance failures. The
-policy fails only a timeout/non-completion or a candidate duration at least
-`10x` the matching Docker fixture.
+Every run has zero semantic differences and complete timing evidence.
+Comparable or better performance (`<=1.00x` Docker) is the objective. A
+completed result above `2.50x` Docker requires further investigation but does
+not, by itself, change functional parity. A timeout, other non-completion, or
+missing or invalid timing evidence fails the gate.
 
 ## Measured hotspots
 
@@ -43,3 +45,7 @@ change does not alter the historical matrix above.
 The complete 19-row timing matrix, variability analysis, phase breakdown,
 artifact links, and measurement protocol is maintained in
 [PERFORMANCE.md](https://github.com/stephenlclarke/devcontainer/blob/main/PERFORMANCE.md).
+
+The project's full parity and comparable-performance objectives, audited
+implementation findings, and solution designs are maintained in
+[PARITY-ROADMAP.md](https://github.com/stephenlclarke/devcontainer/blob/main/PARITY-ROADMAP.md).

@@ -14,8 +14,10 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
+import DevContainerState
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -233,6 +235,481 @@ func `create rejects unknown security and resource drivers`() async throws {
 }
 
 @Test
+// swiftlint:disable:next function_body_length
+func `unknown request members fail before runtime side effects`() async throws {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:test"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(runtime: runtime)
+    let requests = [
+        (
+            "/containers/create",
+            #"{"Image":"alpine:test","UnknownRoot":true}"#,
+            "UnknownRoot"
+        ),
+        (
+            "/containers/create",
+            #"{"Image":"alpine:test","HostConfig":{"FutureResource":1048576}}"#,
+            "HostConfig.FutureResource"
+        ),
+        (
+            "/containers/create",
+            #"""
+            {
+              "Image":"alpine:test",
+              "Mounts":[{
+                "Type":"bind",
+                "Source":"/tmp",
+                "Target":"/work",
+                "BindOptions":{"FuturePropagation":"rprivate"}
+              }]
+            }
+            """#,
+            "Mounts.[0].BindOptions.FuturePropagation"
+        ),
+        (
+            "/networks/create",
+            #"{"Name":"fixture","FutureIPAM":{"Driver":"default"}}"#,
+            "FutureIPAM"
+        ),
+        (
+            "/volumes/create",
+            #"{"Name":"fixture","FutureDriverOpts":{"type":"none"}}"#,
+            "FutureDriverOpts"
+        )
+    ]
+
+    for (target, body, field) in requests {
+        let response = await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: target,
+                body: Data(body.utf8)
+            )
+        )
+        #expect(response.status == 400)
+        let envelope = try JSONSerialization.jsonObject(
+            with: bytes(response)
+        ) as? [String: String]
+        #expect(envelope?["message"]?.contains(field) == true)
+    }
+
+    #expect(await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    ).isEmpty)
+    #expect(await runtime.listNetworks(context: RuntimeRequestContext()).isEmpty)
+    #expect(await runtime.listVolumes(context: RuntimeRequestContext()).isEmpty)
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `known unsupported create fields fail before runtime side effects`() async throws {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:test"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(runtime: runtime)
+    let containerRequests = [
+        (#"{"Image":"alpine:test","HostConfig":{"Memory":1048576}}"#, "HostConfig.Memory"),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"DeviceRequests":[{"Count":-1,"Capabilities":[["gpu"]]}]}}"#,
+            "HostConfig.DeviceRequests"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"Dns":["1.1.1.1"]}}"#,
+            "HostConfig.Dns"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"PidMode":"host"}}"#,
+            "HostConfig.PidMode"
+        ),
+        (
+            #"{"Image":"alpine:test","HostConfig":{"RestartPolicy":{"Name":"always"}}}"#,
+            "HostConfig.RestartPolicy"
+        ),
+        (
+            #"""
+            {
+              "Image":"alpine:test",
+              "Mounts":[{
+                "Type":"bind",
+                "Source":"/tmp",
+                "Target":"/work",
+                "BindOptions":{"Propagation":"rshared"}
+              }]
+            }
+            """#,
+            "Mounts.[0].BindOptions"
+        ),
+        (
+            #"""
+            {
+              "Image":"alpine:test",
+              "NetworkingConfig":{
+                "EndpointsConfig":{
+                  "bridge":{"IPAMConfig":{"IPv4Address":"172.20.0.10"}}
+                }
+              }
+            }
+            """#,
+            "NetworkingConfig.EndpointsConfig.bridge.IPAMConfig"
+        )
+    ]
+    for (body, field) in containerRequests {
+        let response = await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/containers/create",
+                body: Data(body.utf8)
+            )
+        )
+        #expect(response.status == 501, Comment(rawValue: field))
+        let envelope = try JSONSerialization.jsonObject(
+            with: bytes(response)
+        ) as? [String: String]
+        #expect(
+            envelope?["message"]?.contains(field) == true,
+            Comment(rawValue: field)
+        )
+    }
+
+    let network = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/networks/create",
+            body: Data(
+                #"{"Name":"fixture","IPAM":{"Config":[{"Subnet":"172.20.0.0/16"}]}}"#.utf8
+            )
+        )
+    )
+    #expect(network.status == 501)
+    let volume = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/volumes/create",
+            body: Data(#"{"Name":"fixture","DriverOpts":{"type":"none"}}"#.utf8)
+        )
+    )
+    #expect(volume.status == 501)
+
+    #expect(await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    ).isEmpty)
+    #expect(await runtime.listNetworks(context: RuntimeRequestContext()).isEmpty)
+    #expect(await runtime.listVolumes(context: RuntimeRequestContext()).isEmpty)
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `explicit idempotency keys replay one mutation and reject conflicting reuse`() async throws {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:test"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(runtime: runtime)
+    let headers = ["Idempotency-Key": "create-fixture"]
+    let first = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=idempotent",
+            headers: headers,
+            body: Data(#"{"Image":"alpine:test"}"#.utf8)
+        )
+    )
+    let second = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=idempotent",
+            headers: headers,
+            body: Data(#"{"Image":"alpine:test"}"#.utf8)
+        )
+    )
+    #expect(first.status == 201)
+    #expect(second.status == 201)
+    let firstBytes = try bytes(first)
+    let secondBytes = try bytes(second)
+    #expect(firstBytes == secondBytes)
+    #expect(first.headers["X-Request-ID"] != nil)
+    #expect(await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    ).count == 1)
+
+    let conflict = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=different",
+            headers: headers,
+            body: Data(#"{"Image":"alpine:test"}"#.utf8)
+        )
+    )
+    #expect(conflict.status == 409)
+    #expect(await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    ).count == 1)
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `empty Docker host IP binds on all IPv4 interfaces`() async throws {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:fixture",
+            references: ["fixture:latest"],
+            createdAt: Date(timeIntervalSince1970: 1),
+            size: 1
+        )
+    )
+    let router = DockerRouter(runtime: runtime)
+    let body = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "fixture:latest",
+            "HostConfig": [
+                "PortBindings": [
+                    "8080/tcp": [["HostIp": "", "HostPort": "18080"]]
+                ]
+            ]
+        ]
+    )
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/v1.53/containers/create?name=host-ip",
+            body: body
+        )
+    )
+    #expect(response.status == 201)
+    let snapshot = try #require(
+        await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        ).first
+    )
+    #expect(snapshot.spec.ports.first?.hostAddress == "0.0.0.0")
+    #expect(snapshot.imageID == "sha256:fixture")
+
+    let list = await router.respond(
+        to: DockerHTTPRequest(method: .get, target: "/v1.53/containers/json?all=1")
+    )
+    let summaries = try #require(
+        JSONSerialization.jsonObject(with: bytes(list)) as? [[String: Any]]
+    )
+    #expect(summaries.first?["Image"] as? String == "fixture:latest")
+    #expect(summaries.first?["ImageID"] as? String == "sha256:fixture")
+
+    let inspect = await router.respond(
+        to: DockerHTTPRequest(
+            method: .get,
+            target: "/v1.53/containers/\(snapshot.dockerID.rawValue)/json"
+        )
+    )
+    let inspected = try #require(
+        JSONSerialization.jsonObject(with: bytes(inspect)) as? [String: Any]
+    )
+    #expect(inspected["Image"] as? String == "sha256:fixture")
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `production router journals and labels owned container mutations`() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "devcontainer-router-coordinator-\(UUID().uuidString)",
+            isDirectory: true
+        )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(
+        path: directory.appendingPathComponent("state.sqlite")
+    )
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:journalled",
+            references: ["fixture:latest"],
+            createdAt: Date(timeIntervalSince1970: 1),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store)
+    )
+    let body = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "fixture:latest",
+            "Labels": ["devcontainer.local_folder": "/workspace"]
+        ]
+    )
+
+    let created = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/v1.53/containers/create?name=journalled",
+            headers: ["X-Request-ID": "fixture-correlation"],
+            body: body
+        )
+    )
+    #expect(created.status == 201)
+    let project = try #require(await store.listProjects().first)
+    let resources = try await store.resources(project: project.key)
+    let snapshot = try #require(
+        await runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: RuntimeRequestContext()
+        ).first
+    )
+    #expect(project.reconciliationState == .clean)
+    #expect(project.desiredGeneration == 1)
+    #expect(resources.map(\.runtimeID) == [snapshot.runtimeID])
+    #expect(snapshot.spec.labels[RuntimeLabels.project] == project.key.rawValue)
+    #expect(snapshot.spec.labels[RuntimeLabels.provider] == BackendProvider.stock.rawValue)
+    #expect(snapshot.spec.labels[RuntimeLabels.generation] == "1")
+    #expect(snapshot.spec.labels[RuntimeLabels.operation] != nil)
+    #expect(try await store.unfinishedOperations().isEmpty)
+
+    let networkCreate = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/v1.53/networks/create",
+            body: Data(
+                #"""
+                {
+                  "Name":"journalled-network",
+                  "Labels":{"devcontainer.local_folder":"/workspace"}
+                }
+                """#.utf8
+            )
+        )
+    )
+    #expect(networkCreate.status == 201)
+    let networkObject = try #require(
+        JSONSerialization.jsonObject(
+            with: bytes(networkCreate)
+        ) as? [String: Any]
+    )
+    let networkID = try #require(networkObject["Id"] as? String)
+    let connectBody = try JSONSerialization.data(
+        withJSONObject: ["Container": snapshot.dockerID.rawValue]
+    )
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/v1.53/networks/\(networkID)/connect",
+                body: connectBody
+            )
+        ).status == 200
+    )
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/v1.53/networks/\(networkID)/disconnect",
+                body: connectBody
+            )
+        ).status == 200
+    )
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .delete,
+                target: "/v1.53/networks/\(networkID)"
+            )
+        ).status == 204
+    )
+
+    let volumeCreate = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/v1.53/volumes/create",
+            body: Data(
+                #"""
+                {
+                  "Name":"journalled-volume",
+                  "Labels":{"devcontainer.local_folder":"/workspace"}
+                }
+                """#.utf8
+            )
+        )
+    )
+    #expect(volumeCreate.status == 201)
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .delete,
+                target: "/v1.53/volumes/journalled-volume"
+            )
+        ).status == 204
+    )
+
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/v1.53/containers/\(snapshot.dockerID.rawValue)/start"
+            )
+        ).status == 204
+    )
+    let execCreate = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/v1.53/containers/\(snapshot.dockerID.rawValue)/exec",
+            body: Data(#"{"Cmd":["true"],"AttachStdout":true}"#.utf8)
+        )
+    )
+    let execCreateBody = try bytes(execCreate)
+    let execDiagnostic =
+        String(data: execCreateBody, encoding: .utf8)
+            ?? "non-UTF-8 exec response"
+    #expect(
+        execCreate.status == 201,
+        Comment(rawValue: execDiagnostic)
+    )
+    let execObject = try #require(
+        JSONSerialization.jsonObject(
+            with: execCreateBody
+        ) as? [String: Any]
+    )
+    let execID = try #require(execObject["Id"] as? String)
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/v1.53/exec/\(execID)/start",
+                body: Data(#"{"Detach":true,"Tty":false}"#.utf8)
+            )
+        ).status == 200
+    )
+}
+
+@Test
 func `daemon information head requests and invalid inputs use Docker semantics`() async throws {
     let runtime = InMemoryRuntime(version: "1.1.0", commit: "fixture", distribution: "apple")
     await runtime.seedImage(
@@ -252,6 +729,7 @@ func `daemon information head requests and invalid inputs use Docker semantics`(
     let infoObject = try JSONSerialization.jsonObject(with: bytes(info)) as? [String: Any]
     #expect(infoObject?["Images"] as? Int == 1)
     #expect(infoObject?["ServerVersion"] as? String == "1.1.0")
+    #expect(infoObject?["MemoryLimit"] as? Bool == false)
     let images = await router.respond(to: DockerHTTPRequest(method: .get, target: "/images/json"))
     #expect(try (JSONSerialization.jsonObject(with: bytes(images)) as? [[String: Any]])?.count == 1)
 

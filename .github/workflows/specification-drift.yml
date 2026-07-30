@@ -1,0 +1,29 @@
+name: Dev Containers specification drift
+
+on:
+  schedule:
+    - cron: "31 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema:
+    name: Detect untracked schema properties
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download current upstream base schema
+        run: |
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --output "${RUNNER_TEMP}/devContainer.base.schema.json" \
+            https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.base.schema.json
+      - name: Compare specification surface
+        run: |
+          python3 Tools/parity/validate_coverage.py \
+            --schema "${RUNNER_TEMP}/devContainer.base.schema.json"

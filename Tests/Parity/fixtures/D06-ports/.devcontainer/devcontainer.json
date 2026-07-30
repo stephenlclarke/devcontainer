@@ -1,6 +1,6 @@
 {
   "name": "devcontainer-parity-ports",
-  "image": "python:3.13-alpine",
+  "image": "python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0",
   "overrideCommand": true,
   "remoteUser": "root",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/devcontainer-parity,type=bind",

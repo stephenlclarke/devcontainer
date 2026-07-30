@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import Foundation
@@ -116,6 +117,40 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `process cancellation escalates across the complete owned process group`() async throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-process-group-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let session = try AppleProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                """
+                trap '' TERM
+                (trap '' TERM; while :; do sleep 1; done) &
+                printf '%s %s' "$$" "$!" > '\(pidFile.path)'
+                wait
+                """
+            ],
+            environment: [:]
+        )
+        for _ in 0 ..< 100 where !FileManager.default.fileExists(atPath: pidFile.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let identifiers = try String(contentsOf: pidFile, encoding: .utf8)
+            .split(separator: " ")
+            .compactMap { pid_t($0) }
+        #expect(identifiers.count == 2)
+
+        session.cancel()
+        #expect(try await session.wait() != 0)
+        for _ in 0 ..< 100 where identifiers.contains(where: Self.processExists) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!identifiers.contains(where: Self.processExists))
+    }
+
+    @Test
     func `process session preserves large duplex streams`() async throws {
         let payload = Data(
             (0 ..< (4 * 1024 * 1024)).lazy.map { UInt8($0 & 0xFF) }
@@ -146,5 +181,10 @@ struct AppleRuntimeStreamTests {
         #expect(try await session.wait() == 0)
         #expect(standardOutput == payload)
         #expect(standardError == Data("large-stream-stderr".utf8))
+    }
+
+    private static func processExists(_ identifier: pid_t) -> Bool {
+        errno = 0
+        return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
     }
 }

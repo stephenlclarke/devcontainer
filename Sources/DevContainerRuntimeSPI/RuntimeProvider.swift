@@ -34,6 +34,7 @@ public protocol RuntimeIdentityProvider: Sendable {
 public struct RuntimeContainerMetadata: Codable, Equatable, Sendable {
     public var runtimeID: RuntimeID
     public var dockerID: DockerID
+    public var imageID: String?
     public var spec: ContainerSpec
     public var createdAt: Date
     public var startedAt: Date?
@@ -41,12 +42,14 @@ public struct RuntimeContainerMetadata: Codable, Equatable, Sendable {
     public init(
         runtimeID: RuntimeID,
         dockerID: DockerID,
+        imageID: String? = nil,
         spec: ContainerSpec,
         createdAt: Date,
         startedAt: Date? = nil
     ) {
         self.runtimeID = runtimeID
         self.dockerID = dockerID
+        self.imageID = imageID
         self.spec = spec
         self.createdAt = createdAt
         self.startedAt = startedAt

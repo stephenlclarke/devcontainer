@@ -180,7 +180,7 @@ private func runCurl(socket: String, path: String) throws -> String {
     let error = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
     process.arguments = [
-        "--fail",
+        "--fail-with-body",
         "--silent",
         "--show-error",
         "--unix-socket",
@@ -194,9 +194,12 @@ private func runCurl(socket: String, path: String) throws -> String {
     let data = try output.fileHandleForReading.readToEnd() ?? Data()
     let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
     guard process.terminationStatus == 0 else {
-        throw ServiceIntegrationError(
+        let response = String(data: data, encoding: .utf8) ?? "non-UTF-8 response body"
+        let curlDiagnostic =
             String(data: diagnostic, encoding: .utf8)
                 ?? "non-UTF-8 service diagnostic"
+        throw ServiceIntegrationError(
+            "\(curlDiagnostic.trimmingCharacters(in: .whitespacesAndNewlines)): \(response)"
         )
     }
     return String(data: data, encoding: .utf8)

@@ -5,15 +5,19 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite contains 127 Swift tests and records greater than
-90% first-party line coverage. For version 1.0.0, real Docker, stock Apple,
-and separately identified `container-compose` lanes pass all 18 CLI fixtures
-and the pinned real VS Code fixture with zero normalized semantic differences
-and no performance failures. In the exact 1.0.0 tag run, the largest CLI ratios
-are 2.876x for stock Apple and 4.509x for `container-compose`; the corresponding
-VS Code ratios are 1.232x and 1.311x. Three-run statistics and hotspot analysis
-are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds these results to
-the exact physical runner, signing, notarization, and publication evidence.
+driver. The hosted-safe suite is discovered at execution time and must record
+greater than 90% first-party line coverage; documentation does not maintain a
+manual test-count claim that can drift from the executable suite. For version
+1.0.0, real Docker, stock Apple, and separately identified `container-compose`
+lanes pass all 18 CLI fixtures and the pinned real VS Code fixture with zero
+normalized semantic differences and complete timing evidence. In the exact
+1.0.0 tag run, the largest CLI
+ratios are 2.876x for stock Apple and 4.509x for `container-compose`; those
+results require further investigation under the current policy. The
+corresponding VS Code ratios are 1.232x and 1.311x. Three-run statistics and
+hotspot analysis are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds
+these results to the exact physical runner, signing, notarization, and
+publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
@@ -186,11 +190,19 @@ lane.
 
 Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
 
-Timing is not an exact-equivalence assertion. A completed candidate remains passing when it is slower than Docker by less than one order of magnitude. A timeout or other non-completion, missing or invalid timing evidence, or a candidate duration of at least `10x` the Docker oracle for the same fixture fails the parity gate. The harness does not retry, normalize, or waive those failures. The complete 1.0.0 repeated-run analysis and optimization measurement protocol are in [`PERFORMANCE.md`](PERFORMANCE.md).
+Timing is not an exact-equivalence assertion. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed candidate above `2.50x` Docker is marked for further investigation but does not, by itself, change functional parity. A timeout or other non-completion, or missing or invalid timing evidence, fails the parity gate. The harness does not retry, normalize, or waive those failures. The complete 1.0.0 repeated-run analysis and optimization measurement protocol are in [`PERFORMANCE.md`](PERFORMANCE.md), and the full target is in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
 ## Fixture catalog
 
-The machine-readable manifest is the source of release scope. Fixture identifiers remain stable, and every entry records required lanes, pins, capabilities, observations, cleanup assertions, implementation status, and owner.
+The machine-readable manifest is the source of release scope. Fixture
+identifiers remain stable, and every entry records required lanes, pins,
+capabilities, observations, cleanup assertions, and implementation status.
+`Tests/Parity/spec-coverage.json` separately maps every explicit property in
+the pinned Development Containers base schema and each lifecycle rule to
+certified fixture evidence or an explicit blocker and owner. Validation fails
+if a property is missing, duplicated, or certified without an implemented
+fixture. A scheduled drift workflow reports upstream schema additions without
+moving the checked pin.
 
 ### Engine API fixtures
 
@@ -219,10 +231,11 @@ The machine-readable manifest is the source of release scope. Fixture identifier
   explicit container/volume cleanup.
 
 Release evidence records the resolved runtime and client fingerprints.
-Several 1.0.1 fixtures still name public image or Feature tags, so upstream
-content can drift between rebuilds. Converting every fixture input to an
-immutable digest is a reproducibility follow-up; a tag alone is not treated as
-proof of an immutable test input.
+Every checked fixture image uses an immutable digest. Human-readable Feature
+tags are bound to resolved OCI digests and matching integrity values in a
+checked `devcontainer-lock.json`. `make parity-manifest` fails if a mutable
+image, missing Feature lock, mismatched Feature set, or divergent resolved and
+integrity digest is introduced.
 
 ### Compose fixtures
 

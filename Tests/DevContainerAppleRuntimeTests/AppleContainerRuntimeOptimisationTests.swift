@@ -259,6 +259,39 @@ struct AppleContainerRuntimeOptimisationTests {
     }
 
     @Test
+    func `event poller wakes immediately after an in-process mutation`() async throws {
+        let source = EventSnapshotSource()
+        let poller = AppleEventPoller { _ in
+            await source.snapshot()
+        }
+        let stream = AsyncThrowingStream<RuntimeEvent, any Error>.makeStream()
+        let identifier = try await poller.subscribe(
+            continuation: stream.continuation,
+            since: nil,
+            until: nil,
+            labels: [:],
+            context: RuntimeRequestContext()
+        )
+        stream.continuation.onTermination = { _ in
+            Task {
+                await poller.unsubscribe(identifier)
+            }
+        }
+        let nextEvent = Task { () throws -> RuntimeEvent? in
+            for try await event in stream.stream {
+                return event
+            }
+            return nil
+        }
+
+        await source.set(snapshot: .fixture)
+        await poller.notifyChanged()
+
+        #expect(try await nextEvent.value?.action == .create)
+        await poller.shutdown()
+    }
+
+    @Test
     func `start reuses its refreshed inventory for host synchronisation`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()

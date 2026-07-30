@@ -24,6 +24,7 @@ let package = Package(
     ],
     products: [
         .library(name: "DevContainerModel", targets: ["DevContainerModel"]),
+        .library(name: "DevContainerProcess", targets: ["DevContainerProcess"]),
         .library(name: "DevContainerRuntimeSPI", targets: ["DevContainerRuntimeSPI"]),
         .library(name: "DevContainerState", targets: ["DevContainerState"]),
         .library(name: "DevContainerCore", targets: ["DevContainerCore"]),
@@ -64,6 +65,13 @@ let package = Package(
             dependencies: ["DevContainerModel"]
         ),
         .target(
+            name: "DevContainerProcess",
+            dependencies: [
+                "DevContainerModel",
+                .product(name: "ContainerizationOS", package: "containerization")
+            ]
+        ),
+        .target(
             name: "DevContainerState",
             dependencies: [
                 "CSQLite",
@@ -93,6 +101,7 @@ let package = Package(
             name: "DevContainerAppleRuntime",
             dependencies: [
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerRuntimeSPI",
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerBuild", package: "container"),
@@ -107,6 +116,7 @@ let package = Package(
             name: "DevContainerComposeProvider",
             dependencies: [
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerRuntimeSPI"
             ]
         ),
@@ -142,6 +152,7 @@ let package = Package(
                 "DevContainerComposeProvider",
                 "DevContainerCore",
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerState",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Logging", package: "swift-log")
@@ -153,6 +164,7 @@ let package = Package(
                 "DevContainerComposeProvider",
                 "DevContainerCore",
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerState"
             ]
         ),
@@ -170,8 +182,13 @@ let package = Package(
             dependencies: ["DevContainerModel"]
         ),
         .testTarget(
+            name: "DevContainerProcessTests",
+            dependencies: ["DevContainerProcess"]
+        ),
+        .testTarget(
             name: "DevContainerStateTests",
             dependencies: [
+                "CSQLite",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 "DevContainerState"
@@ -189,8 +206,10 @@ let package = Package(
         .testTarget(
             name: "DevContainerDockerAPITests",
             dependencies: [
+                "DevContainerCore",
                 "DevContainerDockerAPI",
                 "DevContainerModel",
+                "DevContainerState",
                 "DevContainerTestSupport"
             ]
         ),
@@ -218,6 +237,7 @@ let package = Package(
                 "DevContainerRuntimeSPI",
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
+                .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")

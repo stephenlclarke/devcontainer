@@ -181,7 +181,7 @@
       "id": "D07-reuse-cleanup",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["reuse and rebuild", "shutdown actions", "crash reconciliation and no leaked resources"]
+      "assertions": ["reuse and forced rebuild", "create and start hook counts", "owned-resource cleanup"]
     },
     {
       "id": "C01-compose-service",

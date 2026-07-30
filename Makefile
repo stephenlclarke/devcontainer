@@ -199,6 +199,8 @@ format-check:
 
 parity-manifest:
 	$(PYTHON) Tools/parity/validate_manifest.py
+	$(PYTHON) Tools/parity/validate_coverage.py
+	$(PYTHON) Tools/parity/validate_fixture_pins.py
 
 parity-docker:
 	Tools/parity/run-lane.sh docker "$(PARITY_EVIDENCE_DIR)"

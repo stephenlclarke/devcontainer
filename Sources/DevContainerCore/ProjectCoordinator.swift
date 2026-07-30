@@ -66,6 +66,8 @@ public struct ProjectMutation: Sendable {
 
 public actor ProjectCoordinator {
     private let store: any ProjectStateStore
+    private var lockedMutationKeys = Set<String>()
+    private var mutationWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     public init(store: any ProjectStateStore) {
         self.store = store
@@ -96,10 +98,18 @@ public actor ProjectCoordinator {
         try await store.releaseProject(key: project)
     }
 
+    // Intent, native mutation, reconciliation state, and commit are one
+    // fail-closed transaction boundary.
+    // swiftlint:disable:next function_body_length
     public func withMutation<Result: Sendable>(
         request: ProjectMutation,
+        context baseContext: RuntimeRequestContext = RuntimeRequestContext(),
         operation body: @Sendable (RuntimeRequestContext) async throws -> Result
     ) async throws -> Result {
+        let lockKey = request.project.rawValue
+        await acquireMutationLock(lockKey)
+        defer { releaseMutationLock(lockKey) }
+        try baseContext.checkActive()
         let claim = try await claim(
             project: request.project,
             provider: request.provider,
@@ -107,7 +117,7 @@ public actor ProjectCoordinator {
             projectDirectory: request.projectDirectory,
             configurationHash: request.configurationHash
         )
-        let operationID = OperationID.random()
+        let operationID = baseContext.operationID
         let generation = claim.desiredGeneration + 1
         let now = Date()
         let operation = request.operation(id: operationID, createdAt: now)
@@ -121,11 +131,18 @@ public actor ProjectCoordinator {
 
         let context = RuntimeRequestContext(
             operationID: operationID,
+            correlationID: baseContext.correlationID,
             project: request.project,
-            generation: generation
+            generation: generation,
+
+            deadline: baseContext.deadline,
+            providerFingerprint: request.provider.rawValue,
+            configurationHash: request.configurationHash
         )
         do {
+            try context.checkActive()
             let result = try await body(context)
+            try context.checkActive()
             try await store.updateOperation(id: operationID, phase: .applied, errorCode: nil)
             try await store.setProjectState(
                 key: request.project,
@@ -150,5 +167,170 @@ public actor ProjectCoordinator {
 
     public func recoveryOperations() async throws -> [OperationRecord] {
         try await store.unfinishedOperations()
+    }
+
+    public func failUnfinishedOperationsForManualRecovery() async throws
+        -> [OperationRecord]
+    {
+        let operations = try await store.unfinishedOperations()
+        for operation in operations {
+            try await store.updateOperation(
+                id: operation.id,
+                phase: .failed,
+                errorCode: "manual-recovery-required"
+            )
+            if let project = try await store.project(key: operation.project) {
+                try await store.setProjectState(
+                    key: operation.project,
+                    desiredState: project.desiredState,
+                    reconciliationState: .failed,
+                    generation: project.desiredGeneration
+                )
+            }
+        }
+        return operations
+    }
+
+    public func recordResource(_ resource: ResourceRecord) async throws {
+        try await store.recordResource(resource)
+    }
+
+    public func recordContainer(
+        _ snapshot: ContainerSnapshot,
+        provider: BackendProvider,
+        context: RuntimeRequestContext,
+        specificationHash: String,
+        labelsHash: String
+    ) async throws {
+        guard let project = context.project, let generation = context.generation else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "cannot record a container without project generation ownership"
+            )
+        }
+        let now = Date()
+        try await store.recordResource(
+            ResourceRecord(
+                runtimeKind: "container",
+                runtimeID: snapshot.runtimeID,
+                dockerID: snapshot.dockerID,
+                project: project,
+                logicalName: snapshot.spec.name,
+                role: "devcontainer",
+                provider: provider,
+                specificationHash: specificationHash,
+                generation: generation,
+                observedState: snapshot.state.rawValue,
+                labelsHash: labelsHash,
+                createdAt: snapshot.createdAt,
+                updatedAt: now
+            )
+        )
+    }
+
+    public func recordNetwork(
+        _ snapshot: NetworkSnapshot,
+        provider: BackendProvider,
+        context: RuntimeRequestContext,
+        specificationHash: String,
+        labelsHash: String
+    ) async throws {
+        try await recordResource(
+            runtimeKind: "network",
+            runtimeID: RuntimeID(rawValue: snapshot.id),
+            dockerID: DockerID(rawValue: snapshot.id),
+            logicalName: snapshot.spec.name,
+            role: "network",
+            provider: provider,
+            context: context,
+            specificationHash: specificationHash,
+            labelsHash: labelsHash,
+            observedState: "active",
+            createdAt: snapshot.createdAt
+        )
+    }
+
+    public func recordVolume(
+        _ snapshot: VolumeSnapshot,
+        provider: BackendProvider,
+        context: RuntimeRequestContext,
+        specificationHash: String,
+        labelsHash: String
+    ) async throws {
+        try await recordResource(
+            runtimeKind: "volume",
+            runtimeID: RuntimeID(rawValue: snapshot.name),
+            dockerID: DockerID(rawValue: snapshot.name),
+            logicalName: snapshot.name,
+            role: "volume",
+            provider: provider,
+            context: context,
+            specificationHash: specificationHash,
+            labelsHash: labelsHash,
+            observedState: "active",
+            createdAt: snapshot.createdAt
+        )
+    }
+
+    public func removeResource(runtimeID: RuntimeID) async throws {
+        try await store.removeResource(runtimeID: runtimeID)
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    private func recordResource(
+        runtimeKind: String,
+        runtimeID: RuntimeID,
+        dockerID: DockerID,
+        logicalName: String,
+        role: String,
+        provider: BackendProvider,
+        context: RuntimeRequestContext,
+        specificationHash: String,
+        labelsHash: String,
+        observedState: String,
+        createdAt: Date
+    ) async throws {
+        guard let project = context.project, let generation = context.generation else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "cannot record a resource without project generation ownership"
+            )
+        }
+        try await store.recordResource(
+            ResourceRecord(
+                runtimeKind: runtimeKind,
+                runtimeID: runtimeID,
+                dockerID: dockerID,
+                project: project,
+                logicalName: logicalName,
+                role: role,
+                provider: provider,
+                specificationHash: specificationHash,
+                generation: generation,
+                observedState: observedState,
+                labelsHash: labelsHash,
+                createdAt: createdAt,
+                updatedAt: Date()
+            )
+        )
+    }
+
+    private func acquireMutationLock(_ key: String) async {
+        if lockedMutationKeys.insert(key).inserted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            mutationWaiters[key, default: []].append(continuation)
+        }
+    }
+
+    private func releaseMutationLock(_ key: String) {
+        if var waiters = mutationWaiters[key], !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            mutationWaiters[key] = waiters.isEmpty ? nil : waiters
+            next.resume()
+            return
+        }
+        lockedMutationKeys.remove(key)
     }
 }

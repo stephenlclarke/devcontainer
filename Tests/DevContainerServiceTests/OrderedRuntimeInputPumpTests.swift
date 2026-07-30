@@ -47,6 +47,19 @@ func `runtime input pump ignores writes following EOF`() async {
     #expect(session.operations == [.data(42), .close])
 }
 
+@Test
+func `runtime session cancellation is owned and delivered exactly once`() async {
+    let session = RecordingProcessSession()
+    let cancellation = RuntimeSessionCancellation(session: session)
+
+    cancellation.cancel()
+    cancellation.cancel()
+    cancellation.cancel()
+    await cancellation.wait()
+
+    #expect(session.cancellationCount == 1)
+}
+
 private final class RecordingProcessSession: RuntimeProcessSession, @unchecked Sendable {
     enum Operation: Equatable {
         case data(UInt8)
@@ -59,9 +72,14 @@ private final class RecordingProcessSession: RuntimeProcessSession, @unchecked S
 
     private let lock = NSLock()
     private var recorded: [Operation] = []
+    private var cancellations = 0
 
     var operations: [Operation] {
         lock.withLock { recorded }
+    }
+
+    var cancellationCount: Int {
+        lock.withLock { cancellations }
     }
 
     func write(_ data: Data) async throws {
@@ -86,5 +104,9 @@ private final class RecordingProcessSession: RuntimeProcessSession, @unchecked S
         0
     }
 
-    func cancel() {}
+    func cancel() {
+        lock.withLock {
+            cancellations += 1
+        }
+    }
 }

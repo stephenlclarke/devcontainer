@@ -21,6 +21,10 @@ import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
+// Runtime scenarios stay in one serialized suite until direct-client live
+// fixtures can be split from CLI fallback fixtures.
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 struct AppleContainerRuntimeTests {
     @Test
@@ -118,7 +122,7 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
-    func `stock create rejects options it cannot enforce and maps privileged to capabilities`() async throws {
+    func `stock create rejects options it cannot enforce before native creation`() async throws {
         let fixture = try FakeAppleCLI(enhancedCreateOptions: false)
         let runtime = try fixture.runtime()
         let context = RuntimeRequestContext()
@@ -153,18 +157,24 @@ struct AppleContainerRuntimeTests {
             #expect(error.message.contains("--security-opt"))
         }
 
-        _ = try await runtime.createContainer(
-            spec: ContainerSpec(
-                name: "fixture",
-                image: "fixture:latest",
-                privileged: true
-            ),
-            context: context
-        )
+        do {
+            _ = try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture",
+                    image: "fixture:latest",
+                    privileged: true
+                ),
+                context: context
+            )
+            Issue.record("stock privileged creation unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .unsupportedCapability)
+            #expect(error.message.contains("--privileged"))
+        }
         let log = try fixture.log()
         #expect(log.contains("create --help"))
-        #expect(log.contains("create --name fixture --cap-add ALL fixture:latest"))
-        #expect(!log.contains("--privileged"))
+        #expect(!log.contains("create --name fixture"))
+        #expect(!log.contains("--cap-add ALL"))
     }
 
     @Test
@@ -328,6 +338,44 @@ struct AppleContainerRuntimeTests {
         )
 
         #expect(containers.isEmpty)
+    }
+
+    @Test
+    func `container resolution distinguishes missing ambiguous and exact identifiers`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let first = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "native-first"),
+            dockerID: DockerID(rawValue: "abcdef000000"),
+            spec: ContainerSpec(name: "first", image: "fixture:latest"),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let second = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "native-second"),
+            dockerID: DockerID(rawValue: "abcdef111111"),
+            spec: ContainerSpec(name: "second", image: "fixture:latest"),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let exact = try await runtime.resolvedContainerSnapshot(
+            id: first.dockerID.rawValue,
+            in: [first, second]
+        )
+        #expect(exact == first)
+        do {
+            _ = try await runtime.resolvedContainerSnapshot(id: "abcdef", in: [first, second])
+            Issue.record("ambiguous prefix unexpectedly resolved")
+        } catch let error as DevContainerError {
+            #expect(error.code == .invalidRequest)
+        }
+        do {
+            _ = try await runtime.resolvedContainerSnapshot(id: "missing", in: [first, second])
+            Issue.record("missing identifier unexpectedly resolved")
+        } catch let error as DevContainerError {
+            #expect(error.code == .notFound)
+        }
     }
 
     @Test
@@ -521,16 +569,18 @@ struct AppleContainerRuntimeTests {
         )
 
         let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
-        let complex = try await runtime.createContainer(
-            spec: ContainerSpec(
-                name: "fixture",
-                image: "fixture",
-                labels: ["devcontainer.metadata": metadata]
-            ),
-            context: context
-        )
-        #expect(complex.spec.labels["devcontainer.metadata"] == metadata)
-        #expect(try !fixture.log().contains("--label devcontainer.metadata="))
+        let logBeforeRejectedCreate = try fixture.log()
+        await #expect(throws: DevContainerError.self) {
+            _ = try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture",
+                    image: "fixture",
+                    labels: ["devcontainer.metadata": metadata]
+                ),
+                context: context
+            )
+        }
+        #expect(try fixture.log() == logBeforeRejectedCreate)
         try await runtime.renameContainer(id: "fixture", name: "renamed", context: context)
         #expect(
             try await runtime.inspectContainer(id: "renamed", context: context).spec.name
@@ -681,9 +731,14 @@ struct FakeAppleCLI {
     private let stateURL: URL
     private let modeURL: URL
     private let enhancedCreateOptions: Bool
+    private let distribution: String
 
-    init(enhancedCreateOptions: Bool = true) throws {
+    init(
+        enhancedCreateOptions: Bool = true,
+        distribution: String = "apple"
+    ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
+        self.distribution = distribution
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
@@ -712,6 +767,7 @@ struct FakeAppleCLI {
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
+            useDirectContainerAPI: false,
             metadataStore: metadataStore,
             volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
         )
@@ -759,7 +815,7 @@ struct FakeAppleCLI {
               "appName":"container",
               "version":"1.1.0",
               "commit":"fixture-commit",
-              "distribution":"apple"
+              "distribution":"\(distribution)"
             }]'
             ;;
           "create --help")

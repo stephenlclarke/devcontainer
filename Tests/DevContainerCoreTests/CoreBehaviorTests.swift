@@ -186,8 +186,107 @@ struct CoreBehaviorTests {
         #expect(try await coordinator.provider(for: key) == nil)
     }
 
+    @Test
+    func `coordinator serializes one project while unrelated projects remain concurrent`() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+        let coordinator = ProjectCoordinator(store: store)
+        let probe = MutationConcurrencyProbe()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (project, suffix) in [
+                ("501:shared", "one"),
+                ("501:shared", "two"),
+                ("501:unrelated", "three")
+            ] {
+                group.addTask {
+                    _ = try await coordinator.withMutation(
+                        request: ProjectMutation(
+                            project: ProjectKey(rawValue: project),
+                            provider: .stock,
+                            configurationHash: suffix,
+                            requestKind: "test",
+                            requestHash: suffix
+                        )
+                    ) { _ in
+                        await probe.enter(project: project)
+                        try await Task.sleep(for: .milliseconds(100))
+                        await probe.leave(project: project)
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        #expect(await probe.maximum(for: "501:shared") == 1)
+        #expect(await probe.globalMaximum >= 2)
+    }
+
+    @Test
+    func `unfinished operations become explicit manual recovery failures`() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+        let coordinator = ProjectCoordinator(store: store)
+        let project = ProjectKey(rawValue: "501:recovery")
+        _ = try await store.claimProject(
+            key: project,
+            provider: .stock,
+            composeProject: nil,
+            projectDirectory: nil,
+            configurationHash: "configuration"
+        )
+        try await store.setProjectState(
+            key: project,
+            desiredState: .running,
+            reconciliationState: .applying,
+            generation: 1
+        )
+        let now = Date()
+        let operation = OperationRecord(
+            id: OperationID(rawValue: "unfinished"),
+            project: project,
+            requestKind: "create",
+            requestHash: "hash",
+            createdAt: now,
+            updatedAt: now
+        )
+        try await store.beginOperation(operation)
+
+        #expect(try await coordinator.failUnfinishedOperationsForManualRecovery() == [operation])
+        #expect(try await coordinator.recoveryOperations().isEmpty)
+        #expect(try await store.project(key: project)?.reconciliationState == .failed)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-core-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+private actor MutationConcurrencyProbe {
+    private var activeByProject: [String: Int] = [:]
+    private var maximumByProject: [String: Int] = [:]
+    private var active = 0
+    private(set) var globalMaximum = 0
+
+    func enter(project: String) {
+        active += 1
+        activeByProject[project, default: 0] += 1
+        globalMaximum = max(globalMaximum, active)
+        maximumByProject[project] = max(
+            maximumByProject[project, default: 0],
+            activeByProject[project, default: 0]
+        )
+    }
+
+    func leave(project: String) {
+        active -= 1
+        activeByProject[project, default: 0] -= 1
+    }
+
+    func maximum(for project: String) -> Int {
+        maximumByProject[project, default: 0]
     }
 }

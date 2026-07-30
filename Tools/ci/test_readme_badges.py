@@ -43,7 +43,8 @@ class ReadmeBadgeTests(unittest.TestCase):
 
     def test_delivery_and_project_badges_are_present(self) -> None:
         for marker in (
-            "actions/workflows/codeql.yml/badge.svg?branch=main",
+            'alt="CodeQL disabled"',
+            "img.shields.io/badge/CodeQL-disabled-lightgrey",
             "actions/workflows/ci.yml/badge.svg?branch=main",
             "actions/workflows/docs.yml/badge.svg?branch=main",
             "img.shields.io/github/v/release/stephenlclarke/devcontainer",

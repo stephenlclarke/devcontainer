@@ -59,6 +59,36 @@
             "target": "devcontainer-compose",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release devcontainer-compose"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [
+                "${workspaceFolder:devcontainer}/Makefile",
+                "${workspaceFolder:devcontainer}/.build/vscode/GeneratedBuildIdentity-debug.swift",
+                "unspecified",
+                "debug"
+            ],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Debug DevContainerVersionGenerator",
+            "target": "DevContainerVersionGenerator",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug DevContainerVersionGenerator"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [
+                "${workspaceFolder:devcontainer}/Makefile",
+                "${workspaceFolder:devcontainer}/.build/vscode/GeneratedBuildIdentity-release.swift",
+                "unspecified",
+                "release"
+            ],
+            "cwd": "${workspaceFolder:devcontainer}",
+            "name": "Release DevContainerVersionGenerator",
+            "target": "DevContainerVersionGenerator",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release DevContainerVersionGenerator"
         }
     ]
 }

@@ -14,17 +14,12 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerizationOS
 import Darwin
 import DevContainerModel
+import DevContainerProcess
 import DevContainerRuntimeSPI
 import Foundation
-
-private struct ProcessLaunchConfiguration {
-    let executable: URL
-    let arguments: [String]
-    let environment: [String: String]
-    let workingDirectory: URL?
-}
 
 private struct ProcessSessionIO: @unchecked Sendable {
     let standardInput = Pipe()
@@ -50,7 +45,8 @@ private struct ProcessSessionIO: @unchecked Sendable {
 final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
 
-    private let process: Process
+    private let command: Command
+    private let termination: OwnedProcessTermination
     private let inputWriter: ProcessInputWriter
     private let outputMonitor: ProcessPipeMonitor
     private let errorMonitor: ProcessPipeMonitor
@@ -62,47 +58,37 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         environment: [String: String],
         workingDirectory: URL? = nil
     ) throws {
-        let process = Process()
         let streams = ProcessSessionIO()
         let inputWriter = ProcessInputWriter(pipe: streams.standardInput)
-        let monitors = Self.configure(
-            process,
-            configuration: ProcessLaunchConfiguration(
-                executable: executable,
-                arguments: arguments,
-                environment: environment,
-                workingDirectory: workingDirectory
-            ),
-            streams: streams
+        let monitors = Self.configureMonitors(streams: streams)
+        var command = Command(
+            executable.path,
+            arguments: arguments,
+            environment: environment.sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" },
+            directory: workingDirectory?.path
         )
-        try Self.start(process, streams: streams)
+        command.stdin = streams.standardInput.fileHandleForReading
+        command.stdout = streams.standardOutput.fileHandleForWriting
+        command.stderr = streams.standardError.fileHandleForWriting
+        command.attrs.setPGroup = true
+        let termination = OwnedProcessTermination()
+        try Self.start(command, streams: streams, termination: termination)
         completion = Self.completionTask(
             streams,
             inputWriter: inputWriter
         )
-        self.process = process
+        self.command = command
+        self.termination = termination
         self.inputWriter = inputWriter
         outputMonitor = monitors.output
         errorMonitor = monitors.error
         frames = streams.frames
     }
 
-    private static func configure(
-        _ process: Process,
-        configuration: ProcessLaunchConfiguration,
+    private static func configureMonitors(
         streams: ProcessSessionIO
     ) -> (output: ProcessPipeMonitor, error: ProcessPipeMonitor) {
-        process.executableURL = configuration.executable
-        process.arguments = configuration.arguments
-        process.environment = configuration.environment
-        process.currentDirectoryURL = configuration.workingDirectory
-        process.standardInput = streams.standardInput
-        process.standardOutput = streams.standardOutput
-        process.standardError = streams.standardError
-        process.terminationHandler = { process in
-            streams.terminationContinuation.yield(process.terminationStatus)
-            streams.terminationContinuation.finish()
-        }
         let output = drain(
             streams.standardOutput,
             channel: .standardOutput,
@@ -133,14 +119,27 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     }
 
     private static func start(
-        _ process: Process,
-        streams: ProcessSessionIO
+        _ command: Command,
+        streams: ProcessSessionIO,
+        termination: OwnedProcessTermination
     ) throws {
         do {
-            try process.run()
+            try command.start()
+            termination.didLaunch(processGroup: command.pid)
             try? streams.standardInput.fileHandleForReading.close()
             try? streams.standardOutput.fileHandleForWriting.close()
             try? streams.standardError.fileHandleForWriting.close()
+            Thread.detachNewThread {
+                let status: Int32
+                do {
+                    status = try command.wait()
+                } catch {
+                    status = 255
+                }
+                termination.didExit()
+                streams.terminationContinuation.yield(status)
+                streams.terminationContinuation.finish()
+            }
         } catch {
             try? streams.standardInput.fileHandleForReading.close()
             try? streams.standardInput.fileHandleForWriting.close()
@@ -173,7 +172,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     }
 
     func write(_ data: Data) async throws {
-        guard process.isRunning else {
+        guard termination.isRunning else {
             throw DevContainerError(.conflict, message: "process is no longer running")
         }
         try await inputWriter.write(data)
@@ -196,12 +195,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
 
     func cancel() {
         inputWriter.cancel()
-        guard process.isRunning else {
-            return
-        }
-        process.terminate()
-        outputMonitor.cancel()
-        errorMonitor.cancel()
+        termination.cancel()
     }
 }
 
@@ -738,6 +732,24 @@ enum AppleCommandRunner {
         workingDirectory: URL? = nil,
         input: Data? = nil
     ) async throws -> AppleCommandResult {
+        try await RuntimeRequestScope.withDeadline {
+            try await runWithoutDeadline(
+                executable: executable,
+                arguments: arguments,
+                environment: environment,
+                workingDirectory: workingDirectory,
+                input: input
+            )
+        }
+    }
+
+    private static func runWithoutDeadline(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        workingDirectory: URL?,
+        input: Data?
+    ) async throws -> AppleCommandResult {
         let session: AppleProcessSession
         do {
             session = try AppleProcessSession(
@@ -746,10 +758,6 @@ enum AppleCommandRunner {
                 environment: environment,
                 workingDirectory: workingDirectory
             )
-            if let input {
-                try await session.write(input)
-            }
-            try await session.closeStandardInput()
         } catch {
             throw DevContainerError(
                 .runtimeUnavailable,
@@ -757,23 +765,32 @@ enum AppleCommandRunner {
             )
         }
 
-        var standardOutput = Data()
-        var standardError = Data()
-        for try await frame in session.frames {
-            switch frame.channel {
-            case .standardOutput:
-                standardOutput.append(frame.data)
-            case .standardError:
-                standardError.append(frame.data)
-            case .standardInput:
-                break
+        return try await withTaskCancellationHandler {
+            if let input {
+                try await session.write(input)
             }
+            try await session.closeStandardInput()
+            var standardOutput = Data()
+            var standardError = Data()
+            for try await frame in session.frames {
+                try Task.checkCancellation()
+                switch frame.channel {
+                case .standardOutput:
+                    standardOutput.append(frame.data)
+                case .standardError:
+                    standardError.append(frame.data)
+                case .standardInput:
+                    break
+                }
+            }
+            let exitCode = try await session.wait()
+            return AppleCommandResult(
+                standardOutput: standardOutput,
+                standardError: standardError,
+                exitCode: exitCode
+            )
+        } onCancel: {
+            session.cancel()
         }
-        let exitCode = try await session.wait()
-        return AppleCommandResult(
-            standardOutput: standardOutput,
-            standardError: standardError,
-            exitCode: exitCode
-        )
     }
 }

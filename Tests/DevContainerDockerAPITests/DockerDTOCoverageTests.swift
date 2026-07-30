@@ -143,3 +143,133 @@ func `string or array decodes both Docker entrypoint forms`() throws {
     #expect(scalar.values == ["entrypoint"])
     #expect(array.values == ["entrypoint", "--flag"])
 }
+
+@Test
+func `strict request decoders survive a deterministic malformed corpus`() {
+    let seeds = [
+        Data(#"{"Image":"alpine:test","Labels":{"fixture":"a=b"}}"#.utf8),
+        Data(
+            #"{"Image":"alpine:test","HostConfig":{"Mounts":[{"Type":"bind","Source":"/tmp","Target":"/work"}]}}"#
+                .utf8
+        ),
+        Data(
+            #"{"Name":"fixture","Driver":"bridge","Labels":{"fixture":"value"}}"#
+                .utf8
+        ),
+        Data(#"{"Name":"fixture","Driver":"local"}"#.utf8),
+        Data(#"{"Cmd":["printf","fixture"],"AttachStdout":true}"#.utf8)
+    ]
+    var generator = DeterministicGenerator(seed: 0xD3C0_17A1_5EED)
+    var attempts = 0
+
+    for index in 0 ..< 1024 {
+        let data = malformedMutation(
+            of: seeds[index % seeds.count],
+            generator: &generator
+        )
+        decodeMalformedRequest(data, kind: index % seeds.count)
+        attempts += 1
+    }
+
+    #expect(attempts == 1024)
+}
+
+@Test
+func `generated unknown request fields always fail closed`() throws {
+    var generator = DeterministicGenerator(seed: 0xBAD5_C0DE)
+
+    for _ in 0 ..< 128 {
+        let field = "FutureField\(String(generator.next(), radix: 16))"
+        let data = try JSONSerialization.data(
+            withJSONObject: [
+                "Image": "alpine:test",
+                "HostConfig": [field: generator.next() & 1 == 0]
+            ]
+        )
+        do {
+            _ = try DockerJSON.decode(
+                DockerCreateContainerRequest.self,
+                from: data,
+                schema: .createContainer
+            )
+            Issue.record("strict decoding accepted \(field)")
+        } catch {
+            #expect(String(describing: error).contains(field))
+        }
+    }
+}
+
+private struct DeterministicGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed
+    }
+
+    mutating func next() -> UInt64 {
+        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        return state
+    }
+}
+
+private func malformedMutation(
+    of seed: Data,
+    generator: inout DeterministicGenerator
+) -> Data {
+    let mutationBytes: [UInt8] = [
+        0x00, 0x09, 0x0A, 0x22, 0x2C, 0x3A, 0x5B, 0x5D, 0x7B, 0x7D, 0x80, 0xFF
+    ]
+    var bytes = Array(seed)
+    switch generator.next() % 4 {
+    case 0:
+        let limit = Int(generator.next() % UInt64(bytes.count + 1))
+        bytes = Array(bytes.prefix(limit))
+    case 1:
+        let offset = Int(generator.next() % UInt64(bytes.count))
+        bytes[offset] = mutationBytes[
+            Int(generator.next() % UInt64(mutationBytes.count))
+        ]
+    case 2:
+        let offset = Int(generator.next() % UInt64(bytes.count + 1))
+        bytes.insert(
+            mutationBytes[Int(generator.next() % UInt64(mutationBytes.count))],
+            at: offset
+        )
+    default:
+        bytes.append(
+            contentsOf: mutationBytes.prefix(
+                Int(generator.next() % UInt64(mutationBytes.count + 1))
+            )
+        )
+    }
+    return Data(bytes)
+}
+
+private func decodeMalformedRequest(_ data: Data, kind: Int) {
+    switch kind {
+    case 0, 1:
+        _ = try? DockerJSON.decode(
+            DockerCreateContainerRequest.self,
+            from: data,
+            schema: .createContainer
+        )
+    case 2:
+        _ = try? DockerJSON.decode(
+            DockerNetworkCreateRequest.self,
+            from: data,
+            schema: .createNetwork
+        )
+    case 3:
+        _ = try? DockerJSON.decode(
+            DockerVolumeCreateRequest.self,
+            from: data,
+            schema: .createVolume
+        )
+    default:
+        _ = try? DockerJSON.decode(
+            DockerCreateExecRequest.self,
+            from: data,
+            schema: .createExec
+        )
+    }
+}

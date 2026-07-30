@@ -20,9 +20,14 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+// The adapter is already split by lifecycle, direct client, events, process,
+// and support concerns; the remaining protocol surface stays in this file.
+// swiftlint:disable file_length
+
 public actor AppleContainerRuntime: DevContainerRuntime {
     struct RequestedContainer {
         var spec: ContainerSpec
+        var imageID: String?
         var createdAt: Date?
     }
 
@@ -45,7 +50,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     public let executable: URL
     let environment: [String: String]
     let useDirectProcessAPI: Bool
-    let apiClient = ContainerClient()
+    let useDirectContainerAPI: Bool
+    let apiClient: ContainerClient
+    let inventoryClient: any AppleContainerInventoryClient
+    let fileClient: any AppleContainerFileClient
+    let networkClient: any AppleNetworkClient
     let metadataStore: (any RuntimeMetadataStore)?
     let managedVolumes: ManagedVolumeStore
     let portForwarding = PortForwarding()
@@ -57,14 +66,44 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExits: [String: ContainerExit] = [:]
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
+    var directContainerInventorySupported: Bool?
+    var managedHostsState: [String: AppleManagedHostsState] = [:]
     var eventPollerState: AppleEventPoller?
 
     public init(
         executable: URL,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         useDirectProcessAPI: Bool = true,
+        useDirectContainerAPI: Bool = true,
         metadataStore: (any RuntimeMetadataStore)? = nil,
         volumeRoot: URL? = nil
+    ) throws {
+        let apiClient = ContainerClient()
+        try self.init(
+            executable: executable,
+            environment: environment,
+            useDirectProcessAPI: useDirectProcessAPI,
+            useDirectContainerAPI: useDirectContainerAPI,
+            metadataStore: metadataStore,
+            volumeRoot: volumeRoot,
+            apiClient: apiClient,
+            inventoryClient: LiveAppleContainerInventoryClient(client: apiClient),
+            fileClient: LiveAppleContainerFileClient(client: apiClient),
+            networkClient: AppleNetworkClientAdapter()
+        )
+    }
+
+    init(
+        executable: URL,
+        environment: [String: String],
+        useDirectProcessAPI: Bool,
+        useDirectContainerAPI: Bool,
+        metadataStore: (any RuntimeMetadataStore)?,
+        volumeRoot: URL?,
+        apiClient: ContainerClient,
+        inventoryClient: any AppleContainerInventoryClient,
+        fileClient: any AppleContainerFileClient,
+        networkClient: any AppleNetworkClient
     ) throws {
         let resolved = executable.standardizedFileURL
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
@@ -76,6 +115,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         self.executable = resolved
         self.environment = Self.filteredEnvironment(environment)
         self.useDirectProcessAPI = useDirectProcessAPI
+        self.useDirectContainerAPI = useDirectContainerAPI
+        self.apiClient = apiClient
+        self.inventoryClient = inventoryClient
+        self.fileClient = fileClient
+        self.networkClient = networkClient
         self.metadataStore = metadataStore
         managedVolumes = try ManagedVolumeStore(
             root: volumeRoot ?? Self.defaultVolumeRoot
@@ -84,15 +128,10 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 }
 
 public extension AppleContainerRuntime {
-    func descriptor(context _: RuntimeRequestContext) async throws -> ProtocolDescriptor {
-        let result = try await command(["system", "version", "--format", "json"])
-        try requireSuccess(result, operation: "version probe")
-        let records = try JSONDecoder().decode([AppleVersionRecord].self, from: result.standardOutput)
-        guard let record = records.first(where: { $0.appName == "container" }) ?? records.first else {
-            throw DevContainerError(
-                .providerProtocolMismatch, message: "Apple container returned no version record"
-            )
-        }
+    func descriptor(context: RuntimeRequestContext) async throws -> ProtocolDescriptor {
+        let record = try await appleVersionRecord(context: context)
+        directContainerInventorySupported =
+            Self.supportsDirectContainerInventory(record)
         return ProtocolDescriptor(
             provider: .stock,
             providerVersion: record.version,
@@ -114,6 +153,43 @@ public extension AppleContainerRuntime {
         )
     }
 
+    private func appleVersionRecord(
+        context: RuntimeRequestContext
+    ) async throws -> AppleVersionRecord {
+        try context.checkActive()
+        let result = try await command(["system", "version", "--format", "json"])
+        try requireSuccess(result, operation: "version probe")
+        try context.checkActive()
+        let records = try JSONDecoder().decode([AppleVersionRecord].self, from: result.standardOutput)
+        guard let record = records.first(where: { $0.appName == "container" }) ?? records.first else {
+            throw DevContainerError(
+                .providerProtocolMismatch, message: "Apple container returned no version record"
+            )
+        }
+        return record
+    }
+
+    private static func supportsDirectContainerInventory(
+        _ record: AppleVersionRecord
+    ) -> Bool {
+        (record.distribution ?? "apple") == "apple"
+    }
+
+    private func canUseDirectContainerInventory(
+        context: RuntimeRequestContext
+    ) async throws -> Bool {
+        guard useDirectContainerAPI else {
+            return false
+        }
+        if let directContainerInventorySupported {
+            return directContainerInventorySupported
+        }
+        let record = try await appleVersionRecord(context: context)
+        let supported = Self.supportsDirectContainerInventory(record)
+        directContainerInventorySupported = supported
+        return supported
+    }
+
     /// Releases all host-side compatibility resources owned by this adapter.
     func shutdown() async {
         await eventPollerState?.shutdown()
@@ -123,9 +199,16 @@ public extension AppleContainerRuntime {
     func listContainers(
         all: Bool,
         labels: [String: String],
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) async throws -> [ContainerSnapshot] {
-        let snapshots = try await loadContainerInventory(all: all)
+        if try await canUseDirectContainerInventory(context: context) {
+            return try await listContainersDirect(
+                all: all,
+                labels: labels,
+                context: context
+            )
+        }
+        let snapshots = try await loadContainerInventory(all: all, context: context)
         return snapshots.filter { snapshot in
             labels.allSatisfy { key, expected in
                 guard let actual = snapshot.spec.labels[key] else {
@@ -137,7 +220,8 @@ public extension AppleContainerRuntime {
     }
 
     private func loadContainerInventory(
-        all: Bool
+        all: Bool,
+        context: RuntimeRequestContext
     ) async throws -> [ContainerSnapshot] {
         var arguments = ["list"]
         if all {
@@ -147,18 +231,28 @@ public extension AppleContainerRuntime {
         let result = try await command(arguments)
         try requireSuccess(result, operation: "container list")
         let values = try parseJSONObjectArray(result.standardOutput)
+        let observed = try values.map(containerSnapshot).filter {
+            !Self.isInternalBuilderResource($0)
+        }
         var snapshots: [ContainerSnapshot] = []
-        snapshots.reserveCapacity(values.count)
+        snapshots.reserveCapacity(observed.count)
         var observedRuntimeIDs = Set<String>()
         let metadata = try await containerMetadataByRuntimeID()
-        for value in values {
-            let observed = try containerSnapshot(value)
-            guard !Self.isInternalBuilderResource(observed) else {
-                continue
-            }
+        let requiresImageResolution = observed.contains {
+            $0.imageID == nil
+                && metadata[$0.runtimeID.rawValue]?.imageID == nil
+        }
+        let images = requiresImageResolution
+            ? try await listImages(context: context)
+            : []
+        for observed in observed {
+            let imageID = observed.imageID
+                ?? metadata[observed.runtimeID.rawValue]?.imageID
+                ?? Self.imageID(for: observed.spec.image, in: images)
             let snapshot = try await containerSnapshotWithMetadata(
                 observed,
-                metadata: metadata[observed.runtimeID.rawValue]
+                metadata: metadata[observed.runtimeID.rawValue],
+                imageID: imageID
             )
             observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
             snapshots.append(snapshot)
@@ -172,12 +266,25 @@ public extension AppleContainerRuntime {
         return snapshots
     }
 
-    private static func isInternalBuilderResource(_ snapshot: ContainerSnapshot) -> Bool {
+    static func imageID(
+        for reference: String,
+        in images: [ImageSnapshot]
+    ) -> String? {
+        images.first {
+            $0.id == reference
+                || imageDigest(reference) == $0.id
+                || $0.references.contains {
+                    equivalentImageReference($0, reference)
+                }
+        }?.id
+    }
+
+    static func isInternalBuilderResource(_ snapshot: ContainerSnapshot) -> Bool {
         snapshot.spec.labels[nativeResourceRoleLabel] == "builder"
             && snapshot.spec.labels[nativePluginLabel] == "builder"
     }
 
-    private func containerMetadataByRuntimeID() async throws
+    func containerMetadataByRuntimeID() async throws
         -> [String: RuntimeContainerMetadata]
     {
         guard let metadataStore else {
@@ -190,11 +297,13 @@ public extension AppleContainerRuntime {
         return metadata
     }
 
-    private func containerSnapshotWithMetadata(
+    func containerSnapshotWithMetadata(
         _ snapshot: ContainerSnapshot,
-        metadata: RuntimeContainerMetadata?
+        metadata: RuntimeContainerMetadata?,
+        imageID: String?
     ) async throws -> ContainerSnapshot {
         var snapshot = snapshot
+        snapshot.imageID = imageID
         if snapshot.state == .stopped,
            let exit = containerExits[snapshot.runtimeID.rawValue]
         {
@@ -204,11 +313,15 @@ public extension AppleContainerRuntime {
         guard let metadataStore else {
             return snapshot
         }
-        if let metadata {
+        if var metadata {
             if Self.sameContainerIncarnation(
                 metadataCreatedAt: metadata.createdAt,
                 observedCreatedAt: snapshot.createdAt
             ) {
+                if metadata.imageID == nil, let imageID {
+                    metadata.imageID = imageID
+                    try await metadataStore.recordContainerMetadata(metadata)
+                }
                 return apply(metadata: metadata, to: snapshot)
             }
             // Native Compose may recreate a stable name. Never project the
@@ -223,6 +336,7 @@ public extension AppleContainerRuntime {
         let metadata = RuntimeContainerMetadata(
             runtimeID: snapshot.runtimeID,
             dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+            imageID: imageID,
             spec: snapshot.spec,
             createdAt: snapshot.createdAt,
             startedAt: snapshot.startedAt
@@ -243,7 +357,7 @@ public extension AppleContainerRuntime {
         return first + second
     }
 
-    private func removeOrphanedContainerMetadata(
+    func removeOrphanedContainerMetadata(
         observedRuntimeIDs: Set<String>,
         metadata: [String: RuntimeContainerMetadata]
     ) async throws {
@@ -268,6 +382,22 @@ public extension AppleContainerRuntime {
         id: String,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        if try await canUseDirectContainerInventory(context: context) {
+            if let exact = try await inspectContainerDirect(
+                id: id,
+                context: context
+            ) {
+                return exact
+            }
+            return try await resolvedContainerSnapshot(
+                id: id,
+                in: listContainersDirect(
+                    all: true,
+                    labels: [:],
+                    context: context
+                )
+            )
+        }
         let matches = try await listContainers(all: true, labels: [:], context: context)
         return try resolvedContainerSnapshot(id: id, in: matches)
     }
@@ -284,8 +414,14 @@ public extension AppleContainerRuntime {
         let prefixes = matches.filter {
             $0.runtimeID.rawValue.hasPrefix(id) || $0.dockerID.rawValue.hasPrefix(id)
         }
-        guard prefixes.count == 1, let snapshot = prefixes.first else {
+        guard !prefixes.isEmpty else {
             throw DevContainerError(.notFound, message: "container \(id) was not found")
+        }
+        guard prefixes.count == 1, let snapshot = prefixes.first else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "container ID prefix \(id) is ambiguous"
+            )
         }
         return snapshot
     }
@@ -296,18 +432,24 @@ public extension AppleContainerRuntime {
     ) async throws -> ContainerSnapshot {
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
         containerExits.removeValue(forKey: spec.name)
+        try validateNativeLabels(spec.labels)
+        let image = try await inspectImage(reference: spec.image, context: context)
         let result = try await command(containerCreateArguments(spec))
         try requireSuccess(result, operation: "container create")
         requestedContainers[spec.name] = RequestedContainer(
             spec: spec,
+            imageID: image.id,
             createdAt: nil
         )
-        let snapshot = try await inspectContainer(id: spec.name, context: context)
+        var snapshot = try await inspectContainer(id: spec.name, context: context)
+        snapshot.imageID = image.id
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
+        await signalEventPollers()
         return snapshot
     }
 
     private func containerCreateArguments(_ spec: ContainerSpec) async throws -> [String] {
+        try validateNativeLabels(spec.labels)
         let optionSupport = try await supportedCreateOptions()
         var arguments = try containerConfigurationArguments(
             spec,
@@ -326,6 +468,19 @@ public extension AppleContainerRuntime {
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
+    }
+
+    private func validateNativeLabels(_ labels: [String: String]) throws {
+        if let unsupported = labels.first(where: {
+            $0.key.contains("=") || $0.value.contains("=")
+        }) {
+            throw DevContainerError(
+                .unsupportedCapability,
+                message:
+                "stock apple/container 1.1 cannot preserve Docker label "
+                    + "\(unsupported.key) because its key or value contains '='"
+            )
+        }
     }
 
     static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
@@ -384,20 +539,20 @@ public extension AppleContainerRuntime {
                     + "use a distribution whose create command exposes --security-opt"
             )
         }
+        if spec.privileged, !optionSupport.privileged {
+            throw DevContainerError(
+                .unsupportedCapability,
+                message:
+                "this Apple container distribution cannot enforce Docker privileged mode; "
+                    + "use a tagged distribution whose create command exposes --privileged"
+            )
+        }
 
         var arguments = ["create", "--name", spec.name]
         arguments += spec.environment.sorted { $0.key < $1.key }
             .flatMap { ["--env", "\($0.key)=\($0.value)"] }
         arguments += spec.labels.sorted { $0.key < $1.key }
-            .flatMap { key, value -> [String] in
-                // apple/container 1.1's CLI rejects a label whenever its value has
-                // another "=". The complete Docker label set remains in the durable
-                // adapter metadata and is projected by inspect/list after creation.
-                guard !key.contains("="), !value.contains("=") else {
-                    return []
-                }
-                return ["--label", "\(key)=\(value)"]
-            }
+            .flatMap { ["--label", "\($0.key)=\($0.value)"] }
         arguments += Self.optionalArgument("--workdir", value: spec.workingDirectory)
         arguments += Self.optionalArgument("--user", value: spec.user)
         arguments += Self.optionalArgument("--hostname", value: spec.hostname)
@@ -409,16 +564,7 @@ public extension AppleContainerRuntime {
         if spec.privileged, optionSupport.privileged {
             arguments.append("--privileged")
         }
-        var capabilitiesToAdd = spec.capabilitiesToAdd
-        if spec.privileged, !optionSupport.privileged,
-           !capabilitiesToAdd.contains(where: { $0.caseInsensitiveCompare("ALL") == .orderedSame })
-        {
-            // Stock apple/container 1.1 exposes guest privilege through
-            // Linux capabilities rather than a Docker-style --privileged
-            // switch. Each container remains isolated in its own VM.
-            capabilitiesToAdd.insert("ALL", at: 0)
-        }
-        arguments += capabilitiesToAdd.flatMap { ["--cap-add", $0] }
+        arguments += spec.capabilitiesToAdd.flatMap { ["--cap-add", $0] }
         arguments += spec.capabilitiesToDrop.flatMap { ["--cap-drop", $0] }
         arguments += spec.securityOptions.flatMap { ["--security-opt", $0] }
         arguments += Self.optionalArgument("--entrypoint", value: spec.entrypoint.first)
@@ -472,6 +618,7 @@ public extension AppleContainerRuntime {
                 RuntimeContainerMetadata(
                     runtimeID: snapshot.runtimeID,
                     dockerID: snapshot.dockerID,
+                    imageID: snapshot.imageID,
                     spec: spec,
                     createdAt: snapshot.createdAt
                 )
@@ -501,12 +648,26 @@ public extension AppleContainerRuntime {
             let requestedName = URL(fileURLWithPath: path).lastPathComponent
             let archiveName = requestedName.isEmpty ? "root" : requestedName
             let copied = temporary.url.appendingPathComponent(archiveName)
-            let copyResult = try await command([
-                "cp",
-                "\(resolved):\(path)",
-                copied.path
-            ])
-            try requireSuccess(copyResult, operation: "container copy-out")
+            if useDirectContainerAPI {
+                do {
+                    try context.checkActive()
+                    try await fileClient.copyOut(
+                        id: resolved,
+                        source: path,
+                        destination: copied.path
+                    )
+                    try context.checkActive()
+                } catch {
+                    throw directAPIError(error, operation: "container copy-out")
+                }
+            } else {
+                let copyResult = try await command([
+                    "cp",
+                    "\(resolved):\(path)",
+                    copied.path
+                ])
+                try requireSuccess(copyResult, operation: "container copy-out")
+            }
             let stat = try Self.archiveStat(
                 url: copied,
                 requestedName: requestedName.isEmpty ? "/" : requestedName
@@ -521,6 +682,7 @@ public extension AppleContainerRuntime {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func copyArchiveToContainer(
         id: String,
         path: String,
@@ -548,12 +710,32 @@ public extension AppleContainerRuntime {
             try requireSuccess(extractResult, operation: "archive extraction")
             let staging = "/tmp/.devcontainer-copy-\(UUID().uuidString.lowercased())"
             do {
-                let uploadResult = try await command([
-                    "cp",
-                    temporary.url.path,
-                    "\(resolved):\(staging)"
-                ])
-                try requireSuccess(uploadResult, operation: "container archive upload")
+                if useDirectContainerAPI {
+                    do {
+                        try context.checkActive()
+                        try await fileClient.copyIn(
+                            id: resolved,
+                            source: temporary.url.path,
+                            destination: staging
+                        )
+                        try context.checkActive()
+                    } catch {
+                        throw directAPIError(
+                            error,
+                            operation: "container archive upload"
+                        )
+                    }
+                } else {
+                    let uploadResult = try await command([
+                        "cp",
+                        temporary.url.path,
+                        "\(resolved):\(staging)"
+                    ])
+                    try requireSuccess(
+                        uploadResult,
+                        operation: "container archive upload"
+                    )
+                }
                 let copyResult = try await command([
                     "exec",
                     resolved,
@@ -571,6 +753,9 @@ public extension AppleContainerRuntime {
             }
             await removeTransferStaging(staging, containerID: resolved)
         }
+        // An archive may replace /etc/hosts while leaving the container
+        // incarnation unchanged. Force the next reconciliation to re-read it.
+        managedHostsState.removeValue(forKey: resolved)
     }
 
     /// Apple currently exposes copy operations only while the container VM is
@@ -590,6 +775,7 @@ public extension AppleContainerRuntime {
                 command(["start", resolved]),
                 operation: "container archive transfer start"
             )
+            managedHostsState.removeValue(forKey: resolved)
             try await waitForContainerState(
                 id: resolved,
                 expected: .running,
@@ -794,6 +980,13 @@ public extension AppleContainerRuntime {
     }
 
     func listNetworks(context _: RuntimeRequestContext) async throws -> [NetworkSnapshot] {
+        if useDirectContainerAPI {
+            do {
+                return try await networkClient.list()
+            } catch {
+                throw directAPIError(error, operation: "network list")
+            }
+        }
         let result = try await command(["network", "list", "--format", "json"])
         try requireSuccess(result, operation: "network list")
         return try parseJSONObjectArray(result.standardOutput).compactMap(networkSnapshot)
@@ -803,6 +996,13 @@ public extension AppleContainerRuntime {
         id: String,
         context: RuntimeRequestContext
     ) async throws -> NetworkSnapshot {
+        if useDirectContainerAPI {
+            do {
+                return try await networkClient.get(id: id)
+            } catch {
+                throw directAPIError(error, operation: "network inspect")
+            }
+        }
         let networks = try await listNetworks(context: context)
         guard let network = networks.first(where: { $0.id == id || $0.spec.name == id }) else {
             throw DevContainerError(.notFound, message: "network \(id) was not found")
@@ -814,6 +1014,13 @@ public extension AppleContainerRuntime {
         spec: NetworkSpec,
         context: RuntimeRequestContext
     ) async throws -> NetworkSnapshot {
+        if useDirectContainerAPI {
+            do {
+                return try await networkClient.create(spec: spec)
+            } catch {
+                throw directAPIError(error, operation: "network create")
+            }
+        }
         var arguments = ["network", "create"]
         for (key, value) in spec.labels.sorted(by: { $0.key < $1.key }) {
             arguments += ["--label", "\(key)=\(value)"]
@@ -860,6 +1067,14 @@ public extension AppleContainerRuntime {
         id: String,
         context _: RuntimeRequestContext
     ) async throws {
+        if useDirectContainerAPI {
+            do {
+                try await networkClient.delete(id: id)
+            } catch {
+                throw directAPIError(error, operation: "network delete")
+            }
+            return
+        }
         try await requireSuccess(
             command(["network", "delete", id]),
             operation: "network delete"

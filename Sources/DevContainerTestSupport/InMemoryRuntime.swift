@@ -21,6 +21,8 @@ import Foundation
 public actor InMemoryRuntime: DevContainerRuntime {
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
+    private let descriptorDelay: Duration?
+    private var requestCancellationCount = 0
     private var containers: [RuntimeID: ContainerSnapshot] = [:]
     private var dockerToRuntime: [DockerID: RuntimeID] = [:]
     private var execs: [ExecID: ExecSnapshot] = [:]
@@ -36,9 +38,11 @@ public actor InMemoryRuntime: DevContainerRuntime {
         version: String = "test",
         commit: String = "test",
         distribution: String = "test",
-        execSession: (any RuntimeProcessSession)? = nil
+        execSession: (any RuntimeProcessSession)? = nil,
+        descriptorDelay: Duration? = nil
     ) {
         self.execSession = execSession
+        self.descriptorDelay = descriptorDelay
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
             providerVersion: version,
@@ -50,8 +54,20 @@ public actor InMemoryRuntime: DevContainerRuntime {
         )
     }
 
-    public func descriptor(context _: RuntimeRequestContext) -> ProtocolDescriptor {
-        runtimeDescriptor
+    public func descriptor(context _: RuntimeRequestContext) async throws -> ProtocolDescriptor {
+        if let descriptorDelay {
+            do {
+                try await Task.sleep(for: descriptorDelay)
+            } catch {
+                requestCancellationCount += 1
+                throw error
+            }
+        }
+        return runtimeDescriptor
+    }
+
+    public var observedRequestCancellationCount: Int {
+        requestCancellationCount
     }
 
     public func listImages(context _: RuntimeRequestContext) -> [ImageSnapshot] {
@@ -175,7 +191,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
         guard !containers.values.contains(where: { $0.spec.name == spec.name }) else {
             throw DevContainerError(.conflict, message: "container name \(spec.name) is already in use")
         }
-        guard image(reference: spec.image) != nil else {
+        guard let image = image(reference: spec.image) else {
             throw DevContainerError(.notFound, message: "image \(spec.image) was not found")
         }
         let runtimeID = RuntimeID(rawValue: Self.identifier())
@@ -183,6 +199,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
         let snapshot = ContainerSnapshot(
             runtimeID: runtimeID,
             dockerID: dockerID,
+            imageID: image.id,
             spec: spec,
             state: .created,
             createdAt: Date()

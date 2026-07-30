@@ -39,6 +39,8 @@ actor AppleEventPoller {
     private var subscriptions: [UUID: Subscription] = [:]
     private var pollingTask: Task<Void, Never>?
     private var pollingID: UUID?
+    private var changeGeneration: UInt64 = 0
+    private var changeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     init(snapshotProvider: @escaping SnapshotProvider) {
         self.snapshotProvider = snapshotProvider
@@ -80,6 +82,15 @@ actor AppleEventPoller {
         stopPolling()
     }
 
+    func notifyChanged() {
+        changeGeneration &+= 1
+        let waiters = changeWaiters.values
+        changeWaiters.removeAll(keepingCapacity: true)
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     private func snapshot(
         context: RuntimeRequestContext
     ) async throws -> [String: ContainerSnapshot] {
@@ -111,8 +122,12 @@ actor AppleEventPoller {
         }
         let identifier = UUID()
         pollingID = identifier
+        let observedGeneration = changeGeneration
         pollingTask = Task { [weak self] in
-            await self?.poll(identifier: identifier)
+            await self?.poll(
+                identifier: identifier,
+                observedGeneration: observedGeneration
+            )
         }
     }
 
@@ -123,7 +138,11 @@ actor AppleEventPoller {
         latestSnapshot = nil
     }
 
-    private func poll(identifier: UUID) async {
+    private func poll(
+        identifier: UUID,
+        observedGeneration initialGeneration: UInt64
+    ) async {
+        var observedGeneration = initialGeneration
         defer {
             if pollingID == identifier {
                 pollingTask = nil
@@ -140,7 +159,7 @@ actor AppleEventPoller {
                 guard !activeSubscriptionIDs(at: Date()).isEmpty else {
                     return
                 }
-                try await Task.sleep(for: .milliseconds(200))
+                await waitForChange(after: observedGeneration)
                 guard
                     !Task.isCancelled,
                     !subscriptions.isEmpty
@@ -158,6 +177,7 @@ actor AppleEventPoller {
                 let current = try await snapshotProvider(RuntimeRequestContext())
                 latestSnapshot = current
                 publish(current, to: active, timestamp: Date())
+                observedGeneration = changeGeneration
             }
         } catch is CancellationError {
             return
@@ -167,6 +187,34 @@ actor AppleEventPoller {
             }
             subscriptions.removeAll()
         }
+    }
+
+    private func waitForChange(after observedGeneration: UInt64) async {
+        guard changeGeneration == observedGeneration else {
+            return
+        }
+        let identifier = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard changeGeneration == observedGeneration else {
+                    continuation.resume()
+                    return
+                }
+                changeWaiters[identifier] = continuation
+                Task {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    self.resumeChangeWaiter(identifier)
+                }
+            }
+        } onCancel: {
+            Task {
+                await self.resumeChangeWaiter(identifier)
+            }
+        }
+    }
+
+    private func resumeChangeWaiter(_ identifier: UUID) {
+        changeWaiters.removeValue(forKey: identifier)?.resume()
     }
 
     private func activeSubscriptionIDs(at timestamp: Date) -> [UUID] {
@@ -325,6 +373,10 @@ extension AppleContainerRuntime {
         }
         eventPollerState = poller
         return poller
+    }
+
+    func signalEventPollers() async {
+        await eventPollerState?.notifyChanged()
     }
 
     static func lifecycleEvents(
@@ -505,6 +557,14 @@ extension AppleContainerRuntime {
                 context: context
             )
         }
+        let observed = Dictionary(
+            uniqueKeysWithValues: inventory.map {
+                ($0.runtimeID.rawValue, $0.createdAt)
+            }
+        )
+        managedHostsState = managedHostsState.filter { id, state in
+            observed[id] == state.createdAt
+        }
         let running = inventory.filter {
             $0.state == .running
                 && $0.spec.networks.contains {
@@ -524,52 +584,108 @@ extension AppleContainerRuntime {
         }
     }
 
+    // Direct and CLI fallback copies intentionally retain identical
+    // state-race handling.
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func synchronizeNetworkHosts(
         target: ContainerSnapshot,
         containers: [ContainerSnapshot],
         context: RuntimeRequestContext
     ) async throws {
         let hosts = Self.managedHosts(target: target, containers: containers)
+        let targetID = target.runtimeID.rawValue
+        let nextState = AppleManagedHostsState(
+            createdAt: target.createdAt,
+            managedHosts: hosts
+        )
+        guard managedHostsState[targetID] != nextState else {
+            return
+        }
         let temporary = try TemporaryDirectory(base: Self.transferDirectory)
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
-        let download = try await command([
-            "cp",
-            "\(target.runtimeID.rawValue):/etc/hosts",
-            localHosts.path
-        ])
-        let observedState = await (try? inspectContainer(
-            id: target.runtimeID.rawValue,
-            context: context
-        ).state)
-        if download.exitCode != 0 {
-            if observedState != .running
-                || Self.isTransientContainerCopyFailure(download)
-            {
-                return
+        if useDirectContainerAPI {
+            do {
+                try context.checkActive()
+                try await fileClient.copyOut(
+                    id: targetID,
+                    source: "/etc/hosts",
+                    destination: localHosts.path
+                )
+                try context.checkActive()
+            } catch {
+                let observedState = await (try? inspectContainer(
+                    id: targetID,
+                    context: context
+                ).state)
+                guard observedState == .running else {
+                    return
+                }
+                throw directAPIError(error, operation: "container hosts download")
             }
-            try requireSuccess(download, operation: "container hosts download")
+        } else {
+            let download = try await command([
+                "cp",
+                "\(targetID):/etc/hosts",
+                localHosts.path
+            ])
+            let observedState = await (try? inspectContainer(
+                id: targetID,
+                context: context
+            ).state)
+            if download.exitCode != 0 {
+                if observedState != .running
+                    || Self.isTransientContainerCopyFailure(download)
+                {
+                    return
+                }
+                try requireSuccess(download, operation: "container hosts download")
+            }
         }
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
-        try Data(updated.utf8).write(to: localHosts, options: .atomic)
-        let upload = try await command([
-            "cp",
-            localHosts.path,
-            "\(target.runtimeID.rawValue):/etc/hosts"
-        ])
-        if upload.exitCode != 0 {
-            let observedState = await (try? inspectContainer(
-                id: target.runtimeID.rawValue,
-                context: context
-            ).state)
-            if observedState != .running
-                || Self.isTransientContainerCopyFailure(upload)
-            {
-                return
+        if current != updated {
+            try Data(updated.utf8).write(to: localHosts, options: .atomic)
+            if useDirectContainerAPI {
+                do {
+                    try context.checkActive()
+                    try await fileClient.copyIn(
+                        id: targetID,
+                        source: localHosts.path,
+                        destination: "/etc/hosts"
+                    )
+                    try context.checkActive()
+                } catch {
+                    let observedState = await (try? inspectContainer(
+                        id: targetID,
+                        context: context
+                    ).state)
+                    guard observedState == .running else {
+                        return
+                    }
+                    throw directAPIError(error, operation: "container hosts upload")
+                }
+            } else {
+                let upload = try await command([
+                    "cp",
+                    localHosts.path,
+                    "\(targetID):/etc/hosts"
+                ])
+                if upload.exitCode != 0 {
+                    let observedState = await (try? inspectContainer(
+                        id: targetID,
+                        context: context
+                    ).state)
+                    if observedState != .running
+                        || Self.isTransientContainerCopyFailure(upload)
+                    {
+                        return
+                    }
+                }
+                try requireSuccess(upload, operation: "container hosts upload")
             }
         }
-        try requireSuccess(upload, operation: "container hosts upload")
+        managedHostsState[targetID] = nextState
     }
 
     static func isTransientContainerCopyFailure(
@@ -762,9 +878,14 @@ extension AppleContainerRuntime {
 
     func containerSnapshot(_ value: [String: Any]) throws -> ContainerSnapshot {
         let record = try containerRecord(value)
+        return containerSnapshot(record)
+    }
+
+    func containerSnapshot(_ record: AppleContainerRecord) -> ContainerSnapshot {
         let wasStarted = startedContainers.contains(record.id)
             || startedContainers.contains(record.dockerID)
-        let requestedSpec = requestedSpec(for: record)
+        let requestedContainer = requestedContainer(for: record)
+        let requestedSpec = requestedContainer?.spec
         let state = Self.containerState(
             record.state,
             createdByThisEngine: requestedSpec != nil,
@@ -776,6 +897,7 @@ extension AppleContainerRuntime {
         var snapshot = ContainerSnapshot(
             runtimeID: RuntimeID(rawValue: record.id),
             dockerID: DockerID(rawValue: record.dockerID),
+            imageID: requestedContainer?.imageID,
             spec: record.spec,
             state: state,
             createdAt: record.createdAt,

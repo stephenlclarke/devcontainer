@@ -19,6 +19,7 @@ import DequeModule
 import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerRuntimeSPI
+import Dispatch
 import Foundation
 import Logging
 import NIOCore
@@ -33,6 +34,7 @@ final class EngineServer: @unchecked Sendable {
     private let logger: Logger
     private let limits: EngineServerLimits
     private let connections = EngineConnectionTracker()
+    private let resourceBudget: EngineResourceBudget
     private var channel: Channel?
     private var lockFileDescriptor: Int32 = -1
     private var ownsSocket = false
@@ -48,6 +50,7 @@ final class EngineServer: @unchecked Sendable {
         self.socketPath = socketPath
         self.logger = logger
         self.limits = limits
+        resourceBudget = EngineResourceBudget(limits: limits)
     }
 
     func start() async throws {
@@ -75,13 +78,17 @@ final class EngineServer: @unchecked Sendable {
             releaseInstanceLock()
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        logger.info("Engine API listening", metadata: ["socket": .string(socketPath)])
+        logger.info(
+            "Engine API listening",
+            metadata: ["socket": .string(DiagnosticsRedactor.redact(socketPath))]
+        )
     }
 
     private func makeBootstrap() -> ServerBootstrap {
         let router = router
         let logger = logger
         let connections = connections
+        let resourceBudget = resourceBudget
         let limits = limits
         return ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -100,6 +107,7 @@ final class EngineServer: @unchecked Sendable {
                     router: router,
                     logger: logger,
                     connections: connections,
+                    resourceBudget: resourceBudget,
                     pipeline: pipeline,
                     limits: limits
                 )
@@ -117,6 +125,13 @@ final class EngineServer: @unchecked Sendable {
             .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
+            .childChannelOption(
+                ChannelOptions.writeBufferWaterMark,
+                value: ChannelOptions.Types.WriteBufferWaterMark(
+                    low: 256 * 1024,
+                    high: 1024 * 1024
+                )
+            )
     }
 
     func wait() async throws {
@@ -256,71 +271,6 @@ enum EngineServerError: Error, CustomStringConvertible {
     }
 }
 
-/// Holds the connection state needed to preserve an input half-close that
-/// arrives while an HTTP upgrade response is being prepared.
-private final class DockerUpgradeState: @unchecked Sendable {
-    var upgradeCandidate = false
-    var inputClosed = false
-
-    func beginRequest(_ head: HTTPRequestHead) {
-        upgradeCandidate = head.headers.contains(name: "Upgrade")
-    }
-}
-
-/// Prevents the HTTP decoder from consuming upgraded-protocol bytes as a
-/// truncated HTTP message when the client sends its input and EOF eagerly.
-private final class DockerInputCloseBarrier:
-    ChannelInboundHandler,
-    RemovableChannelHandler,
-    @unchecked Sendable
-{
-    typealias InboundIn = ByteBuffer
-
-    private let state: DockerUpgradeState
-
-    init(state: DockerUpgradeState) {
-        self.state = state
-    }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        context.fireChannelRead(data)
-    }
-
-    func userInboundEventTriggered(
-        context: ChannelHandlerContext,
-        event: Any
-    ) {
-        if let channelEvent = event as? ChannelEvent,
-           channelEvent == .inputClosed,
-           state.upgradeCandidate
-        {
-            state.inputClosed = true
-            return
-        }
-        context.fireUserInboundEventTriggered(event)
-    }
-
-    func removeHandler(
-        context: ChannelHandlerContext,
-        removalToken: ChannelHandlerContext.RemovalToken
-    ) {
-        context.leavePipeline(removalToken: removalToken)
-    }
-}
-
-private struct DockerHTTPPendingRequest {
-    let head: HTTPRequestHead
-    let request: DockerHTTPRequest?
-    let bodyBytes: Int
-}
-
-private struct DockerHTTPPipeline {
-    let responseEncoder: HTTPResponseEncoder
-    let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
-    let upgradeState: DockerUpgradeState
-    let inputCloseBarrier: DockerInputCloseBarrier
-}
-
 private final class DockerHTTPHandler:
     ChannelInboundHandler,
     RemovableChannelHandler,
@@ -332,6 +282,7 @@ private final class DockerHTTPHandler:
     private let router: DockerRouter
     private let logger: Logger
     private let connections: EngineConnectionTracker
+    private let resourceBudget: EngineResourceBudget
     private let responseEncoder: HTTPResponseEncoder
     private let requestDecoder: ByteToMessageHandler<HTTPRequestDecoder>
     private let upgradeState: DockerUpgradeState
@@ -341,21 +292,34 @@ private final class DockerHTTPHandler:
     private var requestBody = ByteBuffer()
     private var activeRequestHead: HTTPRequestHead?
     private var activeRequestBodyBytes = 0
+    private var activeRequestMeasuredBodyBytes = 0
+    private var activeRequestStartedNanoseconds: UInt64 = 0
+    private var activeResponseStatus = 0
+    private var activeResponseBytes = 0
+    private var activeResponseKind = "none"
+    private var activeCorrelationID = "unassigned"
+    private var activeObservationLogged = false
     private var pendingRequests = Deque<DockerHTTPPendingRequest>()
     private var retainedRequestBodyBytes = 0
     private var responseInFlight = false
     private var closeAfterResponse = false
+    private var activeRouterTask: Task<DockerHTTPResponse, Never>?
+    private var responseStreamTask: Task<Void, Never>?
+    private var registeredConnection = false
+    private var processReservedBodyBytes = 0
 
     init(
         router: DockerRouter,
         logger: Logger,
         connections: EngineConnectionTracker,
+        resourceBudget: EngineResourceBudget,
         pipeline: DockerHTTPPipeline,
         limits: EngineServerLimits
     ) {
         self.router = router
         self.logger = logger
         self.connections = connections
+        self.resourceBudget = resourceBudget
         responseEncoder = pipeline.responseEncoder
         requestDecoder = pipeline.requestDecoder
         upgradeState = pipeline.upgradeState
@@ -364,12 +328,35 @@ private final class DockerHTTPHandler:
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        guard resourceBudget.openConnection() else {
+            context.close(promise: nil)
+            return
+        }
+        registeredConnection = true
         connections.opened()
         context.fireChannelActive()
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        connections.closed()
+        activeRouterTask?.cancel()
+        activeRouterTask = nil
+        responseStreamTask?.cancel()
+        responseStreamTask = nil
+        if processReservedBodyBytes > 0 {
+            resourceBudget.releaseBodyBytes(processReservedBodyBytes)
+            processReservedBodyBytes = 0
+        }
+        recordActiveRequest(termination: "disconnect")
+        activeRequestBodyBytes = 0
+        activeRequestMeasuredBodyBytes = 0
+        retainedRequestBodyBytes = 0
+        requestBody.clear()
+        pendingRequests.removeAll()
+        if registeredConnection {
+            registeredConnection = false
+            resourceBudget.closeConnection()
+            connections.closed()
+        }
         context.fireChannelInactive()
     }
 
@@ -380,6 +367,11 @@ private final class DockerHTTPHandler:
         if let channelEvent = event as? ChannelEvent,
            channelEvent == .inputClosed
         {
+            if !upgradeState.upgradeCandidate {
+                activeRouterTask?.cancel()
+                context.close(promise: nil)
+                return
+            }
             if responseInFlight || !pendingRequests.isEmpty {
                 closeAfterResponse = true
             } else {
@@ -418,7 +410,10 @@ private final class DockerHTTPHandler:
             requestHead = head
             requestBody.clear()
         case var .body(buffer):
-            guard canBufferRequestBody(buffer.readableBytes) else {
+            let additionalBytes = buffer.readableBytes
+            guard canBufferRequestBody(additionalBytes),
+                  resourceBudget.reserveBodyBytes(additionalBytes)
+            else {
                 guard !responseInFlight, pendingRequests.isEmpty else {
                     // A standalone error response would overtake an earlier
                     // pipelined response, so reject this connection instead.
@@ -433,6 +428,7 @@ private final class DockerHTTPHandler:
                 context.close(promise: nil)
                 return
             }
+            processReservedBodyBytes += additionalBytes
             requestBody.writeBuffer(&buffer)
         case .end:
             enqueueRequest(context: context)
@@ -440,7 +436,14 @@ private final class DockerHTTPHandler:
     }
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
-        logger.error("Engine connection failed", metadata: ["error": .string(String(describing: error))])
+        logger.error(
+            "Engine connection failed",
+            metadata: [
+                "error": .string(
+                    DiagnosticsRedactor.redact(String(describing: error))
+                )
+            ]
+        )
         context.close(promise: nil)
     }
 
@@ -498,6 +501,7 @@ private final class DockerHTTPHandler:
             && totalBytes <= limits.maximumBufferedRequestBodyBytes
     }
 
+    // swiftlint:disable:next function_body_length
     private func processNextRequest(context: ChannelHandlerContext) {
         guard !responseInFlight, let pending = pendingRequests.popFirst() else {
             return
@@ -505,6 +509,13 @@ private final class DockerHTTPHandler:
         responseInFlight = true
         activeRequestHead = pending.head
         activeRequestBodyBytes = pending.bodyBytes
+        activeRequestMeasuredBodyBytes = pending.bodyBytes
+        activeRequestStartedNanoseconds = DispatchTime.now().uptimeNanoseconds
+        activeResponseStatus = 0
+        activeResponseBytes = 0
+        activeResponseKind = "none"
+        activeCorrelationID = "unassigned"
+        activeObservationLogged = false
         upgradeState.beginRequest(pending.head)
         guard let request = pending.request else {
             releaseActiveRequestBody()
@@ -517,16 +528,25 @@ private final class DockerHTTPHandler:
         }
         let promise = context.eventLoop.makePromise(of: DockerHTTPResponse.self)
         let sendableContext = SendableChannelHandlerContext(context)
-        promise.completeWithTask {
+        let task = Task {
             await self.router.respond(to: request)
+        }
+        activeRouterTask = task
+        promise.completeWithTask {
+            await task.value
         }
         promise.futureResult.whenComplete { result in
             let context = sendableContext.value
+            self.activeRouterTask = nil
             self.releaseActiveRequestBody()
             switch result {
             case let .success(response):
+                self.activeResponseStatus = response.status
+                self.activeCorrelationID =
+                    response.headers["X-Request-ID"] ?? "unassigned"
                 self.write(response, context: context)
             case let .failure(error):
+                self.activeResponseStatus = 500
                 self.writeError(
                     context: context,
                     status: .internalServerError,
@@ -538,6 +558,8 @@ private final class DockerHTTPHandler:
 
     private func releaseActiveRequestBody() {
         retainedRequestBodyBytes -= activeRequestBodyBytes
+        resourceBudget.releaseBodyBytes(activeRequestBodyBytes)
+        processReservedBodyBytes -= activeRequestBodyBytes
         activeRequestBodyBytes = 0
     }
 
@@ -547,10 +569,13 @@ private final class DockerHTTPHandler:
         let status = HTTPResponseStatus(statusCode: response.status)
         switch response.body {
         case let .bytes(data):
+            activeResponseKind = "bytes"
             writeBytes(data, headers: &headers, status: status, context: context)
         case let .stream(stream):
+            activeResponseKind = "stream"
             writeStream(stream, headers: &headers, status: status, context: context)
         case let .hijack(session, terminal):
+            activeResponseKind = "hijack"
             writeHijack(
                 session: session,
                 terminal: terminal,
@@ -566,6 +591,7 @@ private final class DockerHTTPHandler:
         status: HTTPResponseStatus,
         context: ChannelHandlerContext
     ) {
+        activeResponseBytes = data.count
         headers.replaceOrAdd(name: "Content-Length", value: String(data.count))
         context.write(
             wrapOutboundOut(
@@ -612,7 +638,9 @@ private final class DockerHTTPHandler:
         logger.debug(
             "Engine connection takeover requested",
             metadata: [
-                "request-target": .string(activeRequestHead?.uri ?? "unknown"),
+                "request-target": .string(
+                    DiagnosticsRedactor.redact(activeRequestHead?.uri ?? "unknown")
+                ),
                 "upgrade": .stringConvertible(requestedUpgrade)
             ]
         )
@@ -642,6 +670,7 @@ private final class DockerHTTPHandler:
             logger: logger,
             connections: connections
         )
+        recordActiveRequest(termination: "hijack")
         let sendableContext = SendableChannelHandlerContext(context)
         headPromise.futureResult.whenComplete { result in
             self.completeHijack(
@@ -683,7 +712,13 @@ private final class DockerHTTPHandler:
                     case let .failure(error):
                         self.logger.error(
                             "Engine connection takeover failed",
-                            metadata: ["error": .string(String(describing: error))]
+                            metadata: [
+                                "error": .string(
+                                    DiagnosticsRedactor.redact(
+                                        String(describing: error)
+                                    )
+                                )
+                            ]
                         )
                         context.close(promise: nil)
                     }
@@ -691,50 +726,82 @@ private final class DockerHTTPHandler:
         } catch {
             logger.error(
                 "Engine connection takeover failed",
-                metadata: ["error": .string(String(describing: error))]
+                metadata: [
+                    "error": .string(
+                        DiagnosticsRedactor.redact(String(describing: error))
+                    )
+                ]
             )
             context.close(promise: nil)
         }
     }
 
+    // Stream ownership includes awaited writes, completion, cancellation, and
+    // terminal error closure.
+    // swiftlint:disable:next function_body_length
     private func streamBody(
         _ stream: AsyncThrowingStream<Data, any Error>,
         context: ChannelHandlerContext
     ) {
         let sendableContext = SendableChannelHandlerContext(context)
-        Task {
+        responseStreamTask = Task {
             do {
                 for try await data in stream {
-                    let bytes = data
+                    try Task.checkCancellation()
+                    try await withCheckedThrowingContinuation { continuation in
+                        let bytes = data
+                        sendableContext.value.eventLoop.execute {
+                            let context = sendableContext.value
+                            self.activeResponseBytes += bytes.count
+                            var buffer = context.channel.allocator.buffer(capacity: bytes.count)
+                            buffer.writeBytes(bytes)
+                            let promise = context.eventLoop.makePromise(of: Void.self)
+                            context.writeAndFlush(
+                                self.wrapOutboundOut(.body(.byteBuffer(buffer))),
+                                promise: promise
+                            )
+                            promise.futureResult.whenComplete {
+                                continuation.resume(with: $0)
+                            }
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                try await withCheckedThrowingContinuation { continuation in
                     sendableContext.value.eventLoop.execute {
                         let context = sendableContext.value
-                        var buffer = context.channel.allocator.buffer(capacity: bytes.count)
-                        buffer.writeBytes(bytes)
+                        let promise = context.eventLoop.makePromise(of: Void.self)
                         context.writeAndFlush(
-                            self.wrapOutboundOut(.body(.byteBuffer(buffer))),
-                            promise: nil
+                            self.wrapOutboundOut(.end(nil)),
+                            promise: promise
                         )
+                        promise.futureResult.whenComplete {
+                            continuation.resume(with: $0)
+                        }
                     }
                 }
                 sendableContext.value.eventLoop.execute {
                     let context = sendableContext.value
-                    let promise = context.eventLoop.makePromise(of: Void.self)
-                    context.writeAndFlush(
-                        self.wrapOutboundOut(.end(nil)),
-                        promise: promise
-                    )
+                    self.responseStreamTask = nil
                     self.finishResponse(
-                        promise.futureResult,
+                        context.eventLoop.makeSucceededVoidFuture(),
                         context: context
                     )
                 }
+            } catch is CancellationError {
+                // Channel teardown owns cancellation and closure.
             } catch {
                 self.logger.error(
                     "Engine stream failed",
-                    metadata: ["error": .string(String(describing: error))]
+                    metadata: [
+                        "error": .string(
+                            DiagnosticsRedactor.redact(String(describing: error))
+                        )
+                    ]
                 )
                 sendableContext.value.eventLoop.execute {
                     let context = sendableContext.value
+                    self.responseStreamTask = nil
                     context.close(promise: nil)
                 }
             }
@@ -746,7 +813,10 @@ private final class DockerHTTPHandler:
         status: HTTPResponseStatus,
         message: String
     ) {
-        let data = Data("{\"message\":\"\(message)\"}".utf8)
+        let data = EngineResponseEncoding.dockerError(message)
+        activeResponseStatus = Int(status.code)
+        activeResponseKind = "error"
+        activeResponseBytes = data.count
         var headers = HTTPHeaders()
         headers.add(name: "Content-Type", value: "application/json")
         headers.add(name: "Content-Length", value: String(data.count))
@@ -773,6 +843,7 @@ private final class DockerHTTPHandler:
     ) {
         let sendableContext = SendableChannelHandlerContext(context)
         future.whenComplete { _ in
+            self.recordActiveRequest(termination: "completed")
             self.responseInFlight = false
             self.activeRequestHead = nil
             if self.closeAfterResponse, self.pendingRequests.isEmpty {
@@ -781,6 +852,42 @@ private final class DockerHTTPHandler:
                 self.processNextRequest(context: sendableContext.value)
             }
         }
+    }
+
+    private func recordActiveRequest(termination: String) {
+        guard responseInFlight, !activeObservationLogged else {
+            return
+        }
+        activeObservationLogged = true
+        let elapsedNanoseconds =
+            DispatchTime.now().uptimeNanoseconds
+                .subtractingReportingOverflow(activeRequestStartedNanoseconds)
+                .partialValue
+        let elapsedMilliseconds = Double(elapsedNanoseconds) / 1_000_000
+        logger.info(
+            "Engine request completed",
+            metadata: [
+                "bytes-in": .stringConvertible(activeRequestMeasuredBodyBytes),
+                "bytes-out": .stringConvertible(activeResponseBytes),
+                "correlation": .string(
+                    DiagnosticsRedactor.redact(activeCorrelationID)
+                ),
+                "duration-ms": .string(String(format: "%.3f", elapsedMilliseconds)),
+                "endpoint": .string(
+                    DiagnosticsRedactor.redact(activeRequestHead?.uri ?? "unknown")
+                ),
+                "response-kind": .string(activeResponseKind),
+                "status": .stringConvertible(activeResponseStatus),
+                "termination": .string(termination)
+            ]
+        )
+    }
+}
+
+enum EngineResponseEncoding {
+    static func dockerError(_ message: String) -> Data {
+        (try? DockerJSON.encoder.encode(DockerErrorEnvelope(message: message)))
+            ?? Data(#"{"message":"internal server error"}"#.utf8)
     }
 }
 
@@ -792,6 +899,7 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
     private let logger: Logger
     private let connections: EngineConnectionTracker
     private let inputPump: OrderedRuntimeInputPump
+    private let cancellation: RuntimeSessionCancellation
     private var outputTask: Task<Void, Never>?
     private let stateLock = NSLock()
     private var finishedNormally = false
@@ -806,7 +914,12 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
         self.terminal = terminal
         self.logger = logger
         self.connections = connections
-        inputPump = OrderedRuntimeInputPump(session: session)
+        let cancellation = RuntimeSessionCancellation(session: session)
+        self.cancellation = cancellation
+        inputPump = OrderedRuntimeInputPump(
+            session: session,
+            onFailure: cancellation.cancel
+        )
     }
 
     func start(channel: any Channel) {
@@ -824,9 +937,14 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
                 }
                 try await channel.close().get()
             } catch {
+                cancellation.cancel()
                 logger.error(
                     "Engine raw stream failed",
-                    metadata: ["error": .string(String(describing: error))]
+                    metadata: [
+                        "error": .string(
+                            DiagnosticsRedactor.redact(String(describing: error))
+                        )
+                    ]
                 )
                 channel.eventLoop.execute {
                     channel.close(promise: nil)
@@ -863,122 +981,10 @@ private final class DockerRawStreamHandler: ChannelInboundHandler, @unchecked Se
         if shouldCancel {
             outputTask?.cancel()
             inputPump.cancel()
+            cancellation.cancel()
         } else {
             inputPump.finish()
         }
         context.fireChannelInactive()
-    }
-}
-
-private final class EngineConnectionTracker: @unchecked Sendable {
-    private let lock = NSLock()
-    private var active = 0
-
-    var count: Int {
-        lock.withLock { active }
-    }
-
-    func opened() {
-        lock.withLock {
-            active += 1
-        }
-    }
-
-    func closed() {
-        lock.withLock {
-            active = max(0, active - 1)
-        }
-    }
-}
-
-/// Serializes bytes and EOF from a hijacked Docker connection before forwarding
-/// them to the runtime process. NIO invokes the synchronous enqueue methods in
-/// channel order; the single consumer task preserves that order across the
-/// asynchronous runtime boundary.
-final class OrderedRuntimeInputPump: @unchecked Sendable {
-    private enum Event: Sendable {
-        case data(Data)
-        case close
-    }
-
-    private let continuation: AsyncStream<Event>.Continuation
-    private let worker: Task<Void, Never>
-    private let stateLock = NSLock()
-    private var finished = false
-
-    init(session: any RuntimeProcessSession) {
-        let (stream, continuation) = AsyncStream<Event>.makeStream()
-        self.continuation = continuation
-        worker = Task {
-            do {
-                for await event in stream {
-                    try Task.checkCancellation()
-                    switch event {
-                    case let .data(data):
-                        try await session.write(data)
-                    case .close:
-                        try await session.closeStandardInput()
-                    }
-                }
-            } catch {
-                await session.cancel()
-            }
-        }
-    }
-
-    func write(_ data: Data) {
-        guard !data.isEmpty else {
-            return
-        }
-        stateLock.withLock {
-            guard !finished else {
-                return
-            }
-            continuation.yield(.data(data))
-        }
-    }
-
-    func close() {
-        stateLock.withLock {
-            guard !finished else {
-                return
-            }
-            finished = true
-            continuation.yield(.close)
-            continuation.finish()
-        }
-    }
-
-    func finish() {
-        stateLock.withLock {
-            guard !finished else {
-                return
-            }
-            finished = true
-            continuation.finish()
-        }
-    }
-
-    func cancel() {
-        stateLock.withLock {
-            guard !finished else {
-                return
-            }
-            finished = true
-            continuation.finish()
-            worker.cancel()
-        }
-    }
-
-    func wait() async {
-        await worker.value
-    }
-}
-
-private struct SendableChannelHandlerContext: @unchecked Sendable {
-    let value: ChannelHandlerContext
-
-    init(_ value: ChannelHandlerContext) {
-        self.value = value
     }
 }

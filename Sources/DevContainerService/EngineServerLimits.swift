@@ -16,25 +16,37 @@
 
 struct EngineServerLimits: Sendable {
     static let production = EngineServerLimits(
-        maximumRequestBodyBytes: 1_073_741_824,
-        maximumBufferedRequestBodyBytes: 1_073_741_824,
-        maximumPendingRequests: 32
+        maximumRequestBodyBytes: 67_108_864,
+        maximumBufferedRequestBodyBytes: 67_108_864,
+        maximumPendingRequests: 8,
+        maximumProcessBufferedRequestBodyBytes: 268_435_456,
+        maximumActiveConnections: 64
     )
 
     let maximumRequestBodyBytes: Int
     let maximumBufferedRequestBodyBytes: Int
     let maximumPendingRequests: Int
+    let maximumProcessBufferedRequestBodyBytes: Int
+    let maximumActiveConnections: Int
 
     init(
         maximumRequestBodyBytes: Int,
         maximumBufferedRequestBodyBytes: Int,
-        maximumPendingRequests: Int
+        maximumPendingRequests: Int,
+        maximumProcessBufferedRequestBodyBytes: Int? = nil,
+        maximumActiveConnections: Int = 64
     ) {
         precondition(maximumRequestBodyBytes > 0)
         precondition(maximumBufferedRequestBodyBytes >= maximumRequestBodyBytes)
         precondition(maximumPendingRequests > 0)
+        let processLimit = maximumProcessBufferedRequestBodyBytes
+            ?? maximumBufferedRequestBodyBytes
+        precondition(processLimit >= maximumRequestBodyBytes)
+        precondition(maximumActiveConnections > 0)
         self.maximumRequestBodyBytes = maximumRequestBodyBytes
         self.maximumBufferedRequestBodyBytes = maximumBufferedRequestBodyBytes
         self.maximumPendingRequests = maximumPendingRequests
+        self.maximumProcessBufferedRequestBodyBytes = processLimit
+        self.maximumActiveConnections = maximumActiveConnections
     }
 }

@@ -224,9 +224,11 @@ The aggregate stores raw and normalized observations under
 `.build/parity`. Comparison permits only the nondeterminism defined in the
 manifest. Cleanup proof is part of a passing result. Each fixture records
 monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
-stock and provider timings with Docker. Completed slowdowns below `10x` are
-informational; a timeout, other non-completion, missing timing, or duration of
-at least `10x` the corresponding Docker fixture fails.
+stock and provider timings with Docker. Comparable or better performance
+(`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
+Docker is marked for further investigation but does not, by itself, change
+functional parity. A timeout, other non-completion, or missing or invalid
+timing evidence fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.

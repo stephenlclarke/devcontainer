@@ -26,6 +26,10 @@ public extension AppleContainerRuntime {
     ) async throws {
         let resolved = try await resolveContainerID(id, context: context)
         try await launchContainerProcess(id: resolved)
+        // Runtime bootstrap recreates the guest's default /etc/hosts, even
+        // when the container incarnation itself is unchanged.
+        managedHostsState.removeValue(forKey: resolved)
+        await signalEventPollers()
         let startedAt = Date()
         try await recordStartedContainer(
             requestedID: id,
@@ -43,6 +47,7 @@ public extension AppleContainerRuntime {
             startedAt: startedAt
         )
         try await synchronizeNetworkHosts(context: context, containers: inventory)
+        await signalEventPollers()
     }
 
     private func launchContainerProcess(id: String) async throws {
@@ -78,6 +83,7 @@ public extension AppleContainerRuntime {
     internal func handleContainerExit(_ exit: ContainerExit, id: String) async {
         recordContainerExit(exit, id: id)
         containerExitTasks.removeValue(forKey: id)
+        await signalEventPollers()
         await portForwarding.stop(containerID: id)
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
@@ -91,6 +97,7 @@ public extension AppleContainerRuntime {
         if autoRemove {
             scheduleAutomaticRemoval(id: id)
         }
+        await signalEventPollers()
     }
 
     private func recordStartedContainer(
@@ -113,7 +120,7 @@ public extension AppleContainerRuntime {
     }
 
     private func startPortForwarding(
-        snapshot: ContainerSnapshot,
+        snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
@@ -142,6 +149,7 @@ public extension AppleContainerRuntime {
                 RuntimeContainerMetadata(
                     runtimeID: snapshot.runtimeID,
                     dockerID: snapshot.dockerID,
+                    imageID: snapshot.imageID,
                     spec: spec,
                     createdAt: snapshot.createdAt,
                     startedAt: startedAt
@@ -149,6 +157,7 @@ public extension AppleContainerRuntime {
             )
             let request = RequestedContainer(
                 spec: spec,
+                imageID: snapshot.imageID,
                 createdAt: snapshot.createdAt
             )
             requestedContainers[resolved] = request
@@ -169,13 +178,19 @@ public extension AppleContainerRuntime {
         var arguments = ["stop"]
         if let timeout {
             let components = timeout.components
-            let seconds = components.seconds + (components.attoseconds > 0 ? 1 : 0)
+            let seconds = components.seconds
+                + (components.attoseconds > 0 ? 1 : 0)
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container stop")
+        try await requireSuccess(
+            command(arguments),
+            operation: "container stop"
+        )
+        await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
+        await signalEventPollers()
     }
 
     func killContainer(
@@ -188,8 +203,10 @@ public extension AppleContainerRuntime {
             command(["kill", "--signal", signal, resolved]),
             operation: "container kill"
         )
+        await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
+        await signalEventPollers()
     }
 
     func renameContainer(
@@ -217,16 +234,22 @@ public extension AppleContainerRuntime {
             RuntimeContainerMetadata(
                 runtimeID: snapshot.runtimeID,
                 dockerID: snapshot.dockerID,
+                imageID: snapshot.imageID,
                 spec: spec,
                 createdAt: snapshot.createdAt,
                 startedAt: snapshot.startedAt
             )
         )
-        let request = RequestedContainer(spec: spec, createdAt: snapshot.createdAt)
+        let request = RequestedContainer(
+            spec: spec,
+            imageID: snapshot.imageID,
+            createdAt: snapshot.createdAt
+        )
         requestedContainers.removeValue(forKey: previousName)
         requestedContainers[snapshot.runtimeID.rawValue] = request
         requestedContainers[snapshot.dockerID.rawValue] = request
         requestedContainers[name] = request
+        await signalEventPollers()
     }
 
     func removeContainer(
@@ -241,12 +264,17 @@ public extension AppleContainerRuntime {
             arguments.append("--force")
         }
         arguments.append(resolved)
-        try await requireSuccess(command(arguments), operation: "container delete")
+        try await requireSuccess(
+            command(arguments),
+            operation: "container delete"
+        )
+        await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         requestedContainers.removeValue(forKey: id)
         requestedContainers.removeValue(forKey: resolved)
         requestedContainers.removeValue(forKey: snapshot.dockerID.rawValue)
         requestedContainers.removeValue(forKey: snapshot.spec.name)
+        managedHostsState.removeValue(forKey: resolved)
         startedContainers.remove(id)
         startedContainers.remove(resolved)
         startedContainers.remove(snapshot.dockerID.rawValue)
@@ -259,6 +287,7 @@ public extension AppleContainerRuntime {
         containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
         try await synchronizeNetworkHosts(context: context)
+        await signalEventPollers()
     }
 
     func waitContainer(

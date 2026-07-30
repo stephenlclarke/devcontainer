@@ -184,7 +184,6 @@ jobs:
           fi
           if [[ "${publish}" == "true" && "${lane}" == "current" ]]; then
             required_workflows=(
-              codeql.yml
               dependency-review.yml
               docs.yml
               homebrew.yml

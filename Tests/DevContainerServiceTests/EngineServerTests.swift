@@ -26,6 +26,18 @@ import Testing
 @Suite(.serialized)
 struct EngineServerTests {
     @Test
+    func `server errors always use a valid Docker JSON envelope`() throws {
+        let message = "quote \" slash \\ newline\ncontrol\u{0001} unicode \u{1F680}"
+        let body = EngineResponseEncoding.dockerError(message)
+        let envelope = try JSONDecoder().decode(
+            DockerErrorEnvelope.self,
+            from: body
+        )
+
+        #expect(envelope.message == message)
+    }
+
+    @Test
     func `server exposes byte stream and hijacked Docker responses`() async throws {
         let fixture = try ServerFixture()
         defer { fixture.cleanup() }
@@ -177,6 +189,25 @@ struct EngineServerTests {
             throw error
         }
 
+        try await server.shutdown()
+    }
+
+    @Test
+    func `disconnect cancels an in flight ordinary request`() async throws {
+        let fixture = try ServerFixture()
+        defer { fixture.cleanup() }
+        let runtime = InMemoryRuntime(descriptorDelay: .seconds(30))
+        let server = fixture.server(runtime: runtime)
+        try await server.start()
+
+        try fixture.requestAndDisconnect(
+            "GET /v1.53/version HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        )
+        for _ in 0 ..< 100 where await runtime.observedRequestCancellationCount == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(await runtime.observedRequestCancellationCount == 1)
         try await server.shutdown()
     }
 
@@ -396,6 +427,7 @@ private struct ServerFixture {
         process.standardError = error
         try process.run()
         input.fileHandleForWriting.write(Data(request.utf8))
+        Thread.sleep(forTimeInterval: 0.2)
         try input.fileHandleForWriting.close()
         process.waitUntilExit()
         let standardOutput = try output.fileHandleForReading.readToEnd() ?? Data()
@@ -411,6 +443,22 @@ private struct ServerFixture {
         }
         return String(data: standardOutput, encoding: .utf8)
             ?? "non-UTF-8 pipelined response"
+    }
+
+    func requestAndDisconnect(_ request: String) throws {
+        let input = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        process.arguments = ["-U", socketPath]
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(Data(request.utf8))
+        Thread.sleep(forTimeInterval: 0.05)
+        process.terminate()
+        process.waitUntilExit()
+        try input.fileHandleForWriting.close()
     }
 
     func createExec(container: String) throws -> String {

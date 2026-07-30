@@ -6,11 +6,14 @@
 > Version 1.0.1 supports the exact component fingerprints below. Real Docker,
 > stock Apple `container` 1.1.0, and the separate `container-compose` 0.10.1
 > provider pass all 18 CLI fixtures and the real VS Code end-to-end fixture
-> with zero normalized semantic differences and no performance failures. In
+> with zero normalized semantic differences and complete timing evidence. In
 > the exact tag run, the largest CLI ratios were 2.876x for stock Apple and
 > 4.509x for `container-compose`; the corresponding VS Code ratios were 1.232x
-> and 1.311x, all below the 10x failure threshold. Repeated-run statistics are
-> in [PERFORMANCE.md](PERFORMANCE.md).
+> and 1.311x. The CLI results above 2.50x require further investigation under
+> the current policy. Repeated-run statistics are in
+> [PERFORMANCE.md](PERFORMANCE.md).
+
+The project's north-star goal is 100% behavioural parity with Docker-based Development Containers and comparable or better performance. This document remains the narrower current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the work and evidence required to reach the north star.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -126,12 +129,12 @@ The bounded endpoint surface is:
   fixed at container creation;
 - label-filtered, ordered, reconnectable events.
 
-Decoded unsupported endpoints and fields fail before side effects with a
-Docker-shaped error. Version 1.0.1 does not yet reject every unknown Docker
-create/build member: Swift decoding can omit fields outside the bounded DTO.
-Arbitrary `runArgs` therefore are not a blanket support surface. This known
-non-conformance and its remediation priority are recorded in
-[CONFORMANCE.md](CONFORMANCE.md).
+Modelled runtime-affecting container, exec, network, and volume request objects
+use strict nested decoding. Unknown fields fail before side effects with a
+Docker-shaped `400`; known but unenforceable non-default fields fail with
+`501`. Complete schema-derived coverage for every Docker endpoint is still
+open, so arbitrary `runArgs` are not a blanket support surface. This boundary
+and its remediation priority are recorded in [CONFORMANCE.md](CONFORMANCE.md).
 Buildx is reported only after its session and stream behavior passes the
 Feature and build-context fixtures.
 
@@ -141,9 +144,11 @@ The unmodified Apple 1.1.0 `container create` command does not expose `--hostnam
 
 - accepts the normal Dev Containers path where Docker sends an empty hostname and no security options;
 - treats `seccomp=unconfined` as the already-native state because Apple containers do not install Docker’s default seccomp profile;
-- maps Docker privileged mode to Apple’s native `--cap-add ALL` model, retaining per-container VM isolation but not claiming full Docker privileged semantics;
+- rejects Docker privileged mode before creation rather than approximating it with `--cap-add ALL`;
 - rejects a non-empty Docker `Hostname` or any remaining `SecurityOpt` before creating managed volumes, containers, or other runtime resources;
 - reports a Docker-shaped unsupported-capability response rather than claiming a weakened security approximation.
+
+The complete implementation design for these and every other current `501` capability path is in [`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md). It identifies which gaps can use an existing tagged Apple API, which require a new upstream runtime primitive, and the Docker/stock/provider evidence required before the compatibility claim expands.
 
 The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.1.0/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
 
@@ -198,7 +203,7 @@ The `docker` lane is the behavioral oracle. For a fixture to pass,
 `apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
 
-Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. A completed slowdown below `10x` is informational and does not alter semantic parity. A timeout, other non-completion, missing duration, or candidate duration of at least `10x` the Docker fixture is a parity failure; performance failures are never retried or normalized away.
+Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed result above `2.50x` Docker requires further investigation but does not, by itself, alter functional parity. A timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
 The harness may normalize only:
 
