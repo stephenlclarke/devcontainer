@@ -665,6 +665,7 @@ class VSCodeLane:
             self.runtime.configure_docker_oracle()
         else:
             self.runtime.start_engine()
+        self.runtime.configure_devcontainer_client()
         return self.runtime.fingerprint()
 
     def compose_path(self) -> str:
@@ -679,6 +680,16 @@ class VSCodeLane:
         if not wrapper.is_file():
             raise ParityError(f"Compose adapter is missing: {wrapper}")
         return str(wrapper)
+
+    def devcontainer_docker_path(self) -> str:
+        """Return the Docker CLI surface exposed to VS Code."""
+
+        value = self.runtime.devcontainer_docker
+        if isinstance(value, str):
+            return value
+        if isinstance(self.runtime.docker, str):
+            return self.runtime.docker
+        raise ParityError("Docker CLI is required for VS Code parity")
 
     def install_extensions(
         self,
@@ -774,7 +785,7 @@ class VSCodeLane:
         environment.update(
             {
                 "DEVCONTAINER_VSCODE_DRIVER_BACKEND": self.lane,
-                "DEVCONTAINER_VSCODE_DRIVER_DOCKER": self.runtime.docker,
+                "DEVCONTAINER_VSCODE_DRIVER_DOCKER": self.devcontainer_docker_path(),
                 "DEVCONTAINER_VSCODE_DRIVER_PORT": "8123",
                 "DEVCONTAINER_VSCODE_DRIVER_RESULT": str(driver_result),
                 "DEVCONTAINER_VSCODE_DRIVER_STATE": str(driver_state),
@@ -890,7 +901,7 @@ class VSCodeLane:
             runtime_ready = True
             atomic_json(self.output / "fingerprint.json", fingerprint)
             compose = self.compose_path()
-            settings = vscode_settings(self.runtime.docker, compose)
+            settings = vscode_settings(self.devcontainer_docker_path(), compose)
             atomic_json(user_data / "User/settings.json", settings)
             atomic_json(self.output / "vscode-settings.json", settings)
             self.install_extensions(user_data, extensions, reference)

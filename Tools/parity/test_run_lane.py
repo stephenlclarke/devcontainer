@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import signal
 import sqlite3
+import subprocess
 import unittest
 import urllib.error
 from contextlib import closing
@@ -234,6 +235,40 @@ class CleanupFixtureTests(unittest.TestCase):
 
 
 class BuilderCleanupTests(unittest.TestCase):
+    def test_stock_client_reports_buildx_unavailable(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docker = root / "docker"
+            docker.write_text(
+                "#!/bin/sh\nprintf 'forwarded:%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o700)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.docker = str(docker)
+            runner.devcontainer_docker = runner.docker
+            runner.socket_root = root
+
+            runner.configure_devcontainer_client()
+            buildx = subprocess.run(
+                [runner.devcontainer_docker, "buildx", "version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            forwarded = subprocess.run(
+                [runner.devcontainer_docker, "version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+
+        self.assertNotEqual(buildx.returncode, 0)
+        self.assertIn("unknown command", buildx.stderr)
+        self.assertEqual(forwarded.returncode, 0)
+        self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
+
     def test_builder_disables_unsupported_restart_policy(self) -> None:
         with TemporaryDirectory() as temporary:
             runner = LaneRunner.__new__(LaneRunner)

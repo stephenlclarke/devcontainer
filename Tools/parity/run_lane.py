@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import socket
@@ -53,6 +54,7 @@ class LaneRunner:
         self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
             "docker"
         )
+        self.devcontainer_docker = self.docker
         self.node_package_runner = shutil.which("npx")
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
@@ -107,7 +109,9 @@ class LaneRunner:
 
         results: list[dict[str, Any]] = []
         try:
-            self.prepare_builder()
+            self.configure_devcontainer_client()
+            if self.lane != "apple-stock":
+                self.prepare_builder()
             atomic_json(self.output / "fingerprint.json", self.fingerprint())
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
@@ -219,6 +223,27 @@ class LaneRunner:
         if self.socket_root is not None:
             shutil.rmtree(self.socket_root, ignore_errors=True)
             self.socket_root = None
+
+    def configure_devcontainer_client(self) -> None:
+        """Avoid privileged BuildKit hosting on the unmodified stock runtime."""
+
+        self.devcontainer_docker = self.docker
+        if self.lane != "apple-stock":
+            return
+        if self.socket_root is None or not self.docker:
+            raise ParityError("stock Docker client wrapper requires a live engine")
+        wrapper = self.socket_root / "docker-no-buildx"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            'if [ "${1:-}" = "buildx" ]; then\n'
+            "  printf '%s\\n' 'docker: unknown command: docker buildx' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            f"exec {shlex.quote(self.docker)} \"$@\"\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o700)
+        self.devcontainer_docker = str(wrapper)
 
     def prepare_builder(self) -> None:
         before = self.docker_container_inventory()
@@ -529,7 +554,7 @@ class LaneRunner:
                     "--workspace-folder",
                     str(runtime_fixture.directory),
                     "--docker-path",
-                    self.docker,
+                    self.devcontainer_docker,
                     "--remove-existing-container",
                     "--log-level",
                     "info",
@@ -616,7 +641,7 @@ class LaneRunner:
                         "--workspace-folder",
                         str(fixture.directory),
                         "--docker-path",
-                        self.docker,
+                        self.devcontainer_docker,
                         "--remove-existing-container",
                         "--frozen-lockfile",
                         "--log-level",
@@ -720,7 +745,7 @@ class LaneRunner:
                 "--workspace-folder",
                 str(fixture.directory),
                 "--docker-path",
-                self.docker,
+                self.devcontainer_docker,
                 "--log-level",
                 "info",
                 "--log-format",
@@ -757,7 +782,7 @@ class LaneRunner:
                 "--workspace-folder",
                 str(fixture.directory),
                 "--docker-path",
-                self.docker,
+                self.devcontainer_docker,
                 "--remove-existing-container",
                 "--log-level",
                 "info",
