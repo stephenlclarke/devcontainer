@@ -19,6 +19,7 @@ import Darwin
 import DevContainerAppleRuntime
 import DevContainerCore
 import DevContainerDockerAPI
+import DevContainerModel
 import DevContainerState
 import Dispatch
 import Foundation
@@ -40,6 +41,9 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Crash-recovery SQLite database path.")
     var state: String = DefaultPaths.stateDatabase
 
+    @Option(name: .long, help: "Backend provider recorded for resource ownership.")
+    var provider: String = BackendProvider.stock.rawValue
+
     // Service bootstrap remains linear so ownership and rollback order are
     // reviewable in one place.
     // swiftlint:disable:next function_body_length
@@ -60,6 +64,12 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             ]
         )
         let coordinator = ProjectCoordinator(store: store)
+        guard let selectedProvider = BackendProvider(rawValue: provider) else {
+            throw ValidationError(
+                "provider must be \(BackendProvider.stock.rawValue) or "
+                    + BackendProvider.containerCompose.rawValue
+            )
+        }
         let recovery = try await coordinator
             .failUnfinishedOperationsForManualRecovery()
         if !recovery.isEmpty {
@@ -77,7 +87,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         let router = DockerRouter(
             runtime: runtime,
             coordinator: coordinator,
-            provider: .stock
+            provider: selectedProvider
         )
         let server = EngineServer(router: router, socketPath: socket, logger: logger)
         try await server.start()

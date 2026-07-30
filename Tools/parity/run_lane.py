@@ -174,6 +174,8 @@ class LaneRunner:
                 str(state_path),
                 "--container",
                 container,
+                "--provider",
+                "container-compose" if self.lane == "container-compose" else "stock",
             ],
             cwd=self.repository,
             env=self.environment,
@@ -232,6 +234,7 @@ class LaneRunner:
             return
         if self.socket_root is None or not self.docker:
             raise ParityError("stock Docker client wrapper requires a live engine")
+        self.environment["DOCKER_BUILDKIT"] = "0"
         wrapper = self.socket_root / "docker-no-buildx"
         wrapper.write_text(
             "#!/bin/sh\n"

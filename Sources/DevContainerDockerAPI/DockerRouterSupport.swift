@@ -187,9 +187,6 @@ extension DockerRouter {
         if request.argsEscaped == true {
             try unsupportedCreateField("ArgsEscaped")
         }
-        if request.exposedPorts?.isEmpty == false {
-            try unsupportedCreateField("ExposedPorts")
-        }
         if request.macAddress?.isEmpty == false {
             try unsupportedCreateField("MacAddress")
         }
@@ -205,7 +202,10 @@ extension DockerRouter {
         if request.stdinOnce == true {
             try unsupportedCreateField("StdinOnce")
         }
-        if request.stopSignal?.isEmpty == false {
+        if let stopSignal = request.stopSignal,
+           !stopSignal.isEmpty,
+           !["SIGTERM", "TERM"].contains(stopSignal.uppercased())
+        {
             try unsupportedCreateField("StopSignal")
         }
         if let stopTimeout = request.stopTimeout, stopTimeout != 0 {
@@ -303,7 +303,7 @@ extension DockerRouter {
         {
             try unsupportedCreateField("HostConfig.LogConfig")
         }
-        if host.memorySwappiness != nil {
+        if let memorySwappiness = host.memorySwappiness, memorySwappiness != -1 {
             try unsupportedCreateField("HostConfig.MemorySwappiness")
         }
         if (host.ioMaximumBandwidth ?? 0) != 0 {
@@ -644,7 +644,10 @@ extension DockerRouter {
             user: request.user,
             hostname: request.hostname,
             mounts: containerMounts(request),
-            ports: portBindings(request.hostConfig?.portBindings ?? [:]),
+            ports: portBindings(
+                request.hostConfig?.portBindings ?? [:],
+                exposedPorts: Set(request.exposedPorts?.keys.map(\.self) ?? [])
+            ),
             networks: networkAttachments(request),
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
@@ -727,15 +730,17 @@ extension DockerRouter {
     }
 
     func portBindings(
-        _ values: [String: [DockerPortBindingRequest]]
+        _ values: [String: [DockerPortBindingRequest]],
+        exposedPorts: Set<String> = []
     ) throws -> [PortBinding] {
         var result: [PortBinding] = []
-        for (containerKey, hostBindings) in values {
+        for containerKey in Set(values.keys).union(exposedPorts).sorted() {
             let keyParts = containerKey.split(separator: "/", maxSplits: 1)
             guard let containerPort = UInt16(keyParts[0]) else {
                 throw DevContainerError(.invalidRequest, message: "invalid port \(containerKey)")
             }
             let protocolName = keyParts.count == 2 ? String(keyParts[1]) : "tcp"
+            let hostBindings = values[containerKey] ?? []
             if hostBindings.isEmpty {
                 result.append(
                     PortBinding(
@@ -855,6 +860,7 @@ extension DockerRouter {
                 env: env,
                 cmd: snapshot.spec.command,
                 image: snapshot.spec.image,
+                exposedPorts: exposedPorts(snapshot.spec.ports),
                 volumes: volumeEntries,
                 workingDir: snapshot.spec.workingDirectory ?? "",
                 entrypoint: snapshot.spec.entrypoint,
@@ -889,6 +895,16 @@ extension DockerRouter {
         _ mounts: [RuntimeMount]
     ) -> [String: [String: String]] {
         mounts.reduce(into: [:]) { $0[$1.destination] = [:] }
+    }
+
+    func exposedPorts(
+        _ ports: [PortBinding]
+    ) -> [String: [String: String]] {
+        Dictionary(
+            uniqueKeysWithValues: Set(ports.map {
+                "\($0.containerPort)/\($0.protocolName)"
+            }).sorted().map { ($0, [:]) }
+        )
     }
 
     func networkSettings(

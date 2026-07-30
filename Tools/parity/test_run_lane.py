@@ -249,6 +249,7 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.docker = str(docker)
             runner.devcontainer_docker = runner.docker
             runner.socket_root = root
+            runner.environment = {}
 
             runner.configure_devcontainer_client()
             buildx = subprocess.run(
@@ -268,6 +269,7 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertIn("unknown command", buildx.stderr)
         self.assertEqual(forwarded.returncode, 0)
         self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
+        self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
 
     def test_builder_disables_unsupported_restart_policy(self) -> None:
         with TemporaryDirectory() as temporary:

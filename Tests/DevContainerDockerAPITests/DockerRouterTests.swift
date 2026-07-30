@@ -324,15 +324,12 @@ func `known unsupported create fields fail before runtime side effects`() async 
     let router = DockerRouter(runtime: runtime)
     let containerRequests = [
         (#"{"Image":"alpine:test","ArgsEscaped":true}"#, "ArgsEscaped"),
-        (
-            #"{"Image":"alpine:test","ExposedPorts":{"8080/tcp":{}}}"#,
-            "ExposedPorts"
-        ),
         (#"{"Image":"alpine:test","MacAddress":"02:42:ac:11:00:02"}"#, "MacAddress"),
         (#"{"Image":"alpine:test","NetworkDisabled":true}"#, "NetworkDisabled"),
         (#"{"Image":"alpine:test","OnBuild":["RUN true"]}"#, "OnBuild"),
         (#"{"Image":"alpine:test","Shell":["/bin/sh","-c"]}"#, "Shell"),
         (#"{"Image":"alpine:test","StdinOnce":true}"#, "StdinOnce"),
+        (#"{"Image":"alpine:test","StopSignal":"SIGUSR1"}"#, "StopSignal"),
         (
             #"{"Image":"alpine:test","HostConfig":{"PublishAllPorts":true}}"#,
             "HostConfig.PublishAllPorts"
@@ -491,6 +488,7 @@ private let neutralDockerClientMetadata = Data(
       "OnBuild":[],
       "Shell":[],
       "StdinOnce":false,
+      "StopSignal":"SIGTERM",
       "HostConfig":{
         "Annotations":{},
         "BlkioDeviceReadBps":[],
@@ -512,6 +510,7 @@ private let neutralDockerClientMetadata = Data(
         "Isolation":"",
         "Links":[],
         "LogConfig":{"Config":{},"Type":""},
+        "MemorySwappiness":-1,
         "PublishAllPorts":false,
         "Runtime":"",
         "StorageOpt":{},
@@ -598,7 +597,7 @@ func `explicit idempotency keys replay one mutation and reject conflicting reuse
 
 @Test
 // swiftlint:disable:next function_body_length
-func `empty Docker host IP binds on all IPv4 interfaces`() async throws {
+func `exposed ports and empty Docker host IP retain their semantics`() async throws {
     let runtime = InMemoryRuntime()
     await runtime.seedImage(
         ImageSnapshot(
@@ -612,6 +611,10 @@ func `empty Docker host IP binds on all IPv4 interfaces`() async throws {
     let body = try JSONSerialization.data(
         withJSONObject: [
             "Image": "fixture:latest",
+            "ExposedPorts": [
+                "8080/tcp": [:],
+                "9090/tcp": [:]
+            ],
             "HostConfig": [
                 "PortBindings": [
                     "8080/tcp": [["HostIp": "", "HostPort": "18080"]]
@@ -636,6 +639,7 @@ func `empty Docker host IP binds on all IPv4 interfaces`() async throws {
         ).first
     )
     #expect(snapshot.spec.ports.first?.hostAddress == "0.0.0.0")
+    #expect(snapshot.spec.ports.map(\.containerPort) == [8080, 9090])
     #expect(snapshot.imageID == "sha256:fixture")
 
     let list = await router.respond(
@@ -657,6 +661,9 @@ func `empty Docker host IP binds on all IPv4 interfaces`() async throws {
         JSONSerialization.jsonObject(with: bytes(inspect)) as? [String: Any]
     )
     #expect(inspected["Image"] as? String == "sha256:fixture")
+    let config = try #require(inspected["Config"] as? [String: Any])
+    let exposed = try #require(config["ExposedPorts"] as? [String: Any])
+    #expect(Set(exposed.keys) == ["8080/tcp", "9090/tcp"])
 }
 
 @Test

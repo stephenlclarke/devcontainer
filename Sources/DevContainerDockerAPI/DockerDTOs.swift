@@ -695,6 +695,7 @@ struct DockerContainerConfig: Encodable {
     let env: [String]
     let cmd: [String]
     let image: String
+    let exposedPorts: [String: [String: String]]
     let volumes: [String: [String: String]]
     let workingDir: String
     let entrypoint: [String]
@@ -708,6 +709,7 @@ struct DockerContainerConfig: Encodable {
         case cmd = "Cmd"
         case entrypoint = "Entrypoint"
         case env = "Env"
+        case exposedPorts = "ExposedPorts"
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
         case image = "Image"
