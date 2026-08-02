@@ -131,11 +131,16 @@ public enum ProcessRunner {
             guard let input, let standardInput else {
                 return
             }
-            defer { try? standardInput.fileHandleForWriting.close() }
-            try standardInput.fileHandleForWriting.write(contentsOf: input)
+            try await performThrowingBlocking {
+                defer { try? standardInput.fileHandleForWriting.close() }
+                try standardInput.fileHandleForWriting.write(contentsOf: input)
+            }
         }
+        let runningCommand = command
         let waitTask = Task.detached {
-            try command.wait()
+            try await performThrowingBlocking {
+                try runningCommand.wait()
+            }
         }
         return try await withTaskCancellationHandler {
             do {
@@ -189,8 +194,11 @@ public enum ProcessRunner {
         let termination = OwnedProcessTermination()
         try command.start()
         termination.didLaunch(processGroup: command.pid)
+        let runningCommand = command
         let waitTask = Task.detached {
-            try command.wait()
+            try await performThrowingBlocking {
+                try runningCommand.wait()
+            }
         }
         return try await withTaskCancellationHandler {
             defer {
@@ -235,19 +243,47 @@ public enum ProcessRunner {
         maximumBytes: Int?
     ) -> Task<(data: Data, omitted: Int), Never> {
         Task.detached {
-            defer { try? handle.close() }
-            var retained = Data()
-            var omitted = 0
-            while let chunk = try? handle.read(upToCount: 64 * 1024),
-                  !chunk.isEmpty
-            {
-                let available = maximumBytes.map {
-                    max(0, $0 - retained.count)
-                } ?? chunk.count
-                retained.append(chunk.prefix(available))
-                omitted += chunk.count - available
+            await performBlocking {
+                defer { try? handle.close() }
+                var retained = Data()
+                var omitted = 0
+                while let chunk = try? handle.read(upToCount: 64 * 1024),
+                      !chunk.isEmpty
+                {
+                    let available = maximumBytes.map {
+                        max(0, $0 - retained.count)
+                    } ?? chunk.count
+                    retained.append(chunk.prefix(available))
+                    omitted += chunk.count - available
+                }
+                return (retained, omitted)
             }
-            return (retained, omitted)
+        }
+    }
+
+    private static func performBlocking<Value: Sendable>(
+        _ operation: @escaping @Sendable () -> Value
+    ) async -> Value {
+        // FileHandle reads and wait4 can block indefinitely. Keep them off the
+        // cooperative executor so a small runner can still deliver cancellation.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: operation())
+            }
+        }
+    }
+
+    private static func performThrowingBlocking<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    try continuation.resume(returning: operation())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
     }
 
