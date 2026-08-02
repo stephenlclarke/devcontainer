@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,45 +14,75 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
 SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
-RUNS_ON_KEY = re.compile(r"^(?P<indent> *)runs-on:\s*(?P<value>.*)$")
+RUBY_RUNS_ON_SELECTORS = r"""
+require "json"
+require "yaml"
+
+selectors = {}
+ARGV.each do |path|
+  document = YAML.safe_load(
+    File.read(path, encoding: "UTF-8"),
+    permitted_classes: [],
+    permitted_symbols: [],
+    aliases: true
+  )
+  jobs = document.fetch("jobs")
+  raise "jobs must be a mapping: #{path}" unless jobs.is_a?(Hash)
+  selectors[path] = jobs.filter_map do |name, job|
+    next unless job.is_a?(Hash) && job.key?("runs-on")
+    {"job" => name.to_s, "selector" => job.fetch("runs-on")}
+  end
+end
+STDOUT.write(JSON.generate(selectors))
+"""
 
 
-def workflow_runner_specifications(contents: str) -> list[str]:
-    """Return every scalar, flow-sequence, or block-sequence runs-on value."""
-    lines = contents.splitlines()
-    specifications: list[str] = []
-    index = 0
+def workflow_files(directory: Path = WORKFLOWS) -> list[Path]:
+    """Return every supported GitHub Actions workflow file."""
+    return sorted((*directory.glob("*.yml"), *directory.glob("*.yaml")))
 
-    while index < len(lines):
-        match = RUNS_ON_KEY.match(lines[index])
-        if match is None:
-            index += 1
-            continue
 
-        indentation = len(match.group("indent"))
-        value = match.group("value").strip()
-        specification_lines = [value] if value else []
-        index += 1
-
-        flow_sequence = value.startswith("[") and "]" not in value
-        needs_nested_value = not value or flow_sequence
-        while needs_nested_value and index < len(lines):
-            candidate = lines[index]
-            if (
-                not flow_sequence
-                and candidate.strip()
-                and len(candidate) - len(candidate.lstrip(" ")) <= indentation
+def workflow_runner_labels(
+    workflows: list[Path],
+) -> list[tuple[Path, str, list[str]]]:
+    """Parse workflow job selectors with Ruby's standard YAML implementation."""
+    result = subprocess.run(
+        [
+            "ruby",
+            "-e",
+            RUBY_RUNS_ON_SELECTORS,
+            *(str(path) for path in workflows),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    document = json.loads(result.stdout)
+    parsed: list[tuple[Path, str, list[str]]] = []
+    for workflow in workflows:
+        for entry in document[str(workflow)]:
+            selector = entry["selector"]
+            if isinstance(selector, str):
+                labels = [selector]
+            elif isinstance(selector, list) and all(
+                isinstance(label, str) for label in selector
             ):
-                break
-            specification_lines.append(candidate.strip())
-            if flow_sequence and "]" in candidate:
-                index += 1
-                break
-            index += 1
+                labels = selector
+            else:
+                raise ValueError(
+                    f"{workflow.name}:{entry['job']} has an opaque runs-on selector"
+                )
+            parsed.append((workflow, entry["job"], labels))
+    return parsed
 
-        specifications.append("\n".join(specification_lines))
 
-    return specifications
+def is_self_hosted_selector(labels: list[str]) -> bool:
+    """Identify a self-hosted selector and reject opaque whole-runner routing."""
+    if "self-hosted" in labels:
+        return True
+    if any("${{" in label for label in labels):
+        raise ValueError("dynamic runs-on selectors cannot prove hosted isolation")
+    return False
 
 
 class WorkflowArtifactTests(unittest.TestCase):
@@ -58,7 +90,7 @@ class WorkflowArtifactTests(unittest.TestCase):
         uses_pattern = re.compile(r"^\s+uses:\s+([^@\s]+)@([^\s#]+)", re.MULTILINE)
         checked = 0
 
-        for workflow in WORKFLOWS.glob("*.yml"):
+        for workflow in workflow_files():
             contents = workflow.read_text(encoding="utf-8")
             for action, revision in uses_pattern.findall(contents):
                 if action.startswith("./"):
@@ -77,7 +109,7 @@ class WorkflowArtifactTests(unittest.TestCase):
         revisions: dict[str, set[str]] = {}
         occurrences: dict[str, int] = {}
 
-        for workflow in WORKFLOWS.glob("*.yml"):
+        for workflow in workflow_files():
             for action, revision in uses_pattern.findall(
                 workflow.read_text(encoding="utf-8")
             ):
@@ -124,7 +156,7 @@ class WorkflowArtifactTests(unittest.TestCase):
             ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
         ).read_text(encoding="utf-8")
 
-        for workflow in WORKFLOWS.glob("*.yml"):
+        for workflow in workflow_files():
             contents = workflow.read_text(encoding="utf-8")
             boundaries = [match.start() for match in STEP_BOUNDARY.finditer(contents)]
             boundaries.append(len(contents))
@@ -170,41 +202,95 @@ class WorkflowArtifactTests(unittest.TestCase):
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
         checked = 0
 
-        for workflow in WORKFLOWS.glob("*.yml"):
-            contents = workflow.read_text(encoding="utf-8")
-            for runner_specification in workflow_runner_specifications(contents):
-                if not re.search(
-                    r"(?<![\w-])self-hosted(?![\w-])",
-                    runner_specification,
-                ):
-                    continue
-                checked += 1
-                self.assertIn(
-                    "devcontainer-designated-mbp",
-                    runner_specification,
-                    f"{workflow.name} can route outside the designated MBP",
-                )
-                self.assertNotIn("devcontainer-ultuk2m30000", runner_specification)
+        for workflow, job, labels in workflow_runner_labels(workflow_files()):
+            if not is_self_hosted_selector(labels):
+                continue
+            checked += 1
+            self.assertIn(
+                "devcontainer-designated-mbp",
+                labels,
+                f"{workflow.name}:{job} can route outside the designated MBP",
+            )
+            self.assertNotIn("devcontainer-ultuk2m30000", labels)
 
         self.assertEqual(checked, 2)
 
     def test_runner_specification_parser_covers_yaml_forms(self) -> None:
-        examples = (
-            "    runs-on: self-hosted\n",
-            "    runs-on: [self-hosted, macOS]\n",
-            "    runs-on:\n      [self-hosted, macOS]\n",
-            "    runs-on:\n      - self-hosted\n      - macOS\n",
-            "    runs-on: [\n      self-hosted,\n      macOS\n    ]\n",
+        contents = """
+jobs:
+  scalar:
+    runs-on: self-hosted
+  flow:
+    runs-on: [self-hosted, macOS]
+  next-line-flow:
+    runs-on:
+      [self-hosted, macOS]
+  block:
+    'runs-on':
+      - self-hosted
+      - macOS
+  quoted:
+    "runs-on": [
+      self-hosted,
+      "macOS,ARM64"
+    ]
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = Path(directory) / "forms.yml"
+            workflow.write_text(contents, encoding="utf-8")
+            parsed = {
+                job: labels
+                for _, job, labels in workflow_runner_labels([workflow])
+            }
+        self.assertEqual(
+            parsed,
+            {
+                "scalar": ["self-hosted"],
+                "flow": ["self-hosted", "macOS"],
+                "next-line-flow": ["self-hosted", "macOS"],
+                "block": ["self-hosted", "macOS"],
+                "quoted": ["self-hosted", "macOS,ARM64"],
+            },
         )
 
-        for example in examples:
-            with self.subTest(example=example):
-                specifications = workflow_runner_specifications(example)
-                self.assertEqual(len(specifications), 1)
-                self.assertIn(
-                    "self-hosted",
-                    specifications[0],
-                )
+    def test_runner_comments_cannot_supply_required_labels(self) -> None:
+        contents = """
+jobs:
+  spoofed:
+    runs-on: [self-hosted, macOS] # devcontainer-designated-mbp
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = Path(directory) / "comment.yaml"
+            workflow.write_text(contents, encoding="utf-8")
+            parsed = workflow_runner_labels([workflow])
+        self.assertEqual(parsed[0][2], ["self-hosted", "macOS"])
+
+    def test_dynamic_runner_selection_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot prove hosted isolation"):
+            is_self_hosted_selector(["${{ matrix.runner }}"])
+
+    def test_release_docs_require_the_designated_mbp(self) -> None:
+        contents = (ROOT / "RELEASE.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "runs-on: [self-hosted, macOS, ARM64, devcontainer-release, "
+            "devcontainer-designated-mbp]",
+            contents,
+        )
+        self.assertIn(
+            "both the `devcontainer-release` and "
+            "`devcontainer-designated-mbp` labels",
+            contents,
+        )
+
+    def test_workflow_discovery_includes_both_yaml_suffixes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("one.yml", "two.yaml", "ignored.txt"):
+                (root / name).touch()
+            self.assertEqual(
+                [path.name for path in workflow_files(root)],
+                ["one.yml", "two.yaml"],
+            )
 
     def test_pinned_uploader_verifies_the_action_archive(self) -> None:
         contents = (

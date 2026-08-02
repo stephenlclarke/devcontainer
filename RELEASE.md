@@ -120,7 +120,7 @@ The formula version uses the same validated algorithm as `container-compose`:
 current.418.0123456789ab
 ```
 
-Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until a repository-scoped runner with the `devcontainer-release` label, a Developer ID Application identity, the configured notary profile, and the tap token are all provisioned. Manual dispatch remains fail-closed against the same prerequisites.
+Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until the designated repository-scoped MBP runner has both the `devcontainer-release` and `devcontainer-designated-mbp` labels, a Developer ID Application identity, the configured notary profile, and the tap token. Manual dispatch remains fail-closed against the same prerequisites.
 
 The full source identity remains the lowercase 40-character commit SHA. The 12-character prefix is only a display and asset-name convenience.
 
@@ -280,12 +280,14 @@ Self-hosted workflows must never run pull-request code. They accept only protect
 The live gate requires:
 
 ```yaml
-runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+runs-on: [self-hosted, macOS, ARM64, devcontainer-release, devcontainer-designated-mbp]
 ```
 
 The runner must provide:
 
 - Apple silicon.
+- The `devcontainer-designated-mbp` repository runner label, assigned only to
+  the currently authorized development MBP.
 - A supported macOS Tahoe release with `kern.hv_support=1`.
 - A deliberately installed stock Apple `container` distribution.
 - A deliberately installed Docker engine and pinned Docker Compose oracle.
