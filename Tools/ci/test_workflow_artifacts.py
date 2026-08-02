@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
 SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
+GITHUB_HOSTED_RUNNER_LABELS = frozenset(
+    {
+        "macos-26",
+        "ubuntu-24.04",
+        "ubuntu-latest",
+    }
+)
 RUBY_RUNS_ON_SELECTORS = r"""
 require "json"
 require "yaml"
@@ -77,12 +84,14 @@ def workflow_runner_labels(
 
 
 def is_self_hosted_selector(labels: list[str]) -> bool:
-    """Identify a self-hosted selector and reject opaque whole-runner routing."""
+    """Require designated routing unless a selector is known to be hosted."""
     if "self-hosted" in labels:
         return True
     if any("${{" in label for label in labels):
         raise ValueError("dynamic runs-on selectors cannot prove hosted isolation")
-    return False
+    return not (
+        len(labels) == 1 and labels[0] in GITHUB_HOSTED_RUNNER_LABELS
+    )
 
 
 class WorkflowArtifactTests(unittest.TestCase):
@@ -268,6 +277,19 @@ jobs:
     def test_dynamic_runner_selection_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot prove hosted isolation"):
             is_self_hosted_selector(["${{ matrix.runner }}"])
+
+    def test_only_known_github_hosted_selectors_skip_designated_routing(
+        self,
+    ) -> None:
+        for label in GITHUB_HOSTED_RUNNER_LABELS:
+            self.assertFalse(is_self_hosted_selector([label]), label)
+
+        for labels in (
+            ["devcontainer-release"],
+            ["macOS", "ARM64"],
+            ["future-github-hosted-label"],
+        ):
+            self.assertTrue(is_self_hosted_selector(labels), labels)
 
     def test_release_docs_require_the_designated_mbp(self) -> None:
         contents = (ROOT / "RELEASE.md").read_text(encoding="utf-8")
