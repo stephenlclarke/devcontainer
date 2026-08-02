@@ -67,10 +67,23 @@ public struct ProjectMutation: Sendable {
     }
 }
 
+public struct ProjectMutationSession: Sendable {
+    public let context: RuntimeRequestContext
+    fileprivate let token: UUID
+}
+
+private struct ActiveProjectMutation: Sendable {
+    let request: ProjectMutation
+    let operationID: OperationID
+    let generation: Int64
+    let lockKey: String
+}
+
 public actor ProjectCoordinator {
     private let store: any ProjectStateStore
     private var lockedMutationKeys = Set<String>()
     private var mutationWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var activeMutations: [UUID: ActiveProjectMutation] = [:]
 
     public init(store: any ProjectStateStore) {
         self.store = store
@@ -101,76 +114,141 @@ public actor ProjectCoordinator {
         try await store.releaseProject(key: project)
     }
 
-    // Intent, native mutation, reconciliation state, and commit are one
-    // fail-closed transaction boundary.
-    // swiftlint:disable:next function_body_length
+    /// Runs intent, native mutation, reconciliation, and commit as one
+    /// fail-closed transaction boundary.
     public func withMutation<Result: Sendable>(
         request: ProjectMutation,
         context baseContext: RuntimeRequestContext = RuntimeRequestContext(),
         operation body: @Sendable (RuntimeRequestContext) async throws -> Result
     ) async throws -> Result {
+        let session = try await beginMutation(request: request, context: baseContext)
+        do {
+            let result = try await body(session.context)
+            try await commitMutation(session)
+            return result
+        } catch {
+            await failMutation(session, errorCode: Self.errorCode(for: error))
+            throw error
+        }
+    }
+
+    public func beginMutation(
+        request: ProjectMutation,
+        context baseContext: RuntimeRequestContext = RuntimeRequestContext()
+    ) async throws -> ProjectMutationSession {
         let lockKey = request.project.rawValue
         await acquireMutationLock(lockKey)
-        defer { releaseMutationLock(lockKey) }
-        try baseContext.checkActive()
-        let claim = try await claim(
-            project: request.project,
-            provider: request.provider,
-            composeProject: request.composeProject,
-            projectDirectory: request.projectDirectory,
-            configurationHash: request.configurationHash
-        )
-        let operationID = baseContext.operationID
-        let generation = claim.desiredGeneration + 1
-        let now = Date()
-        let operation = request.operation(id: operationID, createdAt: now)
-        try await store.beginOperation(operation)
-        try await store.setProjectState(
-            key: request.project,
-            desiredState: .running,
-            reconciliationState: .applying,
-            generation: generation
-        )
-
-        let context = RuntimeRequestContext(
-            operationID: operationID,
-            correlationID: baseContext.correlationID,
-            project: request.project,
-            generation: generation,
-
-            deadline: baseContext.deadline,
-            providerFingerprint: request.provider.rawValue,
-            configurationHash: request.configurationHash
-        )
         do {
-            try context.checkActive()
-            let result = try await body(context)
-            try context.checkActive()
-            try await store.updateOperation(id: operationID, phase: .applied, errorCode: nil)
+            try baseContext.checkActive()
+            let claim = try await claim(
+                project: request.project,
+                provider: request.provider,
+                composeProject: request.composeProject,
+                projectDirectory: request.projectDirectory,
+                configurationHash: request.configurationHash
+            )
+            let operationID = baseContext.operationID
+            let generation = claim.desiredGeneration + 1
+            let now = Date()
+            let operation = request.operation(id: operationID, createdAt: now)
+            try await store.beginOperation(operation)
             try await store.setProjectState(
                 key: request.project,
                 desiredState: .running,
-                reconciliationState: .clean,
+                reconciliationState: .applying,
                 generation: generation
             )
-            try await store.updateOperation(id: operationID, phase: .committed, errorCode: nil)
-            if request.releaseProjectWhenEmpty,
-               try await store.resources(project: request.project).isEmpty
-            {
-                try await store.releaseProject(key: request.project)
-            }
-            return result
+
+            let context = RuntimeRequestContext(
+                operationID: operationID,
+                correlationID: baseContext.correlationID,
+                project: request.project,
+                generation: generation,
+                deadline: baseContext.deadline,
+                providerFingerprint: request.provider.rawValue,
+                configurationHash: request.configurationHash
+            )
+            let token = UUID()
+            activeMutations[token] = ActiveProjectMutation(
+                request: request,
+                operationID: operationID,
+                generation: generation,
+                lockKey: lockKey
+            )
+            return ProjectMutationSession(context: context, token: token)
         } catch {
-            let errorCode = (error as? DevContainerError)?.code.rawValue
-            try? await store.updateOperation(id: operationID, phase: .failed, errorCode: errorCode)
-            try? await store.setProjectState(
-                key: request.project,
-                desiredState: .running,
-                reconciliationState: .failed,
-                generation: generation
-            )
+            releaseMutationLock(lockKey)
             throw error
         }
+    }
+
+    public func commitMutation(_ session: ProjectMutationSession) async throws {
+        guard let active = activeMutations.removeValue(forKey: session.token) else {
+            return
+        }
+        defer { releaseMutationLock(active.lockKey) }
+        do {
+            try session.context.checkActive()
+            try await store.updateOperation(
+                id: active.operationID,
+                phase: .applied,
+                errorCode: nil
+            )
+            try await store.setProjectState(
+                key: active.request.project,
+                desiredState: .running,
+                reconciliationState: .clean,
+                generation: active.generation
+            )
+            try await store.updateOperation(
+                id: active.operationID,
+                phase: .committed,
+                errorCode: nil
+            )
+            if active.request.releaseProjectWhenEmpty,
+               try await store.resources(project: active.request.project).isEmpty
+            {
+                try await store.releaseProject(key: active.request.project)
+            }
+        } catch {
+            await recordFailure(active, errorCode: Self.errorCode(for: error))
+            throw error
+        }
+    }
+
+    public func failMutation(
+        _ session: ProjectMutationSession,
+        errorCode: String?
+    ) async {
+        guard let active = activeMutations.removeValue(forKey: session.token) else {
+            return
+        }
+        defer { releaseMutationLock(active.lockKey) }
+        await recordFailure(active, errorCode: errorCode)
+    }
+
+    private func recordFailure(
+        _ active: ActiveProjectMutation,
+        errorCode: String?
+    ) async {
+        try? await store.updateOperation(
+            id: active.operationID,
+            phase: .failed,
+            errorCode: errorCode
+        )
+        try? await store.setProjectState(
+            key: active.request.project,
+            desiredState: .running,
+            reconciliationState: .failed,
+            generation: active.generation
+        )
+    }
+
+    private static func errorCode(for error: any Error) -> String? {
+        if error is CancellationError {
+            return DevContainerErrorCode.cancelled.rawValue
+        }
+        return (error as? DevContainerError)?.code.rawValue
     }
 
     public func recoveryOperations() async throws -> [OperationRecord] {

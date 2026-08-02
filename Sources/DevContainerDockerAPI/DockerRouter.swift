@@ -87,16 +87,12 @@ public struct DockerRouter: Sendable {
                 if let coordinator,
                    let mutation = try await mutation(for: request, context: context)
                 {
-                    return try await coordinator.withMutation(
-                        request: mutation,
-                        context: context
-                    ) { mutationContext in
-                        try await RuntimeRequestScope.$context.withValue(
-                            mutationContext
-                        ) {
-                            try await route(request, context: mutationContext)
-                        }
-                    }
+                    return try await coordinatedResponse(
+                        request: request,
+                        mutation: mutation,
+                        context: context,
+                        coordinator: coordinator
+                    )
                 }
                 return try await route(request, context: context)
             }
@@ -119,6 +115,50 @@ public struct DockerRouter: Sendable {
             response.headers["X-Request-ID"] = context.correlationID
             return response
         }
+    }
+
+    private func coordinatedResponse(
+        request: DockerHTTPRequest,
+        mutation: ProjectMutation,
+        context: RuntimeRequestContext,
+        coordinator: ProjectCoordinator
+    ) async throws -> DockerHTTPResponse {
+        let session = try await coordinator.beginMutation(
+            request: mutation,
+            context: context
+        )
+        do {
+            var response = try await RuntimeRequestScope.$context.withValue(
+                session.context
+            ) {
+                try await route(request, context: session.context)
+            }
+            if case let .stream(stream) = response.body {
+                response.body = .stream(
+                    coordinatedMutationStream(
+                        stream,
+                        coordinator: coordinator,
+                        session: session
+                    )
+                )
+            } else {
+                try await coordinator.commitMutation(session)
+            }
+            return response
+        } catch {
+            await coordinator.failMutation(
+                session,
+                errorCode: Self.mutationErrorCode(error)
+            )
+            throw error
+        }
+    }
+
+    private static func mutationErrorCode(_ error: any Error) -> String? {
+        if error is CancellationError {
+            return DevContainerErrorCode.cancelled.rawValue
+        }
+        return (error as? DevContainerError)?.code.rawValue
     }
 }
 

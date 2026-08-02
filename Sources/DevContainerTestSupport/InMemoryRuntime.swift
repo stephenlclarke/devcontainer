@@ -22,6 +22,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
+    private let pullImageStream: (@Sendable (String) async throws
+        -> AsyncThrowingStream<Data, any Error>)?
     private var requestCancellationCount = 0
     private var containers: [RuntimeID: ContainerSnapshot] = [:]
     private var dockerToRuntime: [DockerID: RuntimeID] = [:]
@@ -39,10 +41,13 @@ public actor InMemoryRuntime: DevContainerRuntime {
         commit: String = "test",
         distribution: String = "test",
         execSession: (any RuntimeProcessSession)? = nil,
-        descriptorDelay: Duration? = nil
+        descriptorDelay: Duration? = nil,
+        pullImageStream: (@Sendable (String) async throws
+            -> AsyncThrowingStream<Data, any Error>)? = nil
     ) {
         self.execSession = execSession
         self.descriptorDelay = descriptorDelay
+        self.pullImageStream = pullImageStream
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
             providerVersion: version,
@@ -87,7 +92,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func pullImage(
         reference: String,
         context _: RuntimeRequestContext
-    ) -> AsyncThrowingStream<Data, any Error> {
+    ) async throws -> AsyncThrowingStream<Data, any Error> {
+        if let pullImageStream {
+            return try await pullImageStream(reference)
+        }
         let snapshot = ImageSnapshot(
             id: "sha256:\(Self.identifier())",
             references: [reference],
