@@ -81,18 +81,18 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
                 root / "swiftpm-testing-helper",
                 "printf 'args=%s\\n' \"$*\"\n",
             )
-            sanitizer = root / "libclang_rt.asan_osx_dynamic.dylib"
-            sanitizer.touch()
-            clang = self.make_executable(
-                root / "clang",
-                f"printf '%s\\n' '{sanitizer}'\n",
-            )
+            clang = subprocess.run(
+                ["xcrun", "--find", "clang"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             platform = root / "MacOSX.platform"
             (platform / "Developer/Library/Frameworks").mkdir(parents=True)
             environment = os.environ.copy()
             environment.update(
                 {
-                    "SWIFT_TEST_CLANG": str(clang),
+                    "SWIFT_TEST_CLANG": clang,
                     "SWIFT_TEST_HELPER": str(helper),
                     "SWIFT_TEST_PLATFORM_PATH": str(platform),
                 }
