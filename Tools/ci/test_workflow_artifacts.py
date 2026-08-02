@@ -313,6 +313,8 @@ jobs:
         self.assertIn("Ruby 2.7 or newer with its standard Psych", build)
         self.assertIn('minimum_ruby_version="2.7"', bootstrap)
         self.assertIn("RUBY_VERSION", bootstrap)
+        self.assertIn('require "yaml"', bootstrap)
+        self.assertIn("YAML.safe_load", bootstrap)
 
     def test_dynamic_runner_selection_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot prove hosted isolation"):

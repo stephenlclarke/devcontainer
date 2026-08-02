@@ -13,9 +13,16 @@ done
 
 minimum_ruby_version="2.7"
 ruby -e '
+begin
+  require "yaml"
+rescue LoadError => error
+  abort("Ruby YAML/Psych is required: #{error.message}")
+end
 minimum = ARGV.fetch(0).split(".").map(&:to_i)
 actual = RUBY_VERSION.split(".").map(&:to_i)
 abort("Ruby #{ARGV.fetch(0)} or newer is required; found #{RUBY_VERSION}") if (actual <=> minimum) == -1
+probe = YAML.safe_load("---\nprobe: true\n")
+abort("Ruby YAML/Psych probe failed") unless probe == {"probe" => true}
 ' "${minimum_ruby_version}"
 
 for tool in "${optional[@]}"; do
