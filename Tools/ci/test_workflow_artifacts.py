@@ -36,8 +36,15 @@ ARGV.each do |path|
   jobs = document.fetch("jobs")
   raise "jobs must be a mapping: #{path}" unless jobs.is_a?(Hash)
   selectors[path] = jobs.filter_map do |name, job|
-    next unless job.is_a?(Hash) && job.key?("runs-on")
-    {"job" => name.to_s, "selector" => job.fetch("runs-on")}
+    next unless job.is_a?(Hash)
+    if job.key?("uses")
+      {
+        "job" => name.to_s,
+        "reusable_workflow" => job.fetch("uses")
+      }
+    elsif job.key?("runs-on")
+      {"job" => name.to_s, "selector" => job.fetch("runs-on")}
+    end
   end
 end
 STDOUT.write(JSON.generate(selectors))
@@ -68,6 +75,11 @@ def workflow_runner_labels(
     parsed: list[tuple[Path, str, list[str]]] = []
     for workflow in workflows:
         for entry in document[str(workflow)]:
+            if "reusable_workflow" in entry:
+                raise ValueError(
+                    f"{workflow.name}:{entry['job']} uses an uninspected "
+                    "reusable workflow"
+                )
             selector = entry["selector"]
             if isinstance(selector, str):
                 labels = [selector]
@@ -273,6 +285,21 @@ jobs:
             workflow.write_text(contents, encoding="utf-8")
             parsed = workflow_runner_labels([workflow])
         self.assertEqual(parsed[0][2], ["self-hosted", "macOS"])
+
+    def test_reusable_workflow_jobs_fail_closed(self) -> None:
+        contents = """
+jobs:
+  delegated:
+    uses: owner/repository/.github/workflows/build.yml@0123456789abcdef
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = Path(directory) / "reusable.yml"
+            workflow.write_text(contents, encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError,
+                "uses an uninspected reusable workflow",
+            ):
+                workflow_runner_labels([workflow])
 
     def test_dynamic_runner_selection_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot prove hosted isolation"):
