@@ -7,6 +7,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -69,6 +70,13 @@ state="${0}.state"
 printf 'colima %s\\n' "$*" >> "$MOCK_RUNTIME_LOG"
 case "${1:-}" in
   start)
+    if [[ "${MOCK_COLIMA_HANG_ONCE:-0}" == "1" && ! -f "${state}.hung" ]]; then
+      : > "${state}.hung"
+      trap 'exit 143' TERM INT
+      while :; do
+        sleep 60
+      done
+    fi
     if [[ "${MOCK_COLIMA_FAIL_ALWAYS:-0}" == "1" ]]; then
       exit 17
     fi
@@ -115,6 +123,7 @@ esac
             text=True,
             capture_output=True,
             check=False,
+            timeout=30,
         )
 
     def test_starts_and_stops_selected_stock_runtime(self) -> None:
@@ -164,6 +173,22 @@ esac
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertEqual(operations.count("colima start"), 2)
+
+    def test_terminates_and_retries_a_hung_colima_start(self) -> None:
+        started_at = time.monotonic()
+        result = self.run_script(
+            "start",
+            "docker",
+            {
+                "DEVCONTAINER_RUNTIME_COLIMA_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_COLIMA_HANG_ONCE": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(time.monotonic() - started_at, 10)
         operations = self.log.read_text(encoding="utf-8")
         self.assertEqual(operations.count("colima start"), 2)
 
