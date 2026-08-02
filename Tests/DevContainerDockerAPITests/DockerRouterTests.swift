@@ -666,6 +666,11 @@ func `exposed ports and empty Docker host IP retain their semantics`() async thr
     let config = try #require(inspected["Config"] as? [String: Any])
     let exposed = try #require(config["ExposedPorts"] as? [String: Any])
     #expect(Set(exposed.keys) == ["8080/tcp", "9090/tcp"])
+    let networkSettings = try #require(inspected["NetworkSettings"] as? [String: Any])
+    let ports = try #require(networkSettings["Ports"] as? [String: Any])
+    let published = try #require(ports["8080/tcp"] as? [[String: String]])
+    #expect(published == [["HostIp": "0.0.0.0", "HostPort": "18080"]])
+    #expect(ports["9090/tcp"] is NSNull)
 }
 
 @Test

@@ -947,7 +947,7 @@ extension DockerRouter {
             grouping: snapshot.spec.ports,
             by: { "\($0.containerPort)/\($0.protocolName)" }
         ).mapValues { values -> [DockerNetworkPortBinding]? in
-            values.compactMap { binding -> DockerNetworkPortBinding? in
+            let published = values.compactMap { binding -> DockerNetworkPortBinding? in
                 guard let hostPort = binding.hostPort else {
                     return nil
                 }
@@ -956,6 +956,7 @@ extension DockerRouter {
                     hostPort: String(hostPort)
                 )
             }
+            return published.isEmpty ? nil : published
         }
         let networks = Dictionary(
             uniqueKeysWithValues: snapshot.networkAddresses.map { name, value in
