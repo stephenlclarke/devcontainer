@@ -128,6 +128,23 @@ class WorkflowArtifactTests(unittest.TestCase):
         )
         self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
 
+    def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
+        runs_on_pattern = re.compile(r"runs-on:\s*\[self-hosted,[^\]]+\]")
+        checked = 0
+
+        for workflow in WORKFLOWS.glob("*.yml"):
+            contents = workflow.read_text(encoding="utf-8")
+            for runner_specification in runs_on_pattern.findall(contents):
+                checked += 1
+                self.assertIn(
+                    "devcontainer-designated-mbp",
+                    runner_specification,
+                    f"{workflow.name} can route outside the designated MBP",
+                )
+                self.assertNotIn("devcontainer-ultuk2m30000", runner_specification)
+
+        self.assertEqual(checked, 2)
+
     def test_pinned_uploader_verifies_the_action_archive(self) -> None:
         contents = (
             ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"

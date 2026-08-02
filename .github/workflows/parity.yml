@@ -33,7 +33,7 @@ jobs:
             container-bin: /opt/homebrew/opt/container/bin/container
             compose-bin: /opt/homebrew/opt/container-compose/bin/container-compose
     runs-on:
-      [self-hosted, macOS, ARM64, devcontainer-ultuk2m30000, "${{ matrix.runner }}"]
+      [self-hosted, macOS, ARM64, devcontainer-designated-mbp, "${{ matrix.runner }}"]
     timeout-minutes: 240
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
