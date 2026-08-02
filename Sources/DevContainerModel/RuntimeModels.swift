@@ -187,17 +187,29 @@ public struct PortBinding: Codable, Equatable, Hashable, Sendable {
     public var hostPort: UInt16?
     public var protocolName: String
     public var hostAddress: String
+    /// `false` when the port is declarative container metadata and must not
+    /// open a host listener. A missing value preserves compatibility with
+    /// metadata written before publication ownership was explicit.
+    public var published: Bool?
+    /// `true` when the compatibility adapter, rather than the native runtime,
+    /// owns the host listener. This survives engine restarts so forwarding can
+    /// be reconciled without guessing from a resolved ephemeral port.
+    public var hostForwarded: Bool?
 
     public init(
         containerPort: UInt16,
         hostPort: UInt16? = nil,
         protocolName: String = "tcp",
-        hostAddress: String = "0.0.0.0"
+        hostAddress: String = "0.0.0.0",
+        published: Bool? = nil,
+        hostForwarded: Bool? = nil
     ) {
         self.containerPort = containerPort
         self.hostPort = hostPort
         self.protocolName = protocolName
         self.hostAddress = hostAddress
+        self.published = published
+        self.hostForwarded = hostForwarded
     }
 }
 

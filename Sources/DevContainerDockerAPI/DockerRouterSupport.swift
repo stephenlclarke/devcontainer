@@ -776,7 +776,8 @@ extension DockerRouter {
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
-                        protocolName: protocolName
+                        protocolName: protocolName,
+                        published: false
                     )
                 )
                 continue
@@ -793,7 +794,8 @@ extension DockerRouter {
                         containerPort: containerPort,
                         hostPort: binding.hostPort.flatMap(UInt16.init),
                         protocolName: protocolName,
-                        hostAddress: hostAddress
+                        hostAddress: hostAddress,
+                        published: true
                     )
                 )
             }

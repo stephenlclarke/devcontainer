@@ -640,6 +640,8 @@ func `exposed ports and empty Docker host IP retain their semantics`() async thr
     )
     #expect(snapshot.spec.ports.first?.hostAddress == "0.0.0.0")
     #expect(snapshot.spec.ports.map(\.containerPort) == [8080, 9090])
+    #expect(snapshot.spec.ports.first { $0.containerPort == 8080 }?.published == true)
+    #expect(snapshot.spec.ports.first { $0.containerPort == 9090 }?.published == false)
     #expect(snapshot.imageID == "sha256:fixture")
 
     let list = await router.respond(
