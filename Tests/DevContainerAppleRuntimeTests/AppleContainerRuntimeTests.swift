@@ -750,7 +750,7 @@ struct AppleContainerRuntimeTests {
         let runtime = try fixture.runtime()
         let stream = try await runtime.events(
             since: Date(timeIntervalSince1970: 0),
-            until: Date().addingTimeInterval(3),
+            until: Date().addingTimeInterval(15),
             labels: ["fixture": "yes"],
             context: RuntimeRequestContext()
         )

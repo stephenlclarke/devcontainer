@@ -239,7 +239,7 @@ jobs:
     name: Sign, notarize, publish, and promote tap
     needs: resolve
     if: needs.resolve.outputs.publish == 'true'
-    runs-on: [self-hosted, macOS, ARM64, devcontainer-release]
+    runs-on: [self-hosted, macOS, ARM64, devcontainer-release, devcontainer-designated-mbp]
     environment: release
     timeout-minutes: 180
     permissions:
