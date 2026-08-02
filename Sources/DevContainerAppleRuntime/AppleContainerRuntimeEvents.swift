@@ -201,15 +201,19 @@ actor AppleEventPoller {
                     return
                 }
                 changeWaiters[identifier] = continuation
-                Task {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    self.resumeChangeWaiter(identifier)
-                }
+                scheduleChangeWaiterTimeout(identifier)
             }
         } onCancel: {
             Task {
                 await self.resumeChangeWaiter(identifier)
             }
+        }
+    }
+
+    private func scheduleChangeWaiterTimeout(_ identifier: UUID) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            self.resumeChangeWaiter(identifier)
         }
     }
 

@@ -27,8 +27,9 @@ public enum DiagnosticsRedactor {
     )
 
     public static func redact(_ text: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let pathRedacted = home == "/"
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser
+        let home = homeURL.path
+        let pathRedacted = homeURL.pathComponents.count == 1
             ? text
             : text.replacingOccurrences(of: home, with: "$HOME")
         let authorizationRedacted = authorizationPattern?.stringByReplacingMatches(

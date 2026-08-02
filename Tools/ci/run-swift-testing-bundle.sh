@@ -44,6 +44,8 @@ for argument in "$@"; do
       fi
       SANITIZER_KIND="tsan"
       ;;
+    *)
+      ;;
   esac
 done
 readonly SANITIZER_KIND

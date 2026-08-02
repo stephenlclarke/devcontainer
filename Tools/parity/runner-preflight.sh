@@ -60,6 +60,19 @@ require_sha256() {
   fi
 }
 
+# Require one observed provenance value to match its candidate-bound identity.
+require_equal() {
+  local label="$1"
+  local expected="$2"
+  local actual="$3"
+
+  if [[ "$actual" != "$expected" ]]; then
+    printf '%s: %s differs: expected %s, found %s\n' \
+      "$SCRIPT_NAME" "$label" "$expected" "$actual" >&2
+    return 1
+  fi
+}
+
 # Reject unknown lane names before any runtime probe.
 validate_lane() {
   local requested="$1"
@@ -99,7 +112,7 @@ main() {
   fi
 
   local command_name
-  for command_name in code codesign jq make node npm npx python3 shasum swift xcodebuild; do
+  for command_name in code codesign jq make node npm npx python3 shasum xcodebuild xcrun; do
     need "$command_name"
   done
 
@@ -129,18 +142,18 @@ main() {
   docker_engine_version="$("$docker_bin" version --format '{{.Server.Version}}')"
   docker_engine_api="$("$docker_bin" version --format '{{.Server.APIVersion}}')"
   docker_engine_commit="$("$docker_bin" version --format '{{.Server.GitCommit}}')"
-  [[ "$docker_cli_version" == "$(
+  require_equal "Docker CLI version" "$(
     jq -r '.referencePins.docker.cliVersion' Tests/Parity/manifest.json
-  )" ]]
-  [[ "$docker_engine_version" == "$(
+  )" "$docker_cli_version"
+  require_equal "Docker Engine version" "$(
     jq -r '.referencePins.docker.engineVersion' Tests/Parity/manifest.json
-  )" ]]
-  [[ "$docker_engine_api" == "$(
+  )" "$docker_engine_version"
+  require_equal "Docker Engine API version" "$(
     jq -r '.referencePins.docker.engineApiVersion' Tests/Parity/manifest.json
-  )" ]]
-  [[ "$docker_engine_commit" == "$(
+  )" "$docker_engine_api"
+  require_equal "Docker Engine commit" "$(
     jq -r '.referencePins.docker.engineCommit' Tests/Parity/manifest.json
-  )" ]]
+  )" "$docker_engine_commit"
   "$docker_bin" info >/dev/null
 
   local devcontainers_version
@@ -151,21 +164,19 @@ main() {
   devcontainers_integrity="$(
     npm view "@devcontainers/cli@${devcontainers_version}" dist.integrity
   )"
-  [[ "$devcontainers_integrity" == "$(
+  require_equal "devcontainers CLI integrity" "$(
     jq -r '.referencePins.devcontainersCli.npmIntegrity' Tests/Parity/manifest.json
-  )" ]]
+  )" "$devcontainers_integrity"
   npx --yes "@devcontainers/cli@${devcontainers_version}" --version \
     | grep -Fx "$devcontainers_version"
 
   if [[ "$lane" == "docker" || "$lane" == "all" ]]; then
     need colima
     colima status >/dev/null
-    [[ "$(docker context show)" == "colima" ]]
-    [[ "$(
-      colima ssh -- sha256sum /usr/bin/dockerd | cut -d ' ' -f 1
-    )" == "$(
+    require_equal "Docker context" "colima" "$(docker context show)"
+    require_equal "Docker Engine SHA-256" "$(
       jq -r '.referencePins.docker.engineSHA256' Tests/Parity/manifest.json
-    )" ]]
+    )" "$(colima ssh -- sha256sum /usr/bin/dockerd | cut -d ' ' -f 1)"
     [[ -n "$docker_compose_bin" ]] || {
       printf '%s: Docker Compose is required for %s parity\n' \
         "$SCRIPT_NAME" "$lane" >&2
@@ -174,13 +185,15 @@ main() {
     require_sha256 "$docker_compose_bin" "$(
       jq -r '.referencePins.docker.composeSHA256' Tests/Parity/manifest.json
     )"
-    "$docker_compose_bin" version --short | grep -Fx "$(
+    require_equal "Docker Compose version" "$(
       jq -r '.referencePins.docker.composeVersion' Tests/Parity/manifest.json
-    )"
+    )" "$("$docker_compose_bin" version --short)"
   fi
 
   local expected_code_version
   local expected_code_commit
+  local actual_code_commit
+  local actual_code_release
   local actual_code_version
   expected_code_version="$(
     jq -r '.referencePins.vscode.version' Tests/Parity/manifest.json
@@ -189,27 +202,35 @@ main() {
     jq -r '.referencePins.vscode.commit' Tests/Parity/manifest.json
   )"
   actual_code_version="$(code --version)"
-  grep -Fx "$expected_code_version" <<<"$actual_code_version"
-  grep -Fx "$expected_code_commit" <<<"$actual_code_version"
+  actual_code_release="$(sed -n '1p' <<<"$actual_code_version")"
+  actual_code_commit="$(sed -n '2p' <<<"$actual_code_version")"
+  require_equal "VS Code version" "$expected_code_version" "$actual_code_release"
+  require_equal "VS Code commit" "$expected_code_commit" "$actual_code_commit"
 
-  [[ "$(uname -m)" == "$(
+  require_equal "release host architecture" "$(
     jq -r '.referencePins.releaseHost.architecture' Tests/Parity/manifest.json
-  )" ]]
-  [[ "$(sw_vers -productVersion)" == "$(
+  )" "$(uname -m)"
+  require_equal "release host macOS product version" "$(
     jq -r '.referencePins.releaseHost.macOSProductVersion' Tests/Parity/manifest.json
-  )" ]]
-  [[ "$(sw_vers -buildVersion)" == "$(
+  )" "$(sw_vers -productVersion)"
+  require_equal "release host macOS build version" "$(
     jq -r '.referencePins.releaseHost.macOSBuildVersion' Tests/Parity/manifest.json
-  )" ]]
-  xcodebuild -version | grep -Fx "Xcode $(
+  )" "$(sw_vers -buildVersion)"
+  local actual_xcode_version
+  actual_xcode_version="$(xcodebuild -version)"
+  require_equal "Xcode version" "Xcode $(
     jq -r '.referencePins.releaseHost.xcodeVersion' Tests/Parity/manifest.json
-  )"
-  xcodebuild -version | grep -Fx "Build version $(
+  )" "$(sed -n '1p' <<<"$actual_xcode_version")"
+  require_equal "Xcode build version" "Build version $(
     jq -r '.referencePins.releaseHost.xcodeBuildVersion' Tests/Parity/manifest.json
+  )" "$(sed -n '2p' <<<"$actual_xcode_version")"
+  local actual_swift_version
+  actual_swift_version="$(
+    xcrun swift --version | sed -n 's/^.*Apple Swift version \([^ ]*\).*/\1/p'
   )"
-  swift --version | grep -F "Apple Swift version $(
+  require_equal "Swift version" "$(
     jq -r '.referencePins.releaseHost.swiftVersion' Tests/Parity/manifest.json
-  )"
+  )" "$actual_swift_version"
 
   if [[ "$lane" != "docker" ]]; then
     [[ -n "$container_bin" ]] || {

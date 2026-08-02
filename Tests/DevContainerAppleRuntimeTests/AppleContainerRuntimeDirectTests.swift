@@ -758,10 +758,12 @@ private func directRuntime(
         useDirectContainerAPI: true,
         metadataStore: nil,
         volumeRoot: fixture.root.appendingPathComponent("volumes"),
-        apiClient: ContainerClient(),
-        inventoryClient: inventory,
-        fileClient: files,
-        networkClient: networks
+        clients: AppleContainerRuntime.DirectClients(
+            api: ContainerClient(),
+            inventory: inventory,
+            files: files,
+            networks: networks
+        )
     )
 }
 

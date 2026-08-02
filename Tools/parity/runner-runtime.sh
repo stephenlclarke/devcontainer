@@ -10,9 +10,14 @@ set -euo pipefail
 readonly SELF_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_NAME="$(basename "$SELF_PATH")"
 readonly SCRIPT_NAME
+SCRIPT_DIRECTORY="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+readonly SCRIPT_DIRECTORY
 
 stock_bin="${DEVCONTAINER_RUNTIME_STOCK_BIN:-/usr/local/bin/container}"
 compose_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-/opt/homebrew/opt/container/bin/container}"
+colima_bin="${DEVCONTAINER_RUNTIME_COLIMA_BIN:-/opt/homebrew/bin/colima}"
+colima_command_timeout_seconds="${DEVCONTAINER_RUNTIME_COLIMA_COMMAND_TIMEOUT_SECONDS:-120}"
+timeout_runner="$SCRIPT_DIRECTORY/run-with-timeout.py"
 
 usage() {
   sed -n 's/^# *//p' "$SELF_PATH" | sed -n '/^USAGE:/,$p'
@@ -52,6 +57,38 @@ stop_all_apple_runtimes() {
   fi
 }
 
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+
+  python3 "$timeout_runner" "$timeout_seconds" "$@"
+}
+
+start_colima() {
+  local attempt
+
+  [[ -x "$colima_bin" ]] || fail "Colima executable is not usable: $colima_bin"
+  [[ -f "$timeout_runner" ]] || fail "timeout runner is missing: $timeout_runner"
+  command -v python3 >/dev/null || fail "python3 is required to bound Colima commands"
+  [[ "$colima_command_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || fail "Colima command timeout must be a positive integer"
+  if run_with_timeout "$colima_command_timeout_seconds" \
+    "$colima_bin" status >/dev/null 2>&1; then
+    return
+  fi
+  for attempt in 1 2 3; do
+    if run_with_timeout "$colima_command_timeout_seconds" "$colima_bin" start \
+      && run_with_timeout "$colima_command_timeout_seconds" \
+        "$colima_bin" status >/dev/null; then
+      return
+    fi
+    if (( attempt < 3 )); then
+      sleep 1
+    fi
+  done
+  fail "Colima did not reach running state after 3 attempts"
+}
+
 selected_runtime() {
   local lane="$1"
 
@@ -75,6 +112,7 @@ start_runtime() {
   local status
 
   stop_all_apple_runtimes
+  start_colima
   if [[ "$lane" == "docker" ]]; then
     return
   fi

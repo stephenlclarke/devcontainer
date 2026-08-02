@@ -48,8 +48,8 @@
     },
     "releaseHost": {
       "architecture": "arm64",
-      "macOSProductVersion": "26.5.1",
-      "macOSBuildVersion": "25F80",
+      "macOSProductVersion": "26.5.2",
+      "macOSBuildVersion": "25F84",
       "xcodeVersion": "26.6",
       "xcodeBuildVersion": "17F113",
       "swiftVersion": "6.3.3"

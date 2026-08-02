@@ -13,7 +13,8 @@ from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("check-swift-coverage.py")
 SPEC = importlib.util.spec_from_file_location("check_swift_coverage", MODULE_PATH)
-assert SPEC and SPEC.loader
+assert SPEC
+assert SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 

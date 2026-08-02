@@ -162,12 +162,16 @@ public enum RuntimeRequestScope {
                     )
                 }
                 group.cancelAll()
-                while await (try? group.next()) != nil {}
+                while await (try? group.next()) != nil {
+                    // Drain cancelled children before returning their winner.
+                }
                 try context.checkActive()
                 return result
             } catch {
                 group.cancelAll()
-                while await (try? group.next()) != nil {}
+                while await (try? group.next()) != nil {
+                    // Drain cancelled children before propagating the failure.
+                }
                 throw error
             }
         }
