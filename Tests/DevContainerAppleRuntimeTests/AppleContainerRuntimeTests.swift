@@ -754,25 +754,24 @@ struct AppleContainerRuntimeTests {
             labels: ["fixture": "yes"],
             context: RuntimeRequestContext()
         )
-        let transitions = Task {
-            try await Task.sleep(for: .milliseconds(300))
-            try fixture.setState("running")
-            try await Task.sleep(for: .milliseconds(500))
-            try fixture.setState("stopped")
-            try await Task.sleep(for: .milliseconds(500))
-            try fixture.setState("missing")
-        }
+        try fixture.setState("running")
 
         var actions: [RuntimeEventAction] = []
-        for try await event in stream {
+        events: for try await event in stream {
             #expect(event.resourceID == "docker-fixture")
             #expect(event.attributes["name"] == "fixture")
             actions.append(event.action)
-            if event.action == .destroy {
-                break
+            switch event.action {
+            case .start:
+                try fixture.setState("stopped")
+            case .stop:
+                try fixture.setState("missing")
+            case .destroy:
+                break events
+            default:
+                continue
             }
         }
-        _ = try await transitions.value
         #expect(actions == [.create, .start, .stop, .destroy])
     }
 }
