@@ -37,6 +37,7 @@ jobs:
       - name: Test and enforce coverage
         env:
           SWIFT_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SWIFT_COVERAGE_SCRATCH_PATH: .build
           SWIFT_TEST_ATTEMPTS: "1"
           SWIFT_TEST_TIMEOUT_SECONDS: "3600"
         run: make coverage-check

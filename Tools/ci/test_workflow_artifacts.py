@@ -184,6 +184,34 @@ class WorkflowArtifactTests(unittest.TestCase):
                 name,
             )
 
+    def test_hosted_swift_tests_reuse_the_resolved_default_scratch(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        quality = (WORKFLOWS / "quality.yml").read_text(encoding="utf-8")
+        sonar = (WORKFLOWS / "sonar.yml").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+        self.assertIn("SWIFT_COVERAGE_SCRATCH_PATH: .build", ci)
+        self.assertIn("SWIFT_COVERAGE_SCRATCH_PATH: .build", sonar)
+        self.assertIn("SWIFT_ASAN_SCRATCH_PATH: .build", quality)
+        self.assertIn("SWIFT_TSAN_SCRATCH_PATH: .build", quality)
+        self.assertEqual(ci.count("- name: Resolve exact dependencies"), 1)
+        self.assertEqual(quality.count("- name: Resolve exact dependencies"), 1)
+        self.assertEqual(sonar.count("- name: Resolve exact dependencies"), 1)
+        self.assertIn(
+            "SWIFT_COVERAGE_SCRATCH_PATH ?= .build/coverage",
+            makefile,
+        )
+        self.assertIn("SWIFT_ASAN_SCRATCH_PATH ?= .build/asan", makefile)
+        self.assertIn("SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan", makefile)
+        self.assertNotIn("--scratch-path .build/coverage", makefile)
+        self.assertNotIn("--scratch-path .build/asan", makefile)
+        self.assertNotIn("--scratch-path .build/tsan", makefile)
+        self.assertIn("devcontainer-swift-profile.XXXXXX", makefile)
+        self.assertIn(
+            'LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-process-%m-%p.profraw"',
+            makefile,
+        )
+
     def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
         swift_workflows = (
             "ci.yml",

@@ -57,13 +57,32 @@ struct ServiceCommandIntegrationTests {
             "--container",
             container.path
         ]
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output
         process.standardError = output
         try process.run()
 
         try await exerciseEngineProcess(process, socket: socket, log: log)
     }
+}
+
+private func engineEnvironment(executable: URL) throws -> [String: String] {
+    var environment = ProcessInfo.processInfo.environment
+    guard environment["LLVM_PROFILE_FILE"] != nil else {
+        return environment
+    }
+
+    let profileDirectory = executable
+        .deletingLastPathComponent()
+        .appendingPathComponent("codecov", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: profileDirectory,
+        withIntermediateDirectories: true
+    )
+    environment["LLVM_PROFILE_FILE"] = profileDirectory
+        .appendingPathComponent("devcontainer-engine-%m-%p.profraw")
+        .path
+    return environment
 }
 
 private func exerciseEngineProcess(

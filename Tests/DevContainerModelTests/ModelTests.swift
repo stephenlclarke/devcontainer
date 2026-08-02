@@ -163,6 +163,23 @@ func `runtime request scope does not surface cancelled deadline sleeper`() async
     #expect(result == "completed")
 }
 
+@Test
+func `runtime request context rejects cancelled tasks`() async {
+    let errorCode = await Task { () -> DevContainerErrorCode? in
+        withUnsafeCurrentTask { $0?.cancel() }
+        do {
+            try RuntimeRequestContext(correlationID: "cancelled-fixture").checkActive()
+            return nil
+        } catch let error as DevContainerError {
+            return error.code
+        } catch {
+            return nil
+        }
+    }.value
+
+    #expect(errorCode == .cancelled)
+}
+
 private final class CancellationFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false

@@ -205,6 +205,92 @@ func `container creation rejects invalid bind port and mount forms`() async thro
 }
 
 @Test
+func `container creation rejects every unsupported root and host field`() async throws {
+    let fixture = try await makeEdgeFixture()
+    let requests: [[String: Any]] = [
+        ["Image": "edge:latest", "Domainname": "example.test"],
+        ["Image": "edge:latest", "ArgsEscaped": true],
+        ["Image": "edge:latest", "MacAddress": "02:00:00:00:00:01"],
+        ["Image": "edge:latest", "NetworkDisabled": true],
+        ["Image": "edge:latest", "OnBuild": ["RUN true"]],
+        ["Image": "edge:latest", "Shell": ["/bin/sh"]],
+        ["Image": "edge:latest", "StdinOnce": true],
+        ["Image": "edge:latest", "StopSignal": "SIGKILL"],
+        ["Image": "edge:latest", "StopTimeout": 1],
+        ["Image": "edge:latest", "HostConfig": ["CpuShares": 1]],
+        ["Image": "edge:latest", "HostConfig": ["CpusetCpus": "0"]],
+        ["Image": "edge:latest", "HostConfig": ["CpusetMems": "0"]],
+        ["Image": "edge:latest", "HostConfig": ["BlkioWeight": 1]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file"]]],
+        ["Image": "edge:latest", "HostConfig": ["MemorySwappiness": 0]],
+        ["Image": "edge:latest", "HostConfig": ["IOMaximumBandwidth": 1]],
+        ["Image": "edge:latest", "HostConfig": ["IOMaximumIOps": 1]],
+        ["Image": "edge:latest", "HostConfig": ["PublishAllPorts": true]],
+        ["Image": "edge:latest", "HostConfig": ["Sysctls": ["kernel.test": "1"]]],
+        ["Image": "edge:latest", "HostConfig": ["ReadonlyRootfs": true]],
+        ["Image": "edge:latest", "HostConfig": ["OomKillDisable": true]],
+        ["Image": "edge:latest", "HostConfig": ["OomScoreAdj": 1]],
+        ["Image": "edge:latest", "HostConfig": ["Dns": ["192.0.2.53"]]],
+        ["Image": "edge:latest", "HostConfig": ["Annotations": ["test": "value"]]],
+        ["Image": "edge:latest", "HostConfig": ["Cgroup": "test"]],
+        ["Image": "edge:latest", "HostConfig": ["IpcMode": "private"]],
+        ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]]
+    ]
+
+    #expect(!fixture.router.labelsMatch(["present": "value"], expected: ["missing": ""]))
+    for object in requests {
+        let response = try await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/containers/create",
+                body: JSONSerialization.data(withJSONObject: object)
+            )
+        )
+        #expect(response.status == 501)
+    }
+}
+
+@Test
+func `network and volume creation reject unsupported Docker fields`() async throws {
+    let fixture = try await makeEdgeFixture()
+    let networkRequests: [[String: Any]] = [
+        ["Name": "edge", "Options": ["test": "value"]],
+        ["Name": "edge", "IPAM": ["Config": [["Subnet": "192.0.2.0/24"]]]],
+        ["Name": "edge", "EnableIPv4": false],
+        ["Name": "edge", "EnableIPv6": true],
+        ["Name": "edge", "Attachable": true],
+        ["Name": "edge", "Ingress": true],
+        ["Name": "edge", "ConfigOnly": true],
+        ["Name": "edge", "ConfigFrom": ["Network": "source"]],
+        ["Name": "edge", "Scope": "swarm"]
+    ]
+    for object in networkRequests {
+        let response = try await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/networks/create",
+                body: JSONSerialization.data(withJSONObject: object)
+            )
+        )
+        #expect(response.status == 501)
+    }
+
+    for object: [String: Any] in [
+        ["Name": "edge", "DriverOpts": ["test": "value"]],
+        ["Name": "edge", "ClusterVolumeSpec": [:]]
+    ] {
+        let response = try await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/volumes/create",
+                body: JSONSerialization.data(withJSONObject: object)
+            )
+        )
+        #expect(response.status == 501)
+    }
+}
+
+@Test
 func `container inspect accepts empty port bindings and sorted aliases`() async throws {
     let fixture = try await makeEdgeFixture()
     let body = try JSONSerialization.data(

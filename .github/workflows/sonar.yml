@@ -25,9 +25,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve exact dependencies
+        run: |
+          cp Package.resolved /tmp/devcontainer-Package.resolved
+          swift package resolve
+          cmp /tmp/devcontainer-Package.resolved Package.resolved
+
       - name: Generate and enforce Swift coverage
         env:
           SWIFT_COVERAGE_BASE: ${{ github.event.before }}
+          SWIFT_COVERAGE_SCRATCH_PATH: .build
           SWIFT_TEST_ATTEMPTS: "1"
           SWIFT_TEST_TIMEOUT_SECONDS: "3600"
         run: make coverage-check

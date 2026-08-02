@@ -19,7 +19,7 @@ import Foundation
 import Testing
 
 @Test
-func `docker server container and exec response defaults encode`() throws {
+func `docker server response defaults encode`() throws {
     let encoder = JSONEncoder()
     let version = DockerVersionResponse(
         platform: DockerVersionPlatform(
@@ -34,37 +34,68 @@ func `docker server container and exec response defaults encode`() throws {
         buildTime: "2026-01-01T00:00:00Z"
     )
     #expect(version.platform.name == "devcontainer Apple runtime bridge")
+    #expect(version.goVersion.isEmpty)
+    #expect(version.arch == "arm64")
+    #expect(version.kernelVersion.isEmpty)
+    let info = DockerInfoResponse(
+        containers: 2,
+        containersRunning: 1,
+        containersStopped: 1,
+        images: 3,
+        serverVersion: "fixture"
+    )
+    #expect(info.id == "devcontainer")
+    #expect(info.containersPaused == 0)
+    #expect(info.driver == "apple-container")
+    #expect(!info.memoryLimit)
+    #expect(!info.swapLimit)
+    #expect(!info.cpuCfsPeriod)
+    #expect(!info.cpuCfsQuota)
+    #expect(!info.cpuShares)
+    #expect(!info.cpuSet)
+    #expect(!info.pidsLimit)
+    #expect(!info.oomKillDisable)
+    #expect(info.operatingSystem == "Apple container Linux virtual machines")
+    #expect(info.osType == "linux")
+    #expect(info.architecture == "aarch64")
+    #expect(info.name == "devcontainer")
     let responses: [Data] = try [
         encoder.encode(version),
-        encoder.encode(
-            DockerInfoResponse(
-                containers: 2,
-                containersRunning: 1,
-                containersStopped: 1,
-                images: 3,
-                serverVersion: "fixture"
-            )
-        ),
-        encoder.encode(
-            DockerContainerState(
-                status: "running",
-                running: true,
-                pid: 42,
-                exitCode: 0,
-                startedAt: "2026-01-01T00:00:00Z",
-                finishedAt: "",
-                health: nil
-            )
-        ),
-        encoder.encode(DockerInspectHostConfig(binds: [])),
-        encoder.encode(
-            DockerExecProcessConfig(
-                tty: false,
-                entrypoint: "printf",
-                arguments: ["fixture"],
-                user: "developer"
-            )
-        )
+        encoder.encode(info)
+    ]
+    #expect(responses.allSatisfy { !$0.isEmpty })
+}
+
+@Test
+func `docker container and exec response defaults encode`() throws {
+    let encoder = JSONEncoder()
+    let state = DockerContainerState(
+        status: "running",
+        running: true,
+        pid: 42,
+        exitCode: 0,
+        startedAt: "2026-01-01T00:00:00Z",
+        finishedAt: "",
+        health: nil
+    )
+    #expect(!state.paused)
+    #expect(!state.restarting)
+    #expect(!state.oomKilled)
+    #expect(!state.dead)
+    #expect(state.error.isEmpty)
+    let hostConfig = DockerInspectHostConfig(binds: [])
+    #expect(hostConfig.networkMode == "default")
+    let processConfig = DockerExecProcessConfig(
+        tty: false,
+        entrypoint: "printf",
+        arguments: ["fixture"],
+        user: "developer"
+    )
+    #expect(!processConfig.privileged)
+    let responses: [Data] = try [
+        encoder.encode(state),
+        encoder.encode(hostConfig),
+        encoder.encode(processConfig)
     ]
     #expect(responses.allSatisfy { !$0.isEmpty })
 }
@@ -72,26 +103,29 @@ func `docker server container and exec response defaults encode`() throws {
 @Test
 func `docker image response defaults encode`() throws {
     let encoder = JSONEncoder()
+    let summary = DockerImageSummary(
+        created: 1,
+        id: "sha256:fixture",
+        repoDigests: [],
+        repoTags: ["fixture:latest"],
+        size: 1,
+        virtualSize: 1
+    )
+    #expect(summary.containers == -1)
+    #expect(summary.labels.isEmpty)
+    #expect(summary.parentID.isEmpty)
+    #expect(summary.sharedSize == -1)
+    let config = DockerImageConfig(
+        user: "developer",
+        environment: [],
+        entrypoint: nil,
+        command: nil,
+        labels: [:]
+    )
+    #expect(config.workingDirectory.isEmpty)
     let responses: [Data] = try [
-        encoder.encode(
-            DockerImageSummary(
-                created: 1,
-                id: "sha256:fixture",
-                repoDigests: [],
-                repoTags: ["fixture:latest"],
-                size: 1,
-                virtualSize: 1
-            )
-        ),
-        encoder.encode(
-            DockerImageConfig(
-                user: "developer",
-                environment: [],
-                entrypoint: nil,
-                command: nil,
-                labels: [:]
-            )
-        )
+        encoder.encode(summary),
+        encoder.encode(config)
     ]
     #expect(responses.allSatisfy { !$0.isEmpty })
 }
@@ -99,33 +133,40 @@ func `docker image response defaults encode`() throws {
 @Test
 func `docker network and volume response defaults encode`() throws {
     let encoder = JSONEncoder()
+    let network = DockerNetworkInspect(
+        name: "fixture",
+        id: "network-fixture",
+        created: "2026-01-01T00:00:00Z",
+        driver: "bridge",
+        internalNetwork: false,
+        containers: [:],
+        labels: [:]
+    )
+    #expect(network.scope == "local")
+    #expect(network.enableIPv6)
+    #expect(network.attachable)
+    #expect(!network.ingress)
+    #expect(network.options.isEmpty)
+    let container = DockerNetworkContainer(
+        name: "fixture",
+        ipv4Address: "192.0.2.2/24"
+    )
+    #expect(container.endpointID.isEmpty)
+    #expect(container.macAddress.isEmpty)
+    #expect(container.ipv6Address.isEmpty)
+    let volume = DockerVolumeInspect(
+        createdAt: "2026-01-01T00:00:00Z",
+        driver: "local",
+        labels: [:],
+        mountpoint: "/volumes/fixture",
+        name: "fixture"
+    )
+    #expect(volume.options.isEmpty)
+    #expect(volume.scope == "local")
     let responses: [Data] = try [
-        encoder.encode(
-            DockerNetworkInspect(
-                name: "fixture",
-                id: "network-fixture",
-                created: "2026-01-01T00:00:00Z",
-                driver: "bridge",
-                internalNetwork: false,
-                containers: [:],
-                labels: [:]
-            )
-        ),
-        encoder.encode(
-            DockerNetworkContainer(
-                name: "fixture",
-                ipv4Address: "192.0.2.2/24"
-            )
-        ),
-        encoder.encode(
-            DockerVolumeInspect(
-                createdAt: "2026-01-01T00:00:00Z",
-                driver: "local",
-                labels: [:],
-                mountpoint: "/volumes/fixture",
-                name: "fixture"
-            )
-        )
+        encoder.encode(network),
+        encoder.encode(container),
+        encoder.encode(volume)
     ]
     #expect(responses.allSatisfy { !$0.isEmpty })
 }
@@ -197,6 +238,13 @@ func `generated unknown request fields always fail closed`() throws {
             #expect(String(describing: error).contains(field))
         }
     }
+}
+
+@Test
+func `request schemas ignore structurally irrelevant scalar values`() throws {
+    try DockerRequestSchema.array(.value).validate("scalar")
+    try DockerRequestSchema.dictionary(.value).validate([])
+    try DockerRequestSchema.object([:]).validate([])
 }
 
 private struct DeterministicGenerator {

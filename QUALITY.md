@@ -166,7 +166,7 @@ SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --no-parallel
 ```
 
-These are Swift's AddressSanitizer and ThreadSanitizer modes, not custom leak or race parsers. They run serially with separate build/cache fingerprints and retain `.build/swift-asan.log` or `.build/swift-tsan.log`.
+These are Swift's AddressSanitizer and ThreadSanitizer modes, not custom leak or race parsers. They run serially with separate local build/cache fingerprints and retain `.build/swift-asan.log` or `.build/swift-tsan.log`. Hosted matrix jobs are isolated from each other and reuse their job's exact dependency checkout in `.build` instead of creating a redundant nested checkout.
 
 The current `container-compose` quality workflow uses ASan for pull requests or
 manual dispatch and TSan nightly or by manual dispatch. Its harness retries
@@ -176,10 +176,13 @@ when passing output exists without detected failure output. This project reuses
 that retry/log mechanism and additionally supports an opt-in process-group
 timeout for hosted SwiftPM stalls. The exact stable candidate sets
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
-evidence. Hosted coverage and sanitizer jobs use one 3,600-second attempt so a
-clean hosted build can finish without spending the job budget on a second
-undersized attempt. ASan and TSan both run on protected main, schedules,
-explicit dispatches, and the exact stable candidate.
+evidence. Hosted coverage and sanitizer jobs resolve the exact graph once,
+reuse `.build` within their isolated runner, and use one 3,600-second attempt.
+Coverage assigns a private temporary, collision-free profile spool to
+instrumented build tools and subprocesses instead of permitting a relative
+`default.profraw` fallback, and removes it after the test command.
+ASan and TSan both run on protected main, schedules, explicit dispatches, and
+the exact stable candidate.
 
 Every Swift test target uses SwiftPM's `--quiet` mode. Failures and the final
 suite summary remain in the retained log, while per-test success chatter is

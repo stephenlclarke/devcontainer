@@ -21,6 +21,26 @@ import Foundation
 import Testing
 
 @Test
+func `mutation replay registry evicts its oldest completed entry`() async throws {
+    let registry = DockerMutationReplayRegistry(maximumEntries: 1)
+    let first = try await registry.task(key: "first", requestHash: "one") {
+        .empty(status: 201)
+    }.value
+    #expect(first.status == 201)
+
+    _ = try await registry.task(key: "second", requestHash: "two") {
+        .empty(status: 202)
+    }.value
+    let replayedAfterEviction = try await registry.task(
+        key: "first",
+        requestHash: "replacement"
+    ) {
+        .empty(status: 204)
+    }.value
+    #expect(replayedAfterEviction.status == 204)
+}
+
+@Test
 func `active exec registry routes resize to the original session`() async throws {
     let registry = ExecSessionRegistry()
     let identifier = ExecID(rawValue: "exec-registry")

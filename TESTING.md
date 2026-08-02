@@ -390,11 +390,15 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
   command's entire process group, retain its diagnostic output, and retry.
 
 The timeout is disabled by default. Hosted CI coverage, Sonar coverage, and
-sanitizer jobs use one 3,600-second attempt. Clean coverage and sanitizer
-builds on the hosted macOS image can exceed 1,800 seconds before dependency
-resolution finishes, so retrying that smaller budget cannot produce valid
-evidence and can consume the full job timeout. An ordinary test failure is
-never retried as a timeout and continues to fail the gate immediately.
+sanitizer jobs use one 3,600-second attempt. Each isolated hosted job resolves
+the exact graph once in `.build` and reuses that scratch path for its one test
+mode. This avoids a second materialization of the large dependency checkout;
+the lane-specific `.build/coverage`, `.build/asan`, and `.build/tsan` defaults
+remain available for sequential local runs. Coverage also gives build-tool and
+subprocess instrumentation a private temporary, per-process profile spool so
+sandboxed plugins never fall back to an unwritable relative `default.profraw`.
+The spool is removed after the test command. An ordinary test failure is never
+retried as a timeout and continues to fail the gate immediately.
 
 The AddressSanitizer job uses the same command shape as `container-compose`:
 
@@ -422,9 +426,9 @@ prevents the SwiftPM test reporter from blocking on CI output back-pressure as
 the suite grows without reducing the pass/fail evidence.
 
 ASan and TSan run on relevant pull requests, `main`, schedules, explicit
-dispatches, and the exact stable candidate. Both run with `--no-parallel`,
-separate SwiftPM build/cache directories, full uploaded logs, and no filtering
-that omits production modules.
+dispatches, and the exact stable candidate. Both run with `--no-parallel`, on
+separate hosted runners (or separate local scratch directories), with full
+uploaded logs and no filtering that omits production modules.
 
 Any AddressSanitizer finding, ThreadSanitizer warning, unexpected test failure, missing test execution, or accepted signal-13 fallback fails the stable gate.
 

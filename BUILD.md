@@ -131,7 +131,8 @@ make coverage-check
 
 The coverage pipeline:
 
-1. runs tests in `.build/coverage` with code coverage enabled;
+1. runs tests in `SWIFT_COVERAGE_SCRATCH_PATH` (default
+   `.build/coverage`) with code coverage enabled;
 2. builds and exercises both CLI products as instrumented executables;
 3. merges every non-empty profile with `llvm-profdata`;
 4. exports LLVM JSON;
@@ -159,10 +160,16 @@ make test-asan
 make test-tsan
 ```
 
-AddressSanitizer uses `.build/asan`; ThreadSanitizer uses `.build/tsan`. Both
+AddressSanitizer uses `SWIFT_ASAN_SCRATCH_PATH` (default `.build/asan`);
+ThreadSanitizer uses `SWIFT_TSAN_SCRATCH_PATH` (default `.build/tsan`). Both
 run the complete Swift suite without test parallelism and retain full logs in
 `.build/swift-asan.log` and `.build/swift-tsan.log`. A sanitizer diagnostic,
 test failure, empty run, or unaccepted helper termination fails the target.
+
+Each hosted job has an isolated checkout, resolves the exact dependency graph
+once in `.build`, and overrides its lane scratch path to `.build`. This avoids
+materializing the same large SwiftPM checkout twice while preserving the
+separate local defaults needed for sequential developer runs.
 
 These checks cover first-party host code. They do not claim that an upstream
 Apple service or guest binary was sanitizer-instrumented.

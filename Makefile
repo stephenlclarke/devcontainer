@@ -14,6 +14,9 @@ SWIFT_COVERAGE_MIN ?= 90
 SWIFT_COVERAGE_CHANGED_MIN ?= 90
 SWIFT_COVERAGE_BASE ?=
 SWIFT_COVERAGE_HEAD ?= HEAD
+SWIFT_COVERAGE_SCRATCH_PATH ?= .build/coverage
+SWIFT_ASAN_SCRATCH_PATH ?= .build/asan
+SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan
 SWIFT_TEST_RESULT_LOG ?= .build/swift-test.log
 SWIFT_TEST_ATTEMPTS ?= 2
 DOCS_OUTPUT_DIR ?= _site
@@ -77,29 +80,37 @@ swift-test:
 
 coverage:
 	@mkdir -p .build
-	@find .build/coverage -type f \
+	@find "$(SWIFT_COVERAGE_SCRATCH_PATH)" -type f \
 		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \
 		-delete 2>/dev/null || true
-	@SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
+	@PROFILE_SPOOL="$$(mktemp -d "$${TMPDIR:-/tmp}/devcontainer-swift-profile.XXXXXX")"; \
+		trap 'rm -rf "$$PROFILE_SPOOL"' EXIT; \
+		SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-process-%m-%p.profraw" \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
-		--scratch-path .build/coverage --enable-code-coverage --no-parallel
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage --no-parallel
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		$(SWIFT_STRICT_FLAGS) \
-		--scratch-path .build/coverage --enable-code-coverage \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage \
 		--product devcontainer
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		$(SWIFT_STRICT_FLAGS) \
-		--scratch-path .build/coverage --enable-code-coverage \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage \
 		--product devcontainer-compose
 	@Tools/coverage/run-cli-coverage.sh \
 		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
-			--scratch-path .build/coverage --show-bin-path)"
+			--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+			--show-bin-path)"
 	@Tools/coverage/export-swift-coverage.sh \
 		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
-			--scratch-path .build/coverage --show-bin-path)" \
+			--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+			--show-bin-path)" \
 		> .build/codecov-path
 
 coverage-check: coverage
@@ -159,7 +170,8 @@ asan:
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
-		--scratch-path .build/asan --sanitize=address --no-parallel
+		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
+		--sanitize=address --no-parallel
 
 tsan:
 	@SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
@@ -167,7 +179,8 @@ tsan:
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
-		--scratch-path .build/tsan --sanitize=thread --no-parallel
+		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
+		--sanitize=thread --no-parallel
 
 test-asan: asan
 
