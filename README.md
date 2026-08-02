@@ -119,7 +119,7 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `container-engine-api` 0.2.1 | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, private provider-session transport, and provider-owned immutable state-root identity |
+| `container-engine-api` 0.2.2 | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, private provider-session transport, deterministic listener ownership/shutdown, starvation-free bidirectional frame I/O, and provider-owned immutable state-root identity |
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Stock-provider adapter; it can retain the standalone compatibility listener or expose only a private `container-engine` provider-session socket |
