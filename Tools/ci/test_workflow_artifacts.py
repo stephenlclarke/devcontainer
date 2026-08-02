@@ -211,6 +211,8 @@ class WorkflowArtifactTests(unittest.TestCase):
             'LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-process-%m-%p.profraw"',
             makefile,
         )
+        self.assertEqual(makefile.count("--build-tests"), 3)
+        self.assertEqual(makefile.count("--skip-build --no-parallel"), 3)
 
     def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
         swift_workflows = (

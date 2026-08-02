@@ -131,14 +131,15 @@ make coverage-check
 
 The coverage pipeline:
 
-1. runs tests in `SWIFT_COVERAGE_SCRATCH_PATH` (default
-   `.build/coverage`) with code coverage enabled;
-2. builds and exercises both CLI products as instrumented executables;
-3. merges every non-empty profile with `llvm-profdata`;
-4. exports LLVM JSON;
-5. writes `coverage.lcov` and Sonar generic `coverage.xml` from the same unique
+1. builds instrumented test binaries in `SWIFT_COVERAGE_SCRATCH_PATH`
+   (default `.build/coverage`);
+2. runs those prebuilt tests with code coverage enabled;
+3. builds and exercises both CLI products as instrumented executables;
+4. merges every non-empty profile with `llvm-profdata`;
+5. exports LLVM JSON;
+6. writes `coverage.lcov` and Sonar generic `coverage.xml` from the same unique
    executable-line map;
-6. fails below 90% aggregate first-party line coverage.
+7. fails below 90% aggregate first-party line coverage.
 
 CI additionally supplies `SWIFT_COVERAGE_BASE`, so the same command fails below
 90% coverage on executable lines changed since the pull-request merge base or
@@ -165,6 +166,8 @@ ThreadSanitizer uses `SWIFT_TSAN_SCRATCH_PATH` (default `.build/tsan`). Both
 run the complete Swift suite without test parallelism and retain full logs in
 `.build/swift-asan.log` and `.build/swift-tsan.log`. A sanitizer diagnostic,
 test failure, empty run, or unaccepted helper termination fails the target.
+SwiftPM builds each sanitizer's test binaries before starting the bounded test
+execution, so a clean hosted compile cannot consume the test timeout.
 
 Each hosted job has an isolated checkout, resolves the exact dependency graph
 once in `.build`, and overrides its lane scratch path to `.build`. This avoids

@@ -151,19 +151,21 @@ Swift AddressSanitizer and ThreadSanitizer use the same full-log retry harness i
 The implemented ASan invocation is:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=address --build-tests
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
   SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --skip-build --no-parallel
 ```
 
 The implemented TSan invocation is:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=thread --build-tests
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
   SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --skip-build --no-parallel
 ```
 
 These are Swift's AddressSanitizer and ThreadSanitizer modes, not custom leak or race parsers. They run serially with separate local build/cache fingerprints and retain `.build/swift-asan.log` or `.build/swift-tsan.log`. Hosted matrix jobs are isolated from each other and reuse their job's exact dependency checkout in `.build` instead of creating a redundant nested checkout.
@@ -177,7 +179,8 @@ that retry/log mechanism and additionally supports an opt-in process-group
 timeout for hosted SwiftPM stalls. The exact stable candidate sets
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
 evidence. Hosted coverage and sanitizer jobs resolve the exact graph once,
-reuse `.build` within their isolated runner, and use one 3,600-second attempt.
+reuse `.build` within their isolated runner, build their test binaries before
+the bounded command, and use one 3,600-second test-execution attempt.
 Coverage assigns a private temporary, collision-free profile spool to
 instrumented build tools and subprocesses instead of permitting a relative
 `default.profraw` fallback, and removes it after the test command.

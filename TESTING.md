@@ -350,8 +350,10 @@ Unit tests are expected to contribute most branch, translation, and error-path c
 
 The implemented Swift coverage flow is:
 
-1. Build tests and product executables with `swift test --enable-code-coverage`.
-2. Run unit, contract, and hosted integration suites with unique `LLVM_PROFILE_FILE` patterns.
+1. Build tests with `swift build --build-tests --enable-code-coverage` and
+   build the product executables with coverage instrumentation.
+2. Run the prebuilt unit, contract, and hosted integration suites with
+   `swift test --skip-build` and unique `LLVM_PROFILE_FILE` patterns.
 3. Require a normal test-process exit and non-empty raw profiles.
 4. Merge all valid profiles with `llvm-profdata merge -sparse`.
 5. Export source coverage with `llvm-cov`, including each instrumented first-party binary.
@@ -390,9 +392,11 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
   command's entire process group, retain its diagnostic output, and retry.
 
 The timeout is disabled by default. Hosted CI coverage, Sonar coverage, and
-sanitizer jobs use one 3,600-second attempt. Each isolated hosted job resolves
+sanitizer jobs prebuild the complete test bundle, then use one 3,600-second
+test-execution attempt with `--skip-build`. Each isolated hosted job resolves
 the exact graph once in `.build` and reuses that scratch path for its one test
-mode. This avoids a second materialization of the large dependency checkout;
+mode. This avoids both a second materialization of the large dependency checkout
+and charging a clean hosted compilation against the test timeout;
 the lane-specific `.build/coverage`, `.build/asan`, and `.build/tsan` defaults
 remain available for sequential local runs. Coverage also gives build-tool and
 subprocess instrumentation a private temporary, per-process profile spool so
@@ -403,17 +407,19 @@ retried as a timeout and continues to fail the gate immediately.
 The AddressSanitizer job uses the same command shape as `container-compose`:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=address --build-tests
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --skip-build --no-parallel
 ```
 
 The ThreadSanitizer job uses:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=thread --build-tests
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --no-parallel
+  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --skip-build --no-parallel
 ```
 
 This project reuses the Compose stack's retry and full-log implementation but

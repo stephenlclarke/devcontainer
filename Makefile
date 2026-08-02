@@ -85,6 +85,10 @@ coverage:
 		-delete 2>/dev/null || true
 	@PROFILE_SPOOL="$$(mktemp -d "$${TMPDIR:-/tmp}/devcontainer-swift-profile.XXXXXX")"; \
 		trap 'rm -rf "$$PROFILE_SPOOL"' EXIT; \
+		LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-build-%m-%p.profraw" \
+		$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage --build-tests; \
 		SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
@@ -92,7 +96,7 @@ coverage:
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
-		--enable-code-coverage --no-parallel
+		--enable-code-coverage --skip-build --no-parallel
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		$(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
@@ -165,22 +169,28 @@ sonar-scan:
 	done
 
 asan:
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
+		--sanitize=address --build-tests
 	@SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
-		--sanitize=address --no-parallel
+		--sanitize=address --skip-build --no-parallel
 
 tsan:
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
+		--sanitize=thread --build-tests
 	@SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		Tools/ci/run-swift-test.sh \
 		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --no-parallel
+		--sanitize=thread --skip-build --no-parallel
 
 test-asan: asan
 
