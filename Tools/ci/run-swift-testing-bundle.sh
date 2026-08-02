@@ -27,6 +27,27 @@ fi
 readonly BUNDLE_EXECUTABLE="$1"
 shift
 
+SANITIZER_KIND=""
+for argument in "$@"; do
+  case "$argument" in
+    --sanitize=address)
+      if [[ -n "$SANITIZER_KIND" && "$SANITIZER_KIND" != "asan" ]]; then
+        printf 'Only one Swift sanitizer can be active per test run.\n' >&2
+        exit 64
+      fi
+      SANITIZER_KIND="asan"
+      ;;
+    --sanitize=thread)
+      if [[ -n "$SANITIZER_KIND" && "$SANITIZER_KIND" != "tsan" ]]; then
+        printf 'Only one Swift sanitizer can be active per test run.\n' >&2
+        exit 64
+      fi
+      SANITIZER_KIND="tsan"
+      ;;
+  esac
+done
+readonly SANITIZER_KIND
+
 if [[ "$BUNDLE_EXECUTABLE" != /* ]]; then
   printf 'Swift test bundle executable must be absolute: %s\n' \
     "$BUNDLE_EXECUTABLE" >&2
@@ -71,6 +92,20 @@ readonly FRAMEWORK_PATH="$PLATFORM_PATH/Developer/Library/Frameworks:$PLATFORM_P
 readonly LIBRARY_PATH="$PLATFORM_PATH/Developer/usr/lib"
 export DYLD_FRAMEWORK_PATH="$FRAMEWORK_PATH${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
 export DYLD_LIBRARY_PATH="$LIBRARY_PATH${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+
+if [[ -n "$SANITIZER_KIND" ]]; then
+  CLANG="${SWIFT_TEST_CLANG:-$(xcrun --find clang)}"
+  readonly CLANG
+  SANITIZER_RUNTIME="$("$CLANG" \
+    -print-file-name="libclang_rt.${SANITIZER_KIND}_osx_dynamic.dylib")"
+  readonly SANITIZER_RUNTIME
+  if [[ ! -f "$SANITIZER_RUNTIME" ]]; then
+    printf 'Swift %s sanitizer runtime does not exist: %s\n' \
+      "$SANITIZER_KIND" "$SANITIZER_RUNTIME" >&2
+    exit 69
+  fi
+  export DYLD_INSERT_LIBRARIES="$SANITIZER_RUNTIME${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
+fi
 
 exec "$HELPER" \
   --test-bundle-path "$BUNDLE_EXECUTABLE" \

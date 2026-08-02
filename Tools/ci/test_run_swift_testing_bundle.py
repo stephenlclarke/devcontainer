@@ -73,6 +73,56 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
         self.assertIn("/Developer/Library/PrivateFrameworks", contents)
         self.assertIn("/Developer/usr/lib", contents)
 
+    def test_resolves_requested_sanitizer_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            bundle = self.make_executable(root / "PackageTests", "exit 0\n")
+            helper = self.make_executable(
+                root / "swiftpm-testing-helper",
+                "printf 'args=%s\\n' \"$*\"\n",
+            )
+            sanitizer = root / "libclang_rt.asan_osx_dynamic.dylib"
+            sanitizer.touch()
+            clang = self.make_executable(
+                root / "clang",
+                f"printf '%s\\n' '{sanitizer}'\n",
+            )
+            platform = root / "MacOSX.platform"
+            (platform / "Developer/Library/Frameworks").mkdir(parents=True)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "SWIFT_TEST_CLANG": str(clang),
+                    "SWIFT_TEST_HELPER": str(helper),
+                    "SWIFT_TEST_PLATFORM_PATH": str(platform),
+                }
+            )
+
+            result = subprocess.run(
+                [str(RUNNER), str(bundle), "--sanitize=address"],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("--sanitize=address", result.stdout)
+
+    def test_rejects_conflicting_sanitizers(self) -> None:
+        result = subprocess.run(
+            [
+                str(RUNNER),
+                "/tmp/unused-PackageTests",
+                "--sanitize=address",
+                "--sanitize=thread",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("Only one Swift sanitizer", result.stderr)
+
     def test_rejects_relative_bundle_path(self) -> None:
         result = subprocess.run(
             [str(RUNNER), "PackageTests"],
