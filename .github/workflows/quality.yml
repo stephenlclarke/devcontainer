@@ -43,7 +43,7 @@ jobs:
       - name: Run sanitizer
         env:
           SWIFT_TEST_ATTEMPTS: "1"
-          SWIFT_TEST_TIMEOUT_SECONDS: "3600"
+          SWIFT_TEST_TIMEOUT_SECONDS: "300"
         run: make "${{ matrix.target }}"
       - name: Upload sanitizer log
         if: always()

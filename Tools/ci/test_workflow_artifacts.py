@@ -179,7 +179,7 @@ class WorkflowArtifactTests(unittest.TestCase):
                 name,
             )
             self.assertEqual(
-                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "3600"'),
+                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "300"'),
                 1,
                 name,
             )
