@@ -28,7 +28,8 @@ jobs:
       - name: Generate and enforce Swift coverage
         env:
           SWIFT_COVERAGE_BASE: ${{ github.event.before }}
-          SWIFT_TEST_TIMEOUT_SECONDS: "1200"
+          SWIFT_TEST_ATTEMPTS: "1"
+          SWIFT_TEST_TIMEOUT_SECONDS: "1800"
         run: make coverage-check
 
       - name: Detect SonarQube credentials

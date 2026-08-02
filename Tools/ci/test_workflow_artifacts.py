@@ -174,7 +174,12 @@ class WorkflowArtifactTests(unittest.TestCase):
         for name in ("ci.yml", "quality.yml", "sonar.yml"):
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
             self.assertEqual(
-                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "1200"'),
+                contents.count('SWIFT_TEST_ATTEMPTS: "1"'),
+                1,
+                name,
+            )
+            self.assertEqual(
+                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "1800"'),
                 1,
                 name,
             )

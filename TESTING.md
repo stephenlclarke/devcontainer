@@ -390,9 +390,11 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
   command's entire process group, retain its diagnostic output, and retry.
 
 The timeout is disabled by default. Hosted CI coverage, Sonar coverage, and
-sanitizer jobs set it to 1,200 seconds so a wedged `swiftpm-testing` process
-cannot consume the full hosted-job timeout. An ordinary test failure is never
-retried as a timeout and continues to fail the gate immediately.
+sanitizer jobs use one 1,800-second attempt. Clean sanitizer builds on the
+hosted macOS image can exceed 1,200 seconds before finishing the final Docker
+API tests, so retrying that smaller budget cannot produce valid evidence and
+can consume the full job timeout. An ordinary test failure is never retried as
+a timeout and continues to fail the gate immediately.
 
 The AddressSanitizer job uses the same command shape as `container-compose`:
 
