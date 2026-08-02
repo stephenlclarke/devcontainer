@@ -176,7 +176,7 @@ when passing output exists without detected failure output. This project reuses
 that retry/log mechanism and additionally supports an opt-in process-group
 timeout for hosted SwiftPM stalls. The exact stable candidate sets
 `SWIFT_TEST_ACCEPT_SIGNAL_13=0`; accepted fallback output is not valid release
-evidence. Hosted coverage and sanitizer jobs use one 1,800-second attempt so a
+evidence. Hosted coverage and sanitizer jobs use one 3,600-second attempt so a
 clean hosted build can finish without spending the job budget on a second
 undersized attempt. ASan and TSan both run on protected main, schedules,
 explicit dispatches, and the exact stable candidate.
