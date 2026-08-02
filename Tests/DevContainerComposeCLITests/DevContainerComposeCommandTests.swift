@@ -92,6 +92,29 @@ struct DevContainerComposeCommandTests {
     }
 
     @Test
+    func `failed mutations preserve child status and failed recovery state`() async throws {
+        let fixture = try ComposeCommandFixture(
+            projectName: "ignored",
+            exitStatus: 17
+        )
+
+        #expect(
+            try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "failed-project", "up"],
+                environment: fixture.environment
+            ) == 17
+        )
+
+        let store = try SQLiteStateStore(path: fixture.state)
+        let project = try await store.project(
+            key: ProjectKey(rawValue: "\(getuid()):failed-project")
+        )
+        #expect(project?.reconciliationState == .failed)
+        #expect(project?.desiredGeneration == 1)
+        #expect(try await store.unfinishedOperations().isEmpty)
+    }
+
+    @Test
     func `successful project removal releases the provider claim`() async throws {
         for arguments in [
             ["--project-name", "down-project", "down"],
@@ -146,8 +169,10 @@ private final class ComposeCommandFixture {
     let state: URL
     private let executable: URL
     private let invocationLog: URL
+    private let exitStatus: Int32
 
-    init(projectName: String) throws {
+    init(projectName: String, exitStatus: Int32 = 0) throws {
+        self.exitStatus = exitStatus
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-compose-cli-tests-\(UUID().uuidString)",
@@ -168,6 +193,9 @@ private final class ComposeCommandFixture {
         case " $* " in
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'
+            ;;
+          *)
+            exit \(exitStatus)
             ;;
         esac
         """

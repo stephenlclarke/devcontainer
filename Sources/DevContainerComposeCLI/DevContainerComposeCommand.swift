@@ -25,6 +25,10 @@ import Foundation
 
 @main
 enum DevContainerComposeCommand {
+    private struct ChildCommandFailure: Error {
+        let status: Int32
+    }
+
     static func main() async {
         do {
             let exitCode = try await run(arguments: Array(CommandLine.arguments.dropFirst()))
@@ -77,27 +81,35 @@ enum DevContainerComposeCommand {
         if let claim {
             let encodedArguments = Data(arguments.joined(separator: "\u{0}").utf8)
             let requestHash = digest(encodedArguments)
-            result = try await claim.coordinator.withMutation(
-                request: ProjectMutation(
-                    project: claim.key,
-                    provider: claim.provider,
-                    composeProject: claim.projectName,
-                    projectDirectory: claim.projectDirectory,
-                    configurationHash: requestHash,
-                    requestKind: "compose \(envelope.command ?? "unknown")",
-                    requestHash: requestHash,
-                    resourceKey: "compose-project:\(claim.projectName)"
-                ),
-                context: RuntimeRequestContext(
-                    deadline: Date().addingTimeInterval(30 * 60)
-                )
-            ) { context in
-                try context.checkActive()
-                return try await execute(
-                    executable: child.executable,
-                    arguments: child.arguments,
-                    environment: child.environment
-                )
+            do {
+                result = try await claim.coordinator.withMutation(
+                    request: ProjectMutation(
+                        project: claim.key,
+                        provider: claim.provider,
+                        composeProject: claim.projectName,
+                        projectDirectory: claim.projectDirectory,
+                        configurationHash: requestHash,
+                        requestKind: "compose \(envelope.command ?? "unknown")",
+                        requestHash: requestHash,
+                        resourceKey: "compose-project:\(claim.projectName)"
+                    ),
+                    context: RuntimeRequestContext(
+                        deadline: Date().addingTimeInterval(30 * 60)
+                    )
+                ) { context in
+                    try context.checkActive()
+                    let status = try await execute(
+                        executable: child.executable,
+                        arguments: child.arguments,
+                        environment: child.environment
+                    )
+                    guard status == 0 else {
+                        throw ChildCommandFailure(status: status)
+                    }
+                    return status
+                }
+            } catch let failure as ChildCommandFailure {
+                result = failure.status
             }
         } else {
             result = try await execute(
