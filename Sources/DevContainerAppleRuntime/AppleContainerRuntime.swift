@@ -1172,11 +1172,11 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> NetworkSnapshot {
         if useDirectContainerAPI {
-            do {
-                return try await networkClient.get(id: id)
-            } catch {
-                throw directAPIError(error, operation: "network inspect")
-            }
+            return try await directNetwork(
+                id: id,
+                context: context,
+                operation: "network inspect"
+            )
         }
         let networks = try await listNetworks(context: context)
         guard let network = networks.first(where: { $0.id == id || $0.spec.name == id }) else {
@@ -1240,11 +1240,16 @@ public extension AppleContainerRuntime {
 
     func removeNetwork(
         id: String,
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) async throws {
         if useDirectContainerAPI {
+            let network = try await directNetwork(
+                id: id,
+                context: context,
+                operation: "network delete"
+            )
             do {
-                try await networkClient.delete(id: id)
+                try await networkClient.delete(id: network.id)
             } catch {
                 throw directAPIError(error, operation: "network delete")
             }
@@ -1254,6 +1259,41 @@ public extension AppleContainerRuntime {
             command(["network", "delete", id]),
             operation: "network delete"
         )
+    }
+
+    private func directNetwork(
+        id: String,
+        context: RuntimeRequestContext,
+        operation: String
+    ) async throws -> NetworkSnapshot {
+        do {
+            try context.checkActive()
+            let network = try await networkClient.get(id: id)
+            try context.checkActive()
+            return network
+        } catch {
+            let directError = directAPIError(error, operation: operation)
+            guard directError.code == .notFound else {
+                throw directError
+            }
+        }
+
+        do {
+            try context.checkActive()
+            let networks = try await networkClient.list()
+            try context.checkActive()
+            guard let network = networks.first(where: {
+                $0.id == id || $0.spec.name == id
+            }) else {
+                throw DevContainerError(
+                    .notFound,
+                    message: "network \(id) was not found"
+                )
+            }
+            return network
+        } catch {
+            throw directAPIError(error, operation: operation)
+        }
     }
 
     func listVolumes(context _: RuntimeRequestContext) async throws -> [VolumeSnapshot] {

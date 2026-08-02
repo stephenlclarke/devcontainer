@@ -267,13 +267,32 @@ struct AppleContainerRuntimeDirectTests {
                 == network
         )
         #expect(
+            try await runtime.inspectNetwork(
+                id: network.spec.name,
+                context: context
+            ) == network
+        )
+        #expect(
             try await runtime.createNetwork(
                 spec: network.spec,
                 context: context
             ) == network
         )
-        try await runtime.removeNetwork(id: network.id, context: context)
+        try await runtime.removeNetwork(
+            id: network.spec.name,
+            context: context
+        )
         #expect(await networks.deletedIDs() == [network.id])
+        #expect(await networks.listCallCount() == 3)
+        do {
+            _ = try await runtime.inspectNetwork(
+                id: "missing-network",
+                context: context
+            )
+            Issue.record("missing network lookup unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .notFound)
+        }
 
         for operation in NetworkFailureOperation.allCases {
             await networks.setFailure(operation)
@@ -635,8 +654,11 @@ private actor FakeNetworkClient: AppleNetworkClient {
         return [snapshot]
     }
 
-    func get(id _: String) throws -> NetworkSnapshot {
+    func get(id: String) throws -> NetworkSnapshot {
         try check(.get)
+        guard id == snapshot.id else {
+            throw ContainerizationError(.notFound, message: id)
+        }
         return snapshot
     }
 
