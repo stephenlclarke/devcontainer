@@ -211,8 +211,20 @@ class WorkflowArtifactTests(unittest.TestCase):
             'LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-process-%m-%p.profraw"',
             makefile,
         )
-        self.assertEqual(makefile.count("--build-tests"), 3)
-        self.assertEqual(makefile.count("--skip-build --no-parallel"), 3)
+        self.assertEqual(makefile.count("--build-tests"), 4)
+        self.assertEqual(makefile.count("--skip-build --no-parallel"), 4)
+        self.assertEqual(
+            makefile.count("--product devcontainer-engine"),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("DEVCONTAINER_ENGINE_TEST_EXECUTABLE="),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("$(SWIFT_TEST_FRAMEWORK_FLAGS)"),
+            4,
+        )
 
     def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
         swift_workflows = (
@@ -232,7 +244,12 @@ class WorkflowArtifactTests(unittest.TestCase):
             self.assertIn(developer_dir, contents, name)
 
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        self.assertEqual(makefile.count("$(SWIFT) test --quiet"), 4)
+        self.assertEqual(makefile.count("$(SWIFT) test $(SWIFT_RESOLVED_FLAGS)"), 4)
+        self.assertIn(
+            "SWIFT_TEST_FRAMEWORK_FLAGS ?= --disable-xctest --enable-swift-testing",
+            makefile,
+        )
+        self.assertNotIn("$(SWIFT) test --quiet", makefile)
 
     def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
         contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")

@@ -109,11 +109,12 @@ make check
 unrelated Apple containers. It uses in-memory or process fakes and temporary,
 user-owned sockets; it does not invoke a live `container system` operation.
 
-The Swift test harness writes complete output to `.build/swift-test.log`,
-retries only the identified SwiftPM helper signal-13 failure, and refuses that
-fallback during coverage. The current suite covers model, state, core,
-Docker-wire, Apple-adapter, Compose-provider, service-process, fault, and
-concurrency behavior.
+The Swift test harness prebuilds the tests and service executable, selects the
+Swift Testing runner explicitly, and writes complete output to
+`.build/swift-test.log`. It retries only the identified SwiftPM helper signal-13
+failure and refuses that fallback during coverage. The current suite covers
+model, state, core, Docker-wire, Apple-adapter, Compose-provider,
+service-process, fault, and concurrency behavior.
 
 Host-process integration tests are opt-in:
 
@@ -131,7 +132,8 @@ make coverage-check
 
 The coverage pipeline:
 
-1. builds instrumented test binaries in `SWIFT_COVERAGE_SCRATCH_PATH`
+1. builds instrumented test binaries and the service executable in
+   `SWIFT_COVERAGE_SCRATCH_PATH`
    (default `.build/coverage`);
 2. runs those prebuilt tests with code coverage enabled;
 3. builds and exercises both CLI products as instrumented executables;
@@ -166,8 +168,10 @@ ThreadSanitizer uses `SWIFT_TSAN_SCRATCH_PATH` (default `.build/tsan`). Both
 run the complete Swift suite without test parallelism and retain full logs in
 `.build/swift-asan.log` and `.build/swift-tsan.log`. A sanitizer diagnostic,
 test failure, empty run, or unaccepted helper termination fails the target.
-SwiftPM builds each sanitizer's test binaries before starting the bounded test
-execution, so a clean hosted compile cannot consume the test timeout.
+SwiftPM builds each sanitizer's test binaries and service executable before
+starting the bounded test execution. The execution selects Swift Testing
+explicitly and receives the exact service executable path, so a clean hosted
+compile cannot consume the test timeout or resolve a stale product.
 
 Each hosted job has an isolated checkout, resolves the exact dependency graph
 once in `.build`, and overrides its lane scratch path to `.build`. This avoids

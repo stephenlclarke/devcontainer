@@ -351,9 +351,10 @@ Unit tests are expected to contribute most branch, translation, and error-path c
 The implemented Swift coverage flow is:
 
 1. Build tests with `swift build --build-tests --enable-code-coverage` and
-   build the product executables with coverage instrumentation.
+   build the service and CLI executables with coverage instrumentation.
 2. Run the prebuilt unit, contract, and hosted integration suites with
-   `swift test --skip-build` and unique `LLVM_PROFILE_FILE` patterns.
+   `swift test --skip-build --disable-xctest --enable-swift-testing`, the exact
+   service executable path, and unique `LLVM_PROFILE_FILE` patterns.
 3. Require a normal test-process exit and non-empty raw profiles.
 4. Merge all valid profiles with `llvm-profdata merge -sparse`.
 5. Export source coverage with `llvm-cov`, including each instrumented first-party binary.
@@ -365,8 +366,8 @@ unrecognized source path, empty test execution, or source file absent from the
 report. It prints numerator, denominator, exclusions, merge base, and uncovered
 changed lines.
 
-The runner harness uses two coverage attempts and
-`SWIFT_TEST_ACCEPT_SIGNAL_13=0`. Accepting a
+The runner harness defaults to two local attempts and uses
+`SWIFT_TEST_ACCEPT_SIGNAL_13=0` for coverage. Accepting a
 `swiftpm-testing-helper` signal 13 after apparently passing output can leave
 incomplete profiles and report false 0% coverage, so it is never accepted
 during coverage collection.
@@ -408,28 +409,39 @@ The AddressSanitizer job uses the same command shape as `container-compose`:
 
 ```console
 swift build --disable-automatic-resolution --sanitize=address --build-tests
+swift build --disable-automatic-resolution --sanitize=address \
+  --product devcontainer-engine
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=address --skip-build --no-parallel
+  DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$PWD/.build/debug/devcontainer-engine" \
+  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution \
+    --sanitize=address --skip-build --no-parallel --disable-xctest \
+    --enable-swift-testing
 ```
 
 The ThreadSanitizer job uses:
 
 ```console
 swift build --disable-automatic-resolution --sanitize=thread --build-tests
+swift build --disable-automatic-resolution --sanitize=thread \
+  --product devcontainer-engine
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --quiet --disable-automatic-resolution --sanitize=thread --skip-build --no-parallel
+  DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$PWD/.build/debug/devcontainer-engine" \
+  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution \
+    --sanitize=thread --skip-build --no-parallel --disable-xctest \
+    --enable-swift-testing
 ```
 
 This project reuses the Compose stack's retry and full-log implementation but
 sets `SWIFT_TEST_ACCEPT_SIGNAL_13=0` for ASan, TSan, and coverage. A toolchain
 signal therefore cannot convert an incomplete execution into release evidence.
 
-All Swift test targets pass `--quiet`: assertion failures and the final suite
-summary are retained, but successful per-test events are not rendered. This
-prevents the SwiftPM test reporter from blocking on CI output back-pressure as
-the suite grows without reducing the pass/fail evidence.
+All Swift test targets disable the unused XCTest runner and enable Swift Testing
+explicitly. The harness retains complete per-test progress in its log while
+printing only a bounded tail after success; failures upload the complete log.
+This avoids the hosted XCTest/Swift Testing bridge hang while preserving enough
+evidence to identify the last completed test if execution stalls.
 
 ASan and TSan run on relevant pull requests, `main`, schedules, explicit
 dispatches, and the exact stable candidate. Both run with `--no-parallel`, on

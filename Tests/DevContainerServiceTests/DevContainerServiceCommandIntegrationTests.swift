@@ -131,6 +131,10 @@ private func waitForExit(
 }
 
 private func engineExecutable() throws -> URL {
+    if let executable = try configuredEngineExecutable() {
+        return executable
+    }
+
     var startingPoints = [URL(fileURLWithPath: CommandLine.arguments[0])]
     startingPoints += Bundle.allBundles.compactMap(\.executableURL)
     if let profile = ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] {
@@ -175,6 +179,26 @@ private func engineExecutable() throws -> URL {
         return match
     }
     throw ServiceIntegrationError("could not locate the built devcontainer-engine")
+}
+
+private func configuredEngineExecutable() throws -> URL? {
+    guard let configured = ProcessInfo.processInfo.environment[
+        "DEVCONTAINER_ENGINE_TEST_EXECUTABLE"
+    ] else {
+        return nil
+    }
+    guard configured.hasPrefix("/") else {
+        throw ServiceIntegrationError(
+            "DEVCONTAINER_ENGINE_TEST_EXECUTABLE must be absolute: \(configured)"
+        )
+    }
+    let executable = URL(fileURLWithPath: configured)
+    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+        throw ServiceIntegrationError(
+            "configured devcontainer-engine is not executable: \(configured)"
+        )
+    }
+    return executable
 }
 
 private func waitForSocket(_ path: String, process: Process) async throws {

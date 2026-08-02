@@ -19,6 +19,7 @@ SWIFT_ASAN_SCRATCH_PATH ?= .build/asan
 SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan
 SWIFT_TEST_RESULT_LOG ?= .build/swift-test.log
 SWIFT_TEST_ATTEMPTS ?= 2
+SWIFT_TEST_FRAMEWORK_FLAGS ?= --disable-xctest --enable-swift-testing
 DOCS_OUTPUT_DIR ?= _site
 DOCS_HOSTING_BASE_PATH ?= devcontainer
 SWIFT_RESOLVED_FLAGS ?= --disable-automatic-resolution
@@ -73,10 +74,17 @@ test-integration:
 
 swift-test:
 	@mkdir -p .build
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--build-tests
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--product devcontainer-engine
 	@SWIFT_TEST_RESULT_LOG="$(SWIFT_TEST_RESULT_LOG)" \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
+		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$($(SWIFT) build \
+			$(SWIFT_RESOLVED_FLAGS) --show-bin-path)/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) --no-parallel
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--skip-build --no-parallel $(SWIFT_TEST_FRAMEWORK_FLAGS)
 
 coverage:
 	@mkdir -p .build
@@ -89,14 +97,22 @@ coverage:
 		$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
 		--enable-code-coverage --build-tests; \
+		$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage --product devcontainer-engine; \
 		SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$($(SWIFT) build \
+			$(SWIFT_RESOLVED_FLAGS) \
+			--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+			--show-bin-path)/devcontainer-engine" \
 		LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-process-%m-%p.profraw" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
-		--enable-code-coverage --skip-build --no-parallel
+		--enable-code-coverage --skip-build --no-parallel \
+		$(SWIFT_TEST_FRAMEWORK_FLAGS)
 	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		$(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
@@ -172,25 +188,41 @@ asan:
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
 		--sanitize=address --build-tests
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
+		--sanitize=address --product devcontainer-engine
 	@SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$($(SWIFT) build \
+			$(SWIFT_RESOLVED_FLAGS) \
+			--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
+			--show-bin-path)/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
-		--sanitize=address --skip-build --no-parallel
+		--sanitize=address --skip-build --no-parallel \
+		$(SWIFT_TEST_FRAMEWORK_FLAGS)
 
 tsan:
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
 		--sanitize=thread --build-tests
+	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
+		--sanitize=thread --product devcontainer-engine
 	@SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$($(SWIFT) build \
+			$(SWIFT_RESOLVED_FLAGS) \
+			--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
+			--show-bin-path)/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
-		$(SWIFT) test --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
+		$(SWIFT) test $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --skip-build --no-parallel
+		--sanitize=thread --skip-build --no-parallel \
+		$(SWIFT_TEST_FRAMEWORK_FLAGS)
 
 test-asan: asan
 
