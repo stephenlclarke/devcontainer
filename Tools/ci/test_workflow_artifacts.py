@@ -301,6 +301,16 @@ jobs:
             ):
                 workflow_runner_labels([workflow])
 
+    def test_development_contract_declares_the_required_ruby(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        bootstrap = (ROOT / "Tools" / "ci" / "bootstrap.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Ruby 2.7 or newer", readme)
+        self.assertIn('minimum_ruby_version="2.7"', bootstrap)
+        self.assertIn("RUBY_VERSION", bootstrap)
+
     def test_dynamic_runner_selection_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot prove hosted isolation"):
             is_self_hosted_selector(["${{ matrix.runner }}"])
