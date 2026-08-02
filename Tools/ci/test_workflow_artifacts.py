@@ -303,11 +303,14 @@ jobs:
 
     def test_development_contract_declares_the_required_ruby(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        build = (ROOT / "BUILD.md").read_text(encoding="utf-8")
         bootstrap = (ROOT / "Tools" / "ci" / "bootstrap.sh").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("Ruby 2.7 or newer", readme)
+        self.assertIn("Ruby 2.7 or newer with Psych", build)
+        self.assertIn("Ruby 2.7 or newer with its standard Psych", build)
         self.assertIn('minimum_ruby_version="2.7"', bootstrap)
         self.assertIn("RUBY_VERSION", bootstrap)
 
