@@ -12,6 +12,45 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
 SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
+RUNS_ON_KEY = re.compile(r"^(?P<indent> *)runs-on:\s*(?P<value>.*)$")
+
+
+def workflow_runner_specifications(contents: str) -> list[str]:
+    """Return every scalar, flow-sequence, or block-sequence runs-on value."""
+    lines = contents.splitlines()
+    specifications: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        match = RUNS_ON_KEY.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+
+        indentation = len(match.group("indent"))
+        value = match.group("value").strip()
+        specification_lines = [value] if value else []
+        index += 1
+
+        flow_sequence = value.startswith("[") and "]" not in value
+        needs_nested_value = not value or flow_sequence
+        while needs_nested_value and index < len(lines):
+            candidate = lines[index]
+            if (
+                not flow_sequence
+                and candidate.strip()
+                and len(candidate) - len(candidate.lstrip(" ")) <= indentation
+            ):
+                break
+            specification_lines.append(candidate.strip())
+            if flow_sequence and "]" in candidate:
+                index += 1
+                break
+            index += 1
+
+        specifications.append("\n".join(specification_lines))
+
+    return specifications
 
 
 class WorkflowArtifactTests(unittest.TestCase):
@@ -129,12 +168,16 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
-        runs_on_pattern = re.compile(r"runs-on:\s*\[self-hosted,[^\]]+\]")
         checked = 0
 
         for workflow in WORKFLOWS.glob("*.yml"):
             contents = workflow.read_text(encoding="utf-8")
-            for runner_specification in runs_on_pattern.findall(contents):
+            for runner_specification in workflow_runner_specifications(contents):
+                if not re.search(
+                    r"(?<![\w-])self-hosted(?![\w-])",
+                    runner_specification,
+                ):
+                    continue
                 checked += 1
                 self.assertIn(
                     "devcontainer-designated-mbp",
@@ -144,6 +187,24 @@ class WorkflowArtifactTests(unittest.TestCase):
                 self.assertNotIn("devcontainer-ultuk2m30000", runner_specification)
 
         self.assertEqual(checked, 2)
+
+    def test_runner_specification_parser_covers_yaml_forms(self) -> None:
+        examples = (
+            "    runs-on: self-hosted\n",
+            "    runs-on: [self-hosted, macOS]\n",
+            "    runs-on:\n      [self-hosted, macOS]\n",
+            "    runs-on:\n      - self-hosted\n      - macOS\n",
+            "    runs-on: [\n      self-hosted,\n      macOS\n    ]\n",
+        )
+
+        for example in examples:
+            with self.subTest(example=example):
+                specifications = workflow_runner_specifications(example)
+                self.assertEqual(len(specifications), 1)
+                self.assertIn(
+                    "self-hosted",
+                    specifications[0],
+                )
 
     def test_pinned_uploader_verifies_the_action_archive(self) -> None:
         contents = (
