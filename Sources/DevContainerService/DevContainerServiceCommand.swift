@@ -84,6 +84,11 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             volumeRoot: stateURL.deletingLastPathComponent()
                 .appendingPathComponent("volumes", isDirectory: true)
         )
+        try await runtime.restorePortForwarding(
+            context: RuntimeRequestContext(
+                deadline: Date().addingTimeInterval(5 * 60)
+            )
+        )
         let router = DockerRouter(
             runtime: runtime,
             coordinator: coordinator,

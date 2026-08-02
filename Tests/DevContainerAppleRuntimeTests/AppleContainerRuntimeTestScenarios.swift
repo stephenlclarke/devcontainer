@@ -158,7 +158,12 @@ extension AppleContainerRuntimeTests {
             ],
             ports: [
                 PortBinding(containerPort: 8080, hostAddress: "127.0.0.1"),
-                PortBinding(containerPort: 53, protocolName: "udp")
+                PortBinding(containerPort: 53, protocolName: "udp"),
+                PortBinding(
+                    containerPort: 8443,
+                    hostPort: 18443,
+                    hostAddress: "127.0.0.1"
+                )
             ],
             networks: [
                 NetworkAttachment(name: "fixture-network", aliases: ["app", "api"])
@@ -194,7 +199,8 @@ extension AppleContainerRuntimeTests {
             )
         )
         #expect(log.contains("--tmpfs /run"))
-        #expect(!log.contains("--publish"))
+        #expect(log.contains("--publish 127.0.0.1:18443:8443/tcp"))
+        #expect(!log.contains("127.0.0.1:0:8080"))
         #expect(log.contains("--network fixture-network fixture:latest"))
         #expect(!log.contains("fixture-network,alias="))
         #expect(log.contains("cp fixture:/etc/hosts"))

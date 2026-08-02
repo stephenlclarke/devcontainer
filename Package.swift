@@ -235,6 +235,7 @@ let package = Package(
                 "DevContainerAppleRuntime",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
+                "DevContainerState",
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
                 .product(name: "Containerization", package: "containerization"),

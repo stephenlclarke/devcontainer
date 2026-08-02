@@ -121,6 +121,10 @@ actor PortForwarding {
         }
     }
 
+    func hasListeners(containerID: String) -> Bool {
+        !(listeners[containerID] ?? []).isEmpty
+    }
+
     static func preferredAddress(
         _ values: [String: String]
     ) -> String? {

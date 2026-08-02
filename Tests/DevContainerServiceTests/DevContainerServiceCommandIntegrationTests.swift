@@ -253,7 +253,7 @@ private let fakeContainerCLI = """
 #!/bin/sh
 set -eu
 if [ "$*" = "system version --format json" ]; then
-  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"stock-fixture","distribution":"apple"}]'
+  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"fixture"}]'
   exit 0
 fi
 if [ "$*" = "list --all --format json" ]; then

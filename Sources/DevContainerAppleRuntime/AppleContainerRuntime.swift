@@ -43,6 +43,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
+        let publish: Bool
         let privileged: Bool
         let securityOptions: Bool
         let dns: Bool
@@ -442,10 +443,20 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        var spec = spec
+        let optionSupport = try await supportedCreateOptions()
+        spec.ports = spec.ports.map {
+            Self.configuredPortBinding(
+                $0,
+                nativePublishingSupported: optionSupport.publish
+            )
+        }
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
         containerExits.removeValue(forKey: spec.name)
         let image = try await inspectImage(reference: spec.image, context: context)
-        let result = try await command(containerCreateArguments(spec))
+        let result = try await command(
+            containerCreateArguments(spec, optionSupport: optionSupport)
+        )
         try requireSuccess(result, operation: "container create")
         requestedContainers[spec.name] = RequestedContainer(
             spec: spec,
@@ -459,8 +470,10 @@ public extension AppleContainerRuntime {
         return snapshot
     }
 
-    private func containerCreateArguments(_ spec: ContainerSpec) async throws -> [String] {
-        let optionSupport = try await supportedCreateOptions()
+    private func containerCreateArguments(
+        _ spec: ContainerSpec,
+        optionSupport: CreateOptionSupport
+    ) async throws -> [String] {
         var arguments = try containerConfigurationArguments(
             spec,
             optionSupport: optionSupport
@@ -468,13 +481,45 @@ public extension AppleContainerRuntime {
         for mount in spec.mounts {
             arguments += try await mountArguments(mount)
         }
-        // Port publishing is owned by PortForwarding after the VM starts.
-        // This keeps fixed and ephemeral listeners consistent across stock
-        // and custom Apple container distributions.
+        if optionSupport.publish {
+            arguments += spec.ports.compactMap(Self.nativePublishArguments).flatMap(\.self)
+        }
         arguments += spec.networks.flatMap { ["--network", $0.name] }
         arguments.append(spec.image)
         arguments += Array(spec.entrypoint.dropFirst()) + spec.command
         return arguments
+    }
+
+    static func configuredPortBinding(
+        _ binding: PortBinding,
+        nativePublishingSupported: Bool
+    ) -> PortBinding {
+        var binding = binding
+        guard binding.published != false else {
+            binding.hostForwarded = false
+            return binding
+        }
+        binding.hostForwarded = !nativePublishingSupported || (binding.hostPort ?? 0) == 0
+        return binding
+    }
+
+    static func nativePublishArguments(_ binding: PortBinding) -> [String]? {
+        guard binding.published != false,
+              binding.hostForwarded == false,
+              let hostPort = binding.hostPort,
+              hostPort > 0
+        else {
+            return nil
+        }
+        let hostAddress =
+            binding.hostAddress.contains(":")
+                ? "[\(binding.hostAddress)]"
+                : binding.hostAddress
+        return [
+            "--publish",
+            "\(hostAddress):\(hostPort):\(binding.containerPort)/"
+                + binding.protocolName.lowercased()
+        ]
     }
 
     internal func supportedCreateOptions() async throws -> CreateOptionSupport {
@@ -490,6 +535,7 @@ public extension AppleContainerRuntime {
             ) ?? ""
         let support = CreateOptionSupport(
             hostname: help.contains("--hostname"),
+            publish: help.contains("--publish"),
             privileged: help.contains("--privileged"),
             securityOptions: help.contains("--security-opt"),
             dns: help.contains("--dns")

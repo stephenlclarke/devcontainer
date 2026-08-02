@@ -155,45 +155,103 @@ public extension AppleContainerRuntime {
         }
     }
 
+    func restorePortForwarding(
+        context: RuntimeRequestContext
+    ) async throws {
+        let containers = try await listContainers(
+            all: true,
+            labels: [:],
+            context: context
+        )
+        for snapshot in containers where snapshot.state == .running {
+            try await startPortForwarding(
+                snapshot: snapshot,
+                startedAt: snapshot.startedAt ?? Date(),
+                stopContainerOnFailure: false
+            )
+        }
+    }
+
     private func startPortForwarding(
         snapshot: DevContainerModel.ContainerSnapshot,
-        startedAt: Date
+        startedAt: Date,
+        stopContainerOnFailure: Bool = true
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
         do {
+            let optionSupport = try await supportedCreateOptions()
+            let emulated = snapshot.spec.ports.filter {
+                Self.requiresHostForwarding(
+                    $0,
+                    nativePublishingSupported: optionSupport.publish
+                )
+            }
             var replacements = try await portForwarding.start(
                 containerID: resolved,
-                bindings: snapshot.spec.ports,
+                bindings: emulated,
                 networkAddresses: snapshot.networkAddresses
             ).makeIterator()
-            let ports = snapshot.spec.ports.map { replacements.next() ?? $0 }
+            let ports = snapshot.spec.ports.map { binding in
+                guard Self.requiresHostForwarding(
+                    binding,
+                    nativePublishingSupported: optionSupport.publish
+                ) else {
+                    return binding
+                }
+                return replacements.next() ?? binding
+            }
             guard ports != snapshot.spec.ports else {
                 return
             }
-            var spec = snapshot.spec
-            spec.ports = ports
-            try await metadataStore?.recordContainerMetadata(
-                RuntimeContainerMetadata(
-                    runtimeID: snapshot.runtimeID,
-                    dockerID: snapshot.dockerID,
-                    imageID: snapshot.imageID,
-                    spec: spec,
-                    createdAt: snapshot.createdAt,
-                    startedAt: startedAt
-                )
+            try await recordResolvedPortBindings(
+                ports,
+                snapshot: snapshot,
+                startedAt: startedAt
             )
-            let request = RequestedContainer(
-                spec: spec,
-                imageID: snapshot.imageID,
-                createdAt: snapshot.createdAt
-            )
-            requestedContainers[resolved] = request
-            requestedContainers[spec.name] = request
         } catch {
             await portForwarding.stop(containerID: resolved)
-            _ = try? await command(["stop", "--time", "0", resolved])
+            if stopContainerOnFailure {
+                _ = try? await command(["stop", "--time", "0", resolved])
+            }
             throw error
         }
+    }
+
+    private func recordResolvedPortBindings(
+        _ ports: [PortBinding],
+        snapshot: DevContainerModel.ContainerSnapshot,
+        startedAt: Date
+    ) async throws {
+        var spec = snapshot.spec
+        spec.ports = ports
+        try await metadataStore?.recordContainerMetadata(
+            RuntimeContainerMetadata(
+                runtimeID: snapshot.runtimeID,
+                dockerID: snapshot.dockerID,
+                imageID: snapshot.imageID,
+                spec: spec,
+                createdAt: snapshot.createdAt,
+                startedAt: startedAt
+            )
+        )
+        let request = RequestedContainer(
+            spec: spec,
+            imageID: snapshot.imageID,
+            createdAt: snapshot.createdAt
+        )
+        requestedContainers[snapshot.runtimeID.rawValue] = request
+        requestedContainers[spec.name] = request
+    }
+
+    private static func requiresHostForwarding(
+        _ binding: PortBinding,
+        nativePublishingSupported: Bool
+    ) -> Bool {
+        guard binding.published != false else {
+            return false
+        }
+        return binding.hostForwarded
+            ?? (!nativePublishingSupported || (binding.hostPort ?? 0) == 0)
     }
 
     func stopContainer(
