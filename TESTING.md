@@ -38,7 +38,7 @@ The test system proves all of the following:
 - State reconciliation, cancellation, concurrent operations, and cleanup remain correct after partial failures.
 - A pinned stable VS Code and Dev Containers extension can open, rebuild, reuse, and close a representative workspace without patches.
 - Tests execute enough product code to meet a 90% overall line-coverage gate and a 90% changed-code line-coverage gate.
-- Swift memory-safety and concurrency regressions are exercised with AddressSanitizer and ThreadSanitizer through a retrying, full-log harness.
+- Swift memory-safety and concurrency regressions are exercised with AddressSanitizer and ThreadSanitizer through a bounded, full-log harness that directly loads the prebuilt Swift Testing bundle.
 
 ## Test architecture
 
