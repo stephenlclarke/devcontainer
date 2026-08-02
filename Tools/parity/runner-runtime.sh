@@ -13,6 +13,7 @@ readonly SCRIPT_NAME
 
 stock_bin="${DEVCONTAINER_RUNTIME_STOCK_BIN:-/usr/local/bin/container}"
 compose_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-/opt/homebrew/opt/container/bin/container}"
+colima_bin="${DEVCONTAINER_RUNTIME_COLIMA_BIN:-/opt/homebrew/bin/colima}"
 
 usage() {
   sed -n 's/^# *//p' "$SELF_PATH" | sed -n '/^USAGE:/,$p'
@@ -52,6 +53,24 @@ stop_all_apple_runtimes() {
   fi
 }
 
+start_colima() {
+  local attempt
+
+  [[ -x "$colima_bin" ]] || fail "Colima executable is not usable: $colima_bin"
+  if "$colima_bin" status >/dev/null 2>&1; then
+    return
+  fi
+  for attempt in 1 2 3; do
+    if "$colima_bin" start && "$colima_bin" status >/dev/null; then
+      return
+    fi
+    if (( attempt < 3 )); then
+      sleep 1
+    fi
+  done
+  fail "Colima did not reach running state after 3 attempts"
+}
+
 selected_runtime() {
   local lane="$1"
 
@@ -75,6 +94,7 @@ start_runtime() {
   local status
 
   stop_all_apple_runtimes
+  start_colima
   if [[ "$lane" == "docker" ]]; then
     return
   fi

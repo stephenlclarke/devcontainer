@@ -22,6 +22,7 @@ class RunnerRuntimeTests(unittest.TestCase):
         self.log = self.root / "operations.log"
         self.stock = self.make_runtime("stock")
         self.compose = self.make_runtime("compose")
+        self.colima = self.make_colima()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -59,6 +60,37 @@ esac
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         return executable
 
+    def make_colima(self) -> Path:
+        executable = self.root / "colima"
+        executable.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+state="${0}.state"
+printf 'colima %s\\n' "$*" >> "$MOCK_RUNTIME_LOG"
+case "${1:-}" in
+  start)
+    if [[ "${MOCK_COLIMA_FAIL_ALWAYS:-0}" == "1" ]]; then
+      exit 17
+    fi
+    if [[ "${MOCK_COLIMA_FAIL_ONCE:-0}" == "1" && ! -f "${state}.failed" ]]; then
+      : > "${state}.failed"
+      exit 17
+    fi
+    printf 'running\\n' > "$state"
+    ;;
+  status)
+    [[ -f "$state" && "$(<"$state")" == "running" ]]
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+        return executable
+
     def run_script(
         self,
         operation: str,
@@ -70,6 +102,7 @@ esac
             {
                 "DEVCONTAINER_RUNTIME_STOCK_BIN": str(self.stock),
                 "DEVCONTAINER_RUNTIME_COMPOSE_BIN": str(self.compose),
+                "DEVCONTAINER_RUNTIME_COLIMA_BIN": str(self.colima),
                 "DEVCONTAINER_RUNTIME_SKIP_SUDO": "1",
                 "MOCK_RUNTIME_LOG": str(self.log),
             }
@@ -108,6 +141,53 @@ esac
             (self.root / "compose.state").read_text().strip(),
             "unregistered",
         )
+        self.assertEqual(
+            (self.root / "colima.state").read_text().strip(),
+            "running",
+        )
+
+    def test_every_lane_starts_colima_before_the_selected_runtime(self) -> None:
+        result = self.run_script("start", "apple-stock")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.log.read_text(encoding="utf-8").splitlines()
+        self.assertLess(
+            operations.index("colima start"),
+            operations.index("stock system start --enable-kernel-install --timeout 120"),
+        )
+
+    def test_retries_an_interrupted_colima_start(self) -> None:
+        result = self.run_script(
+            "start",
+            "docker",
+            {"MOCK_COLIMA_FAIL_ONCE": "1"},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertEqual(operations.count("colima start"), 2)
+
+    def test_reuses_an_already_running_colima(self) -> None:
+        (self.root / "colima.state").write_text("running\n", encoding="utf-8")
+
+        result = self.run_script("start", "docker")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertNotIn("colima start", operations)
+        self.assertEqual(operations.count("colima status"), 1)
+
+    def test_fails_closed_when_colima_cannot_start(self) -> None:
+        result = self.run_script(
+            "start",
+            "docker",
+            {"MOCK_COLIMA_FAIL_ALWAYS": "1"},
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Colima did not reach running state", result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertEqual(operations.count("colima start"), 3)
 
     def test_retries_an_interrupted_runtime_start(self) -> None:
         result = self.run_script(
