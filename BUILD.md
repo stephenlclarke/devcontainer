@@ -40,10 +40,14 @@ The package targets enforce the provider boundary described in
 DevContainerVersionGenerator -> GenerateDevContainerVersion -> DevContainerModel
 DevContainerModel -> DevContainerRuntimeSPI
 DevContainerRuntimeSPI -> DevContainerState -> DevContainerCore
+ContainerEngineWire -> DevContainerDockerAPI
+ContainerEngineRouter -> DevContainerDockerAPI
 DevContainerCore -> DevContainerDockerAPI
 DevContainerRuntimeSPI -> DevContainerAppleRuntime
 DevContainerRuntimeSPI -> DevContainerComposeProvider
 DevContainerDockerAPI -> DevContainerTestSupport
+ContainerEngineRuntimeSPI -> DevContainerService
+ContainerUnixHTTPServer -> DevContainerService
 ```
 
 The three executable products are:
@@ -51,7 +55,7 @@ The three executable products are:
 | Product | Purpose |
 | --- | --- |
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
-| `devcontainer-engine` | Serve the tested Docker Engine API subset on a user-owned Unix socket and translate it to stock Apple runtime operations |
+| `devcontainer-engine` | Select one immutable stock-provider fingerprint, serve the tested API subset through the shared user-owned Unix listener, and translate requests to stock Apple runtime operations |
 | `devcontainer-compose` | Docker Compose-compatible dispatcher that selects upstream Docker Compose or an explicitly configured external `container-compose` executable |
 
 Only `DevContainerAppleRuntime` links Apple runtime products. The Compose

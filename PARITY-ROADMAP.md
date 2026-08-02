@@ -243,7 +243,9 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 ### ENG-002: Disconnecting a hijacked stream does not reliably cancel the owned runtime session
 
-**Evidence:** `DockerRawStreamHandler.channelInactive` cancels the output task and calls `OrderedRuntimeInputPump.cancel`. The pump finishes its input stream and cancels its worker, but it calls `session.cancel()` only if the worker reaches its `catch` path. A normally finished empty queue can exit without cancelling the session. The output task can then await `session.wait()`.
+**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.1.0.
+
+**Evidence:** The shared `DockerRawStreamHandler.channelInactive` now owns one `DockerHijackCancellation`, calls the session's cancellation operation directly and exactly once on abnormal closure, and leaves the ordered input pump responsible only for input ordering. Devcontainer's ten shared-listener integration tests retain the early-half-close, completed-hijack, disconnect, and connection-budget coverage.
 
 **Impact:** Closing VS Code, Docker exec, attach, or a terminal connection can leave the guest or Apple CLI process running and retain pipes or other resources.
 
@@ -277,7 +279,7 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 ### ENG-003: Generic streamed responses ignore socket backpressure and outlive disconnects
 
-**Evidence:** `EngineServer.streamBody` schedules every chunk with `eventLoop.execute` and `writeAndFlush` without awaiting the write. The task is not retained or cancelled in `channelInactive`. The raw hijacked stream path does await each channel write, so the two streaming paths have different safety properties.
+**Evidence:** The adopted `ContainerUnixHTTPServer.streamBody` retains and cancels the legacy stream task but still schedules each chunk with `eventLoop.execute` and `writeAndFlush` without awaiting the write. Pull-based `managedStream` responses and raw hijacks do await each channel write, so provider-push legacy streams remain the evidence-backed gap.
 
 **Impact:** Fast image-build, pull, log, or event producers can queue data faster than the client drains it. A disconnected client can leave the producer consuming work and attempting writes.
 
@@ -287,7 +289,9 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 ### ENG-004: Server-generated Docker error JSON is not safely encoded
 
-**Evidence:** `EngineServer.writeError` constructs `{"message":"\(message)"}` by string interpolation rather than `JSONEncoder`.
+**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.1.0.
+
+**Evidence:** `ContainerUnixHTTPServer.writeError` uses the shared `DockerErrorEnvelope` and deterministic `DockerJSON` encoder. Devcontainer retains a regression test with quotes, Unicode, backslashes, control characters, and newlines.
 
 **Impact:** Quotes, backslashes, control characters, or newlines in an internal error can produce invalid JSON and a non-Docker error response.
 

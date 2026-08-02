@@ -14,10 +14,9 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-struct EngineServerLimits: Sendable {
-    /// Buildx sends the complete exported image archive to /images/load. Real
-    /// Dev Container Feature images routinely exceed 64 MiB, so keep one
-    /// bounded image-sized request and a separate aggregate connection budget.
+import ContainerUnixHTTPServer
+
+struct EngineServerLimits: Equatable, Sendable {
     static let production = EngineServerLimits(
         maximumRequestBodyBytes: 536_870_912,
         maximumBufferedRequestBodyBytes: 536_870_912,
@@ -44,12 +43,26 @@ struct EngineServerLimits: Sendable {
         precondition(maximumPendingRequests > 0)
         let processLimit = maximumProcessBufferedRequestBodyBytes
             ?? maximumBufferedRequestBodyBytes
-        precondition(processLimit >= maximumRequestBodyBytes)
+        precondition(processLimit >= maximumBufferedRequestBodyBytes)
         precondition(maximumActiveConnections > 0)
         self.maximumRequestBodyBytes = maximumRequestBodyBytes
         self.maximumBufferedRequestBodyBytes = maximumBufferedRequestBodyBytes
         self.maximumPendingRequests = maximumPendingRequests
         self.maximumProcessBufferedRequestBodyBytes = processLimit
         self.maximumActiveConnections = maximumActiveConnections
+    }
+
+    var shared: ContainerUnixHTTPServerLimits {
+        ContainerUnixHTTPServerLimits(
+            maximumRequestBodyBytes: maximumRequestBodyBytes,
+            maximumBufferedRequestBodyBytes: maximumBufferedRequestBodyBytes,
+            maximumPendingRequests: maximumPendingRequests,
+            maximumConnections: maximumActiveConnections,
+            maximumAggregateBufferedRequestBodyBytes:
+            maximumProcessBufferedRequestBodyBytes,
+            requestReadTimeout: .seconds(30),
+            idleConnectionTimeout: .seconds(300),
+            gracefulDrainTimeout: .seconds(10)
+        )
     }
 }

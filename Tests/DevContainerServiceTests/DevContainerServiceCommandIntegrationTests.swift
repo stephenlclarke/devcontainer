@@ -62,7 +62,12 @@ struct ServiceCommandIntegrationTests {
         process.standardError = output
         try process.run()
 
-        try await exerciseEngineProcess(process, socket: socket, log: log)
+        try await exerciseEngineProcess(
+            process,
+            socket: socket,
+            log: log,
+            providerSelection: root.appendingPathComponent("engine-provider.json")
+        )
     }
 }
 
@@ -88,7 +93,8 @@ private func engineEnvironment(executable: URL) throws -> [String: String] {
 private func exerciseEngineProcess(
     _ process: Process,
     socket: String,
-    log: URL
+    log: URL,
+    providerSelection: URL
 ) async throws {
     do {
         try await waitForSocket(socket, process: process)
@@ -96,6 +102,15 @@ private func exerciseEngineProcess(
         #expect(ping == "OK")
         let version = try runCurl(socket: socket, path: "/version")
         #expect(version.contains("\"Version\":\"1.1.0\""))
+        let selectionData = try Data(contentsOf: providerSelection)
+        let selection = try #require(
+            JSONSerialization.jsonObject(with: selectionData) as? [String: Any]
+        )
+        #expect((selection["digest"] as? String)?.hasPrefix("sha256:") == true)
+        #expect(selection["stateRootUUID"] as? String != nil)
+        var selectionStatus = stat()
+        #expect(lstat(providerSelection.path, &selectionStatus) == 0)
+        #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
         try await waitForExit(process, log: log)

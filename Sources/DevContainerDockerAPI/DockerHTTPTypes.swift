@@ -14,115 +14,120 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerEngineWire
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-public enum DockerHTTPMethod: String, Sendable {
-    case delete = "DELETE"
-    case get = "GET"
-    case head = "HEAD"
-    case post = "POST"
-    case put = "PUT"
-}
+public typealias DockerHTTPBody = ContainerEngineWire.DockerHTTPBody
+public typealias DockerHTTPHeaders = ContainerEngineWire.DockerHTTPHeaders
+public typealias DockerHTTPMethod = ContainerEngineWire.DockerHTTPMethod
+public typealias DockerHTTPRequest = ContainerEngineWire.DockerHTTPRequest
+public typealias DockerHTTPResponder = ContainerEngineWire.DockerHTTPResponder
+public typealias DockerHTTPResponse = ContainerEngineWire.DockerHTTPResponse
+public typealias DockerJSON = ContainerEngineWire.DockerJSON
 
-public struct DockerHTTPRequest: Sendable {
-    public var method: DockerHTTPMethod
-    public var target: String
-    public var headers: [String: String]
-    public var body: Data
-
-    public init(
+public extension DockerHTTPRequest {
+    /// Source-compatible bridge for callers whose headers are already unique.
+    init(
         method: DockerHTTPMethod,
         target: String,
-        headers: [String: String] = [:],
+        headers: [String: String],
         body: Data = Data()
     ) {
-        self.method = method
-        self.target = target
-        self.headers = headers
-        self.body = body
-    }
-
-    public func header(_ name: String) -> String? {
-        let lowercased = name.lowercased()
-        return headers.first { $0.key.lowercased() == lowercased }?.value
-    }
-}
-
-public enum DockerHTTPBody: Sendable {
-    case bytes(Data)
-    case stream(AsyncThrowingStream<Data, any Error>)
-    case hijack(any RuntimeProcessSession, terminal: Bool)
-}
-
-public struct DockerHTTPResponse: Sendable {
-    public var status: Int
-    public var headers: [String: String]
-    public var body: DockerHTTPBody
-
-    public init(
-        status: Int,
-        headers: [String: String] = [:],
-        body: DockerHTTPBody = .bytes(Data())
-    ) {
-        self.status = status
-        self.headers = headers
-        self.body = body
-    }
-
-    public static func empty(status: Int) -> DockerHTTPResponse {
-        DockerHTTPResponse(status: status)
-    }
-
-    public static func text(
-        _ text: String,
-        status: Int = 200,
-        contentType: String = "text/plain; charset=utf-8"
-    ) -> DockerHTTPResponse {
-        DockerHTTPResponse(
-            status: status,
-            headers: ["Content-Type": contentType],
-            body: .bytes(Data(text.utf8))
+        let fields = headers.map {
+            DockerHTTPHeaders.Field(name: $0.key, value: $0.value)
+        }.sorted {
+            let lhs = $0.name.lowercased()
+            let rhs = $1.name.lowercased()
+            return lhs == rhs ? $0.name < $1.name : lhs < rhs
+        }
+        self.init(
+            method: method,
+            target: target,
+            headers: DockerHTTPHeaders(fields),
+            body: body
         )
     }
 
-    public static func json(
-        _ value: some Encodable,
-        status: Int = 200,
-        encoder: JSONEncoder = DockerJSON.encoder
-    ) throws -> DockerHTTPResponse {
-        try DockerHTTPResponse(
-            status: status,
-            headers: ["Content-Type": "application/json"],
-            body: .bytes(encoder.encode(value))
-        )
+    /// Legacy convenience now fails closed when a field is repeated.
+    func header(_ name: String) -> String? {
+        try? uniqueHeader(name)
     }
 }
 
-public enum DockerJSON {
-    public static var encoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
+public struct DockerRuntimeHijackSession: DockerHijackSession {
+    private let session: any RuntimeProcessSession
+
+    public init(_ session: any RuntimeProcessSession) {
+        self.session = session
     }
 
-    public static var decoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
+    public var frames: AsyncThrowingStream<DockerStreamFrame, any Error> {
+        let session = session
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await frame in session.frames {
+                        let channel: DockerStreamChannel = switch frame.channel {
+                        case .standardInput:
+                            .standardInput
+                        case .standardOutput:
+                            .standardOutput
+                        case .standardError:
+                            .standardError
+                        }
+                        continuation.yield(
+                            DockerStreamFrame(
+                                channel: channel,
+                                data: frame.data
+                            )
+                        )
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func write(_ data: Data) async throws {
+        try await session.write(data)
+    }
+
+    public func closeStandardInput() async throws {
+        try await session.closeStandardInput()
+    }
+
+    public func wait() async throws -> Int32 {
+        try await session.wait()
+    }
+
+    public func cancel() async {
+        await session.cancel()
     }
 }
 
 public enum DockerStreamFraming {
     public static func encode(_ frame: RuntimeIOFrame, terminal: Bool) -> Data {
+        let channel: DockerStreamChannel = switch frame.channel {
+        case .standardInput:
+            .standardInput
+        case .standardOutput:
+            .standardOutput
+        case .standardError:
+            .standardError
+        }
         if terminal {
             return frame.data
         }
-
+        precondition(frame.data.count <= Int(UInt32.max))
         var result = Data(capacity: frame.data.count + 8)
-        result.append(frame.channel.rawValue)
+        result.append(channel.rawValue)
         result.append(contentsOf: [0, 0, 0])
         var size = UInt32(frame.data.count).bigEndian
         withUnsafeBytes(of: &size) { result.append(contentsOf: $0) }

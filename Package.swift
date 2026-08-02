@@ -37,6 +37,10 @@ let package = Package(
         .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"])
     ],
     dependencies: [
+        .package(
+            url: "https://github.com/stephenlclarke/container-engine-api.git",
+            exact: "0.1.0"
+        ),
         .package(url: "https://github.com/apple/container.git", exact: "1.1.0"),
         .package(url: "https://github.com/apple/containerization.git", exact: "0.35.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
@@ -93,6 +97,8 @@ let package = Package(
                 "DevContainerCore",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
+                .product(name: "ContainerEngineRouter", package: "container-engine-api"),
+                .product(name: "ContainerEngineWire", package: "container-engine-api"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio")
             ]
@@ -137,13 +143,10 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 "DevContainerState",
+                .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
+                .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "DequeModule", package: "swift-collections"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOFoundationCompat", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio")
+                .product(name: "Logging", package: "swift-log")
             ]
         ),
         .executableTarget(

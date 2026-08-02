@@ -25,25 +25,28 @@ import Foundation
 // extension while its strict DTO and ownership changes settle.
 // swiftlint:disable file_length
 
-public struct DockerRouter: Sendable {
+public struct DockerRouter: DockerHTTPResponder, Sendable {
     public let runtime: any DevContainerRuntime
     private let execSessions: ExecSessionRegistry
     private let mutationReplays: DockerMutationReplayRegistry
     let healthChecks: ContainerHealthRegistry
     private let coordinator: ProjectCoordinator?
     private let provider: BackendProvider
+    private let providerFingerprint: String?
     private let requestTimeout: TimeInterval
 
     public init(
         runtime: any DevContainerRuntime,
         coordinator: ProjectCoordinator? = nil,
         provider: BackendProvider = .stock,
+        providerFingerprint: String? = nil,
         requestTimeout: TimeInterval = 5 * 60
     ) {
         precondition(requestTimeout > 0)
         self.runtime = runtime
         self.coordinator = coordinator
         self.provider = provider
+        self.providerFingerprint = providerFingerprint
         self.requestTimeout = requestTimeout
         execSessions = ExecSessionRegistry()
         mutationReplays = DockerMutationReplayRegistry()
@@ -214,7 +217,8 @@ extension DockerRouter {
         return RuntimeRequestContext(
             operationID: operationID,
             correlationID: correlation,
-            deadline: Date().addingTimeInterval(requestTimeout)
+            deadline: Date().addingTimeInterval(requestTimeout),
+            providerFingerprint: providerFingerprint
         )
     }
 
@@ -888,7 +892,10 @@ extension DockerRouter {
                     "Upgrade": "tcp",
                     "Content-Type": "application/vnd.docker.raw-stream"
                 ],
-                body: .hijack(session, terminal: terminal)
+                body: .hijack(
+                    DockerRuntimeHijackSession(session),
+                    terminal: terminal
+                )
             )
         default:
             return nil
@@ -1111,7 +1118,10 @@ extension DockerRouter {
                 "Upgrade": "tcp",
                 "Content-Type": "application/vnd.docker.raw-stream"
             ],
-            body: .hijack(session, terminal: options.tty ?? exec.spec.terminal)
+            body: .hijack(
+                DockerRuntimeHijackSession(session),
+                terminal: options.tty ?? exec.spec.terminal
+            )
         )
     }
 

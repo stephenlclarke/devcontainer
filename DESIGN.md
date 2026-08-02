@@ -79,7 +79,8 @@ flowchart TB
     ReferenceCLI --> DockerCLI["Unmodified Docker CLI"]
     ReferenceCLI --> ComposeSelector{"Configured Compose executable"}
     DockerCLI --> Socket["User-owned Unix socket"]
-    Socket --> Service["devcontainer compatibility service"]
+    Socket --> Shared["container-engine-api Unix server"]
+    Shared --> Service["devcontainer stock provider adapter"]
     Service --> RuntimeCore["Runtime-neutral application core"]
     RuntimeCore --> AppleAdapter["Stock Apple runtime adapter"]
     AppleAdapter --> AppleAPI["ContainerAPIClient and Apple XPC services"]
@@ -102,13 +103,14 @@ service and Compose-dispatch executables:
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
 | `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, privacy-redacted `diagnostics`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
-| `devcontainer-engine` | Normal executable | Docker Engine HTTP API on a user-owned Unix socket, stock Apple translation, state reconciliation, and event handling |
+| `devcontainer-engine` | Normal executable | Stock-provider bootstrap for the shared Docker Engine Unix listener, immutable provider selection, state reconciliation, and event handling |
+| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, and `ContainerEngineRuntimeSPI` | Exact `container-engine-api` 0.1.0 libraries | Shared Docker wire and request-target contracts, hardened listener, and immutable provider identity; no Apple or Compose dependency |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
 | `DevContainerAppleRuntime` | Swift library | Translation to official `ContainerAPIClient` and versioned Apple models |
 | `DevContainerComposeProvider` | Swift library | Validates and invokes a configured `container-compose` executable; contains no `ComposeCore` source dependency |
-| `DevContainerDockerAPI` | Swift library | Versioned HTTP routing, Docker wire DTOs, streaming, hijack, and error envelopes |
+| `DevContainerDockerAPI` | Swift library | Stock-provider endpoint policy and DTO projection over the shared wire/router contracts |
 | `DevContainerState` | Swift library | SQLite schema, migrations, leases, event cursor, and rebuildable compatibility metadata |
 | `DevContainerTestSupport` | Swift library | Fakes, controllable clocks, stream recorders, fault injection, and observation models |
 
@@ -332,7 +334,7 @@ The service uses Swift actors for state isolation and a keyed async lock per pro
 
 1. verifies schema and acquires a single-instance database lease;
 2. lists project-labelled runtime resources;
-3. validates provider fingerprints and configuration digests;
+3. validates the shared, immutable state-root provider fingerprint and configuration digests;
 4. reconstructs recoverable state and event cursors;
 5. marks conflicts for explicit repair rather than deleting them;
 6. removes only invocation-owned stale exec metadata.

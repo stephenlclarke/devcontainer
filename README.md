@@ -64,7 +64,8 @@ flowchart LR
     VS["VS Code Dev Containers"] --> DC["Official @devcontainers/cli"]
     DC --> Docker["Unmodified Docker CLI"]
     Docker --> API["Local Docker Engine compatibility socket"]
-    API --> Core["Provider-neutral runtime core"]
+    API --> Shared["container-engine-api wire, router and Unix server"]
+    Shared --> Core["Provider-neutral runtime core"]
     Core --> Stock["Stock apple/container"]
     DC --> ComposeChoice{"Compose provider"}
     ComposeChoice --> DockerCompose["Docker Compose over the bridge"]
@@ -117,9 +118,10 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `Sources/DevContainerDockerAPI` | Docker Engine API compatibility router |
+| `container-engine-api` 0.1.0 | Shared Docker wire types, request-target parsing, hardened Unix server, and immutable provider identity |
+| `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
-| `Sources/DevContainerService` | Unix-socket compatibility engine |
+| `Sources/DevContainerService` | Stock-provider bootstrap for the shared Unix-socket compatibility engine |
 | `Sources/DevContainerComposeProvider` | Optional external `container-compose` dispatcher |
 
 ## Development

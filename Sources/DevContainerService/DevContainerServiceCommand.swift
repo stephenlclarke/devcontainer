@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import ContainerEngineRuntimeSPI
 import Darwin
 import DevContainerAppleRuntime
 import DevContainerCore
@@ -84,6 +85,48 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             volumeRoot: stateURL.deletingLastPathComponent()
                 .appendingPathComponent("volumes", isDirectory: true)
         )
+        let runtimeDescriptor = try await runtime.descriptor(
+            context: RuntimeRequestContext(
+                deadline: Date().addingTimeInterval(5 * 60)
+            )
+        )
+        let providerDeclaration = try ContainerEngineProviderDeclaration(
+            profile: .stock,
+            kind: .devcontainerStock,
+            implementationVersion: BuildInfo.current.version,
+            runtimeRevisions: [
+                "apple-container": runtimeDescriptor.providerVersion,
+                "apple-container-commit": runtimeDescriptor.providerCommit,
+                "devcontainer": BuildInfo.current.commit,
+                "resource-owner": selectedProvider.rawValue
+            ],
+            stateSchemaVersion: UInt64(SQLiteStateStore.schemaVersion),
+            capabilities: runtimeDescriptor.capabilities.map { capability, status in
+                let sharedStatus: ContainerEngineCapabilityStatus = switch status {
+                case .native:
+                    .native
+                case .emulated:
+                    .emulated
+                case .unsupported:
+                    .unavailable
+                }
+                return try ContainerEngineProviderCapability(
+                    identifier: "engine.\(capability.rawValue)",
+                    status: sharedStatus
+                )
+            }
+        )
+        let providerFingerprint = try ContainerEngineProviderSelectionStore(
+            path: stateURL.deletingLastPathComponent()
+                .appendingPathComponent("engine-provider.json")
+        ).select(providerDeclaration)
+        logger.info(
+            "Engine provider selected",
+            metadata: [
+                "fingerprint": .string(providerFingerprint.digest),
+                "profile": .string(providerDeclaration.profile.rawValue)
+            ]
+        )
         try await runtime.restorePortForwarding(
             context: RuntimeRequestContext(
                 deadline: Date().addingTimeInterval(5 * 60)
@@ -92,7 +135,8 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         let router = DockerRouter(
             runtime: runtime,
             coordinator: coordinator,
-            provider: selectedProvider
+            provider: selectedProvider,
+            providerFingerprint: providerFingerprint.digest
         )
         let server = EngineServer(router: router, socketPath: socket, logger: logger)
         try await server.start()

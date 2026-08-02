@@ -2,6 +2,7 @@
   "licenses": {
     "async-http-client": "Apache-2.0",
     "container": "Apache-2.0",
+    "container-engine-api": "Apache-2.0",
     "containerization": "Apache-2.0",
     "grpc-swift-2": "Apache-2.0",
     "grpc-swift-nio-transport": "Apache-2.0",

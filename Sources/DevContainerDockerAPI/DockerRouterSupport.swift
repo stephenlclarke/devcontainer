@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerEngineRouter
 import DevContainerCore
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -1252,23 +1253,26 @@ struct DockerRoute {
 }
 
 struct ParsedTarget {
-    let path: String
-    let query: [String: [String]]
+    private let target: DockerRequestTarget
+
+    var path: String {
+        target.path
+    }
+
+    var query: [String: [String]] {
+        target.query
+    }
 
     init(_ target: String) throws {
-        guard
-            let components = URLComponents(string: target),
-            !components.path.isEmpty
-        else {
+        do {
+            self.target = try DockerRequestTarget(target)
+        } catch {
             throw DevContainerError(.invalidRequest, message: "invalid request target")
         }
-        path = components.percentEncodedPath
-        query = Dictionary(grouping: components.queryItems ?? [], by: \.name)
-            .mapValues { $0.compactMap(\.value) }
     }
 
     func first(_ name: String) -> String? {
-        query[name]?.first
+        target.first(name)
     }
 }
 
