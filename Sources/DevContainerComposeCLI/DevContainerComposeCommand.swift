@@ -81,35 +81,50 @@ enum DevContainerComposeCommand {
         if let claim {
             let encodedArguments = Data(arguments.joined(separator: "\u{0}").utf8)
             let requestHash = digest(encodedArguments)
-            do {
-                result = try await claim.coordinator.withMutation(
-                    request: ProjectMutation(
-                        project: claim.key,
-                        provider: claim.provider,
-                        composeProject: claim.projectName,
-                        projectDirectory: claim.projectDirectory,
-                        configurationHash: requestHash,
-                        requestKind: "compose \(envelope.command ?? "unknown")",
-                        requestHash: requestHash,
-                        resourceKey: "compose-project:\(claim.projectName)"
-                    ),
-                    context: RuntimeRequestContext(
-                        deadline: Date().addingTimeInterval(30 * 60)
-                    )
-                ) { context in
-                    try context.checkActive()
-                    let status = try await execute(
-                        executable: child.executable,
-                        arguments: child.arguments,
-                        environment: child.environment
-                    )
-                    guard status == 0 else {
-                        throw ChildCommandFailure(status: status)
+            if provider == .docker {
+                _ = try await claim.coordinator.claim(
+                    project: claim.key,
+                    provider: claim.provider,
+                    composeProject: claim.projectName,
+                    projectDirectory: claim.projectDirectory,
+                    configurationHash: requestHash
+                )
+                result = try await execute(
+                    executable: child.executable,
+                    arguments: child.arguments,
+                    environment: child.environment
+                )
+            } else {
+                do {
+                    result = try await claim.coordinator.withMutation(
+                        request: ProjectMutation(
+                            project: claim.key,
+                            provider: claim.provider,
+                            composeProject: claim.projectName,
+                            projectDirectory: claim.projectDirectory,
+                            configurationHash: requestHash,
+                            requestKind: "compose \(envelope.command ?? "unknown")",
+                            requestHash: requestHash,
+                            resourceKey: "compose-project:\(claim.projectName)"
+                        ),
+                        context: RuntimeRequestContext(
+                            deadline: Date().addingTimeInterval(30 * 60)
+                        )
+                    ) { context in
+                        try context.checkActive()
+                        let status = try await execute(
+                            executable: child.executable,
+                            arguments: child.arguments,
+                            environment: child.environment
+                        )
+                        guard status == 0 else {
+                            throw ChildCommandFailure(status: status)
+                        }
+                        return status
                     }
-                    return status
+                } catch let failure as ChildCommandFailure {
+                    result = failure.status
                 }
-            } catch let failure as ChildCommandFailure {
-                result = failure.status
             }
         } else {
             result = try await execute(
@@ -119,10 +134,96 @@ enum DevContainerComposeCommand {
             )
         }
         if result == 0, envelope.removesProject, let claim {
-            try await claim.store.removeResources(project: claim.key)
-            try await claim.store.releaseProject(key: claim.key)
+            try await reconcileProjectRemoval(
+                envelope: envelope,
+                provider: provider,
+                claim: claim,
+                execution: ComposeExecutionEnvironment(
+                    paths: paths,
+                    environment: environment,
+                    socket: configuration.socket
+                )
+            )
         }
         return result
+    }
+
+    private static func reconcileProjectRemoval(
+        envelope: ComposeCommandEnvelope,
+        provider: ComposeProviderKind,
+        claim: ComposeProjectClaim,
+        execution: ComposeExecutionEnvironment
+    ) async throws {
+        if provider == .docker {
+            try await releaseProjectIfEmpty(claim)
+            return
+        }
+        guard let liveVolumes = await liveContainerComposeVolumes(
+            envelope: envelope,
+            execution: execution
+        ) else {
+            return
+        }
+        let resources = try await claim.store.resources(project: claim.key)
+        for resource in resources where !Self.isLiveVolume(resource, names: liveVolumes) {
+            try await claim.store.removeResource(runtimeID: resource.runtimeID)
+        }
+        guard liveVolumes.isEmpty else {
+            return
+        }
+        try await releaseProjectIfEmpty(claim)
+    }
+
+    private static func liveContainerComposeVolumes(
+        envelope: ComposeCommandEnvelope,
+        execution: ComposeExecutionEnvironment
+    ) async -> Set<String>? {
+        let child = childCommand(
+            provider: .containerCompose,
+            arguments: envelope.projectArguments + ["volumes", "--quiet"],
+            paths: execution.paths,
+            environment: execution.environment,
+            socket: execution.socket
+        )
+        guard let result = try? await executeCaptured(
+            executable: child.executable,
+            arguments: child.arguments,
+            environment: child.environment
+        ), result.exitCode == 0 else {
+            return nil
+        }
+        guard let output = String(bytes: result.standardOutput, encoding: .utf8) else {
+            return nil
+        }
+        return Set(
+            output.split(whereSeparator: \.isNewline)
+                .map(String.init)
+        )
+    }
+
+    private static func isLiveVolume(
+        _ resource: ResourceRecord,
+        names: Set<String>
+    ) -> Bool {
+        resource.runtimeKind == "volume"
+            && (
+                names.contains(resource.runtimeID.rawValue)
+                    || names.contains(resource.logicalName)
+            )
+    }
+
+    private static func releaseProjectIfEmpty(
+        _ claim: ComposeProjectClaim
+    ) async throws {
+        guard try await claim.store.resources(project: claim.key).isEmpty else {
+            return
+        }
+        do {
+            try await claim.store.releaseProject(key: claim.key)
+        } catch let error as DevContainerError where error.code == .conflict {
+            // A concurrent Engine API mutation won the cross-process race and
+            // attached a resource after the empty read. Its claim must survive.
+        }
     }
 
     private static func claimIfNeeded(
@@ -336,6 +437,12 @@ private struct ComposeChildCommand {
     let executable: URL
     let arguments: [String]
     let environment: [String: String]
+}
+
+private struct ComposeExecutionEnvironment {
+    let paths: Paths
+    let environment: [String: String]
+    let socket: String
 }
 
 private struct Paths {
