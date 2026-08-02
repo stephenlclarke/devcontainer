@@ -250,15 +250,28 @@ public enum ProcessRunner {
                 while let chunk = try? handle.read(upToCount: 64 * 1024),
                       !chunk.isEmpty
                 {
-                    let available = maximumBytes.map {
-                        max(0, $0 - retained.count)
-                    } ?? chunk.count
+                    let available = retainedByteCount(
+                        maximumBytes: maximumBytes,
+                        retainedBytes: retained.count,
+                        chunkBytes: chunk.count
+                    )
                     retained.append(chunk.prefix(available))
                     omitted += chunk.count - available
                 }
                 return (retained, omitted)
             }
         }
+    }
+
+    private static func retainedByteCount(
+        maximumBytes: Int?,
+        retainedBytes: Int,
+        chunkBytes: Int
+    ) -> Int {
+        guard let maximumBytes else {
+            return chunkBytes
+        }
+        return max(0, maximumBytes - retainedBytes)
     }
 
     private static func performBlocking<Value: Sendable>(
@@ -328,7 +341,9 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     private var cancellationRequested = false
     private var escalation: DispatchWorkItem?
 
-    public init() {}
+    public init() {
+        // Mutable termination state is initialized by the property defaults.
+    }
 
     public var isRunning: Bool {
         lock.withLock { running }

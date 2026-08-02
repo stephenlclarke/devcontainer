@@ -746,9 +746,7 @@ private final class DockerHTTPHandler:
         }
     }
 
-    // Stream ownership includes awaited writes, completion, cancellation, and
-    // terminal error closure.
-    // swiftlint:disable:next function_body_length
+    /// Owns awaited stream writes, completion, cancellation, and terminal failure.
     private func streamBody(
         _ stream: AsyncThrowingStream<Data, any Error>,
         context: ChannelHandlerContext
@@ -758,38 +756,10 @@ private final class DockerHTTPHandler:
             do {
                 for try await data in stream {
                     try Task.checkCancellation()
-                    try await withCheckedThrowingContinuation { continuation in
-                        let bytes = data
-                        sendableContext.value.eventLoop.execute {
-                            let context = sendableContext.value
-                            self.activeResponseBytes += bytes.count
-                            var buffer = context.channel.allocator.buffer(capacity: bytes.count)
-                            buffer.writeBytes(bytes)
-                            let promise = context.eventLoop.makePromise(of: Void.self)
-                            context.writeAndFlush(
-                                self.wrapOutboundOut(.body(.byteBuffer(buffer))),
-                                promise: promise
-                            )
-                            promise.futureResult.whenComplete {
-                                continuation.resume(with: $0)
-                            }
-                        }
-                    }
+                    try await writeStream(data, context: sendableContext)
                 }
                 try Task.checkCancellation()
-                try await withCheckedThrowingContinuation { continuation in
-                    sendableContext.value.eventLoop.execute {
-                        let context = sendableContext.value
-                        let promise = context.eventLoop.makePromise(of: Void.self)
-                        context.writeAndFlush(
-                            self.wrapOutboundOut(.end(nil)),
-                            promise: promise
-                        )
-                        promise.futureResult.whenComplete {
-                            continuation.resume(with: $0)
-                        }
-                    }
-                }
+                try await writeStream(nil, context: sendableContext)
                 sendableContext.value.eventLoop.execute {
                     let context = sendableContext.value
                     self.responseStreamTask = nil
@@ -814,6 +784,36 @@ private final class DockerHTTPHandler:
                     self.responseStreamTask = nil
                     context.close(promise: nil)
                 }
+            }
+        }
+    }
+
+    private func writeStream(_ data: Data?, context: SendableChannelHandlerContext) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            scheduleStream(data, context: context, continuation: continuation)
+        }
+    }
+
+    private func scheduleStream(
+        _ data: Data?,
+        context sendableContext: SendableChannelHandlerContext,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        sendableContext.value.eventLoop.execute {
+            let context = sendableContext.value
+            let part: HTTPServerResponsePart
+            if let data {
+                self.activeResponseBytes += data.count
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                part = .body(.byteBuffer(buffer))
+            } else {
+                part = .end(nil)
+            }
+            let promise = context.eventLoop.makePromise(of: Void.self)
+            context.writeAndFlush(self.wrapOutboundOut(part), promise: promise)
+            promise.futureResult.whenComplete {
+                continuation.resume(with: $0)
             }
         }
     }

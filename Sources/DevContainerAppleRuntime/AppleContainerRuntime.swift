@@ -55,6 +55,13 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let temporary: TemporaryDirectory?
     }
 
+    struct DirectClients {
+        let api: ContainerClient
+        let inventory: any AppleContainerInventoryClient
+        let files: any AppleContainerFileClient
+        let networks: any AppleNetworkClient
+    }
+
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
     private static let nativeResourceRoleLabel = "com.apple.container.resource.role"
     private static let nativePluginLabel = "com.apple.container.plugin"
@@ -99,10 +106,12 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             useDirectContainerAPI: useDirectContainerAPI,
             metadataStore: metadataStore,
             volumeRoot: volumeRoot,
-            apiClient: apiClient,
-            inventoryClient: LiveAppleContainerInventoryClient(client: apiClient),
-            fileClient: LiveAppleContainerFileClient(client: apiClient),
-            networkClient: AppleNetworkClientAdapter()
+            clients: DirectClients(
+                api: apiClient,
+                inventory: LiveAppleContainerInventoryClient(client: apiClient),
+                files: LiveAppleContainerFileClient(client: apiClient),
+                networks: AppleNetworkClientAdapter()
+            )
         )
     }
 
@@ -113,10 +122,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectContainerAPI: Bool,
         metadataStore: (any RuntimeMetadataStore)?,
         volumeRoot: URL?,
-        apiClient: ContainerClient,
-        inventoryClient: any AppleContainerInventoryClient,
-        fileClient: any AppleContainerFileClient,
-        networkClient: any AppleNetworkClient
+        clients: DirectClients
     ) throws {
         let resolved = executable.standardizedFileURL
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
@@ -129,10 +135,10 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         self.environment = Self.filteredEnvironment(environment)
         self.useDirectProcessAPI = useDirectProcessAPI
         self.useDirectContainerAPI = useDirectContainerAPI
-        self.apiClient = apiClient
-        self.inventoryClient = inventoryClient
-        self.fileClient = fileClient
-        self.networkClient = networkClient
+        apiClient = clients.api
+        inventoryClient = clients.inventory
+        fileClient = clients.files
+        networkClient = clients.networks
         self.metadataStore = metadataStore
         managedVolumes = try ManagedVolumeStore(
             root: volumeRoot ?? Self.defaultVolumeRoot

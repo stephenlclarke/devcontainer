@@ -38,9 +38,10 @@ class ValidateCoverageTests(unittest.TestCase):
     def test_injected_schema_property_fails_closed(self) -> None:
         coverage = copy.deepcopy(self.coverage)
         coverage["expectedProperties"].append("futureRuntimeControl")
+        manifest = copy.deepcopy(self.manifest)
 
         with self.assertRaisesRegex(CoverageError, "lack coverage"):
-            validate_coverage(coverage, copy.deepcopy(self.manifest))
+            validate_coverage(coverage, manifest)
 
     def test_blocker_requires_owner_and_reason(self) -> None:
         coverage = copy.deepcopy(self.coverage)
@@ -50,9 +51,10 @@ class ValidateCoverageTests(unittest.TestCase):
             if value["status"] == "blocked"
         )
         group["blocker"] = ""
+        manifest = copy.deepcopy(self.manifest)
 
         with self.assertRaisesRegex(CoverageError, "explicit blocker"):
-            validate_coverage(coverage, copy.deepcopy(self.manifest))
+            validate_coverage(coverage, manifest)
 
     def test_certification_requires_implemented_fixture(self) -> None:
         coverage = copy.deepcopy(self.coverage)
@@ -62,9 +64,10 @@ class ValidateCoverageTests(unittest.TestCase):
             if value["status"] == "certified"
         )
         group["fixtures"] = ["future-fixture"]
+        manifest = copy.deepcopy(self.manifest)
 
         with self.assertRaisesRegex(CoverageError, "unknown fixtures"):
-            validate_coverage(coverage, copy.deepcopy(self.manifest))
+            validate_coverage(coverage, manifest)
 
 
 if __name__ == "__main__":

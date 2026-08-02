@@ -110,7 +110,9 @@ final class OrderedRuntimeInputPump: @unchecked Sendable {
 
     init(
         session: any RuntimeProcessSession,
-        onFailure: @escaping @Sendable () -> Void = {}
+        onFailure: @escaping @Sendable () -> Void = {
+            // Failure notification is optional for callers without recovery state.
+        }
     ) {
         let (stream, continuation) = AsyncStream<Event>.makeStream()
         self.continuation = continuation

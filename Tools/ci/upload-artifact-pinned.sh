@@ -41,7 +41,10 @@ if [[ "${actual_sha256}" != "${archive_sha256}" ]]; then
 fi
 
 tar -xzf "${archive_path}" --strip-components=1 -C "${action_directory}"
-test -f "${action_directory}/dist/upload/index.js"
+if [[ ! -f "${action_directory}/dist/upload/index.js" ]]; then
+  printf 'upload-artifact entry point is missing after extraction\n' >&2
+  exit 1
+fi
 
 env \
   "INPUT_NAME=${artifact_name}" \
