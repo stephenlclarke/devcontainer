@@ -107,7 +107,7 @@ private func exerciseEngineProcess(
             JSONSerialization.jsonObject(with: selectionData) as? [String: Any]
         )
         #expect((selection["digest"] as? String)?.hasPrefix("sha256:") == true)
-        #expect(selection["stateRootUUID"] as? String != nil)
+        #expect(selection["stateRootUUID"] is String)
         var selectionStatus = stat()
         #expect(lstat(providerSelection.path, &selectionStatus) == 0)
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
