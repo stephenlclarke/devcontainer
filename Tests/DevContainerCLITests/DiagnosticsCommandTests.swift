@@ -130,7 +130,12 @@ struct DiagnosticsCommandTests {
             from: prepared
         )
         #expect(runtime.probes.count == 8)
-        #expect(runtime.probes.allSatisfy { $0.exitCode == 0 })
+        for probe in runtime.probes {
+            #expect(
+                probe.exitCode == 0,
+                "\(probe.name) exited \(String(describing: probe.exitCode)): \(probe.standardError)"
+            )
+        }
         #expect(runtime.socket.present)
         #expect(!runtime.socket.socket)
     }
