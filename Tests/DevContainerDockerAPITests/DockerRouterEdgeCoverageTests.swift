@@ -205,6 +205,7 @@ func `container creation rejects invalid bind port and mount forms`() async thro
 }
 
 @Test
+// swiftlint:disable:next function_body_length
 func `container creation rejects every unsupported root and host field`() async throws {
     let fixture = try await makeEdgeFixture()
     let requests: [[String: Any]] = [
@@ -220,7 +221,10 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["CpuShares": 1]],
         ["Image": "edge:latest", "HostConfig": ["CpusetCpus": "0"]],
         ["Image": "edge:latest", "HostConfig": ["CpusetMems": "0"]],
+        ["Image": "edge:latest", "HostConfig": ["DeviceRequests": [["Count": -1]]]],
+        ["Image": "edge:latest", "HostConfig": ["Devices": [["PathOnHost": "/dev/null"]]]],
         ["Image": "edge:latest", "HostConfig": ["BlkioWeight": 1]],
+        ["Image": "edge:latest", "HostConfig": ["BlkioDeviceWriteIOps": [[:]]]],
         ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file"]]],
         ["Image": "edge:latest", "HostConfig": ["MemorySwappiness": 0]],
         ["Image": "edge:latest", "HostConfig": ["IOMaximumBandwidth": 1]],
@@ -231,26 +235,85 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["OomKillDisable": true]],
         ["Image": "edge:latest", "HostConfig": ["OomScoreAdj": 1]],
         ["Image": "edge:latest", "HostConfig": ["Dns": ["192.0.2.53"]]],
+        ["Image": "edge:latest", "HostConfig": ["VolumesFrom": ["fixture"]]],
         ["Image": "edge:latest", "HostConfig": ["Annotations": ["test": "value"]]],
+        ["Image": "edge:latest", "HostConfig": ["Tmpfs": ["/tmp": "size=1m"]]],
         ["Image": "edge:latest", "HostConfig": ["Cgroup": "test"]],
+        ["Image": "edge:latest", "HostConfig": ["VolumeDriver": "local"]],
+        ["Image": "edge:latest", "HostConfig": [
+            "Ulimits": [["Name": "nofile", "Soft": 1024, "Hard": 1024]]
+        ]],
         ["Image": "edge:latest", "HostConfig": ["IpcMode": "private"]],
-        ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]]
+        ["Image": "edge:latest", "HostConfig": ["CgroupnsMode": "host"]],
+        ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "bind", "Source": "/tmp", "Target": "/work",
+            "Consistency": "cached"
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "bind", "Source": "/tmp", "Target": "/work",
+            "BindOptions": ["ReadOnlyForceRecursive": true]
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "volume", "Source": "fixture", "Target": "/work",
+            "VolumeOptions": ["DriverConfig": ["Name": "local"]]
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "tmpfs", "Target": "/tmp",
+            "TmpfsOptions": ["Mode": 493]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["Links": ["fixture"]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["IPAMConfig": ["LinkLocalIPs": ["169.254.1.1"]]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["MacAddress": "02:00:00:00:00:01"]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["DriverOpts": ["test": "value"]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GwPriority": 1]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GlobalIPv6Address": "2001:db8::2"]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["IPPrefixLen": 24]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GlobalIPv6PrefixLen": 64]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["DNSNames": ["fixture"]]
+        ]]]
     ]
 
     #expect(!fixture.router.labelsMatch(["present": "value"], expected: ["missing": ""]))
     for object in requests {
-        let response = try await fixture.router.respond(
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
             to: DockerHTTPRequest(
                 method: .post,
                 target: "/containers/create",
-                body: JSONSerialization.data(withJSONObject: object)
+                body: body
             )
         )
         #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerCreateContainerRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateCreateContainerRequest(decoded)
+        }
     }
 }
 
 @Test
+// swiftlint:disable:next function_body_length
 func `network and volume creation reject unsupported Docker fields`() async throws {
     let fixture = try await makeEdgeFixture()
     let networkRequests: [[String: Any]] = [
@@ -265,28 +328,44 @@ func `network and volume creation reject unsupported Docker fields`() async thro
         ["Name": "edge", "Scope": "swarm"]
     ]
     for object in networkRequests {
-        let response = try await fixture.router.respond(
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
             to: DockerHTTPRequest(
                 method: .post,
                 target: "/networks/create",
-                body: JSONSerialization.data(withJSONObject: object)
+                body: body
             )
         )
         #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerNetworkCreateRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateNetworkCreateRequest(decoded)
+        }
     }
 
     for object: [String: Any] in [
         ["Name": "edge", "DriverOpts": ["test": "value"]],
         ["Name": "edge", "ClusterVolumeSpec": [:]]
     ] {
-        let response = try await fixture.router.respond(
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
             to: DockerHTTPRequest(
                 method: .post,
                 target: "/volumes/create",
-                body: JSONSerialization.data(withJSONObject: object)
+                body: body
             )
         )
         #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerVolumeCreateRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateVolumeCreateRequest(decoded)
+        }
     }
 }
 
