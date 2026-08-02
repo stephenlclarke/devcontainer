@@ -41,10 +41,63 @@ func `runtime input pump ignores writes following EOF`() async {
 
     pump.write(Data([42]))
     pump.close()
+    pump.close()
     pump.write(Data([99]))
     await pump.wait()
 
     #expect(session.operations == [.data(42), .close])
+}
+
+@Test
+func `runtime input pump cancellation is idempotent`() async {
+    let session = RecordingProcessSession()
+    let pump = OrderedRuntimeInputPump(session: session)
+
+    pump.write(Data())
+    pump.cancel()
+    pump.cancel()
+    await pump.wait()
+
+    #expect(session.operations.isEmpty)
+}
+
+@Test
+func `engine resource budget rejects excess and releases exactly`() {
+    let limits = EngineServerLimits(
+        maximumRequestBodyBytes: 8,
+        maximumBufferedRequestBodyBytes: 8,
+        maximumPendingRequests: 1,
+        maximumProcessBufferedRequestBodyBytes: 16,
+        maximumActiveConnections: 1
+    )
+    let budget = EngineResourceBudget(limits: limits)
+
+    #expect(budget.openConnection())
+    #expect(!budget.openConnection())
+    budget.closeConnection()
+    budget.closeConnection()
+    #expect(budget.openConnection())
+
+    #expect(!budget.reserveBodyBytes(-1))
+    #expect(budget.reserveBodyBytes(16))
+    #expect(!budget.reserveBodyBytes(1))
+    #expect(!budget.reserveBodyBytes(Int.max))
+    budget.releaseBodyBytes(16)
+    budget.releaseBodyBytes(16)
+    #expect(budget.reserveBodyBytes(16))
+}
+
+@Test
+func `runtime session cancellation is owned and delivered exactly once`() async {
+    let session = RecordingProcessSession()
+    let cancellation = RuntimeSessionCancellation(session: session)
+
+    cancellation.cancel()
+    cancellation.cancel()
+    cancellation.cancel()
+    await cancellation.wait()
+
+    #expect(session.cancellationCount == 1)
 }
 
 private final class RecordingProcessSession: RuntimeProcessSession, @unchecked Sendable {
@@ -59,9 +112,14 @@ private final class RecordingProcessSession: RuntimeProcessSession, @unchecked S
 
     private let lock = NSLock()
     private var recorded: [Operation] = []
+    private var cancellations = 0
 
     var operations: [Operation] {
         lock.withLock { recorded }
+    }
+
+    var cancellationCount: Int {
+        lock.withLock { cancellations }
     }
 
     func write(_ data: Data) async throws {
@@ -86,5 +144,9 @@ private final class RecordingProcessSession: RuntimeProcessSession, @unchecked S
         0
     }
 
-    func cancel() {}
+    func cancel() {
+        lock.withLock {
+            cancellations += 1
+        }
+    }
 }

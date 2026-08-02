@@ -14,9 +14,9 @@ missing evidence.
 Stock Apple `container` 1.1.0 does not transport explicit Docker hostnames or
 security options. The adapter rejects a non-empty hostname and security
 options other than the already-native `seccomp=unconfined` state before
-runtime creation. Stock privileged mode maps to Apple `--cap-add ALL`; it is
-not full Docker privileged semantics. A separately fingerprinted enhanced
-runtime uses native flags only when its actual help surface advertises them.
+runtime creation. Stock privileged mode is also rejected instead of being
+approximated with `--cap-add ALL`. A separately fingerprinted enhanced runtime
+uses native flags only when its actual help surface advertises them.
 
 The certified fixture matrix is not a claim of complete Development
 Containers Specification support. See <doc:Conformance> for the complete

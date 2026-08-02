@@ -14,7 +14,7 @@
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Technical Debt" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=sqale_index" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Maintainability Rating" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=sqale_rating" /></a>
   <a href="https://sonarcloud.io/summary/new_code?id=stephenlclarke_devcontainer"><img alt="Vulnerabilities" src="https://sonarcloud.io/api/project_badges/measure?project=stephenlclarke_devcontainer&metric=vulnerabilities" /></a>
-  <a href="https://github.com/stephenlclarke/devcontainer/actions/workflows/codeql.yml?query=branch%3Amain"><img alt="CodeQL" src="https://github.com/stephenlclarke/devcontainer/actions/workflows/codeql.yml/badge.svg?branch=main" /></a>
+  <a href="https://github.com/stephenlclarke/devcontainer/actions/workflows/codeql.yml"><img alt="CodeQL disabled" src="https://img.shields.io/badge/CodeQL-disabled-lightgrey" /></a>
   <a href="https://github.com/stephenlclarke/devcontainer/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/stephenlclarke/devcontainer/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="https://github.com/stephenlclarke/devcontainer/actions/workflows/docs.yml?query=branch%3Amain"><img alt="Documentation" src="https://github.com/stephenlclarke/devcontainer/actions/workflows/docs.yml/badge.svg?branch=main" /></a>
   <a href="https://github.com/stephenlclarke/devcontainer/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/stephenlclarke/devcontainer?label=release" /></a>
@@ -27,13 +27,16 @@
 
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
+The project's north-star goal is 100% behavioural parity with Docker-based Development Containers, with comparable or better user-visible performance. Current releases make narrower evidence-bound claims until the complete specification and performance objectives are proved. The audited findings and solution designs are in the [full parity and performance roadmap](PARITY-ROADMAP.md).
+
 > [!IMPORTANT]
-> Version 1.0.1 supports the exact component fingerprints in
-> [COMPATIBILITY.md](COMPATIBILITY.md). Release certification ran all 18 CLI
-> fixtures plus the real VS Code end-to-end fixture against real Docker,
-> unmodified Apple `container` 1.1.0, and the separately maintained
-> `container-compose` 0.10.1 provider stack with zero normalized semantic
-> differences.
+> Version 1.0.1 is the latest immutable stable baseline. Its exact tag
+> certification ran all 18 CLI fixtures plus the real VS Code end-to-end
+> fixture against real Docker, unmodified Apple `container` 1.1.0, and the
+> separately maintained `container-compose` 0.10.1 provider stack with zero
+> normalized semantic differences. [COMPATIBILITY.md](COMPATIBILITY.md)
+> records the newer exact fingerprints required by the current source
+> candidate without rewriting that historical release evidence.
 
 ## See it work
 
@@ -84,12 +87,14 @@ silently replaces stock Apple `container` with the matched fork stack.
 
 The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md), [COMPATIBILITY.md](COMPATIBILITY.md), and the explicit [standards conformance audit](CONFORMANCE.md).
 
-Stock `apple/container` 1.1.0 does not expose create-time hostname or Docker
-security-option fields. A non-empty hostname and security options that are not
-already Apple’s native state fail before runtime creation. Stock privileged
-mode maps to Apple’s `--cap-add ALL` model and is not full Docker privileged
-mode. Version 1.0.1 also does not fail closed for every unknown Docker create
-member, so arbitrary `runArgs` are outside the compatibility claim. See
+Stock `apple/container` 1.1.0 does not expose create-time hostname, full Docker
+privileged mode, or most Docker security-option fields. Requests for those
+semantics fail before runtime creation; privileged mode is never approximated
+with `CapAdd ALL`. Runtime-affecting container, exec, network, and volume
+request objects use strict nested decoding. Unknown fields return a Docker
+`400`, and known fields that the selected runtime cannot enforce return `501`,
+before side effects. Arbitrary `runArgs` remain outside the compatibility
+claim until their exact behaviour is certified. See
 [CONFORMANCE.md](CONFORMANCE.md) before using security, device, resource, or
 advanced mount options.
 
@@ -99,6 +104,8 @@ advanced mount options.
 | --- | --- |
 | [USER_GUIDE.md](USER_GUIDE.md) | Installation-to-operation user manual for the stock and optional provider paths |
 | [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
+| [PARITY-ROADMAP.md](PARITY-ROADMAP.md) | North-star parity and performance criteria, audited defects, and designed solutions |
+| [UNSUPPORTED-CAPABILITIES.md](UNSUPPORTED-CAPABILITIES.md) | Field-by-field implementation and certification design for every current unsupported capability |
 | [CONFORMANCE.md](CONFORMANCE.md) | Complete audited Dev Containers property ledger and explicit 1.0.1 non-conformances |
 | [PERFORMANCE.md](PERFORMANCE.md) | Full repeated-run parity timing analysis and optimization priorities |
 | [TESTING.md](TESTING.md) | Docker, stock Apple, and separate `container-compose` differential harness |
@@ -144,7 +151,8 @@ Live runtime tests are deliberately not run on public pull-request code or GitHu
 
 Start with the [user guide](USER_GUIDE.md), then consult the
 [compatibility contract](COMPATIBILITY.md), [standards conformance
-audit](CONFORMANCE.md), and [parity timing analysis](PERFORMANCE.md). The
+audit](CONFORMANCE.md), [full parity and performance roadmap](PARITY-ROADMAP.md),
+and [parity timing analysis](PERFORMANCE.md). The
 generated [DocC site](https://stephenlclarke.github.io/devcontainer/) contains
 the public Swift API reference plus architecture, use, compatibility,
 conformance, testing, and performance articles. GitHub Pages publishes it from

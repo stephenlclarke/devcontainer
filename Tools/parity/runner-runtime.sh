@@ -12,7 +12,7 @@ SCRIPT_NAME="$(basename "$SELF_PATH")"
 readonly SCRIPT_NAME
 
 stock_bin="${DEVCONTAINER_RUNTIME_STOCK_BIN:-/usr/local/bin/container}"
-compose_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-/opt/homebrew/bin/container}"
+compose_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-/opt/homebrew/opt/container/bin/container}"
 
 usage() {
   sed -n 's/^# *//p' "$SELF_PATH" | sed -n '/^USAGE:/,$p'
@@ -71,6 +71,7 @@ selected_runtime() {
 start_runtime() {
   local lane="$1"
   local executable
+  local attempt
   local status
 
   stop_all_apple_runtimes
@@ -85,10 +86,19 @@ start_runtime() {
       || fail "passwordless sudo is required to prepare the trusted runner"
   fi
 
-  "$executable" system start --enable-kernel-install --timeout 120
-  status="$(runtime_status "$executable")"
-  [[ "$status" == "running" ]] \
-    || fail "runtime did not reach running state: $status"
+  for attempt in 1 2 3; do
+    if "$executable" system start --enable-kernel-install --timeout 120; then
+      status="$(runtime_status "$executable" 2>/dev/null || true)"
+      if [[ "$status" == "running" ]]; then
+        return
+      fi
+    fi
+    if (( attempt < 3 )); then
+      stop_all_apple_runtimes
+      sleep 1
+    fi
+  done
+  fail "runtime did not reach running state after 3 attempts: ${status:-unavailable}"
 }
 
 main() {

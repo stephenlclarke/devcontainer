@@ -57,13 +57,32 @@ struct ServiceCommandIntegrationTests {
             "--container",
             container.path
         ]
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output
         process.standardError = output
         try process.run()
 
         try await exerciseEngineProcess(process, socket: socket, log: log)
     }
+}
+
+private func engineEnvironment(executable: URL) throws -> [String: String] {
+    var environment = ProcessInfo.processInfo.environment
+    guard environment["LLVM_PROFILE_FILE"] != nil else {
+        return environment
+    }
+
+    let profileDirectory = executable
+        .deletingLastPathComponent()
+        .appendingPathComponent("codecov", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: profileDirectory,
+        withIntermediateDirectories: true
+    )
+    environment["LLVM_PROFILE_FILE"] = profileDirectory
+        .appendingPathComponent("devcontainer-engine-%m-%p.profraw")
+        .path
+    return environment
 }
 
 private func exerciseEngineProcess(
@@ -112,6 +131,10 @@ private func waitForExit(
 }
 
 private func engineExecutable() throws -> URL {
+    if let executable = try configuredEngineExecutable() {
+        return executable
+    }
+
     var startingPoints = [URL(fileURLWithPath: CommandLine.arguments[0])]
     startingPoints += Bundle.allBundles.compactMap(\.executableURL)
     if let profile = ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] {
@@ -158,6 +181,26 @@ private func engineExecutable() throws -> URL {
     throw ServiceIntegrationError("could not locate the built devcontainer-engine")
 }
 
+private func configuredEngineExecutable() throws -> URL? {
+    guard let configured = ProcessInfo.processInfo.environment[
+        "DEVCONTAINER_ENGINE_TEST_EXECUTABLE"
+    ] else {
+        return nil
+    }
+    guard configured.hasPrefix("/") else {
+        throw ServiceIntegrationError(
+            "DEVCONTAINER_ENGINE_TEST_EXECUTABLE must be absolute: \(configured)"
+        )
+    }
+    let executable = URL(fileURLWithPath: configured)
+    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+        throw ServiceIntegrationError(
+            "configured devcontainer-engine is not executable: \(configured)"
+        )
+    }
+    return executable
+}
+
 private func waitForSocket(_ path: String, process: Process) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while ContinuousClock.now < deadline {
@@ -180,7 +223,7 @@ private func runCurl(socket: String, path: String) throws -> String {
     let error = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
     process.arguments = [
-        "--fail",
+        "--fail-with-body",
         "--silent",
         "--show-error",
         "--unix-socket",
@@ -194,9 +237,12 @@ private func runCurl(socket: String, path: String) throws -> String {
     let data = try output.fileHandleForReading.readToEnd() ?? Data()
     let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
     guard process.terminationStatus == 0 else {
-        throw ServiceIntegrationError(
+        let response = String(data: data, encoding: .utf8) ?? "non-UTF-8 response body"
+        let curlDiagnostic =
             String(data: diagnostic, encoding: .utf8)
                 ?? "non-UTF-8 service diagnostic"
+        throw ServiceIntegrationError(
+            "\(curlDiagnostic.trimmingCharacters(in: .whitespacesAndNewlines)): \(response)"
         )
     }
     return String(data: data, encoding: .utf8)
@@ -207,7 +253,7 @@ private let fakeContainerCLI = """
 #!/bin/sh
 set -eu
 if [ "$*" = "system version --format json" ]; then
-  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"stock-fixture","distribution":"apple"}]'
+  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"fixture"}]'
   exit 0
 fi
 if [ "$*" = "list --all --format json" ]; then

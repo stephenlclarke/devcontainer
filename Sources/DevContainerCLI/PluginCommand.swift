@@ -16,6 +16,7 @@
 
 import ArgumentParser
 import DevContainerModel
+import DevContainerProcess
 import Foundation
 
 enum PluginRegistrationStatus: String, Sendable {
@@ -150,26 +151,20 @@ struct PluginRegistration {
 
 enum ContainerInstallRootResolver {
     static func resolve(container: URL) throws -> URL {
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        let process = Process()
-        process.executableURL = container
-        process.arguments = ["system", "status", "--format", "json"]
-        process.environment = CLIPaths.safeEnvironment
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        try process.run()
-        process.waitUntilExit()
-        let output = try standardOutput.fileHandleForReading.readToEnd() ?? Data()
-        let error = try standardError.fileHandleForReading.readToEnd() ?? Data()
-        guard process.terminationStatus == 0 else {
+        let result = try ProcessRunner.capturedSync(
+            executable: container,
+            arguments: ["system", "status", "--format", "json"],
+            environment: CLIPaths.safeEnvironment,
+            maximumOutputBytes: 1024 * 1024
+        )
+        guard result.exitCode == 0 else {
             throw DevContainerError(
                 .runtimeUnavailable,
-                message: String(data: error, encoding: .utf8)
+                message: String(data: result.standardError, encoding: .utf8)
                     ?? "container system status failed"
             )
         }
-        return try installRoot(from: output)
+        return try installRoot(from: result.standardOutput)
     }
 
     static func installRoot(from output: Data) throws -> URL {

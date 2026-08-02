@@ -17,7 +17,9 @@
 import ArgumentParser
 import Darwin
 import DevContainerAppleRuntime
+import DevContainerCore
 import DevContainerDockerAPI
+import DevContainerModel
 import DevContainerState
 import Dispatch
 import Foundation
@@ -39,19 +41,59 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Crash-recovery SQLite database path.")
     var state: String = DefaultPaths.stateDatabase
 
+    @Option(name: .long, help: "Backend provider recorded for resource ownership.")
+    var provider: String = BackendProvider.stock.rawValue
+
+    // Service bootstrap remains linear so ownership and rollback order are
+    // reviewable in one place.
+    // swiftlint:disable:next function_body_length
     mutating func run() async throws {
         var logger = Logger(label: "devcontainer-engine")
         logger.logLevel = .info
 
         let stateURL = URL(fileURLWithPath: state)
         let store = try SQLiteStateStore(path: stateURL)
+        let retention = try await store.pruneRetainedState()
+        logger.info(
+            "State retention completed",
+            metadata: [
+                "deleted-events": .stringConvertible(retention.deletedEvents),
+                "deleted-operations": .stringConvertible(retention.deletedOperations),
+                "retained-events": .stringConvertible(retention.retainedEvents),
+                "retained-operations": .stringConvertible(retention.retainedOperations)
+            ]
+        )
+        let coordinator = ProjectCoordinator(store: store)
+        guard let selectedProvider = BackendProvider(rawValue: provider) else {
+            throw ValidationError(
+                "provider must be \(BackendProvider.stock.rawValue) or "
+                    + BackendProvider.containerCompose.rawValue
+            )
+        }
+        let recovery = try await coordinator
+            .failUnfinishedOperationsForManualRecovery()
+        if !recovery.isEmpty {
+            logger.warning(
+                "Unfinished mutations require manual recovery",
+                metadata: ["operations": .stringConvertible(recovery.count)]
+            )
+        }
         let runtime = try AppleContainerRuntime(
             executable: URL(fileURLWithPath: container),
             metadataStore: store,
             volumeRoot: stateURL.deletingLastPathComponent()
                 .appendingPathComponent("volumes", isDirectory: true)
         )
-        let router = DockerRouter(runtime: runtime)
+        try await runtime.restorePortForwarding(
+            context: RuntimeRequestContext(
+                deadline: Date().addingTimeInterval(5 * 60)
+            )
+        )
+        let router = DockerRouter(
+            runtime: runtime,
+            coordinator: coordinator,
+            provider: selectedProvider
+        )
         let server = EngineServer(router: router, socketPath: socket, logger: logger)
         try await server.start()
         let signals = Self.terminationSignals()

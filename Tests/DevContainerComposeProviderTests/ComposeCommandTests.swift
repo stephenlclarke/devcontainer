@@ -37,6 +37,13 @@ func `command envelope finds project and mutation`() throws {
     #expect(envelope.files == ["compose.yaml"])
     #expect(envelope.mutating)
     #expect(!envelope.removesProject)
+    #expect(
+        envelope.projectArguments == [
+            "--project-directory", "/workspace",
+            "-f", "compose.yaml",
+            "--project-name=Demo"
+        ]
+    )
     #expect(envelope.projectKey(userID: 501) == ProjectKey(rawValue: "501:demo"))
     #expect(
         envelope.configurationArguments == [
@@ -171,6 +178,12 @@ func `inherited global options are normalized after the command`() throws {
     )
     #expect(mutating.projectName == "after-command")
     #expect(mutating.mutating)
+    #expect(
+        mutating.projectArguments == [
+            "--project-name", "after-command",
+            "--profile=debug"
+        ]
+    )
     #expect(
         mutating.configurationArguments == [
             "--project-name", "after-command",

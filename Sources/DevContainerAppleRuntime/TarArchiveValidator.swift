@@ -38,12 +38,19 @@ public enum TarArchiveValidator {
     public static let maximumEntries = 100_000
     public static let maximumExpandedSize: UInt64 = 2_147_483_648
 
+    public static func validatedForExtraction(_ archive: Data) throws -> Data {
+        try validate(archive)
+        let remainder = archive.count % 512
+        guard remainder != 0 else {
+            return archive
+        }
+        var normalized = archive
+        normalized.append(Data(repeating: 0, count: 512 - remainder))
+        return normalized
+    }
+
     @discardableResult
     public static func validate(_ archive: Data) throws -> Int {
-        guard archive.count % 512 == 0 else {
-            throw invalid("tar archive is not aligned to 512-byte records")
-        }
-
         var state = TarValidationState()
 
         while state.offset + 512 <= archive.count {
@@ -54,9 +61,19 @@ public enum TarArchiveValidator {
             let entry = try parseEntry(header, from: archive, offset: state.offset)
             try consume(entry, header: header, state: &state)
             state.offset = entry.nextOffset
+            if state.offset == archive.count {
+                return state.entries
+            }
         }
 
-        throw invalid("tar archive has no terminating zero record")
+        if state.entries > 0,
+           state.offset < archive.count,
+           archive[state.offset...].allSatisfy({ $0 == 0 })
+        {
+            return state.entries
+        }
+
+        throw invalid("tar archive ended before a complete header")
     }
 
     private static func parseEntry(
@@ -76,15 +93,22 @@ public enum TarArchiveValidator {
         }
         let bodyEnd = bodyStart + Int(size)
         let paddedSize = (Int(size) + 511) & ~511
-        guard paddedSize <= archive.count - bodyStart else {
-            throw invalid("tar entry padding exceeds the archive")
+        let paddedEnd = bodyStart + paddedSize
+        let nextOffset: Int
+        if paddedEnd <= archive.count {
+            nextOffset = paddedEnd
+        } else {
+            guard archive[bodyEnd...].allSatisfy({ $0 == 0 }) else {
+                throw invalid("tar entry padding is not zero filled")
+            }
+            nextOffset = archive.count
         }
         return try ParsedTarEntry(
             size: size,
             type: header[156],
             headerName: joinedName(header),
             body: archive.subdata(in: bodyStart ..< bodyEnd),
-            nextOffset: bodyStart + paddedSize
+            nextOffset: nextOffset
         )
     }
 

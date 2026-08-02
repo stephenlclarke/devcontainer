@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/devcontainers/spec",
+    "commit": "c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421",
+    "schema": "schemas/devContainer.base.schema.json",
+    "schemaSHA256": "a0883c0405ff433db188849d458fb20b9c0d73e0ba1a6e44c1d83f3b485408dd"
+  },
+  "expectedProperties": [
+    "$schema",
+    "additionalProperties",
+    "appPort",
+    "build",
+    "build.args",
+    "build.cacheFrom",
+    "build.context",
+    "build.dockerfile",
+    "build.options",
+    "build.target",
+    "capAdd",
+    "containerEnv",
+    "containerUser",
+    "context",
+    "customizations",
+    "dockerComposeFile",
+    "dockerFile",
+    "features",
+    "features.fish",
+    "features.gradle",
+    "features.homebrew",
+    "features.jupyterlab",
+    "features.maven",
+    "forwardPorts",
+    "hostRequirements",
+    "hostRequirements.cpus",
+    "hostRequirements.gpu",
+    "hostRequirements.gpu.cores",
+    "hostRequirements.gpu.memory",
+    "hostRequirements.memory",
+    "hostRequirements.storage",
+    "image",
+    "init",
+    "initializeCommand",
+    "mounts",
+    "mounts[].source",
+    "mounts[].target",
+    "mounts[].type",
+    "name",
+    "onCreateCommand",
+    "otherPortsAttributes",
+    "otherPortsAttributes.elevateIfNeeded",
+    "otherPortsAttributes.label",
+    "otherPortsAttributes.onAutoForward",
+    "otherPortsAttributes.protocol",
+    "otherPortsAttributes.requireLocalPort",
+    "overrideCommand",
+    "overrideFeatureInstallOrder",
+    "portsAttributes",
+    "portsAttributes.*",
+    "portsAttributes.*.elevateIfNeeded",
+    "portsAttributes.*.label",
+    "portsAttributes.*.onAutoForward",
+    "portsAttributes.*.protocol",
+    "portsAttributes.*.requireLocalPort",
+    "postAttachCommand",
+    "postCreateCommand",
+    "postStartCommand",
+    "privileged",
+    "remoteEnv",
+    "remoteUser",
+    "runArgs",
+    "runServices",
+    "secrets",
+    "secrets.*",
+    "secrets.*.description",
+    "secrets.*.documentationUrl",
+    "securityOpt",
+    "service",
+    "shutdownAction",
+    "updateContentCommand",
+    "updateRemoteUserUID",
+    "userEnvProbe",
+    "waitFor",
+    "workspaceFolder",
+    "workspaceMount"
+  ],
+  "propertyCoverageGroups": [
+    {
+      "id": "schema-selection",
+      "properties": ["$schema"],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "blocker": "No differential fixture proves schema selection and validation behaviour."
+    },
+    {
+      "id": "basic-image-and-user-configuration",
+      "properties": [
+        "containerEnv",
+        "containerUser",
+        "image",
+        "name",
+        "overrideCommand",
+        "remoteEnv",
+        "remoteUser",
+        "workspaceFolder",
+        "workspaceMount"
+      ],
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": [
+        "D01-image-config",
+        "D03-users-environment"
+      ]
+    },
+    {
+      "id": "dockerfile-build-core",
+      "properties": [
+        "build",
+        "build.args",
+        "build.context",
+        "build.dockerfile",
+        "build.target"
+      ],
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": ["D02-dockerfile-config"]
+    },
+    {
+      "id": "legacy-and-advanced-build",
+      "properties": [
+        "build.cacheFrom",
+        "build.options",
+        "context",
+        "dockerFile"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "blocker": "Legacy root build properties and cache or arbitrary build options lack differential fixtures and strict request coverage."
+    },
+    {
+      "id": "oci-features-core",
+      "properties": ["features"],
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": ["D05-features"]
+    },
+    {
+      "id": "feature-order-and-legacy-features",
+      "properties": [
+        "features.fish",
+        "features.gradle",
+        "features.homebrew",
+        "features.jupyterlab",
+        "features.maven",
+        "overrideFeatureInstallOrder"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "blocker": "Feature ordering, dependency metadata, and deprecated Feature members are not covered by differential fixtures."
+    },
+    {
+      "id": "port-forwarding-core",
+      "properties": [
+        "appPort",
+        "forwardPorts",
+        "portsAttributes",
+        "portsAttributes.*",
+        "portsAttributes.*.label",
+        "portsAttributes.*.onAutoForward"
+      ],
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": [
+        "D06-ports",
+        "V01-vscode-end-to-end"
+      ]
+    },
+    {
+      "id": "port-forwarding-attributes",
+      "properties": [
+        "otherPortsAttributes",
+        "otherPortsAttributes.elevateIfNeeded",
+        "otherPortsAttributes.label",
+        "otherPortsAttributes.onAutoForward",
+        "otherPortsAttributes.protocol",
+        "otherPortsAttributes.requireLocalPort",
+        "portsAttributes.*.elevateIfNeeded",
+        "portsAttributes.*.protocol",
+        "portsAttributes.*.requireLocalPort"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "blocker": "Elevation, protocol, required-local-port, and default port-attribute behaviour are not certified in all three lanes."
+    },
+    {
+      "id": "compose-selection-and-dependencies",
+      "properties": [
+        "dockerComposeFile",
+        "runServices",
+        "service"
+      ],
+      "status": "certified",
+      "owner": "devcontainer and container-compose",
+      "fixtures": [
+        "C01-compose-service",
+        "C02-compose-dependencies",
+        "C03-compose-resources"
+      ]
+    },
+    {
+      "id": "mount-schema-core",
+      "properties": [
+        "mounts",
+        "mounts[].source",
+        "mounts[].target",
+        "mounts[].type"
+      ],
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": [
+        "D07-reuse-cleanup",
+        "E06-network-volume"
+      ]
+    },
+    {
+      "id": "lifecycle-command-forms",
+      "properties": [
+        "initializeCommand",
+        "onCreateCommand",
+        "postAttachCommand",
+        "postCreateCommand",
+        "postStartCommand",
+        "updateContentCommand",
+        "waitFor"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "fixtures": ["D04-lifecycle-hooks"],
+      "blocker": "String hooks are covered, but array and object forms, parallel execution, failure short-circuiting, reuse counts, and every waitFor value are not."
+    },
+    {
+      "id": "host-resource-requirements",
+      "properties": [
+        "hostRequirements",
+        "hostRequirements.cpus",
+        "hostRequirements.gpu",
+        "hostRequirements.gpu.cores",
+        "hostRequirements.gpu.memory",
+        "hostRequirements.memory",
+        "hostRequirements.storage"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer and apple/container",
+      "blocker": "Tagged stock Apple APIs do not expose all required enforceable resource and GPU semantics."
+    },
+    {
+      "id": "runtime-security-and-identity-controls",
+      "properties": [
+        "capAdd",
+        "init",
+        "privileged",
+        "runArgs",
+        "securityOpt",
+        "updateRemoteUserUID"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer, apple/container, and apple/containerization",
+      "blocker": "The tagged stock Apple stack lacks complete capability, init, privileged, security, resource, namespace, and UID-rewrite semantics."
+    },
+    {
+      "id": "shutdown-actions",
+      "properties": ["shutdownAction"],
+      "status": "blocked",
+      "owner": "devcontainer and container-compose",
+      "fixtures": [
+        "C04-compose-lifecycle",
+        "D07-reuse-cleanup"
+      ],
+      "blocker": "stopCompose is covered, but stopContainer, none, reopen, and service-recovery behaviour are not all certified."
+    },
+    {
+      "id": "environment-probing",
+      "properties": ["userEnvProbe"],
+      "status": "blocked",
+      "owner": "devcontainer",
+      "blocker": "All probe modes, shell variants, timeout, failure, and precedence behaviour need differential coverage."
+    },
+    {
+      "id": "vendor-metadata-and-secrets",
+      "properties": [
+        "additionalProperties",
+        "customizations",
+        "secrets",
+        "secrets.*",
+        "secrets.*.description",
+        "secrets.*.documentationUrl"
+      ],
+      "status": "blocked",
+      "owner": "devcontainer and VS Code Dev Containers",
+      "blocker": "Vendor metadata and declarative-secret delivery, permissions, optionality, redaction, rebuild, and cleanup are not certified."
+    }
+  ],
+  "lifecycleCoverage": [
+    {
+      "id": "engine-container-lifecycle",
+      "status": "certified",
+      "owner": "devcontainer",
+      "fixtures": [
+        "E02-container-lifecycle",
+        "E03-exec-streams"
+      ],
+      "rules": [
+        "engine.create",
+        "engine.start",
+        "engine.stop",
+        "engine.kill",
+        "engine.wait",
+        "engine.inspect",
+        "engine.logs",
+        "engine.attach",
+        "engine.exec",
+        "engine.remove"
+      ]
+    },
+    {
+      "id": "editor-lifecycle",
+      "status": "certified",
+      "owner": "devcontainer and VS Code Dev Containers",
+      "fixtures": ["V01-vscode-end-to-end"],
+      "rules": [
+        "editor.open",
+        "editor.attach",
+        "editor.rebuild",
+        "editor.reopen",
+        "editor.port-forward",
+        "editor.cleanup"
+      ]
+    },
+    {
+      "id": "failure-cancellation-and-recovery",
+      "status": "blocked",
+      "owner": "devcontainer",
+      "fixtures": ["F01-fault-recovery"],
+      "rules": [
+        "failure.cancel-before-create",
+        "failure.cancel-during-create",
+        "failure.failed-create",
+        "failure.service-crash",
+        "failure.restart-reconciliation",
+        "failure.retry-deduplication"
+      ],
+      "blocker": "Local cancellation and retry controls exist, but full three-lane crash injection and persistent replay or reconciliation evidence is incomplete."
+    }
+  ]
+}

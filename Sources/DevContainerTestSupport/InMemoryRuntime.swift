@@ -21,6 +21,10 @@ import Foundation
 public actor InMemoryRuntime: DevContainerRuntime {
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
+    private let descriptorDelay: Duration?
+    private let pullImageStream: (@Sendable (String) async throws
+        -> AsyncThrowingStream<Data, any Error>)?
+    private var requestCancellationCount = 0
     private var containers: [RuntimeID: ContainerSnapshot] = [:]
     private var dockerToRuntime: [DockerID: RuntimeID] = [:]
     private var execs: [ExecID: ExecSnapshot] = [:]
@@ -36,9 +40,14 @@ public actor InMemoryRuntime: DevContainerRuntime {
         version: String = "test",
         commit: String = "test",
         distribution: String = "test",
-        execSession: (any RuntimeProcessSession)? = nil
+        execSession: (any RuntimeProcessSession)? = nil,
+        descriptorDelay: Duration? = nil,
+        pullImageStream: (@Sendable (String) async throws
+            -> AsyncThrowingStream<Data, any Error>)? = nil
     ) {
         self.execSession = execSession
+        self.descriptorDelay = descriptorDelay
+        self.pullImageStream = pullImageStream
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
             providerVersion: version,
@@ -50,8 +59,20 @@ public actor InMemoryRuntime: DevContainerRuntime {
         )
     }
 
-    public func descriptor(context _: RuntimeRequestContext) -> ProtocolDescriptor {
-        runtimeDescriptor
+    public func descriptor(context _: RuntimeRequestContext) async throws -> ProtocolDescriptor {
+        if let descriptorDelay {
+            do {
+                try await Task.sleep(for: descriptorDelay)
+            } catch {
+                requestCancellationCount += 1
+                throw error
+            }
+        }
+        return runtimeDescriptor
+    }
+
+    public var observedRequestCancellationCount: Int {
+        requestCancellationCount
     }
 
     public func listImages(context _: RuntimeRequestContext) -> [ImageSnapshot] {
@@ -71,7 +92,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func pullImage(
         reference: String,
         context _: RuntimeRequestContext
-    ) -> AsyncThrowingStream<Data, any Error> {
+    ) async throws -> AsyncThrowingStream<Data, any Error> {
+        if let pullImageStream {
+            return try await pullImageStream(reference)
+        }
         let snapshot = ImageSnapshot(
             id: "sha256:\(Self.identifier())",
             references: [reference],
@@ -175,7 +199,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
         guard !containers.values.contains(where: { $0.spec.name == spec.name }) else {
             throw DevContainerError(.conflict, message: "container name \(spec.name) is already in use")
         }
-        guard image(reference: spec.image) != nil else {
+        guard let image = image(reference: spec.image) else {
             throw DevContainerError(.notFound, message: "image \(spec.image) was not found")
         }
         let runtimeID = RuntimeID(rawValue: Self.identifier())
@@ -183,6 +207,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
         let snapshot = ContainerSnapshot(
             runtimeID: runtimeID,
             dockerID: dockerID,
+            imageID: image.id,
             spec: spec,
             state: .created,
             createdAt: Date()
@@ -269,11 +294,14 @@ public actor InMemoryRuntime: DevContainerRuntime {
 
     public func waitContainer(
         id: String,
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) throws -> Int32 {
         let snapshot = try container(id: id)
         guard snapshot.state != .running else {
             throw DevContainerError(.conflict, message: "test container \(id) is still running")
+        }
+        if snapshot.spec.autoRemove {
+            try removeContainer(id: id, force: true, context: context)
         }
         return snapshot.exitCode ?? 0
     }
@@ -338,7 +366,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func startExec(
         id: ExecID,
         context _: RuntimeRequestContext
-    ) throws -> any RuntimeProcessSession {
+    ) async throws -> any RuntimeProcessSession {
         guard var exec = execs[id] else {
             throw DevContainerError(.notFound, message: "exec \(id) was not found")
         }
@@ -348,14 +376,25 @@ public actor InMemoryRuntime: DevContainerRuntime {
         exec.running = false
         exec.exitCode = 0
         execs[id] = exec
+        let session: any RuntimeProcessSession
         if let execSession {
-            return execSession
+            session = execSession
+        } else {
+            let text = exec.spec.command.joined(separator: " ") + "\n"
+            session = InMemoryProcessSession(
+                frames: [RuntimeIOFrame(channel: .standardOutput, data: Data(text.utf8))],
+                exitCode: 0
+            )
         }
-        let text = exec.spec.command.joined(separator: " ") + "\n"
-        return InMemoryProcessSession(
-            frames: [RuntimeIOFrame(channel: .standardOutput, data: Data(text.utf8))],
-            exitCode: 0
-        )
+        if exec.spec.terminal,
+           let width = exec.spec.terminalWidth,
+           let height = exec.spec.terminalHeight,
+           width > 0,
+           height > 0
+        {
+            try await session.resize(width: width, height: height)
+        }
+        return session
     }
 
     public func inspectExec(

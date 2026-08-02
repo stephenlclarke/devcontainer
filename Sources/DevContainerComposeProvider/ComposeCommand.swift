@@ -111,6 +111,7 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
     public var files: [String]
     public var mutating: Bool
     public var removesProject: Bool
+    public var projectArguments: [String]
     public var configurationArguments: [String]
 
     public init(arguments: [String]) throws {
@@ -133,8 +134,8 @@ public struct ComposeCommandEnvelope: Equatable, Sendable {
                             )
                     )
             )
-        configurationArguments =
-            parsed.configurationArguments + ["config", "--format", "json"]
+        projectArguments = parsed.configurationArguments
+        configurationArguments = projectArguments + ["config", "--format", "json"]
     }
 
     public func projectKey(userID: uid_t = getuid()) -> ProjectKey? {

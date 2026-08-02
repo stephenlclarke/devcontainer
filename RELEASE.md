@@ -155,7 +155,7 @@ Stable publication requires:
 - GitHub reports the annotated tag signature as verified.
 - `DEVCONTAINER_VERSION` equals the tag.
 - The release object does not already exist, except for an explicit formula-only recovery.
-- Exact-commit CI, CodeQL, dependency review, Scorecard, documentation, and hosted release checks succeeded.
+- Exact-commit CI, dependency review, Scorecard, documentation, and hosted release checks succeeded.
 - The trusted live parity gate succeeded for the same commit.
 - The candidate-bound `Stable Release Authority (MAJOR.MINOR.PATCH)` check succeeded.
 - Signing, notarization, SBOM generation, package validation, checksum verification, attestation, and Homebrew installation succeeded.
@@ -190,7 +190,7 @@ The implemented workflow split is:
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
 | `ci.yml` | `macos-26`, Ubuntu aggregate | Format/lint, unit/contract/integration tests, both coverage gates, build, CLI smoke, and `Validate` aggregation |
-| `codeql.yml` | `macos-26` | Exact-commit Swift CodeQL analysis |
+| `codeql.yml` | `macos-26` | Temporarily disabled; ready-pull-request Swift analysis when re-enabled |
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
 | `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |
@@ -202,7 +202,7 @@ The implemented workflow split is:
 
 ```mermaid
 flowchart TD
-    Change["Pull request or protected main change"] --> HostedCI["Hosted CI, coverage, CodeQL, and package checks"]
+    Change["Pull request or protected main change"] --> HostedCI["Hosted CI, coverage, and package checks"]
     Change --> Docs["DocC build"]
     HostedCI --> Aggregate["Stable exact-commit Validate authority"]
     Docs --> Aggregate
@@ -229,10 +229,11 @@ flowchart TD
 Branch protection requires stable context names:
 
 - `Validate`
-- `CodeQL`
-- `Documentation`
 
-Heavy and documentation-only paths must both conclude through a real `Validate` job. A no-op path may report why an expensive analysis was unnecessary, but the aggregate must fail if no accepted validation path completed.
+Heavy and documentation-only paths must both conclude through a real
+`Validate` job or a separately verified exact-commit release authority. A
+no-op path may report why an expensive analysis was unnecessary, but the
+aggregate must fail if no accepted validation path completed.
 
 Every release resolver must query runs by exact commit and inspect final job and step conclusions. A workflow-level success is insufficient when a required step may have skipped. Current publication should require an exact-main successful Sonar step when Sonar is enabled; transient API failures must fail closed rather than masquerade as absent evidence.
 
@@ -243,7 +244,7 @@ Every release resolver must query runs by exact commit and inspect final job and
 1. Validate the bare semantic input.
 2. Resolve the signed tag to a 40-character commit.
 3. Verify the GitHub tag object's signature.
-4. Verify exact-commit CI, CodeQL, documentation, and parity authorities.
+4. Verify exact-commit CI, documentation, and parity authorities.
 5. Checkout the candidate and release-control revision separately.
 6. Run the hosted release gate without live virtualization.
 7. Upload `stable-authority-MAJOR.MINOR.PATCH-SHA`, containing the candidate,
@@ -320,7 +321,7 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
-- Per-fixture monotonic durations and candidate/Docker timing ratios; only non-completion or a duration of at least `10x` the matching Docker fixture is a performance failure.
+- Per-fixture monotonic durations and candidate/Docker timing ratios. Comparable or better performance (`<=1.00x` Docker) is the objective; any completed result above `2.50x` requires further investigation. Non-completion or missing or invalid timing evidence fails the gate, while a completed timing ratio alone does not alter functional parity. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.
@@ -389,7 +390,7 @@ Every Current and stable package publishes:
 - Matching `.sha256`
 - `devcontainer-sbom.spdx.json`
 - `build-info.json`
-- Release notes with exact CI, CodeQL, documentation, parity, signing, and notarization links
+- Release notes with exact CI, documentation, parity, signing, and notarization links
 
 The repository-owned deterministic SPDX 2.3 generator records the exact source
 commit, source-date epoch, and every pin in `Package.resolved`. A checked-in

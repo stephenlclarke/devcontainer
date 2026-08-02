@@ -17,7 +17,9 @@ jobs:
   test:
     name: Test and coverage
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,7 +37,9 @@ jobs:
       - name: Test and enforce coverage
         env:
           SWIFT_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          SWIFT_TEST_TIMEOUT_SECONDS: "1200"
+          SWIFT_COVERAGE_SCRATCH_PATH: .build
+          SWIFT_TEST_ATTEMPTS: "1"
+          SWIFT_TEST_TIMEOUT_SECONDS: "300"
         run: make coverage-check
       - name: Build
         run: make build

@@ -5,15 +5,19 @@
 The repository contains the production Docker compatibility service, stock
 Apple runtime adapter, optional `container-compose` provider, differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
-driver. The hosted-safe suite contains 127 Swift tests and records greater than
-90% first-party line coverage. For version 1.0.0, real Docker, stock Apple,
-and separately identified `container-compose` lanes pass all 18 CLI fixtures
-and the pinned real VS Code fixture with zero normalized semantic differences
-and no performance failures. In the exact 1.0.0 tag run, the largest CLI ratios
-are 2.876x for stock Apple and 4.509x for `container-compose`; the corresponding
-VS Code ratios are 1.232x and 1.311x. Three-run statistics and hotspot analysis
-are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds these results to
-the exact physical runner, signing, notarization, and publication evidence.
+driver. The hosted-safe suite is discovered at execution time and must record
+greater than 90% first-party line coverage; documentation does not maintain a
+manual test-count claim that can drift from the executable suite. For version
+1.0.0, real Docker, stock Apple, and separately identified `container-compose`
+lanes pass all 18 CLI fixtures and the pinned real VS Code fixture with zero
+normalized semantic differences and complete timing evidence. In the exact
+1.0.0 tag run, the largest CLI
+ratios are 2.876x for stock Apple and 4.509x for `container-compose`; those
+results require further investigation under the current policy. The
+corresponding VS Code ratios are 1.232x and 1.311x. Three-run statistics and
+hotspot analysis are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds
+these results to the exact physical runner, signing, notarization, and
+publication evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
@@ -34,7 +38,7 @@ The test system proves all of the following:
 - State reconciliation, cancellation, concurrent operations, and cleanup remain correct after partial failures.
 - A pinned stable VS Code and Dev Containers extension can open, rebuild, reuse, and close a representative workspace without patches.
 - Tests execute enough product code to meet a 90% overall line-coverage gate and a 90% changed-code line-coverage gate.
-- Swift memory-safety and concurrency regressions are exercised with AddressSanitizer and ThreadSanitizer through a retrying, full-log harness.
+- Swift memory-safety and concurrency regressions are exercised with AddressSanitizer and ThreadSanitizer through a bounded, full-log harness that directly loads the prebuilt Swift Testing bundle.
 
 ## Test architecture
 
@@ -186,11 +190,19 @@ lane.
 
 Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
 
-Timing is not an exact-equivalence assertion. A completed candidate remains passing when it is slower than Docker by less than one order of magnitude. A timeout or other non-completion, missing or invalid timing evidence, or a candidate duration of at least `10x` the Docker oracle for the same fixture fails the parity gate. The harness does not retry, normalize, or waive those failures. The complete 1.0.0 repeated-run analysis and optimization measurement protocol are in [`PERFORMANCE.md`](PERFORMANCE.md).
+Timing is not an exact-equivalence assertion. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed candidate above `2.50x` Docker is marked for further investigation but does not, by itself, change functional parity. A timeout or other non-completion, or missing or invalid timing evidence, fails the parity gate. The harness does not retry, normalize, or waive those failures. The complete 1.0.0 repeated-run analysis and optimization measurement protocol are in [`PERFORMANCE.md`](PERFORMANCE.md), and the full target is in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
 ## Fixture catalog
 
-The machine-readable manifest is the source of release scope. Fixture identifiers remain stable, and every entry records required lanes, pins, capabilities, observations, cleanup assertions, implementation status, and owner.
+The machine-readable manifest is the source of release scope. Fixture
+identifiers remain stable, and every entry records required lanes, pins,
+capabilities, observations, cleanup assertions, and implementation status.
+`Tests/Parity/spec-coverage.json` separately maps every explicit property in
+the pinned Development Containers base schema and each lifecycle rule to
+certified fixture evidence or an explicit blocker and owner. Validation fails
+if a property is missing, duplicated, or certified without an implemented
+fixture. A scheduled drift workflow reports upstream schema additions without
+moving the checked pin.
 
 ### Engine API fixtures
 
@@ -219,10 +231,11 @@ The machine-readable manifest is the source of release scope. Fixture identifier
   explicit container/volume cleanup.
 
 Release evidence records the resolved runtime and client fingerprints.
-Several 1.0.1 fixtures still name public image or Feature tags, so upstream
-content can drift between rebuilds. Converting every fixture input to an
-immutable digest is a reproducibility follow-up; a tag alone is not treated as
-proof of an immutable test input.
+Every checked fixture image uses an immutable digest. Human-readable Feature
+tags are bound to resolved OCI digests and matching integrity values in a
+checked `devcontainer-lock.json`. `make parity-manifest` fails if a mutable
+image, missing Feature lock, mismatched Feature set, or divergent resolved and
+integrity digest is introduced.
 
 ### Compose fixtures
 
@@ -337,8 +350,11 @@ Unit tests are expected to contribute most branch, translation, and error-path c
 
 The implemented Swift coverage flow is:
 
-1. Build tests and product executables with `swift test --enable-code-coverage`.
-2. Run unit, contract, and hosted integration suites with unique `LLVM_PROFILE_FILE` patterns.
+1. Build tests with `swift build --build-tests --enable-code-coverage` and
+   build the service and CLI executables with coverage instrumentation.
+2. Run the prebuilt unit, contract, and hosted integration suites with
+   `swift test --skip-build --disable-xctest --enable-swift-testing`, the exact
+   service executable path, and unique `LLVM_PROFILE_FILE` patterns.
 3. Require a normal test-process exit and non-empty raw profiles.
 4. Merge all valid profiles with `llvm-profdata merge -sparse`.
 5. Export source coverage with `llvm-cov`, including each instrumented first-party binary.
@@ -350,8 +366,8 @@ unrecognized source path, empty test execution, or source file absent from the
 report. It prints numerator, denominator, exclusions, merge base, and uncovered
 changed lines.
 
-The runner harness uses two coverage attempts and
-`SWIFT_TEST_ACCEPT_SIGNAL_13=0`. Accepting a
+The runner harness defaults to two local attempts and uses
+`SWIFT_TEST_ACCEPT_SIGNAL_13=0` for coverage. Accepting a
 `swiftpm-testing-helper` signal 13 after apparently passing output can leave
 incomplete profiles and report false 0% coverage, so it is never accepted
 during coverage collection.
@@ -377,34 +393,60 @@ The shared harness is implemented as `Tools/ci/run-swift-test.sh`, matching the
   command's entire process group, retain its diagnostic output, and retry.
 
 The timeout is disabled by default. Hosted CI coverage, Sonar coverage, and
-sanitizer jobs set it to 1,200 seconds so a wedged `swiftpm-testing` process
-cannot consume the full hosted-job timeout. An ordinary test failure is never
+sanitizer jobs prebuild the complete test bundle, then use one 3,600-second
+test-execution attempt with `--skip-build`. Each isolated hosted job resolves
+the exact graph once in `.build` and reuses that scratch path for its one test
+mode. This avoids both a second materialization of the large dependency checkout
+and charging a clean hosted compilation against the test timeout;
+the lane-specific `.build/coverage`, `.build/asan`, and `.build/tsan` defaults
+remain available for sequential local runs. Coverage also gives build-tool and
+subprocess instrumentation a private temporary, per-process profile spool so
+sandboxed plugins never fall back to an unwritable relative `default.profraw`.
+The spool is removed after the test command. An ordinary test failure is never
 retried as a timeout and continues to fail the gate immediately.
 
 The AddressSanitizer job uses the same command shape as `container-compose`:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=address --build-tests
+swift build --disable-automatic-resolution --sanitize=address \
+  --product devcontainer-engine
 SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=address --no-parallel
+  DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$PWD/.build/debug/devcontainer-engine" \
+  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution \
+    --sanitize=address --skip-build --no-parallel --disable-xctest \
+    --enable-swift-testing
 ```
 
 The ThreadSanitizer job uses:
 
 ```console
+swift build --disable-automatic-resolution --sanitize=thread --build-tests
+swift build --disable-automatic-resolution --sanitize=thread \
+  --product devcontainer-engine
 SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
   SWIFT_TEST_ATTEMPTS=2 \
-  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution --sanitize=thread --no-parallel
+  DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$PWD/.build/debug/devcontainer-engine" \
+  Tools/ci/run-swift-test.sh swift test --disable-automatic-resolution \
+    --sanitize=thread --skip-build --no-parallel --disable-xctest \
+    --enable-swift-testing
 ```
 
 This project reuses the Compose stack's retry and full-log implementation but
 sets `SWIFT_TEST_ACCEPT_SIGNAL_13=0` for ASan, TSan, and coverage. A toolchain
 signal therefore cannot convert an incomplete execution into release evidence.
 
+All Swift test targets disable the unused XCTest runner and enable Swift Testing
+explicitly. The harness retains complete per-test progress in its log while
+printing only a bounded tail after success; failures upload the complete log.
+This avoids the hosted XCTest/Swift Testing bridge hang while preserving enough
+evidence to identify the last completed test if execution stalls.
+
 ASan and TSan run on relevant pull requests, `main`, schedules, explicit
-dispatches, and the exact stable candidate. Both run with `--no-parallel`,
-separate SwiftPM build/cache directories, full uploaded logs, and no filtering
-that omits production modules.
+dispatches, and the exact stable candidate. Both run with `--no-parallel`, on
+separate hosted runners (or separate local scratch directories), with full
+uploaded logs and no filtering that omits production modules.
 
 Any AddressSanitizer finding, ThreadSanitizer warning, unexpected test failure, missing test execution, or accepted signal-13 fallback fails the stable gate.
 

@@ -81,28 +81,4 @@ struct PortForwardingTests {
             ) == "2001:db8::7"
         )
     }
-
-    @Test
-    func `fixed ports use native Apple publish syntax`() {
-        #expect(
-            AppleContainerRuntime.nativePublishArguments(
-                PortBinding(
-                    containerPort: 8443,
-                    hostPort: 443,
-                    protocolName: "TCP",
-                    hostAddress: "::1"
-                )
-            ) == ["--publish", "[::1]:443:8443/tcp"]
-        )
-        #expect(
-            AppleContainerRuntime.nativePublishArguments(
-                PortBinding(
-                    containerPort: 53,
-                    hostPort: 0,
-                    protocolName: "udp",
-                    hostAddress: "127.0.0.1"
-                )
-            ) == nil
-        )
-    }
 }

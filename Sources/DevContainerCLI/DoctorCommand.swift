@@ -18,6 +18,7 @@ import ArgumentParser
 import Darwin
 import DevContainerCore
 import DevContainerModel
+import DevContainerProcess
 import Foundation
 
 struct DoctorCommand: AsyncParsableCommand {
@@ -179,40 +180,16 @@ struct DoctorCommand: AsyncParsableCommand {
         executable: URL,
         arguments: [String]
     ) async throws -> DoctorProcessResult {
-        let process = Process()
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = CLIPaths.safeEnvironment
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        let (termination, terminationContinuation) = AsyncStream<Int32>.makeStream()
-        process.terminationHandler = { process in
-            terminationContinuation.yield(process.terminationStatus)
-            terminationContinuation.finish()
-        }
-        try process.run()
-        let outputTask = Task.detached {
-            standardOutput.fileHandleForReading.readDataToEndOfFile()
-        }
-        let errorTask = Task.detached {
-            standardError.fileHandleForReading.readDataToEndOfFile()
-        }
-        let exitCode = await withTaskCancellationHandler {
-            for await status in termination {
-                return status
-            }
-            return 255
-        } onCancel: {
-            if process.isRunning {
-                process.terminate()
-            }
-        }
-        return await DoctorProcessResult(
-            standardOutput: outputTask.value,
-            standardError: errorTask.value,
-            status: exitCode
+        let result = try await ProcessRunner.captured(
+            executable: executable,
+            arguments: arguments,
+            environment: CLIPaths.safeEnvironment,
+            maximumOutputBytes: 1024 * 1024
+        )
+        return DoctorProcessResult(
+            standardOutput: result.standardOutput,
+            standardError: result.standardError,
+            status: result.exitCode
         )
     }
 }

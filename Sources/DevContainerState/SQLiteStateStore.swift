@@ -20,8 +20,12 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+// Schema and statement helpers remain colocated while the v3 migration is the
+// only supported upgrade path.
+// swiftlint:disable file_length
+
 public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
-    public static let schemaVersion = 2
+    public static let schemaVersion = 3
 
     private let handle: SQLiteHandle
     private var database: OpaquePointer {
@@ -233,6 +237,13 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         }
     }
 
+    public func removeResources(project: ProjectKey) throws {
+        try withStatement("DELETE FROM resources WHERE project_key = ?") { statement in
+            try bind(project.rawValue, at: 1, to: statement)
+            try stepDone(statement)
+        }
+    }
+
     public func resources(project: ProjectKey) throws -> [ResourceRecord] {
         let sql = """
         SELECT runtime_kind, runtime_id, docker_id, project_key, logical_name,
@@ -401,6 +412,84 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         }
     }
 
+    // swiftlint:disable:next function_body_length
+    public func pruneRetainedState(
+        policy: StateRetentionPolicy = StateRetentionPolicy(),
+        now: Date = Date()
+    ) throws -> StateRetentionResult {
+        let beforeEvents = try Self.scalarInt64(
+            database,
+            "SELECT COUNT(*) FROM events"
+        )
+        let beforeOperations = try Self.scalarInt64(
+            database,
+            "SELECT COUNT(*) FROM operations"
+        )
+        let cutoff = now.addingTimeInterval(-policy.maximumAge)
+            .timeIntervalSinceReferenceDate
+        try transaction {
+            try withStatement(
+                """
+                DELETE FROM operations
+                WHERE phase IN ('committed', 'failed') AND updated_at < ?
+                """
+            ) { statement in
+                try bind(cutoff, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            try withStatement(
+                """
+                DELETE FROM operations
+                WHERE operation_id IN (
+                    SELECT operation_id FROM operations
+                    WHERE phase IN ('committed', 'failed')
+                    ORDER BY updated_at DESC, operation_id DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """
+            ) { statement in
+                try bind(
+                    Int64(policy.maximumCompletedOperationCount),
+                    at: 1,
+                    to: statement
+                )
+                try stepDone(statement)
+            }
+            try withStatement("DELETE FROM events WHERE time < ?") { statement in
+                try bind(cutoff, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            try withStatement(
+                """
+                DELETE FROM events
+                WHERE seq IN (
+                    SELECT seq FROM events
+                    ORDER BY seq DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """
+            ) { statement in
+                try bind(Int64(policy.maximumEventCount), at: 1, to: statement)
+                try stepDone(statement)
+            }
+        }
+        let retainedEvents = try Self.scalarInt64(
+            database,
+            "SELECT COUNT(*) FROM events"
+        )
+        let retainedOperations = try Self.scalarInt64(
+            database,
+            "SELECT COUNT(*) FROM operations"
+        )
+        try Self.execute(database, sql: "PRAGMA wal_checkpoint(PASSIVE)")
+        return StateRetentionResult(
+            deletedEvents: Int(beforeEvents - retainedEvents),
+            deletedOperations: Int(beforeOperations - retainedOperations),
+            retainedEvents: Int(retainedEvents),
+            retainedOperations: Int(retainedOperations)
+        )
+    }
+
     private func decodeEvent(_ statement: OpaquePointer) throws -> RuntimeEvent {
         guard
             let action = RuntimeEventAction(rawValue: text(statement, 4)),
@@ -433,10 +522,11 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         let specification = try JSONEncoder().encode(metadata.spec)
         let sql = """
         INSERT INTO runtime_containers (
-            runtime_id, docker_id, specification_json, created_at, started_at
-        ) VALUES (?, ?, ?, ?, ?)
+            runtime_id, docker_id, image_id, specification_json, created_at, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(runtime_id) DO UPDATE SET
             docker_id = excluded.docker_id,
+            image_id = excluded.image_id,
             specification_json = excluded.specification_json,
             created_at = excluded.created_at,
             started_at = excluded.started_at
@@ -444,11 +534,12 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         try withStatement(sql) { statement in
             try bind(metadata.runtimeID.rawValue, at: 1, to: statement)
             try bind(metadata.dockerID.rawValue, at: 2, to: statement)
-            try bind(specification, at: 3, to: statement)
-            try bind(metadata.createdAt.timeIntervalSinceReferenceDate, at: 4, to: statement)
+            try bind(metadata.imageID, at: 3, to: statement)
+            try bind(specification, at: 4, to: statement)
+            try bind(metadata.createdAt.timeIntervalSinceReferenceDate, at: 5, to: statement)
             try bind(
                 metadata.startedAt?.timeIntervalSinceReferenceDate,
-                at: 5,
+                at: 6,
                 to: statement
             )
             try stepDone(statement)
@@ -457,7 +548,7 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
 
     public func containerMetadata(id: String) throws -> RuntimeContainerMetadata? {
         let sql = """
-        SELECT runtime_id, docker_id, specification_json, created_at, started_at
+        SELECT runtime_id, docker_id, image_id, specification_json, created_at, started_at
         FROM runtime_containers
         WHERE runtime_id = ? OR docker_id = ?
         """
@@ -467,7 +558,7 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
             guard sqlite3_step(statement) == SQLITE_ROW else {
                 return nil
             }
-            guard let specification = blob(statement, 2) else {
+            guard let specification = blob(statement, 3) else {
                 throw DevContainerError(
                     .stateCorruption,
                     message: "runtime container specification is missing"
@@ -476,14 +567,15 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
             return try RuntimeContainerMetadata(
                 runtimeID: RuntimeID(rawValue: text(statement, 0)),
                 dockerID: DockerID(rawValue: text(statement, 1)),
+                imageID: optionalText(statement, 2),
                 spec: JSONDecoder().decode(ContainerSpec.self, from: specification),
                 createdAt: Date(
-                    timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 3)
+                    timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 4)
                 ),
-                startedAt: sqlite3_column_type(statement, 4) == SQLITE_NULL
+                startedAt: sqlite3_column_type(statement, 5) == SQLITE_NULL
                     ? nil
                     : Date(
-                        timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 4)
+                        timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 5)
                     )
             )
         }
@@ -491,14 +583,14 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
 
     public func listContainerMetadata() throws -> [RuntimeContainerMetadata] {
         let sql = """
-        SELECT runtime_id, docker_id, specification_json, created_at, started_at
+        SELECT runtime_id, docker_id, image_id, specification_json, created_at, started_at
         FROM runtime_containers
         ORDER BY runtime_id
         """
         return try withStatement(sql) { statement in
             var values: [RuntimeContainerMetadata] = []
             while sqlite3_step(statement) == SQLITE_ROW {
-                guard let specification = blob(statement, 2) else {
+                guard let specification = blob(statement, 3) else {
                     throw DevContainerError(
                         .stateCorruption,
                         message: "runtime container specification is missing"
@@ -508,6 +600,7 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
                     RuntimeContainerMetadata(
                         runtimeID: RuntimeID(rawValue: text(statement, 0)),
                         dockerID: DockerID(rawValue: text(statement, 1)),
+                        imageID: optionalText(statement, 2),
                         spec: JSONDecoder().decode(
                             ContainerSpec.self,
                             from: specification
@@ -515,15 +608,15 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
                         createdAt: Date(
                             timeIntervalSinceReferenceDate: sqlite3_column_double(
                                 statement,
-                                3
+                                4
                             )
                         ),
-                        startedAt: sqlite3_column_type(statement, 4) == SQLITE_NULL
+                        startedAt: sqlite3_column_type(statement, 5) == SQLITE_NULL
                             ? nil
                             : Date(
                                 timeIntervalSinceReferenceDate: sqlite3_column_double(
                                     statement,
-                                    4
+                                    5
                                 )
                             )
                     )
@@ -589,6 +682,7 @@ extension SQLiteStateStore {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     private static func migrate(_ database: OpaquePointer) throws {
         try execute(database, sql: "BEGIN IMMEDIATE")
         do {
@@ -601,7 +695,7 @@ extension SQLiteStateStore {
                     sql: "INSERT INTO schema_meta(version, bridge_version) VALUES (\(schemaVersion), '\(info.version)')"
                 )
             } else {
-                let version = try scalarInt64(
+                var version = try scalarInt64(
                     database,
                     "SELECT version FROM schema_meta LIMIT 1"
                 )
@@ -611,11 +705,35 @@ extension SQLiteStateStore {
                         message: "state schema \(version) is newer than supported schema \(schemaVersion)"
                     )
                 }
+                guard version >= 2 else {
+                    throw DevContainerError(
+                        .stateCorruption,
+                        message: "state schema \(version) has no supported migration path"
+                    )
+                }
+                if version == 2 {
+                    if try !tableColumns(database, table: "runtime_containers")
+                        .contains("image_id")
+                    {
+                        try execute(
+                            database,
+                            sql: "ALTER TABLE runtime_containers ADD COLUMN image_id TEXT"
+                        )
+                    }
+                    version = 3
+                }
+                guard version == Int64(schemaVersion) else {
+                    throw DevContainerError(
+                        .stateCorruption,
+                        message: "state schema migration stopped at unexpected version \(version)"
+                    )
+                }
                 try execute(
                     database,
-                    sql: "UPDATE schema_meta SET version = \(schemaVersion)"
+                    sql: "UPDATE schema_meta SET version = \(schemaVersion), bridge_version = '\(BuildInfo.current.version)'"
                 )
             }
+            try validateSchema(database)
             try execute(database, sql: "COMMIT")
         } catch {
             try? execute(database, sql: "ROLLBACK")
@@ -680,6 +798,7 @@ extension SQLiteStateStore {
     CREATE TABLE IF NOT EXISTS runtime_containers (
         runtime_id TEXT PRIMARY KEY,
         docker_id TEXT NOT NULL UNIQUE,
+        image_id TEXT,
         specification_json BLOB NOT NULL,
         created_at REAL NOT NULL,
         started_at REAL
@@ -689,6 +808,117 @@ extension SQLiteStateStore {
     CREATE INDEX IF NOT EXISTS operations_phase_idx
         ON operations(phase, created_at);
     """
+
+    // swiftlint:disable:next function_body_length
+    private static func validateSchema(_ database: OpaquePointer) throws {
+        let expectedColumns: [String: Set<String>] = [
+            "schema_meta": ["version", "bridge_version"],
+            "projects": [
+                "project_key", "provider", "compose_project", "project_directory",
+                "config_hash", "desired_generation", "desired_state",
+                "reconciliation_state", "created_at", "updated_at"
+            ],
+            "resources": [
+                "runtime_kind", "runtime_id", "docker_id", "project_key",
+                "logical_name", "role", "provider", "spec_hash", "generation",
+                "observed_state", "labels_hash", "created_at", "updated_at"
+            ],
+            "operations": [
+                "operation_id", "project_key", "resource_key", "request_kind",
+                "request_hash", "phase", "retry_class", "error_code", "created_at",
+                "updated_at"
+            ],
+            "events": [
+                "seq", "time", "resource", "resource_type", "action",
+                "attributes_json"
+            ],
+            "runtime_containers": [
+                "runtime_id", "docker_id", "image_id", "specification_json",
+                "created_at", "started_at"
+            ]
+        ]
+        for (table, expected) in expectedColumns {
+            let actual = try tableColumns(database, table: table)
+            guard actual == expected else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message: "state table \(table) has unexpected columns"
+                )
+            }
+        }
+        guard try scalarText(database, "PRAGMA integrity_check") == "ok" else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "state database integrity check failed"
+            )
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "PRAGMA foreign_key_check",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK, let statement
+        else {
+            throw sqliteError(database, prefix: "cannot run foreign-key check")
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "state database foreign-key check failed"
+            )
+        }
+    }
+
+    private static func tableColumns(
+        _ database: OpaquePointer,
+        table: String
+    ) throws -> Set<String> {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "PRAGMA table_info(\(table))",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK, let statement
+        else {
+            throw sqliteError(database, prefix: "cannot inspect state table \(table)")
+        }
+        defer { sqlite3_finalize(statement) }
+        var columns = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let value = sqlite3_column_text(statement, 1) else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message: "state table \(table) has an invalid column"
+                )
+            }
+            columns.insert(String(cString: value))
+        }
+        return columns
+    }
+
+    private static func scalarText(
+        _ database: OpaquePointer,
+        _ sql: String
+    ) throws -> String {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement
+        else {
+            throw sqliteError(database, prefix: "cannot prepare scalar query")
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let value = sqlite3_column_text(statement, 0)
+        else {
+            throw sqliteError(database, prefix: "scalar query returned no text")
+        }
+        return String(cString: value)
+    }
 
     private func transaction<T>(_ body: () throws -> T) throws -> T {
         try Self.execute(database, sql: "BEGIN IMMEDIATE")

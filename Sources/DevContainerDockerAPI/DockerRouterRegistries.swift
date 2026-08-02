@@ -18,6 +18,46 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+actor DockerMutationReplayRegistry {
+    private struct Entry {
+        let requestHash: String
+        let task: Task<DockerHTTPResponse, Never>
+    }
+
+    private let maximumEntries: Int
+    private var entries: [String: Entry] = [:]
+    private var insertionOrder: [String] = []
+
+    init(maximumEntries: Int = 1024) {
+        precondition(maximumEntries > 0)
+        self.maximumEntries = maximumEntries
+    }
+
+    func task(
+        key: String,
+        requestHash: String,
+        operation: @escaping @Sendable () async -> DockerHTTPResponse
+    ) throws -> Task<DockerHTTPResponse, Never> {
+        if let existing = entries[key] {
+            guard existing.requestHash == requestHash else {
+                throw DevContainerError(
+                    .conflict,
+                    message: "idempotency key was already used for a different Docker request"
+                )
+            }
+            return existing.task
+        }
+        let task = Task(operation: operation)
+        entries[key] = Entry(requestHash: requestHash, task: task)
+        insertionOrder.append(key)
+        while insertionOrder.count > maximumEntries {
+            let expired = insertionOrder.removeFirst()
+            entries.removeValue(forKey: expired)
+        }
+        return task
+    }
+}
+
 enum ContainerHealthDecision: Sendable {
     case check
     case cached(DockerContainerHealth)

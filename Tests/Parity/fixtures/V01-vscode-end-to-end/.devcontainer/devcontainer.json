@@ -19,6 +19,6 @@
       "onAutoForward": "silent"
     }
   },
-  "postCreateCommand": "/bin/sh .devcontainer/lifecycle.sh create",
-  "postAttachCommand": "/bin/sh .devcontainer/lifecycle.sh attach"
+  "postCreateCommand": "/bin/sh /workspaces/vscode-parity/.devcontainer/lifecycle.sh create",
+  "postAttachCommand": "/bin/sh /workspaces/vscode-parity/.devcontainer/lifecycle.sh attach"
 }

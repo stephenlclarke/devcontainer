@@ -19,6 +19,7 @@ import CryptoKit
 import Darwin
 import DevContainerCore
 import DevContainerModel
+import DevContainerProcess
 import DevContainerState
 import Foundation
 
@@ -683,40 +684,16 @@ struct DiagnosticsBundleBuilder {
         executable: URL,
         arguments: [String]
     ) async throws -> DiagnosticsProcessResult {
-        let process = Process()
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = CLIPaths.safeEnvironment
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        let (termination, continuation) = AsyncStream<Int32>.makeStream()
-        process.terminationHandler = { process in
-            continuation.yield(process.terminationStatus)
-            continuation.finish()
-        }
-        try process.run()
-        let outputTask = Task.detached {
-            standardOutput.fileHandleForReading.readDataToEndOfFile()
-        }
-        let errorTask = Task.detached {
-            standardError.fileHandleForReading.readDataToEndOfFile()
-        }
-        let status = await withTaskCancellationHandler {
-            for await value in termination {
-                return value
-            }
-            return 255
-        } onCancel: {
-            if process.isRunning {
-                process.terminate()
-            }
-        }
-        return await DiagnosticsProcessResult(
-            standardOutput: outputTask.value,
-            standardError: errorTask.value,
-            status: status
+        let result = try await ProcessRunner.captured(
+            executable: executable,
+            arguments: arguments,
+            environment: CLIPaths.safeEnvironment,
+            maximumOutputBytes: 1024 * 1024
+        )
+        return DiagnosticsProcessResult(
+            standardOutput: result.standardOutput,
+            standardError: result.standardError,
+            status: result.exitCode
         )
     }
 
@@ -769,39 +746,7 @@ private struct DiagnosticsProbeRequest {
     }
 }
 
-enum DiagnosticsRedactor {
-    private static let authorizationPattern = try? NSRegularExpression(
-        pattern: #"(?i)(["']?authorization["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\r\n]+)"#
-    )
-    private static let sensitivePattern = try? NSRegularExpression(
-        pattern:
-        #"(?i)(["']?(?:authorization|token|password|secret|cookie|"#
-            + #"credential)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)"#
-    )
-
-    static func redact(_ text: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let pathRedacted = home == "/"
-            ? text
-            : text.replacingOccurrences(of: home, with: "$HOME")
-        let authorizationRedacted = authorizationPattern?.stringByReplacingMatches(
-            in: pathRedacted,
-            range: NSRange(pathRedacted.startIndex..., in: pathRedacted),
-            withTemplate: #"$1"<redacted>""#
-        ) ?? pathRedacted
-        guard let sensitivePattern else {
-            return authorizationRedacted
-        }
-        return sensitivePattern.stringByReplacingMatches(
-            in: authorizationRedacted,
-            range: NSRange(
-                authorizationRedacted.startIndex...,
-                in: authorizationRedacted
-            ),
-            withTemplate: #"$1"<redacted>""#
-        )
-    }
-
+extension DiagnosticsRedactor {
     static func redact(_ project: ProjectRecord) -> ProjectRecord {
         var value = project
         value.projectDirectory = value.projectDirectory.map(redact)
@@ -880,33 +825,29 @@ enum SystemTarArchiver {
     }
 
     private static func createArchive(directory: URL, output: URL) throws {
-        let process = Process()
-        let standardError = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = [
-            "--no-xattrs",
-            "-czf",
-            output.path,
-            "-C",
-            directory.path,
-            "."
-        ]
         var environment = CLIPaths.safeEnvironment
         environment["COPYFILE_DISABLE"] = "1"
-        process.environment = environment
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = standardError
-        try process.run()
-        process.waitUntilExit()
-        let error = standardError.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else {
+        let result = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: [
+                "--no-xattrs",
+                "-czf",
+                output.path,
+                "-C",
+                directory.path,
+                "."
+            ],
+            environment: environment,
+            maximumOutputBytes: 4096
+        )
+        guard result.exitCode == 0 else {
             let errorText = String(
-                data: Data(error.prefix(4096)),
+                data: result.standardError,
                 encoding: .utf8
             ) ?? "<non-UTF-8 data omitted>"
             throw DevContainerError(
                 .build,
-                message: "tar exited \(process.terminationStatus): "
+                message: "tar exited \(result.exitCode): "
                     + DiagnosticsRedactor.redact(errorText)
             )
         }

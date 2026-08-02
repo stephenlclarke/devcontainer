@@ -120,6 +120,44 @@ public enum OperationPhase: String, Codable, Sendable {
     case failed
 }
 
+public struct StateRetentionPolicy: Equatable, Sendable {
+    public var maximumEventCount: Int
+    public var maximumCompletedOperationCount: Int
+    public var maximumAge: TimeInterval
+
+    public init(
+        maximumEventCount: Int = 100_000,
+        maximumCompletedOperationCount: Int = 10000,
+        maximumAge: TimeInterval = 30 * 24 * 60 * 60
+    ) {
+        precondition(maximumEventCount >= 0)
+        precondition(maximumCompletedOperationCount >= 0)
+        precondition(maximumAge >= 0)
+        self.maximumEventCount = maximumEventCount
+        self.maximumCompletedOperationCount = maximumCompletedOperationCount
+        self.maximumAge = maximumAge
+    }
+}
+
+public struct StateRetentionResult: Equatable, Sendable {
+    public var deletedEvents: Int
+    public var deletedOperations: Int
+    public var retainedEvents: Int
+    public var retainedOperations: Int
+
+    public init(
+        deletedEvents: Int,
+        deletedOperations: Int,
+        retainedEvents: Int,
+        retainedOperations: Int
+    ) {
+        self.deletedEvents = deletedEvents
+        self.deletedOperations = deletedOperations
+        self.retainedEvents = retainedEvents
+        self.retainedOperations = retainedOperations
+    }
+}
+
 public struct OperationRecord: Codable, Equatable, Sendable {
     public var id: OperationID
     public var project: ProjectKey
@@ -176,6 +214,7 @@ public protocol ProjectStateStore: Sendable {
     func releaseProject(key: ProjectKey) async throws
     func recordResource(_ resource: ResourceRecord) async throws
     func removeResource(runtimeID: RuntimeID) async throws
+    func removeResources(project: ProjectKey) async throws
     func resources(project: ProjectKey) async throws -> [ResourceRecord]
     func beginOperation(_ operation: OperationRecord) async throws
     func updateOperation(id: OperationID, phase: OperationPhase, errorCode: String?) async throws

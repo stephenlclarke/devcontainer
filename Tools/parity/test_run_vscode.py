@@ -227,6 +227,7 @@ class VSCodeParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             environment = vscode_environment(
                 {
+                    "CONTAINER_COMPOSE_CONTAINER": "/stable/bin/container",
                     "DEVCONTAINER_CONFIG": "/private/tmp/config.toml",
                     "DEVCONTAINER_SOCKET": "/private/tmp/devcontainer.sock",
                     "DEVCONTAINER_STATE": "/private/tmp/state.sqlite",
@@ -241,6 +242,10 @@ class VSCodeParityTests(unittest.TestCase):
             self.assertEqual(
                 environment["DOCKER_HOST"],
                 "unix:///private/tmp/docker.sock",
+            )
+            self.assertEqual(
+                environment["CONTAINER_COMPOSE_CONTAINER"],
+                "/stable/bin/container",
             )
             self.assertEqual(
                 environment["DEVCONTAINER_CONFIG"],

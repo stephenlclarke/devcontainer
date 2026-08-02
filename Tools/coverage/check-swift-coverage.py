@@ -72,25 +72,46 @@ def coverage(path: Path) -> tuple[int, int, list[tuple[str, float]]]:
 
 
 def sonar_lines(item: dict[str, object]) -> dict[int, int]:
-    """Return executable source lines and their greatest execution count."""
+    """Return executable source lines and their greatest execution count.
+
+    LLVM segments describe coverage state from one source location until the
+    next. A later executable segment on a new line may therefore begin after
+    code already ran on that line. Preserve the segment-entry line set used by
+    Sonar, but include the active count entering each such line.
+    """
 
     lines: dict[int, int] = {}
     raw_segments = item.get("segments", [])
     if not isinstance(raw_segments, list):
         return lines
+    segments: list[tuple[int, int, int, bool, bool]] = []
     for raw in raw_segments:
         if not isinstance(raw, list) or len(raw) < 6:
             continue
-        line, _, execution_count, has_count, _, is_gap = raw[:6]
+        line, column, execution_count, has_count, _, is_gap = raw[:6]
         if (
             not isinstance(line, int)
             or line <= 0
+            or not isinstance(column, int)
+            or column <= 0
             or not isinstance(execution_count, int)
-            or has_count is not True
-            or is_gap is True
+            or not isinstance(has_count, bool)
+            or not isinstance(is_gap, bool)
         ):
             continue
-        lines[line] = max(lines.get(line, 0), execution_count)
+        segments.append((line, column, execution_count, has_count, is_gap))
+        if has_count and not is_gap:
+            lines[line] = max(lines.get(line, 0), execution_count)
+
+    segments.sort(key=lambda value: (value[0], value[1]))
+    active: tuple[int, int, int, bool, bool] | None = None
+    index = 0
+    for line in sorted(lines):
+        while index < len(segments) and segments[index][:2] < (line, 1):
+            active = segments[index]
+            index += 1
+        if active is not None and active[3] and not active[4]:
+            lines[line] = max(lines[line], active[2])
     return lines
 
 

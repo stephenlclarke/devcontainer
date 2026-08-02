@@ -30,9 +30,10 @@ jobs:
             compose-bin: ""
           - lane: container-compose
             runner: devcontainer-container-compose
-            container-bin: /opt/homebrew/bin/container
-            compose-bin: /opt/homebrew/bin/container-compose
-    runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner }}"]
+            container-bin: /opt/homebrew/opt/container/bin/container
+            compose-bin: /opt/homebrew/opt/container-compose/bin/container-compose
+    runs-on:
+      [self-hosted, macOS, ARM64, devcontainer-ultuk2m30000, "${{ matrix.runner }}"]
     timeout-minutes: 240
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
@@ -40,9 +41,17 @@ jobs:
       DEVCONTAINER_COMPOSE_BIN: ${{ matrix.compose-bin }}
     steps:
       - name: Check out exact trusted commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+        env:
+          TRUSTED_REPOSITORY: "https://github.com/${{ github.repository }}.git"
+          TRUSTED_SHA: "${{ github.sha }}"
+        run: |
+          git init "${GITHUB_WORKSPACE}"
+          git -C "${GITHUB_WORKSPACE}" remote remove origin 2>/dev/null || true
+          git -C "${GITHUB_WORKSPACE}" remote add origin "${TRUSTED_REPOSITORY}"
+          git -C "${GITHUB_WORKSPACE}" fetch --no-tags --depth=1 origin "${TRUSTED_SHA}"
+          git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
+          git -C "${GITHUB_WORKSPACE}" clean -ffdx
+          test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
       - name: Build compatibility bridge
         if: matrix.lane != 'docker'
         run: swift build --disable-automatic-resolution
@@ -66,14 +75,12 @@ jobs:
         run: Tools/parity/runner-runtime.sh stop "${{ matrix.lane }}"
       - name: Upload lane evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: ./Tools/ci/upload-artifact-action
         with:
-          name: parity-${{ matrix.lane }}
+          name: "parity-${{ matrix.lane }}"
           path: |
             .build/parity/${{ matrix.lane }}
             .build/parity/vscode/${{ matrix.lane }}
-          include-hidden-files: true
-          if-no-files-found: error
 
   compare:
     if: ${{ always() }}

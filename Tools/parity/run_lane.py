@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import socket
@@ -37,6 +39,25 @@ from parity_lib import (
 )
 
 
+def resolver_nameservers(configuration: str) -> list[str]:
+    """Return unique, valid nameservers from a resolver configuration."""
+
+    nameservers: list[str] = []
+    for line in configuration.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0] != "nameserver":
+            continue
+        candidate = fields[1]
+        address = candidate.split("%", maxsplit=1)[0]
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if candidate not in nameservers:
+            nameservers.append(candidate)
+    return nameservers
+
+
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
@@ -53,6 +74,7 @@ class LaneRunner:
         self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
             "docker"
         )
+        self.devcontainer_docker = self.docker
         self.node_package_runner = shutil.which("npx")
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
@@ -61,6 +83,28 @@ class LaneRunner:
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
+        self.configure_runtime_path()
+
+    def configure_runtime_path(self) -> None:
+        """Prefer explicitly selected provider binaries throughout the lane."""
+
+        if self.lane != "container-compose":
+            return
+        container = os.environ.get("DEVCONTAINER_CONTAINER_BIN")
+        if container:
+            self.environment["CONTAINER_COMPOSE_CONTAINER"] = container
+        directories = [
+            str(Path(value).parent)
+            for value in (
+                container,
+                os.environ.get("DEVCONTAINER_COMPOSE_BIN"),
+            )
+            if value
+        ]
+        directories.extend(self.environment.get("PATH", "").split(os.pathsep))
+        self.environment["PATH"] = os.pathsep.join(
+            dict.fromkeys(value for value in directories if value)
+        )
 
     def run(self) -> int:
         if self.lane not in LANES:
@@ -107,7 +151,9 @@ class LaneRunner:
 
         results: list[dict[str, Any]] = []
         try:
-            self.prepare_builder()
+            self.configure_devcontainer_client()
+            if self.lane != "apple-stock":
+                self.prepare_builder()
             atomic_json(self.output / "fingerprint.json", self.fingerprint())
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
@@ -170,6 +216,8 @@ class LaneRunner:
                 str(state_path),
                 "--container",
                 container,
+                "--provider",
+                "container-compose" if self.lane == "container-compose" else "stock",
             ],
             cwd=self.repository,
             env=self.environment,
@@ -220,19 +268,121 @@ class LaneRunner:
             shutil.rmtree(self.socket_root, ignore_errors=True)
             self.socket_root = None
 
+    def configure_devcontainer_client(self) -> None:
+        """Avoid privileged BuildKit hosting on the unmodified stock runtime."""
+
+        self.devcontainer_docker = self.docker
+        if self.lane != "apple-stock":
+            return
+        if self.socket_root is None or not self.docker:
+            raise ParityError("stock Docker client wrapper requires a live engine")
+        self.environment["DOCKER_BUILDKIT"] = "0"
+        wrapper = self.socket_root / "docker-no-buildx"
+        if self.docker == str(wrapper):
+            return
+        docker = self.docker
+        build_filter = (
+            "import os\n"
+            "import sys\n"
+            "docker = sys.argv[1]\n"
+            "arguments = sys.argv[2:]\n"
+            "filtered = []\n"
+            "index = 0\n"
+            "while index < len(arguments):\n"
+            "    argument = arguments[index]\n"
+            '    if argument == "--load":\n'
+            "        index += 1\n"
+            "        continue\n"
+            '    if argument == "--progress":\n'
+            "        index += 2\n"
+            "        continue\n"
+            '    if argument.startswith("--progress="):\n'
+            "        index += 1\n"
+            "        continue\n"
+            "    filtered.append(argument)\n"
+            "    index += 1\n"
+            'os.environ["DOCKER_BUILDKIT"] = "0"\n'
+            "os.execv(docker, [docker, *filtered])\n"
+        )
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            f"docker={shlex.quote(docker)}\n"
+            'if [ "${1-}" = "buildx" ]; then\n'
+            '    printf "%s\\n" "docker: unknown command: docker buildx" >&2\n'
+            "    exit 1\n"
+            "fi\n"
+            'if [ "${1-}" = "build" ]; then\n'
+            "    exec /usr/bin/env python3 -c "
+            f"{shlex.quote(build_filter)} \"$docker\" \"$@\"\n"
+            "fi\n"
+            'exec "$docker" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o700)
+        self.devcontainer_docker = str(wrapper)
+        self.docker = str(wrapper)
+        self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
+
     def prepare_builder(self) -> None:
+        if self.lane == "docker":
+            self.environment["BUILDX_BUILDER"] = "default"
+            bootstrap = subprocess.run(
+                [self.docker, "buildx", "inspect", "--bootstrap", "default"],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=300,
+            )
+            (self.output / "buildx-bootstrap.log").write_text(
+                bootstrap.stdout + bootstrap.stderr,
+                encoding="utf-8",
+            )
+            if bootstrap.returncode != 0:
+                raise ParityError(
+                    "Docker daemon-integrated BuildKit did not become ready: "
+                    f"{bootstrap.stderr.strip()}"
+                )
+            return
+
         before = self.docker_container_inventory()
         self.builder_name = f"devcontainer-parity-{self.lane}-{os.getpid()}"
+        arguments = [
+            self.docker,
+            "buildx",
+            "create",
+            "--name",
+            self.builder_name,
+            "--driver",
+            "docker-container",
+            "--driver-opt",
+            "restart-policy=no",
+        ]
+        if self.lane == "container-compose":
+            try:
+                resolver_configuration = Path("/etc/resolv.conf").read_text(
+                    encoding="utf-8"
+                )
+            except OSError as error:
+                raise ParityError(
+                    "cannot read host resolver configuration for the provider builder"
+                ) from error
+            nameservers = resolver_nameservers(resolver_configuration)
+            if not nameservers:
+                raise ParityError(
+                    "host resolver configuration has no usable nameservers"
+                )
+            buildkitd_config = self.output / "buildkitd.toml"
+            encoded = ", ".join(json.dumps(value) for value in nameservers)
+            buildkitd_config.write_text(
+                f"[dns]\n  nameservers = [{encoded}]\n",
+                encoding="utf-8",
+            )
+            arguments += ["--buildkitd-config", str(buildkitd_config)]
         result = subprocess.run(
-            [
-                self.docker,
-                "buildx",
-                "create",
-                "--name",
-                self.builder_name,
-                "--driver",
-                "docker-container",
-            ],
+            arguments,
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
@@ -527,7 +677,7 @@ class LaneRunner:
                     "--workspace-folder",
                     str(runtime_fixture.directory),
                     "--docker-path",
-                    self.docker,
+                    self.devcontainer_docker,
                     "--remove-existing-container",
                     "--log-level",
                     "info",
@@ -614,7 +764,7 @@ class LaneRunner:
                         "--workspace-folder",
                         str(fixture.directory),
                         "--docker-path",
-                        self.docker,
+                        self.devcontainer_docker,
                         "--remove-existing-container",
                         "--frozen-lockfile",
                         "--log-level",
@@ -718,7 +868,7 @@ class LaneRunner:
                 "--workspace-folder",
                 str(fixture.directory),
                 "--docker-path",
-                self.docker,
+                self.devcontainer_docker,
                 "--log-level",
                 "info",
                 "--log-format",
@@ -755,7 +905,7 @@ class LaneRunner:
                 "--workspace-folder",
                 str(fixture.directory),
                 "--docker-path",
-                self.docker,
+                self.devcontainer_docker,
                 "--remove-existing-container",
                 "--log-level",
                 "info",

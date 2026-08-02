@@ -18,6 +18,8 @@ The selected provider is immutable while a Dev Container project owns resources.
 
 ## Goals
 
+- Reach 100% behavioural parity with Docker-based Development Containers across the complete audited Development Containers surface.
+- Reach comparable or better user-visible performance than the matching Docker oracle, measured independently from functional parity.
 - Work with the stock VS Code Dev Containers extension and the official `@devcontainers/cli` without patching either.
 - Target official, tagged Apple `container` releases without requiring Stephen's forks.
 - Support image, Dockerfile, Feature, and Compose `devcontainer.json` scenarios.
@@ -27,6 +29,8 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Bind every compatibility claim to pinned Docker, Dev Containers, Apple, Compose, macOS, and project versions.
 - Keep local state reconstructable from runtime resources and labels.
 - Ship a local-only, least-privilege service with deterministic cleanup and diagnostics.
+
+These are north-star goals, not claims about version 1.0.1. Current releases remain bounded by the exact certified fixtures and known gaps in [`CONFORMANCE.md`](CONFORMANCE.md). [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines full-parity acceptance, the comparable-performance objective, the current baseline, and audited implementation issues. [`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md) defines the field-by-field implementation and certification design for every current unsupported capability.
 
 ## Non-goals
 
@@ -38,12 +42,12 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Hiding unsupported stock-Apple primitives behind success responses.
 - Treating the current matched `container-compose` fork stack as stock Apple.
 
-Version 1.0.1 has one known exception to the fail-explicitly goal: Docker
-create/build members absent from the bounded Swift DTO can be ignored during
-decoding. This means arbitrary `runArgs` are not fail-closed. The confirmed
-cases, user impact, and remediation priorities are maintained in
-[`CONFORMANCE.md`](CONFORMANCE.md); no design or compatibility claim should
-hide that exception.
+Runtime-affecting fields in the modelled container, exec, network, and volume
+request objects now use strict nested schemas. Unknown members fail with a
+Docker-shaped `400`; known but unenforceable non-default fields fail with
+`501`, before native or metadata side effects. Complete schema-derived
+coverage for every Docker endpoint remains an explicit blocker, so arbitrary
+`runArgs` are not a blanket support claim.
 
 ## Normative and implementation references
 
@@ -140,9 +144,52 @@ The runtime SPI is capability-driven and asynchronous. Its initial protocol grou
 - `EventRuntime`: ordered lifecycle/image/network/volume/exec events with resumable cursors.
 - `ComposeProvider`: version/capability probe, config, build, up, stop, down, and primary-service discovery.
 
-Each request contains an idempotency key, correlation identifier, deadline, selected backend fingerprint, and project lease. Decoded unsupported behavior returns a typed `unsupportedCapability` error before resources are created. Docker create fields outside the current request model are an explicit conformance gap and can be ignored by Swift decoding; see [CONFORMANCE.md](CONFORMANCE.md).
+Every request receives a correlation identifier and deadline. Mutating
+requests also receive an operation identifier, selected backend fingerprint,
+configuration hash, project key, and generation through the production
+coordinator. Explicit idempotency keys deduplicate an in-process replay and
+reject conflicting reuse; persistent replay across service restart remains a
+roadmap blocker. Decoded unsupported behaviour returns a typed
+`unsupportedCapability` error before resources are created.
 
-The Apple adapter also probes `container create --help` once per selected executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged switches: privileged requests map to the stock capability model, while explicit hostname or security-option requests fail before mount or container side effects. A separately fingerprinted enhanced runtime uses its native switches. Capability discovery is behavioral and never inferred from an install path or attributed across provider lanes.
+The Apple adapter also probes `container create --help` once per selected
+executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged
+switches: requests for those semantics fail before mount or container side
+effects. A separately fingerprinted enhanced runtime uses its native switches.
+Capability discovery is behavioural and never inferred from an install path
+or attributed across provider lanes.
+
+### Apple adapter fast path
+
+The adapter keeps reusable official clients for the lifetime of each engine
+process. Stock Apple container inventory and exact inspection use the typed
+1.1.0 schema. A separately fingerprinted enhanced distribution retains its
+CLI JSON inventory path because decoding it through the stock schema would
+discard additive exit, hostname, security, alias, and health fields. Network,
+archive, and managed `/etc/hosts` transfers continue to use distribution-safe
+direct clients. Operations without a certified typed equivalent continue
+through the selected `container` executable.
+
+```mermaid
+flowchart LR
+    Request["Runtime SPI request"] --> Choice{"Certified typed operation?"}
+    Choice -->|Yes| Client["Reusable Apple API clients"]
+    Choice -->|No| CLI["Selected container executable"]
+    Client --> Services["Apple XPC services"]
+    CLI --> Services
+    Mutation["Authoritative in-process mutation"] --> Wake["Wake event waiter"]
+    Wake --> Poll["Reconcile immediately"]
+    Fallback["External mutation or timeout"] --> Poll
+    Poll --> Inventory["Certified typed or enhanced CLI inventory"]
+```
+
+The event loop wakes immediately after an in-process mutation and retains a
+200ms reconciliation fallback for changes made by another process. Managed
+host-file content is cached by container runtime identifier, creation
+timestamp, and desired block. Runtime bootstrap recreates the guest's default
+`/etc/hosts`, so the cache is invalidated on every adapter-owned start,
+including transient archive starts, as well as container recreation, removal,
+or archive upload.
 
 ## Docker Engine compatibility boundary
 
@@ -342,7 +389,7 @@ Per-project provider choice and configuration digest live in the service databas
 
 ## Observability
 
-Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time; slowdowns below `10x` are informational, while non-completion or a duration of at least `10x` fails the gate. There is no outbound telemetry in the initial product.
+Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time. Comparable or better performance (`<=1.00x` Docker) is the objective, and any completed result above `2.50x` requires further investigation. Non-completion and missing or invalid timing evidence fail the gate; a completed timing ratio alone does not alter functional parity. The full target and current implementation gaps are defined in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). There is no outbound telemetry in the initial product.
 
 `container devcontainer diagnostics` creates a reviewable archive containing versions, capability probes, redacted logs, runtime resource summaries, config hashes, and recent event state. The command prints the archive manifest before writing it.
 
@@ -371,7 +418,7 @@ A stable tag is prohibited until:
 - Docker oracle, stock Apple 1.1.0, and `container-compose` 0.10.1 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
-- hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;
+- hosted CI, coverage, Sonar, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit; CodeQL remains excluded while it is explicitly disabled by project decision;
 - the Homebrew-installed artifact passes a physical-runner smoke test;
 - documentation and the compatibility ledger match the evidence.
 

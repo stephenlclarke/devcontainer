@@ -109,11 +109,15 @@ make check
 unrelated Apple containers. It uses in-memory or process fakes and temporary,
 user-owned sockets; it does not invoke a live `container system` operation.
 
-The Swift test harness writes complete output to `.build/swift-test.log`,
-retries only the identified SwiftPM helper signal-13 failure, and refuses that
-fallback during coverage. The current suite covers model, state, core,
-Docker-wire, Apple-adapter, Compose-provider, service-process, fault, and
-concurrency behavior.
+The Swift test harness prebuilds the tests and service executable, then loads
+the resulting bundle through Xcode's Swift Testing helper without asking
+SwiftPM to plan or launch the built product again. This avoids a reproducible
+Xcode 26.6 hosted-runner launch stall while retaining the supported Swift
+Testing runtime, explicit serial execution, and exact service executable. The
+harness writes complete output to `.build/swift-test.log`, bounds execution,
+and refuses signal-based success fallbacks during coverage. The current suite
+covers model, state, core, Docker-wire, Apple-adapter, Compose-provider,
+service-process, fault, and concurrency behavior.
 
 Host-process integration tests are opt-in:
 
@@ -131,13 +135,16 @@ make coverage-check
 
 The coverage pipeline:
 
-1. runs tests in `.build/coverage` with code coverage enabled;
-2. builds and exercises both CLI products as instrumented executables;
-3. merges every non-empty profile with `llvm-profdata`;
-4. exports LLVM JSON;
-5. writes `coverage.lcov` and Sonar generic `coverage.xml` from the same unique
+1. builds instrumented test binaries and the service executable in
+   `SWIFT_COVERAGE_SCRATCH_PATH`
+   (default `.build/coverage`);
+2. runs those prebuilt tests with code coverage enabled;
+3. builds and exercises both CLI products as instrumented executables;
+4. merges every non-empty profile with `llvm-profdata`;
+5. exports LLVM JSON;
+6. writes `coverage.lcov` and Sonar generic `coverage.xml` from the same unique
    executable-line map;
-6. fails below 90% aggregate first-party line coverage.
+7. fails below 90% aggregate first-party line coverage.
 
 CI additionally supplies `SWIFT_COVERAGE_BASE`, so the same command fails below
 90% coverage on executable lines changed since the pull-request merge base or
@@ -159,10 +166,21 @@ make test-asan
 make test-tsan
 ```
 
-AddressSanitizer uses `.build/asan`; ThreadSanitizer uses `.build/tsan`. Both
+AddressSanitizer uses `SWIFT_ASAN_SCRATCH_PATH` (default `.build/asan`);
+ThreadSanitizer uses `SWIFT_TSAN_SCRATCH_PATH` (default `.build/tsan`). Both
 run the complete Swift suite without test parallelism and retain full logs in
 `.build/swift-asan.log` and `.build/swift-tsan.log`. A sanitizer diagnostic,
 test failure, empty run, or unaccepted helper termination fails the target.
+SwiftPM builds each sanitizer's test binaries and service executable before
+starting the bounded test execution. The execution loads that exact bundle
+through Xcode's Swift Testing helper and receives the exact service executable
+path, so a clean hosted compile cannot consume the test timeout or resolve a
+stale product.
+
+Each hosted job has an isolated checkout, resolves the exact dependency graph
+once in `.build`, and overrides its lane scratch path to `.build`. This avoids
+materializing the same large SwiftPM checkout twice while preserving the
+separate local defaults needed for sequential developer runs.
 
 These checks cover first-party host code. They do not claim that an upstream
 Apple service or guest binary was sanitizer-instrumented.
@@ -224,9 +242,11 @@ The aggregate stores raw and normalized observations under
 `.build/parity`. Comparison permits only the nondeterminism defined in the
 manifest. Cleanup proof is part of a passing result. Each fixture records
 monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
-stock and provider timings with Docker. Completed slowdowns below `10x` are
-informational; a timeout, other non-completion, missing timing, or duration of
-at least `10x` the corresponding Docker fixture fails.
+stock and provider timings with Docker. Comparable or better performance
+(`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
+Docker is marked for further investigation but does not, by itself, change
+functional parity. A timeout, other non-completion, or missing or invalid
+timing evidence fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.

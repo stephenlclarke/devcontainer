@@ -20,6 +20,12 @@ import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
+private struct RuntimeTarEntry {
+    let name: String
+    let body: Data
+    let type: UInt8
+}
+
 extension AppleContainerRuntimeTests {
     func assertContainerInventory(
         _ runtime: AppleContainerRuntime,
@@ -40,7 +46,7 @@ extension AppleContainerRuntimeTests {
         #expect(container.spec.mounts.map(\.type) == [.bind, .volume, .tmpfs])
         #expect(
             container.spec.ports == [
-                PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0")
+                PortBinding(containerPort: 8080, hostPort: 0, hostAddress: "127.0.0.1")
             ]
         )
         #expect(
@@ -151,8 +157,13 @@ extension AppleContainerRuntimeTests {
                 RuntimeMount(type: .tmpfs, source: "", destination: "/run")
             ],
             ports: [
-                PortBinding(containerPort: 8080, hostPort: 18080, hostAddress: "0.0.0.0"),
-                PortBinding(containerPort: 53, protocolName: "udp")
+                PortBinding(containerPort: 8080, hostAddress: "127.0.0.1"),
+                PortBinding(containerPort: 53, protocolName: "udp"),
+                PortBinding(
+                    containerPort: 8443,
+                    hostPort: 18443,
+                    hostAddress: "127.0.0.1"
+                )
             ],
             networks: [
                 NetworkAttachment(name: "fixture-network", aliases: ["app", "api"])
@@ -188,8 +199,8 @@ extension AppleContainerRuntimeTests {
             )
         )
         #expect(log.contains("--tmpfs /run"))
-        #expect(log.contains("--publish 0.0.0.0:18080:8080/tcp"))
-        #expect(!log.contains("--publish 127.0.0.1:0:53/udp"))
+        #expect(log.contains("--publish 127.0.0.1:18443:8443/tcp"))
+        #expect(!log.contains("127.0.0.1:0:8080"))
         #expect(log.contains("--network fixture-network fixture:latest"))
         #expect(!log.contains("fixture-network,alias="))
         #expect(log.contains("cp fixture:/etc/hosts"))
@@ -257,7 +268,7 @@ extension AppleContainerRuntimeTests {
         }
         #expect(try await session.wait() == 0)
         #expect(String(data: output, encoding: .utf8) == "exec-output\n")
-        let completed = try await waitForExec(runtime, id: exec.id, context: context)
+        let completed = try await runtime.inspectExec(id: exec.id, context: context)
         #expect(!completed.running)
         #expect(completed.exitCode == 0)
         await #expect(throws: DevContainerError.self) {
@@ -292,6 +303,7 @@ extension AppleContainerRuntimeTests {
         #expect(String(data: loaded, encoding: .utf8) == "load-progress\n")
         let request = ImageBuildRequest(
             context: minimalTar(),
+            dockerfile: "file.txt",
             tags: ["fixture:built"],
             buildArguments: ["MODE": "debug"],
             target: "development",
@@ -302,6 +314,19 @@ extension AppleContainerRuntimeTests {
             built.append(chunk)
         }
         #expect(String(data: built, encoding: .utf8) == "build-progress\n")
+        let featureRequest = ImageBuildRequest(
+            context: featureContentTar(),
+            dockerfile: "Dockerfile.buildContent",
+            tags: ["fixture:feature-content"],
+            buildArguments: [:],
+            target: nil,
+            labels: [:]
+        )
+        for try await _ in try await runtime.buildImage(
+            request: featureRequest,
+            context: context
+        ) {}
+        #expect(try fixture.log().contains("prepared-feature-context"))
     }
 
     func exerciseNetworkAndVolumeMutations(
@@ -397,23 +422,73 @@ extension AppleContainerRuntimeTests {
     }
 
     func minimalTar() -> Data {
-        var header = Data(repeating: 0, count: 512)
-        write("file.txt", into: &header, range: 0 ..< 100)
-        write("0000644", into: &header, range: 100 ..< 108)
-        write("0000000", into: &header, range: 108 ..< 116)
-        write("0000000", into: &header, range: 116 ..< 124)
-        write("00000000000", into: &header, range: 124 ..< 136)
-        write("00000000000", into: &header, range: 136 ..< 148)
-        for index in 148 ..< 156 {
-            header[index] = 32
+        tar([
+            RuntimeTarEntry(
+                name: "file.txt",
+                body: Data(),
+                type: UInt8(ascii: "0")
+            )
+        ])
+    }
+
+    func featureContentTar() -> Data {
+        tar([
+            RuntimeTarEntry(
+                name: "Dockerfile.buildContent",
+                body: Data(
+                    "\n\tFROM scratch\n\tCOPY . /tmp/build-features/\n".utf8
+                ),
+                type: UInt8(ascii: "0")
+            ),
+            RuntimeTarEntry(
+                name: "common-utils_0/",
+                body: Data(),
+                type: UInt8(ascii: "5")
+            ),
+            RuntimeTarEntry(
+                name: "common-utils_0/devcontainer-features-install.sh",
+                body: Data("#!/bin/sh\n".utf8),
+                type: UInt8(ascii: "0")
+            )
+        ])
+    }
+
+    private func tar(_ entries: [RuntimeTarEntry]) -> Data {
+        var archive = Data()
+        for entry in entries {
+            var header = Data(repeating: 0, count: 512)
+            write(entry.name, into: &header, range: 0 ..< 100)
+            write(
+                entry.type == UInt8(ascii: "5") ? "0000755" : "0000644",
+                into: &header,
+                range: 100 ..< 108
+            )
+            write("0000000", into: &header, range: 108 ..< 116)
+            write("0000000", into: &header, range: 116 ..< 124)
+            write(
+                String(format: "%011o", entry.body.count),
+                into: &header,
+                range: 124 ..< 136
+            )
+            write("00000000000", into: &header, range: 136 ..< 148)
+            for index in 148 ..< 156 {
+                header[index] = 32
+            }
+            header[156] = entry.type
+            write("ustar", into: &header, range: 257 ..< 263)
+            let checksum = header.reduce(0) { $0 + UInt64($1) }
+            write(
+                String(format: "%06o", checksum),
+                into: &header,
+                range: 148 ..< 154
+            )
+            header[154] = 0
+            header[155] = 32
+            archive.append(header)
+            archive.append(entry.body)
+            let padding = (512 - entry.body.count % 512) % 512
+            archive.append(Data(repeating: 0, count: padding))
         }
-        header[156] = 48
-        write("ustar", into: &header, range: 257 ..< 263)
-        let checksum = header.reduce(0) { $0 + UInt64($1) }
-        write(String(format: "%06o", checksum), into: &header, range: 148 ..< 154)
-        header[154] = 0
-        header[155] = 32
-        var archive = header
         archive.append(Data(repeating: 0, count: 1024))
         return archive
     }

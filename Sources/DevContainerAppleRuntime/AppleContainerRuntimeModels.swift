@@ -31,6 +31,11 @@ struct AppleContainerRecord {
     let networkAddresses: [String: String]
 }
 
+struct AppleManagedHostsState: Equatable, Sendable {
+    let createdAt: Date
+    let managedHosts: String
+}
+
 struct AppleVersionRecord: Decodable {
     let appName: String
     let version: String

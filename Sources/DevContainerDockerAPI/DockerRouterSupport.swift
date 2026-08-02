@@ -19,6 +19,10 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+// Endpoint projections stay together until TEST-005 completes the behavioural
+// split by Docker API object family.
+// swiftlint:disable file_length
+
 extension DockerRouter {
     func labelsMatch(
         _ actualLabels: [String: String],
@@ -150,6 +154,25 @@ extension DockerRouter {
         return result
     }
 
+    func consoleSize(
+        _ values: [UInt]?,
+        name: String
+    ) throws -> (width: UInt16, height: UInt16)? {
+        guard let values else {
+            return nil
+        }
+        guard values.count == 2,
+              let height = UInt16(exactly: values[0]),
+              let width = UInt16(exactly: values[1])
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "\(name) must contain 16-bit unsigned [height,width] values"
+            )
+        }
+        return (width: width, height: height)
+    }
+
     func validateSecurityOptions(_ options: [String]) throws -> [String] {
         var result: [String] = []
         for option in options {
@@ -171,6 +194,342 @@ extension DockerRouter {
             )
         }
         return result
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    func validateCreateContainerRequest(
+        _ request: DockerCreateContainerRequest
+    ) throws {
+        if request.domainname?.isEmpty == false {
+            try unsupportedCreateField("Domainname")
+        }
+        if request.argsEscaped == true {
+            try unsupportedCreateField("ArgsEscaped")
+        }
+        if request.macAddress?.isEmpty == false {
+            try unsupportedCreateField("MacAddress")
+        }
+        if request.networkDisabled == true {
+            try unsupportedCreateField("NetworkDisabled")
+        }
+        if request.onBuild?.isEmpty == false {
+            try unsupportedCreateField("OnBuild")
+        }
+        if request.shell?.isEmpty == false {
+            try unsupportedCreateField("Shell")
+        }
+        if request.stdinOnce == true {
+            try unsupportedCreateField("StdinOnce")
+        }
+        if let stopSignal = request.stopSignal,
+           !stopSignal.isEmpty,
+           !["SIGTERM", "TERM"].contains(stopSignal.uppercased())
+        {
+            try unsupportedCreateField("StopSignal")
+        }
+        if let stopTimeout = request.stopTimeout, stopTimeout != 0 {
+            try unsupportedCreateField("StopTimeout")
+        }
+        for (index, mount) in (request.mounts ?? []).enumerated() {
+            try validateAdvancedMountOptions(
+                mount,
+                prefix: "Mounts.[\(index)]"
+            )
+        }
+        guard let host = request.hostConfig else {
+            try validateEndpointConfigurations(request.networkingConfig)
+            return
+        }
+
+        let numericFields: [(String, Int64?)] = [
+            ("HostConfig.Memory", host.memory),
+            ("HostConfig.MemorySwap", host.memorySwap),
+            ("HostConfig.MemoryReservation", host.memoryReservation),
+            ("HostConfig.NanoCpus", host.nanoCPUs),
+            ("HostConfig.CpuShares", host.cpuShares),
+            ("HostConfig.CpuCount", host.cpuCount),
+            ("HostConfig.CpuPeriod", host.cpuPeriod),
+            ("HostConfig.CpuPercent", host.cpuPercent),
+            ("HostConfig.CpuQuota", host.cpuQuota),
+            ("HostConfig.CpuRealtimePeriod", host.cpuRealtimePeriod),
+            ("HostConfig.CpuRealtimeRuntime", host.cpuRealtimeRuntime),
+            ("HostConfig.PidsLimit", host.pidsLimit),
+            ("HostConfig.ShmSize", host.shmSize)
+        ]
+        if let field = numericFields.first(where: { ($0.1 ?? 0) != 0 })?.0 {
+            try unsupportedCreateField(field)
+        }
+        if host.cpusetCPUs?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.CpusetCpus")
+        }
+        if host.cpusetMems?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.CpusetMems")
+        }
+        if host.deviceRequests?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.DeviceRequests")
+        }
+        if host.devices?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.Devices")
+        }
+        if host.blkioWeight != nil && host.blkioWeight != 0 {
+            try unsupportedCreateField("HostConfig.BlkioWeight")
+        }
+        for (field, values) in [
+            ("HostConfig.BlkioWeightDevice", host.blkioWeightDevice),
+            ("HostConfig.BlkioDeviceReadBps", host.blkioDeviceReadBPS),
+            ("HostConfig.BlkioDeviceWriteBps", host.blkioDeviceWriteBPS),
+            ("HostConfig.BlkioDeviceReadIOps", host.blkioDeviceReadIOPS),
+            ("HostConfig.BlkioDeviceWriteIOps", host.blkioDeviceWriteIOPS)
+        ] where values?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        for (field, values) in [
+            ("HostConfig.Dns", host.dns),
+            ("HostConfig.DnsOptions", host.dnsOptions),
+            ("HostConfig.DnsSearch", host.dnsSearch),
+            ("HostConfig.ExtraHosts", host.extraHosts),
+            ("HostConfig.GroupAdd", host.groupAdd),
+            ("HostConfig.Links", host.links),
+            ("HostConfig.DeviceCgroupRules", host.deviceCgroupRules),
+            ("HostConfig.MaskedPaths", host.maskedPaths),
+            ("HostConfig.ReadonlyPaths", host.readOnlyPaths),
+            ("HostConfig.VolumesFrom", host.volumesFrom)
+        ] where values?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        for (field, values) in [
+            ("HostConfig.Annotations", host.annotations),
+            ("HostConfig.StorageOpt", host.storageOptions),
+            ("HostConfig.Tmpfs", host.tmpfs)
+        ] where values?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        for (field, value) in [
+            ("HostConfig.Cgroup", host.cgroup),
+            ("HostConfig.CgroupParent", host.cgroupParent),
+            ("HostConfig.ContainerIDFile", host.containerIDFile),
+            ("HostConfig.Isolation", host.isolation),
+            ("HostConfig.Runtime", host.runtime),
+            ("HostConfig.VolumeDriver", host.volumeDriver)
+        ] where value?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        let initialConsoleSize = try consoleSize(
+            host.consoleSize,
+            name: "HostConfig.ConsoleSize"
+        )
+        if request.tty == true,
+           let initialConsoleSize,
+           initialConsoleSize.width != 0 || initialConsoleSize.height != 0
+        {
+            try unsupportedCreateField("HostConfig.ConsoleSize")
+        }
+        if host.logConfig?.type?.isEmpty == false
+            || host.logConfig?.config?.isEmpty == false
+        {
+            try unsupportedCreateField("HostConfig.LogConfig")
+        }
+        if let memorySwappiness = host.memorySwappiness, memorySwappiness != -1 {
+            try unsupportedCreateField("HostConfig.MemorySwappiness")
+        }
+        if (host.ioMaximumBandwidth ?? 0) != 0 {
+            try unsupportedCreateField("HostConfig.IOMaximumBandwidth")
+        }
+        if (host.ioMaximumIOPS ?? 0) != 0 {
+            try unsupportedCreateField("HostConfig.IOMaximumIOps")
+        }
+        if host.publishAllPorts == true {
+            try unsupportedCreateField("HostConfig.PublishAllPorts")
+        }
+        if host.sysctls?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.Sysctls")
+        }
+        if host.ulimits?.isEmpty == false {
+            try unsupportedCreateField("HostConfig.Ulimits")
+        }
+        if host.readOnlyRootFilesystem == true {
+            try unsupportedCreateField("HostConfig.ReadonlyRootfs")
+        }
+        if host.oomKillDisable == true {
+            try unsupportedCreateField("HostConfig.OomKillDisable")
+        }
+        if let adjustment = host.oomScoreAdjustment, adjustment != 0 {
+            try unsupportedCreateField("HostConfig.OomScoreAdj")
+        }
+        for (field, mode) in [
+            ("HostConfig.IpcMode", host.ipcMode),
+            ("HostConfig.PidMode", host.pidMode),
+            ("HostConfig.UsernsMode", host.userNamespaceMode),
+            ("HostConfig.UTSMode", host.utsMode),
+            ("HostConfig.CgroupnsMode", host.cgroupNamespaceMode)
+        ] where mode?.isEmpty == false {
+            try unsupportedCreateField(field)
+        }
+        if let restart = host.restartPolicy,
+           restart.name?.isEmpty == false && restart.name != "no"
+           || (restart.maximumRetryCount ?? 0) != 0
+        {
+            try unsupportedCreateField("HostConfig.RestartPolicy")
+        }
+        for (index, mount) in (host.mounts ?? []).enumerated() {
+            try validateAdvancedMountOptions(
+                mount,
+                prefix: "HostConfig.Mounts.[\(index)]"
+            )
+        }
+        try validateEndpointConfigurations(request.networkingConfig)
+    }
+
+    func validateNetworkCreateRequest(
+        _ request: DockerNetworkCreateRequest
+    ) throws {
+        if request.options?.isEmpty == false {
+            try unsupportedCreateField("Options")
+        }
+        if let ipam = request.ipam,
+           ipam.config?.isEmpty == false
+           || ipam.options?.isEmpty == false
+           || !(ipam.driver ?? "").isEmpty && ipam.driver != "default"
+        {
+            try unsupportedCreateField("IPAM")
+        }
+        if request.enableIPv4 == false {
+            try unsupportedCreateField("EnableIPv4")
+        }
+        if request.enableIPv6 == true {
+            try unsupportedCreateField("EnableIPv6")
+        }
+        if request.attachable == true {
+            try unsupportedCreateField("Attachable")
+        }
+        if request.ingress == true {
+            try unsupportedCreateField("Ingress")
+        }
+        if request.configOnly == true {
+            try unsupportedCreateField("ConfigOnly")
+        }
+        if request.configFrom?.network?.isEmpty == false {
+            try unsupportedCreateField("ConfigFrom")
+        }
+        if let scope = request.scope, !scope.isEmpty, scope != "local" {
+            try unsupportedCreateField("Scope")
+        }
+    }
+
+    func validateVolumeCreateRequest(
+        _ request: DockerVolumeCreateRequest
+    ) throws {
+        if request.driverOptions?.isEmpty == false {
+            try unsupportedCreateField("DriverOpts")
+        }
+        if request.clusterVolumeSpecification != nil {
+            try unsupportedCreateField("ClusterVolumeSpec")
+        }
+    }
+
+    func validateEndpointConfiguration(
+        _ endpoint: DockerNetworkEndpointConfig?
+    ) throws {
+        guard let endpoint else {
+            return
+        }
+        try validateEndpointFields(
+            endpoint,
+            prefix: "EndpointConfig"
+        )
+    }
+
+    private func validateEndpointConfigurations(
+        _ networking: DockerNetworkingConfig?
+    ) throws {
+        for (name, endpoint) in networking?.endpointsConfig ?? [:] {
+            try validateEndpointFields(
+                endpoint,
+                prefix: "NetworkingConfig.EndpointsConfig.\(name)"
+            )
+        }
+    }
+
+    private func validateEndpointFields(
+        _ endpoint: DockerNetworkEndpointConfig,
+        prefix: String
+    ) throws {
+        if endpoint.links?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).Links")
+        }
+        if endpoint.ipamConfig?.ipv4Address?.isEmpty == false
+            || endpoint.ipamConfig?.ipv6Address?.isEmpty == false
+            || endpoint.ipamConfig?.linkLocalIPs?.isEmpty == false
+        {
+            try unsupportedCreateField("\(prefix).IPAMConfig")
+        }
+        if endpoint.macAddress?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).MacAddress")
+        }
+        if endpoint.driverOptions?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).DriverOpts")
+        }
+        if let gatewayPriority = endpoint.gatewayPriority, gatewayPriority != 0 {
+            try unsupportedCreateField("\(prefix).GwPriority")
+        }
+        let unsupportedStrings: [(String, String?)] = [
+            ("NetworkID", endpoint.networkID),
+            ("EndpointID", endpoint.endpointID),
+            ("Gateway", endpoint.gateway),
+            ("IPAddress", endpoint.ipAddress),
+            ("IPv6Gateway", endpoint.ipv6Gateway),
+            ("GlobalIPv6Address", endpoint.globalIPv6Address)
+        ]
+        if let (field, _) = unsupportedStrings.first(where: { $0.1?.isEmpty == false }) {
+            try unsupportedCreateField("\(prefix).\(field)")
+        }
+        if let prefixLength = endpoint.ipPrefixLength, prefixLength != 0 {
+            try unsupportedCreateField("\(prefix).IPPrefixLen")
+        }
+        if let prefixLength = endpoint.globalIPv6PrefixLength, prefixLength != 0 {
+            try unsupportedCreateField("\(prefix).GlobalIPv6PrefixLen")
+        }
+        if endpoint.dnsNames?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).DNSNames")
+        }
+    }
+
+    private func validateAdvancedMountOptions(
+        _ mount: DockerMountRequest,
+        prefix: String
+    ) throws {
+        if mount.consistency?.isEmpty == false {
+            try unsupportedCreateField("\(prefix).Consistency")
+        }
+        if let options = mount.bindOptions,
+           options.propagation?.isEmpty == false
+           || options.nonRecursive == true
+           || options.createMountpoint == true
+           || options.readOnlyNonRecursive == true
+           || options.readOnlyForceRecursive == true
+        {
+            try unsupportedCreateField("\(prefix).BindOptions")
+        }
+        if let options = mount.volumeOptions,
+           options.noCopy == true
+           || options.labels?.isEmpty == false
+           || options.subpath?.isEmpty == false
+           || options.driverConfiguration != nil
+        {
+            try unsupportedCreateField("\(prefix).VolumeOptions")
+        }
+        if let options = mount.tmpfsOptions,
+           (options.sizeBytes ?? 0) != 0 || options.mode != nil
+        {
+            try unsupportedCreateField("\(prefix).TmpfsOptions")
+        }
+    }
+
+    private func unsupportedCreateField(_ field: String) throws -> Never {
+        throw DevContainerError(
+            .unsupportedCapability,
+            message: "Docker request field \(field) is not supported by the selected Apple runtime"
+        )
     }
 
     func archiveStatHeader(_ value: ArchivePathStat) throws -> String {
@@ -209,10 +568,15 @@ extension DockerRouter {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let snapshot = try await runtime.inspectContainer(
+                        id: id,
+                        context: context
+                    )
                     let exitCode = try await runtime.waitContainer(id: id, context: context)
-                    if condition == "removed" {
+                    if condition == "removed" || snapshot.spec.autoRemove {
                         try await waitForContainerRemoval(id: id, context: context)
                     }
+                    try await reconcileAutomaticRemoval(snapshot)
                     try continuation.yield(
                         DockerJSON.encoder.encode(
                             DockerWaitResponse(statusCode: exitCode)
@@ -311,7 +675,10 @@ extension DockerRouter {
             user: request.user,
             hostname: request.hostname,
             mounts: containerMounts(request),
-            ports: portBindings(request.hostConfig?.portBindings ?? [:]),
+            ports: portBindings(
+                request.hostConfig?.portBindings ?? [:],
+                exposedPorts: Set(request.exposedPorts?.keys.map(\.self) ?? [])
+            ),
             networks: networkAttachments(request),
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
@@ -394,20 +761,23 @@ extension DockerRouter {
     }
 
     func portBindings(
-        _ values: [String: [DockerPortBindingRequest]]
+        _ values: [String: [DockerPortBindingRequest]],
+        exposedPorts: Set<String> = []
     ) throws -> [PortBinding] {
         var result: [PortBinding] = []
-        for (containerKey, hostBindings) in values {
+        for containerKey in Set(values.keys).union(exposedPorts).sorted() {
             let keyParts = containerKey.split(separator: "/", maxSplits: 1)
             guard let containerPort = UInt16(keyParts[0]) else {
                 throw DevContainerError(.invalidRequest, message: "invalid port \(containerKey)")
             }
             let protocolName = keyParts.count == 2 ? String(keyParts[1]) : "tcp"
+            let hostBindings = values[containerKey] ?? []
             if hostBindings.isEmpty {
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
-                        protocolName: protocolName
+                        protocolName: protocolName,
+                        published: false
                     )
                 )
                 continue
@@ -417,14 +787,15 @@ extension DockerRouter {
                     if let requested = binding.hostIP, !requested.isEmpty {
                         requested
                     } else {
-                        "127.0.0.1"
+                        "0.0.0.0"
                     }
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
                         hostPort: binding.hostPort.flatMap(UInt16.init),
                         protocolName: protocolName,
-                        hostAddress: hostAddress
+                        hostAddress: hostAddress,
+                        published: true
                     )
                 )
             }
@@ -466,7 +837,7 @@ extension DockerRouter {
             id: snapshot.dockerID.rawValue,
             names: ["/\(snapshot.spec.name)"],
             image: snapshot.spec.image,
-            imageID: snapshot.spec.image,
+            imageID: snapshot.imageID ?? "",
             command: (snapshot.spec.entrypoint + snapshot.spec.command).joined(separator: " "),
             created: Int64(snapshot.createdAt.timeIntervalSince1970),
             state: snapshot.state.rawValue,
@@ -510,7 +881,7 @@ extension DockerRouter {
                 finishedAt: snapshot.finishedAt.map(formatter.string) ?? "",
                 health: health
             ),
-            image: snapshot.spec.image,
+            image: snapshot.imageID ?? "",
             config: DockerContainerConfig(
                 hostname: snapshot.spec.hostname ?? snapshot.spec.name,
                 user: snapshot.spec.user ?? "",
@@ -522,6 +893,7 @@ extension DockerRouter {
                 env: env,
                 cmd: snapshot.spec.command,
                 image: snapshot.spec.image,
+                exposedPorts: exposedPorts(snapshot.spec.ports),
                 volumes: volumeEntries,
                 workingDir: snapshot.spec.workingDirectory ?? "",
                 entrypoint: snapshot.spec.entrypoint,
@@ -558,6 +930,16 @@ extension DockerRouter {
         mounts.reduce(into: [:]) { $0[$1.destination] = [:] }
     }
 
+    func exposedPorts(
+        _ ports: [PortBinding]
+    ) -> [String: [String: String]] {
+        Dictionary(
+            uniqueKeysWithValues: Set(ports.map {
+                "\($0.containerPort)/\($0.protocolName)"
+            }).sorted().map { ($0, [:]) }
+        )
+    }
+
     func networkSettings(
         _ snapshot: ContainerSnapshot
     ) -> DockerNetworkSettings {
@@ -565,7 +947,7 @@ extension DockerRouter {
             grouping: snapshot.spec.ports,
             by: { "\($0.containerPort)/\($0.protocolName)" }
         ).mapValues { values -> [DockerNetworkPortBinding]? in
-            values.compactMap { binding -> DockerNetworkPortBinding? in
+            let published = values.compactMap { binding -> DockerNetworkPortBinding? in
                 guard let hostPort = binding.hostPort else {
                     return nil
                 }
@@ -574,6 +956,7 @@ extension DockerRouter {
                     hostPort: String(hostPort)
                 )
             }
+            return published.isEmpty ? nil : published
         }
         let networks = Dictionary(
             uniqueKeysWithValues: snapshot.networkAddresses.map { name, value in

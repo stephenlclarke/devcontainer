@@ -14,8 +14,10 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
+import DevContainerState
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -48,6 +50,65 @@ private func makeEdgeFixture(name: String = "edge") async throws -> EdgeFixture 
         context: context,
         identifier: container.dockerID.rawValue
     )
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `auto removed container releases resource and empty project claim`() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "devcontainer-router-auto-remove-\(UUID().uuidString)",
+            isDirectory: true
+        )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(
+        path: directory.appendingPathComponent("state.sqlite")
+    )
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:auto-remove",
+            references: ["fixture:latest"],
+            createdAt: Date(timeIntervalSince1970: 1),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store)
+    )
+    let body = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "fixture:latest",
+            "HostConfig": ["AutoRemove": true]
+        ]
+    )
+    let created = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=auto-remove",
+            body: body
+        )
+    )
+    let object = try #require(
+        JSONSerialization.jsonObject(
+            with: responseBytes(created)
+        ) as? [String: Any]
+    )
+    let id = try #require(object["Id"] as? String)
+    let project = try #require(await store.listProjects().first)
+    #expect(try await store.resources(project: project.key).count == 1)
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/\(id)/wait"
+        )
+    )
+    _ = try await responseStreamBytes(response)
+
+    #expect(try await store.resources(project: project.key).isEmpty)
+    #expect(try await store.listProjects().isEmpty)
 }
 
 @Test
@@ -140,6 +201,171 @@ func `container creation rejects invalid bind port and mount forms`() async thro
             to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
         )
         #expect(response.status == expectedStatus)
+    }
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `container creation rejects every unsupported root and host field`() async throws {
+    let fixture = try await makeEdgeFixture()
+    let requests: [[String: Any]] = [
+        ["Image": "edge:latest", "Domainname": "example.test"],
+        ["Image": "edge:latest", "ArgsEscaped": true],
+        ["Image": "edge:latest", "MacAddress": "02:00:00:00:00:01"],
+        ["Image": "edge:latest", "NetworkDisabled": true],
+        ["Image": "edge:latest", "OnBuild": ["RUN true"]],
+        ["Image": "edge:latest", "Shell": ["/bin/sh"]],
+        ["Image": "edge:latest", "StdinOnce": true],
+        ["Image": "edge:latest", "StopSignal": "SIGKILL"],
+        ["Image": "edge:latest", "StopTimeout": 1],
+        ["Image": "edge:latest", "HostConfig": ["CpuShares": 1]],
+        ["Image": "edge:latest", "HostConfig": ["CpusetCpus": "0"]],
+        ["Image": "edge:latest", "HostConfig": ["CpusetMems": "0"]],
+        ["Image": "edge:latest", "HostConfig": ["DeviceRequests": [["Count": -1]]]],
+        ["Image": "edge:latest", "HostConfig": ["Devices": [["PathOnHost": "/dev/null"]]]],
+        ["Image": "edge:latest", "HostConfig": ["BlkioWeight": 1]],
+        ["Image": "edge:latest", "HostConfig": ["BlkioDeviceWriteIOps": [[:]]]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file"]]],
+        ["Image": "edge:latest", "HostConfig": ["MemorySwappiness": 0]],
+        ["Image": "edge:latest", "HostConfig": ["IOMaximumBandwidth": 1]],
+        ["Image": "edge:latest", "HostConfig": ["IOMaximumIOps": 1]],
+        ["Image": "edge:latest", "HostConfig": ["PublishAllPorts": true]],
+        ["Image": "edge:latest", "HostConfig": ["Sysctls": ["kernel.test": "1"]]],
+        ["Image": "edge:latest", "HostConfig": ["ReadonlyRootfs": true]],
+        ["Image": "edge:latest", "HostConfig": ["OomKillDisable": true]],
+        ["Image": "edge:latest", "HostConfig": ["OomScoreAdj": 1]],
+        ["Image": "edge:latest", "HostConfig": ["Dns": ["192.0.2.53"]]],
+        ["Image": "edge:latest", "HostConfig": ["VolumesFrom": ["fixture"]]],
+        ["Image": "edge:latest", "HostConfig": ["Annotations": ["test": "value"]]],
+        ["Image": "edge:latest", "HostConfig": ["Tmpfs": ["/tmp": "size=1m"]]],
+        ["Image": "edge:latest", "HostConfig": ["Cgroup": "test"]],
+        ["Image": "edge:latest", "HostConfig": ["VolumeDriver": "local"]],
+        ["Image": "edge:latest", "HostConfig": [
+            "Ulimits": [["Name": "nofile", "Soft": 1024, "Hard": 1024]]
+        ]],
+        ["Image": "edge:latest", "HostConfig": ["IpcMode": "private"]],
+        ["Image": "edge:latest", "HostConfig": ["CgroupnsMode": "host"]],
+        ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "bind", "Source": "/tmp", "Target": "/work",
+            "Consistency": "cached"
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "bind", "Source": "/tmp", "Target": "/work",
+            "BindOptions": ["ReadOnlyForceRecursive": true]
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "volume", "Source": "fixture", "Target": "/work",
+            "VolumeOptions": ["DriverConfig": ["Name": "local"]]
+        ]]],
+        ["Image": "edge:latest", "Mounts": [[
+            "Type": "tmpfs", "Target": "/tmp",
+            "TmpfsOptions": ["Mode": 493]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["Links": ["fixture"]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["IPAMConfig": ["LinkLocalIPs": ["169.254.1.1"]]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["MacAddress": "02:00:00:00:00:01"]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["DriverOpts": ["test": "value"]]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GwPriority": 1]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GlobalIPv6Address": "2001:db8::2"]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["IPPrefixLen": 24]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["GlobalIPv6PrefixLen": 64]
+        ]]],
+        ["Image": "edge:latest", "NetworkingConfig": ["EndpointsConfig": [
+            "edge": ["DNSNames": ["fixture"]]
+        ]]]
+    ]
+
+    #expect(!fixture.router.labelsMatch(["present": "value"], expected: ["missing": ""]))
+    for object in requests {
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/containers/create",
+                body: body
+            )
+        )
+        #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerCreateContainerRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateCreateContainerRequest(decoded)
+        }
+    }
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `network and volume creation reject unsupported Docker fields`() async throws {
+    let fixture = try await makeEdgeFixture()
+    let networkRequests: [[String: Any]] = [
+        ["Name": "edge", "Options": ["test": "value"]],
+        ["Name": "edge", "IPAM": ["Config": [["Subnet": "192.0.2.0/24"]]]],
+        ["Name": "edge", "EnableIPv4": false],
+        ["Name": "edge", "EnableIPv6": true],
+        ["Name": "edge", "Attachable": true],
+        ["Name": "edge", "Ingress": true],
+        ["Name": "edge", "ConfigOnly": true],
+        ["Name": "edge", "ConfigFrom": ["Network": "source"]],
+        ["Name": "edge", "Scope": "swarm"]
+    ]
+    for object in networkRequests {
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/networks/create",
+                body: body
+            )
+        )
+        #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerNetworkCreateRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateNetworkCreateRequest(decoded)
+        }
+    }
+
+    for object: [String: Any] in [
+        ["Name": "edge", "DriverOpts": ["test": "value"]],
+        ["Name": "edge", "ClusterVolumeSpec": [:]]
+    ] {
+        let body = try JSONSerialization.data(withJSONObject: object)
+        let response = await fixture.router.respond(
+            to: DockerHTTPRequest(
+                method: .post,
+                target: "/volumes/create",
+                body: body
+            )
+        )
+        #expect(response.status == 501)
+        let decoded = try JSONDecoder().decode(
+            DockerVolumeCreateRequest.self,
+            from: body
+        )
+        #expect(throws: DevContainerError.self) {
+            try fixture.router.validateVolumeCreateRequest(decoded)
+        }
     }
 }
 

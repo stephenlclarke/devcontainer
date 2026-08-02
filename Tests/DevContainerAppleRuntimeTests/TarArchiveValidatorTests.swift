@@ -64,6 +64,41 @@ struct TarArchiveValidatorTests {
     }
 
     @Test
+    func `accepts Docker streaming tar without final padding`() throws {
+        var archive = tar([Entry(name: "file", body: Data("data".utf8))])
+        archive.removeLast(1024 + 508)
+        #expect(try TarArchiveValidator.validate(archive) == 1)
+
+        archive.removeLast()
+        #expect(throws: DevContainerError.self) {
+            try TarArchiveValidator.validate(archive)
+        }
+    }
+
+    @Test
+    func `pads Docker streaming tar for extraction`() throws {
+        var archive = tar([Entry(name: "file", body: Data("data".utf8))])
+        archive.removeLast(1024 + 508)
+
+        let extractionInput = try TarArchiveValidator.validatedForExtraction(
+            archive
+        )
+
+        #expect(extractionInput.count == 1024)
+        #expect(extractionInput.prefix(archive.count) == archive)
+        #expect(extractionInput.suffix(508).allSatisfy { $0 == 0 })
+    }
+
+    @Test
+    func `preserves block aligned tar extraction input`() throws {
+        let archive = tar([Entry(name: "file", body: Data("data".utf8))])
+
+        #expect(
+            try TarArchiveValidator.validatedForExtraction(archive) == archive
+        )
+    }
+
+    @Test
     func `rejects non UTF8 header text`() {
         var archive = tar([Entry(name: "file")])
         archive[0] = 0xFF

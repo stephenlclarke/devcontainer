@@ -21,8 +21,49 @@ import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
+// Runtime scenarios stay in one serialized suite until direct-client live
+// fixtures can be split from CLI fallback fixtures.
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 struct AppleContainerRuntimeTests {
+    @Test
+    func `native build DNS arguments use valid resolver nameservers`() {
+        let configuration = """
+        # Generated resolver configuration
+        nameserver 192.0.2.53
+        nameserver 2001:db8::53
+        nameserver fe80::1%en0
+        nameserver 192.0.2.53
+        nameserver invalid.example
+        search example.test
+
+        """
+
+        #expect(
+            AppleContainerRuntime.buildDNSArguments(
+                resolverConfiguration: configuration
+            ) == [
+                "--dns", "192.0.2.53",
+                "--dns", "2001:db8::53",
+                "--dns", "fe80::1%en0"
+            ]
+        )
+        #expect(
+            AppleContainerRuntime.requiresHostDNS(
+                ContainerSpec(
+                    name: "buildx_buildkit_devcontainer0",
+                    image: "moby/buildkit:buildx-stable-1"
+                )
+            )
+        )
+        #expect(
+            !AppleContainerRuntime.requiresHostDNS(
+                ContainerSpec(name: "application", image: "buildkit-client:latest")
+            )
+        )
+    }
+
     @Test
     func `managed hosts replacement preserves unmanaged entries`() {
         let original = """
@@ -118,7 +159,7 @@ struct AppleContainerRuntimeTests {
     }
 
     @Test
-    func `stock create rejects options it cannot enforce and maps privileged to capabilities`() async throws {
+    func `stock create rejects options it cannot enforce before native creation`() async throws {
         let fixture = try FakeAppleCLI(enhancedCreateOptions: false)
         let runtime = try fixture.runtime()
         let context = RuntimeRequestContext()
@@ -153,18 +194,24 @@ struct AppleContainerRuntimeTests {
             #expect(error.message.contains("--security-opt"))
         }
 
-        _ = try await runtime.createContainer(
-            spec: ContainerSpec(
-                name: "fixture",
-                image: "fixture:latest",
-                privileged: true
-            ),
-            context: context
-        )
+        do {
+            _ = try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture",
+                    image: "fixture:latest",
+                    privileged: true
+                ),
+                context: context
+            )
+            Issue.record("stock privileged creation unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .unsupportedCapability)
+            #expect(error.message.contains("--privileged"))
+        }
         let log = try fixture.log()
         #expect(log.contains("create --help"))
-        #expect(log.contains("create --name fixture --cap-add ALL fixture:latest"))
-        #expect(!log.contains("--privileged"))
+        #expect(!log.contains("create --name fixture"))
+        #expect(!log.contains("--cap-add ALL"))
     }
 
     @Test
@@ -328,6 +375,44 @@ struct AppleContainerRuntimeTests {
         )
 
         #expect(containers.isEmpty)
+    }
+
+    @Test
+    func `container resolution distinguishes missing ambiguous and exact identifiers`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let first = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "native-first"),
+            dockerID: DockerID(rawValue: "abcdef000000"),
+            spec: ContainerSpec(name: "first", image: "fixture:latest"),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let second = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "native-second"),
+            dockerID: DockerID(rawValue: "abcdef111111"),
+            spec: ContainerSpec(name: "second", image: "fixture:latest"),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let exact = try await runtime.resolvedContainerSnapshot(
+            id: first.dockerID.rawValue,
+            in: [first, second]
+        )
+        #expect(exact == first)
+        do {
+            _ = try await runtime.resolvedContainerSnapshot(id: "abcdef", in: [first, second])
+            Issue.record("ambiguous prefix unexpectedly resolved")
+        } catch let error as DevContainerError {
+            #expect(error.code == .invalidRequest)
+        }
+        do {
+            _ = try await runtime.resolvedContainerSnapshot(id: "missing", in: [first, second])
+            Issue.record("missing identifier unexpectedly resolved")
+        } catch let error as DevContainerError {
+            #expect(error.code == .notFound)
+        }
     }
 
     @Test
@@ -505,12 +590,14 @@ struct AppleContainerRuntimeTests {
 
         try assertLifecycleLog(fixture.log())
 
-        _ = try await runtime.createContainer(
+        let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
+        let metadataContainer = try await runtime.createContainer(
             spec: ContainerSpec(
                 name: "fixture",
                 image: "fixture",
                 command: ["printf ok"],
-                entrypoint: ["/bin/sh", "-c"]
+                entrypoint: ["/bin/sh", "-c"],
+                labels: ["devcontainer.metadata": metadata]
             ),
             context: context
         )
@@ -519,23 +606,39 @@ struct AppleContainerRuntimeTests {
                 "create --name fixture --entrypoint /bin/sh fixture -c printf ok"
             )
         )
-
-        let metadata = #"{"postCreateCommand":"value=$(printf A=B)"}"#
-        let complex = try await runtime.createContainer(
-            spec: ContainerSpec(
-                name: "fixture",
-                image: "fixture",
-                labels: ["devcontainer.metadata": metadata]
-            ),
-            context: context
+        #expect(try !fixture.log().contains("devcontainer.metadata"))
+        #expect(
+            metadataContainer.spec.labels["devcontainer.metadata"] == metadata
         )
-        #expect(complex.spec.labels["devcontainer.metadata"] == metadata)
-        #expect(try !fixture.log().contains("--label devcontainer.metadata="))
         try await runtime.renameContainer(id: "fixture", name: "renamed", context: context)
         #expect(
             try await runtime.inspectContainer(id: "renamed", context: context).spec.name
                 == "renamed"
         )
+    }
+
+    @Test
+    func `concurrent starts share one native bootstrap`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        let runtime = try fixture.runtime()
+        let context = RuntimeRequestContext()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 4 {
+                group.addTask {
+                    try await runtime.startContainer(
+                        id: "fixture",
+                        context: context
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let starts = try fixture.log().split(separator: "\n")
+            .filter { $0 == "start fixture" }
+        #expect(starts.count == 1)
     }
 
     @Test
@@ -651,25 +754,24 @@ struct AppleContainerRuntimeTests {
             labels: ["fixture": "yes"],
             context: RuntimeRequestContext()
         )
-        let transitions = Task {
-            try await Task.sleep(for: .milliseconds(300))
-            try fixture.setState("running")
-            try await Task.sleep(for: .milliseconds(500))
-            try fixture.setState("stopped")
-            try await Task.sleep(for: .milliseconds(500))
-            try fixture.setState("missing")
-        }
+        try fixture.setState("running")
 
         var actions: [RuntimeEventAction] = []
-        for try await event in stream {
+        events: for try await event in stream {
             #expect(event.resourceID == "docker-fixture")
             #expect(event.attributes["name"] == "fixture")
             actions.append(event.action)
-            if event.action == .destroy {
-                break
+            switch event.action {
+            case .start:
+                try fixture.setState("stopped")
+            case .stop:
+                try fixture.setState("missing")
+            case .destroy:
+                break events
+            default:
+                continue
             }
         }
-        _ = try await transitions.value
         #expect(actions == [.create, .start, .stop, .destroy])
     }
 }
@@ -681,9 +783,14 @@ struct FakeAppleCLI {
     private let stateURL: URL
     private let modeURL: URL
     private let enhancedCreateOptions: Bool
+    private let distribution: String
 
-    init(enhancedCreateOptions: Bool = true) throws {
+    init(
+        enhancedCreateOptions: Bool = true,
+        distribution: String = "apple"
+    ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
+        self.distribution = distribution
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
@@ -712,6 +819,7 @@ struct FakeAppleCLI {
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
+            useDirectContainerAPI: false,
             metadataStore: metadataStore,
             volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
         )
@@ -734,7 +842,7 @@ struct FakeAppleCLI {
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
         let createHelp = enhancedCreateOptions
-            ? "--hostname\\n--publish\\n--privileged\\n--security-opt"
+            ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
         return """
         #!/bin/sh
@@ -759,7 +867,7 @@ struct FakeAppleCLI {
               "appName":"container",
               "version":"1.1.0",
               "commit":"fixture-commit",
-              "distribution":"apple"
+              "distribution":"\(distribution)"
             }]'
             ;;
           "create --help")
@@ -855,9 +963,9 @@ struct FakeAppleCLI {
                 ],
                 "publishedPorts":[{
                   "containerPort":"8080",
-                  "hostPort":18080,
+                  "hostPort":0,
                   "protocol":"tcp",
-                  "hostAddress":"0.0.0.0"
+                  "hostAddress":"127.0.0.1"
                 }],
                 "networks":[{
                   "network":"bridge",
@@ -951,10 +1059,15 @@ struct FakeAppleCLI {
             printf '%s\\n' 'load-progress'
             ;;
           "build --file")
+            if grep -q '^ADD context.tar /tmp/build-features/$' "$3"; then
+              test -f "$(dirname "$3")/context.tar"
+              printf '%s\n' prepared-feature-context >> "$LOG"
+            fi
             printf '%s\\n' 'build-progress'
             ;;
           "start fixture")
             if [ "$state" = created ]; then
+              sleep 0.1
               printf '%s' running > "$STATE"
             fi
             ;;

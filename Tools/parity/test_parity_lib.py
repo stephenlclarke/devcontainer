@@ -57,12 +57,14 @@ class ParityLibraryTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertIn("container-compose provider", markdown)
 
-    def test_comparison_records_informational_slowdowns(self) -> None:
+    def test_comparison_flags_slowdowns_without_failing_functional_parity(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for lane, duration in (
                 ("docker", 2.0),
-                ("apple-stock", 19.98),
+                ("apple-stock", 5.02),
                 ("container-compose", 4.0),
             ):
                 self.write_lane(root, lane, duration)
@@ -70,30 +72,72 @@ class ParityLibraryTests(unittest.TestCase):
             result, markdown = compare(root)
 
             self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["schemaVersion"], 2)
+            self.assertTrue(result["performanceInvestigationRequired"])
             fixture = result["fixtures"][0]
-            self.assertEqual(fixture["relativeDurations"]["apple-stock"], 9.99)
-            self.assertTrue(fixture["performanceEquivalent"])
-            self.assertIn("9.990x", markdown)
+            self.assertEqual(fixture["relativeDurations"]["apple-stock"], 2.51)
+            self.assertTrue(fixture["functionalEquivalent"])
+            self.assertFalse(fixture["performanceTargetMet"])
+            self.assertTrue(fixture["performanceInvestigationRequired"])
+            self.assertIn(
+                "apple-stock duration is 2.510x Docker",
+                fixture["performanceInvestigations"][0],
+            )
+            self.assertIn("investigate", markdown)
 
-    def test_comparison_fails_at_an_order_of_magnitude(self) -> None:
+    def test_comparison_does_not_investigate_exactly_at_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for lane, duration in (
                 ("docker", 2.0),
-                ("apple-stock", 4.0),
-                ("container-compose", 20.0),
+                ("apple-stock", 5.0),
+                ("container-compose", 2.0),
             ):
                 self.write_lane(root, lane, duration)
 
             result, _ = compare(root)
 
-            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["status"], "passed")
+            self.assertFalse(result["performanceInvestigationRequired"])
             fixture = result["fixtures"][0]
-            self.assertFalse(fixture["performanceEquivalent"])
-            self.assertIn(
-                "container-compose duration is 10.000x Docker",
-                fixture["performanceDifferences"][0],
-            )
+            self.assertFalse(fixture["performanceTargetMet"])
+            self.assertFalse(fixture["performanceInvestigationRequired"])
+
+    def test_comparison_records_comparable_or_better_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane, duration in (
+                ("docker", 2.0),
+                ("apple-stock", 1.9),
+                ("container-compose", 2.0),
+            ):
+                self.write_lane(root, lane, duration)
+
+            result, markdown = compare(root)
+
+            self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["performanceTargetMet"])
+            self.assertFalse(result["performanceInvestigationRequired"])
+            self.assertIn("target met", markdown)
+
+    def test_comparison_records_target_miss_below_investigation_threshold(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane, duration in (
+                ("docker", 2.0),
+                ("apple-stock", 3.0),
+                ("container-compose", 4.0),
+            ):
+                self.write_lane(root, lane, duration)
+
+            result, markdown = compare(root)
+
+            self.assertEqual(result["status"], "passed")
+            self.assertFalse(result["performanceTargetMet"])
+            self.assertFalse(result["performanceInvestigationRequired"])
+            self.assertIn("target missed", markdown)
 
     def test_comparison_requires_recorded_timings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -110,7 +154,7 @@ class ParityLibraryTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertIn(
                 "missing or invalid duration: apple-stock",
-                result["fixtures"][0]["performanceDifferences"],
+                result["fixtures"][0]["timingDifferences"],
             )
 
     @staticmethod

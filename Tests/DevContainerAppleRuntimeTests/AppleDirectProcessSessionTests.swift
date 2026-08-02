@@ -197,6 +197,22 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
+    func `socket input half close signals EOF while a descriptor copy remains`() async throws {
+        let channel = try AppleProcessInputChannel.socketPair()
+        let duplicate = dup(channel.hostEnd.fileDescriptor)
+        #expect(duplicate >= 0)
+        defer { Darwin.close(duplicate) }
+        let writer = ProcessInputWriter(
+            channel: channel,
+            label: "io.github.stephenlclarke.devcontainer.test-process-input"
+        )
+
+        try await writer.close()
+        var byte: UInt8 = 0
+        #expect(Darwin.read(channel.processEnd.fileDescriptor, &byte, 1) == 0)
+    }
+
+    @Test
     func `direct session preserves four mebibytes of duplex backpressure`() async throws {
         let input = Pipe()
         let output = Pipe()

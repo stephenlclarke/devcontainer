@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import Foundation
@@ -116,6 +117,40 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `process cancellation escalates across the complete owned process group`() async throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-process-group-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let session = try AppleProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                """
+                trap '' TERM
+                (trap '' TERM; while :; do sleep 1; done) &
+                printf '%s %s' "$$" "$!" > '\(pidFile.path)'
+                wait
+                """
+            ],
+            environment: [:]
+        )
+        for _ in 0 ..< 100 where !FileManager.default.fileExists(atPath: pidFile.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let identifiers = try String(contentsOf: pidFile, encoding: .utf8)
+            .split(separator: " ")
+            .compactMap { pid_t($0) }
+        #expect(identifiers.count == 2)
+
+        session.cancel()
+        #expect(try await session.wait() != 0)
+        for _ in 0 ..< 100 where identifiers.contains(where: Self.processExists) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!identifiers.contains(where: Self.processExists))
+    }
+
+    @Test
     func `process session preserves large duplex streams`() async throws {
         let payload = Data(
             (0 ..< (4 * 1024 * 1024)).lazy.map { UInt8($0 & 0xFF) }
@@ -146,5 +181,59 @@ struct AppleRuntimeStreamTests {
         #expect(try await session.wait() == 0)
         #expect(standardOutput == payload)
         #expect(standardError == Data("large-stream-stderr".utf8))
+    }
+
+    @Test
+    func `terminal session survives immediate resize and preserves output`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf terminal-output"],
+            environment: [:]
+        )
+
+        try session.resize(width: 132, height: 43)
+        var output = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        let text = try #require(String(data: output, encoding: .utf8))
+        #expect(text.contains("terminal-output"))
+    }
+
+    @Test
+    func `terminal session supports duplex input closure and completed guards`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                "IFS= read -r line; cat >/dev/null; printf 'received:%s' \"$line\""
+            ],
+            environment: [:]
+        )
+
+        try session.resize(width: 0, height: 43)
+        try await session.write(Data("hello\n".utf8))
+        try await session.closeStandardInput()
+        var output = Data()
+        for try await frame in session.frames {
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        let text = try #require(String(data: output, encoding: .utf8))
+        #expect(text.contains("received:hello"))
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
+        }
+        try await session.closeStandardInput()
+        session.cancel()
+    }
+
+    private static func processExists(_ identifier: pid_t) -> Bool {
+        errno = 0
+        return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
     }
 }

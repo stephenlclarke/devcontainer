@@ -11,10 +11,10 @@
       "cliVersion": "29.6.2",
       "cliSHA256": "eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a",
       "cliBottleSHA256": "b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821",
-      "engineVersion": "29.2.1",
-      "engineCommit": "6bc6209",
-      "engineSHA256": "e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2",
-      "engineApiVersion": "1.53",
+      "engineVersion": "29.5.2",
+      "engineCommit": "568f755",
+      "engineSHA256": "eb4bf018da78f7b9d01d69209d0944d1fe995869ac3caefa5c93e4552e181301",
+      "engineApiVersion": "1.54",
       "composeVersion": "5.3.1",
       "composeSHA256": "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3",
       "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608"
@@ -48,8 +48,8 @@
     },
     "releaseHost": {
       "architecture": "arm64",
-      "macOSProductVersion": "26.5.2",
-      "macOSBuildVersion": "25F84",
+      "macOSProductVersion": "26.5.1",
+      "macOSBuildVersion": "25F80",
       "xcodeVersion": "26.6",
       "xcodeBuildVersion": "17F113",
       "swiftVersion": "6.3.3"
@@ -181,7 +181,7 @@
       "id": "D07-reuse-cleanup",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["reuse and rebuild", "shutdown actions", "crash reconciliation and no leaked resources"]
+      "assertions": ["reuse and forced rebuild", "create and start hook counts", "owned-resource cleanup"]
     },
     {
       "id": "C01-compose-service",

@@ -28,6 +28,7 @@ class CoverageTests(unittest.TestCase):
                             "filename": "/repo/Sources/Core/A.swift",
                             "segments": [
                                 [3, 1, 2, True, True, False],
+                                [3, 2, 0, False, False, False],
                                 [7, 1, 0, True, True, False],
                             ],
                             "summary": {"lines": {"count": 10, "covered": 9}},
@@ -81,6 +82,7 @@ class CoverageTests(unittest.TestCase):
                                 [3, 1, 4, True, True, False],
                                 [3, 8, 0, False, False, False],
                                 [7, 1, 0, True, True, False],
+                                [7, 2, 0, False, False, False],
                                 [8, 1, 12, True, True, True],
                             ],
                             "summary": {"lines": {"count": 2, "covered": 1}},
@@ -124,6 +126,7 @@ class CoverageTests(unittest.TestCase):
                             "segments": [
                                 [3, 1, 0, True, True, False],
                                 [3, 8, 4, True, True, False],
+                                [3, 9, 0, False, False, False],
                                 [7, 1, 0, True, True, False],
                             ],
                         }
@@ -183,7 +186,9 @@ diff --git a/README.md b/README.md
                             "filename": "/repo/Sources/Core/A.swift",
                             "segments": [
                                 [3, 1, 4, True, True, False],
+                                [3, 2, 0, False, False, False],
                                 [4, 1, 0, True, True, False],
+                                [4, 2, 0, False, False, False],
                                 [5, 1, 0, False, False, False],
                             ],
                         },
@@ -223,6 +228,20 @@ diff --git a/README.md b/README.md
             )
 
         self.assertEqual(result, (0, 0, [], ["Sources/Core/Missing.swift"]))
+
+    def test_line_inherits_active_count_from_spanning_llvm_region(self) -> None:
+        item = {
+            "segments": [
+                [203, 49, 2, True, True, False],
+                [204, 53, 0, True, True, False],
+                [205, 10, 0, False, False, False],
+            ]
+        }
+
+        self.assertEqual(
+            MODULE.sonar_lines(item),
+            {203: 2, 204: 2},
+        )
 
     def test_git_changed_lines_uses_merge_base_and_source_hunks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

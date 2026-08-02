@@ -81,6 +81,9 @@ class WorkflowArtifactTests(unittest.TestCase):
 
     def test_hidden_build_evidence_is_explicitly_included(self) -> None:
         checked_blocks = 0
+        pinned_uploader = (
+            ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
+        ).read_text(encoding="utf-8")
 
         for workflow in WORKFLOWS.glob("*.yml"):
             contents = workflow.read_text(encoding="utf-8")
@@ -89,19 +92,67 @@ class WorkflowArtifactTests(unittest.TestCase):
 
             for start, end in zip(boundaries, boundaries[1:]):
                 block = contents[start:end]
-                if "uses: actions/upload-artifact@" not in block:
+                uses_action = "uses: actions/upload-artifact@" in block
+                uses_pinned_uploader = (
+                    "uses: ./Tools/ci/upload-artifact-action" in block
+                )
+                if not uses_action and not uses_pinned_uploader:
                     continue
                 if ".build/" not in block:
                     continue
 
                 checked_blocks += 1
-                self.assertIn(
-                    "include-hidden-files: true",
-                    block,
-                    f"{workflow.name} omits hidden .build evidence",
-                )
+                if uses_action:
+                    self.assertIn(
+                        "include-hidden-files: true",
+                        block,
+                        f"{workflow.name} omits hidden .build evidence",
+                    )
+                else:
+                    self.assertIn(
+                        "INPUT_INCLUDE-HIDDEN-FILES=true",
+                        pinned_uploader,
+                        "pinned uploader omits hidden .build evidence",
+                    )
 
         self.assertEqual(checked_blocks, 6)
+
+    def test_self_hosted_parity_lane_avoids_runner_action_downloads(self) -> None:
+        contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
+        lane = contents[contents.index("  lane:\n"):contents.index("  compare:\n")]
+
+        self.assertNotRegex(lane, r"\n        uses:\s+[^./]")
+        self.assertIn(
+            'git -C "${GITHUB_WORKSPACE}" fetch --no-tags --depth=1 origin',
+            lane,
+        )
+        self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
+
+    def test_pinned_uploader_verifies_the_action_archive(self) -> None:
+        contents = (
+            ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "action_revision=043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            contents,
+        )
+        self.assertIn(
+            "archive_sha256="
+            "d14fb1cada435a236a66b448fbb370cd126564c2c2d6cb52abd14d20bcbb9748",
+            contents,
+        )
+        self.assertIn('[[ "${actual_sha256}" != "${archive_sha256}" ]]', contents)
+
+        action = (
+            ROOT / "Tools" / "ci" / "upload-artifact-action" / "action.yml"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "Tools" / "ci" / "upload-artifact-action" / "index.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("using: node24", action)
+        self.assertIn("'upload-artifact-pinned.sh'", wrapper)
+        self.assertIn("env: process.env", wrapper)
 
     def test_hosted_workflows_cancel_superseded_runs(self) -> None:
         workflows = (
@@ -123,10 +174,91 @@ class WorkflowArtifactTests(unittest.TestCase):
         for name in ("ci.yml", "quality.yml", "sonar.yml"):
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
             self.assertEqual(
-                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "1200"'),
+                contents.count('SWIFT_TEST_ATTEMPTS: "1"'),
                 1,
                 name,
             )
+            self.assertEqual(
+                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "300"'),
+                1,
+                name,
+            )
+
+    def test_hosted_swift_tests_reuse_the_resolved_default_scratch(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        quality = (WORKFLOWS / "quality.yml").read_text(encoding="utf-8")
+        sonar = (WORKFLOWS / "sonar.yml").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+        self.assertIn("SWIFT_COVERAGE_SCRATCH_PATH: .build", ci)
+        self.assertIn("SWIFT_COVERAGE_SCRATCH_PATH: .build", sonar)
+        self.assertIn("SWIFT_ASAN_SCRATCH_PATH: .build", quality)
+        self.assertIn("SWIFT_TSAN_SCRATCH_PATH: .build", quality)
+        self.assertEqual(ci.count("- name: Resolve exact dependencies"), 1)
+        self.assertEqual(quality.count("- name: Resolve exact dependencies"), 1)
+        self.assertEqual(sonar.count("- name: Resolve exact dependencies"), 1)
+        self.assertIn(
+            "SWIFT_COVERAGE_SCRATCH_PATH ?= .build/coverage",
+            makefile,
+        )
+        self.assertIn("SWIFT_ASAN_SCRATCH_PATH ?= .build/asan", makefile)
+        self.assertIn("SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan", makefile)
+        self.assertNotIn("--scratch-path .build/coverage", makefile)
+        self.assertNotIn("--scratch-path .build/asan", makefile)
+        self.assertNotIn("--scratch-path .build/tsan", makefile)
+        self.assertIn("devcontainer-swift-profile.XXXXXX", makefile)
+        self.assertIn(
+            'LLVM_PROFILE_FILE="$$TEST_BIN_PATH/codecov/devcontainer-tests-%m-%p.profraw"',
+            makefile,
+        )
+        self.assertEqual(makefile.count("--build-tests"), 4)
+        self.assertEqual(
+            makefile.count("--product devcontainer-engine"),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("DEVCONTAINER_ENGINE_TEST_EXECUTABLE="),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("$(SWIFT_TEST_RUNNER_FLAGS)"),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("Tools/ci/run-swift-testing-bundle.sh"),
+            4,
+        )
+        self.assertEqual(
+            makefile.count("devcontainerPackageTests.xctest/Contents/MacOS"),
+            4,
+        )
+        self.assertEqual(makefile.count("--enable-code-coverage"), 5)
+        self.assertEqual(makefile.count("--sanitize=address"), 3)
+        self.assertEqual(makefile.count("--sanitize=thread"), 3)
+
+    def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
+        swift_workflows = (
+            "ci.yml",
+            "codeql.yml",
+            "docs.yml",
+            "homebrew.yml",
+            "quality.yml",
+            "sonar.yml",
+            "stable-release-gate.yml",
+        )
+        developer_dir = (
+            "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer"
+        )
+        for name in swift_workflows:
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            self.assertIn(developer_dir, contents, name)
+
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn(
+            "SWIFT_TEST_RUNNER_FLAGS ?= --no-parallel",
+            makefile,
+        )
+        self.assertNotIn("$(SWIFT) test", makefile)
 
     def test_codeql_traces_first_party_sources_after_dependency_build(self) -> None:
         contents = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")

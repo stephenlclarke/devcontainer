@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import DevContainerModel
+import DevContainerProcess
 import DevContainerRuntimeSPI
 import Foundation
 
@@ -112,50 +113,28 @@ public struct ExecutableComposeProvider: ComposeProvider {
         environment: [String: String],
         workingDirectory: URL
     ) async throws -> ComposeResult {
-        let process = Process()
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = workingDirectory
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        let (termination, terminationContinuation) = AsyncStream<Int32>.makeStream()
-        process.terminationHandler = { process in
-            terminationContinuation.yield(process.terminationStatus)
-            terminationContinuation.finish()
-        }
-
+        let result: CapturedProcessResult
         do {
-            try process.run()
+            result = try await ProcessRunner.captured(
+                executable: executable,
+                arguments: arguments,
+                environment: environment,
+                workingDirectory: workingDirectory
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DevContainerError {
+            throw error
         } catch {
-            terminationContinuation.finish()
             throw DevContainerError(
                 .runtimeUnavailable,
                 message: "cannot launch container-compose: \(error)"
             )
         }
-        let outputTask = Task.detached {
-            standardOutput.fileHandleForReading.readDataToEndOfFile()
-        }
-        let errorTask = Task.detached {
-            standardError.fileHandleForReading.readDataToEndOfFile()
-        }
-        let exitCode = await withTaskCancellationHandler {
-            for await status in termination {
-                return status
-            }
-            return 255
-        } onCancel: {
-            if process.isRunning {
-                process.terminate()
-            }
-        }
-        return await ComposeResult(
-            standardOutput: outputTask.value,
-            standardError: errorTask.value,
-            exitCode: exitCode
+        return ComposeResult(
+            standardOutput: result.standardOutput,
+            standardError: result.standardError,
+            exitCode: result.exitCode
         )
     }
 

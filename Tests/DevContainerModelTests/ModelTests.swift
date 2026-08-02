@@ -19,6 +19,24 @@ import Foundation
 import Testing
 
 @Test
+func `diagnostic redaction covers paths and credential shaped values`() {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let source = """
+    path=\(home)/private/workspace
+    Authorization: Bearer very-secret
+    token=abc123 password='hunter2' COOKIE=session-value
+    """
+    let redacted = DiagnosticsRedactor.redact(source)
+
+    #expect(redacted.contains("$HOME/private/workspace"))
+    #expect(!redacted.contains(home))
+    #expect(!redacted.contains("very-secret"))
+    #expect(!redacted.contains("abc123"))
+    #expect(!redacted.contains("hunter2"))
+    #expect(!redacted.contains("session-value"))
+}
+
+@Test
 func `build info uses makefile owned version`() throws {
     let repositoryRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -99,4 +117,80 @@ func `errors include correlation when present`() {
     )
     #expect(error.description == "invalid [correlation: correlation]")
     #expect(DevContainerError(.notFound, message: "missing").description == "missing")
+}
+
+@Test
+func `runtime request scope enforces deadlines and cancels owned work`() async {
+    let cancellation = CancellationFlag()
+    let context = RuntimeRequestContext(
+        correlationID: "deadline-fixture",
+        deadline: Date().addingTimeInterval(0.02)
+    )
+
+    do {
+        _ = try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await withTaskCancellationHandler {
+                    try await Task.sleep(for: .seconds(10))
+                    return "unexpected"
+                } onCancel: {
+                    cancellation.record()
+                }
+            }
+        }
+        Issue.record("expired runtime request unexpectedly completed")
+    } catch let error as DevContainerError {
+        #expect(error.code == .deadlineExceeded)
+        #expect(error.correlationID == "deadline-fixture")
+    } catch {
+        Issue.record("deadline returned unexpected error \(error)")
+    }
+    #expect(cancellation.recorded)
+}
+
+@Test
+func `runtime request scope does not surface cancelled deadline sleeper`() async throws {
+    let context = RuntimeRequestContext(
+        correlationID: "completed-fixture",
+        deadline: Date().addingTimeInterval(10)
+    )
+    let result = try await RuntimeRequestScope.$context.withValue(context) {
+        try await RuntimeRequestScope.withDeadline {
+            await Task.yield()
+            return "completed"
+        }
+    }
+    #expect(result == "completed")
+}
+
+@Test
+func `runtime request context rejects cancelled tasks`() async {
+    let errorCode = await Task { () -> DevContainerErrorCode? in
+        withUnsafeCurrentTask { $0?.cancel() }
+        do {
+            try RuntimeRequestContext(correlationID: "cancelled-fixture").checkActive()
+            return nil
+        } catch let error as DevContainerError {
+            return error.code
+        } catch {
+            return nil
+        }
+    }.value
+
+    #expect(errorCode == .cancelled)
+}
+
+private final class CancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var recorded: Bool {
+        lock.withLock { value }
+    }
+
+    func record() {
+        lock.withLock {
+            value = true
+        }
+    }
 }

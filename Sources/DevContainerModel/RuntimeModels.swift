@@ -75,19 +75,102 @@ public struct RuntimeRequestContext: Codable, Equatable, Sendable {
     public var project: ProjectKey?
     public var generation: Int64?
     public var deadline: Date?
+    public var providerFingerprint: String?
+    public var configurationHash: String?
 
     public init(
         operationID: OperationID = .random(),
         correlationID: String = UUID().uuidString.lowercased(),
         project: ProjectKey? = nil,
         generation: Int64? = nil,
-        deadline: Date? = nil
+        deadline: Date? = nil,
+        providerFingerprint: String? = nil,
+        configurationHash: String? = nil
     ) {
         self.operationID = operationID
         self.correlationID = correlationID
         self.project = project
         self.generation = generation
         self.deadline = deadline
+        self.providerFingerprint = providerFingerprint
+        self.configurationHash = configurationHash
+    }
+
+    public func checkActive(now: Date = Date()) throws {
+        if Task.isCancelled {
+            throw DevContainerError(
+                .cancelled,
+                message: "runtime request \(correlationID) was cancelled",
+                correlationID: correlationID
+            )
+        }
+        if let deadline, deadline <= now {
+            throw DevContainerError(
+                .deadlineExceeded,
+                message: "runtime request \(correlationID) exceeded its deadline",
+                correlationID: correlationID
+            )
+        }
+    }
+}
+
+public enum RuntimeRequestScope {
+    @TaskLocal public static var context: RuntimeRequestContext?
+
+    public static func checkActive() throws {
+        try context?.checkActive()
+    }
+
+    public static func withDeadline<Result: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Result
+    ) async throws -> Result {
+        try checkActive()
+        guard let context, let deadline = context.deadline else {
+            let result = try await operation()
+            try checkActive()
+            return result
+        }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else {
+            try context.checkActive()
+            throw DevContainerError(
+                .deadlineExceeded,
+                message: "runtime request \(context.correlationID) exceeded its deadline",
+                correlationID: context.correlationID
+            )
+        }
+        return try await withThrowingTaskGroup(of: Result.self) { group in
+            group.addTask(operation: operation)
+            group.addTask {
+                let nanoseconds = UInt64(
+                    min(remaining, TimeInterval(UInt64.max) / 1_000_000_000)
+                        * 1_000_000_000
+                )
+                try await Task.sleep(nanoseconds: nanoseconds)
+                throw DevContainerError(
+                    .deadlineExceeded,
+                    message: "runtime request \(context.correlationID) exceeded its deadline",
+                    correlationID: context.correlationID
+                )
+            }
+            do {
+                guard let result = try await group.next() else {
+                    throw DevContainerError(
+                        .cancelled,
+                        message: "runtime request \(context.correlationID) was cancelled",
+                        correlationID: context.correlationID
+                    )
+                }
+                group.cancelAll()
+                while await (try? group.next()) != nil {}
+                try context.checkActive()
+                return result
+            } catch {
+                group.cancelAll()
+                while await (try? group.next()) != nil {}
+                throw error
+            }
+        }
     }
 }
 
@@ -104,17 +187,29 @@ public struct PortBinding: Codable, Equatable, Hashable, Sendable {
     public var hostPort: UInt16?
     public var protocolName: String
     public var hostAddress: String
+    /// `false` when the port is declarative container metadata and must not
+    /// open a host listener. A missing value preserves compatibility with
+    /// metadata written before publication ownership was explicit.
+    public var published: Bool?
+    /// `true` when the compatibility adapter, rather than the native runtime,
+    /// owns the host listener. This survives engine restarts so forwarding can
+    /// be reconciled without guessing from a resolved ephemeral port.
+    public var hostForwarded: Bool?
 
     public init(
         containerPort: UInt16,
         hostPort: UInt16? = nil,
         protocolName: String = "tcp",
-        hostAddress: String = "127.0.0.1"
+        hostAddress: String = "0.0.0.0",
+        published: Bool? = nil,
+        hostForwarded: Bool? = nil
     ) {
         self.containerPort = containerPort
         self.hostPort = hostPort
         self.protocolName = protocolName
         self.hostAddress = hostAddress
+        self.published = published
+        self.hostForwarded = hostForwarded
     }
 }
 
@@ -260,6 +355,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
 public struct ContainerSnapshot: Codable, Equatable, Sendable {
     public var runtimeID: RuntimeID
     public var dockerID: DockerID
+    public var imageID: String?
     public var spec: ContainerSpec
     public var state: RuntimeContainerState
     public var createdAt: Date
@@ -271,6 +367,7 @@ public struct ContainerSnapshot: Codable, Equatable, Sendable {
     public init(
         runtimeID: RuntimeID,
         dockerID: DockerID,
+        imageID: String? = nil,
         spec: ContainerSpec,
         state: RuntimeContainerState,
         createdAt: Date,
@@ -281,6 +378,7 @@ public struct ContainerSnapshot: Codable, Equatable, Sendable {
     ) {
         self.runtimeID = runtimeID
         self.dockerID = dockerID
+        self.imageID = imageID
         self.spec = spec
         self.state = state
         self.createdAt = createdAt
@@ -394,6 +492,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
     public var workingDirectory: String?
     public var user: String?
     public var terminal: Bool
+    public var terminalWidth: UInt16?
+    public var terminalHeight: UInt16?
     public var attachStandardInput: Bool
     public var attachStandardOutput: Bool
     public var attachStandardError: Bool
@@ -404,6 +504,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
         workingDirectory: String? = nil,
         user: String? = nil,
         terminal: Bool = false,
+        terminalWidth: UInt16? = nil,
+        terminalHeight: UInt16? = nil,
         attachStandardInput: Bool = false,
         attachStandardOutput: Bool = true,
         attachStandardError: Bool = true
@@ -413,6 +515,8 @@ public struct ExecSpec: Codable, Equatable, Sendable {
         self.workingDirectory = workingDirectory
         self.user = user
         self.terminal = terminal
+        self.terminalWidth = terminalWidth
+        self.terminalHeight = terminalHeight
         self.attachStandardInput = attachStandardInput
         self.attachStandardOutput = attachStandardOutput
         self.attachStandardError = attachStandardError
