@@ -15,7 +15,7 @@ starts, stops, installs, or replaces a developer's Apple container runtime.
 
 | Work | Required host |
 | --- | --- |
-| Build, tests, coverage, sanitizers, and DocC | Apple-silicon macOS 15 or later, Xcode 26/Swift 6.2, Python 3, Ruby 2.7 or newer with Psych, GNU Make |
+| Build, tests, coverage, sanitizers, and DocC | Apple-silicon macOS 15 or later, Xcode 26/Swift 6.2, Python 3, Ruby 2.7 or newer with JSON and Psych, GNU Make |
 | Live stock Apple parity | Physical Apple-silicon macOS 26 host with the pinned stock `container` release |
 | Live Compose parity | Reserved physical Apple-silicon host with pinned `container-compose` and its declared matched stack; the workflow serializes this lane when sharing the stock/Docker host |
 | VS Code end-to-end parity | Physical Apple-silicon host with a logged-in GUI session and the pinned VS Code/VSIX artifacts |
@@ -26,10 +26,10 @@ Run the non-mutating prerequisite probe first:
 make bootstrap
 ```
 
-It requires `swift`, `python3`, Ruby 2.7 or newer with its standard Psych YAML
-library, `make`, and `git`, and reports missing optional quality tools. The full
-local quality aggregate also expects `actionlint`, `markdownlint`, `shellcheck`,
-`swiftformat`, and `swiftlint`.
+It requires `swift`, `python3`, Ruby 2.7 or newer with its standard JSON and
+Psych YAML libraries, `make`, and `git`, and reports missing optional quality
+tools. The full local quality aggregate also expects `actionlint`,
+`markdownlint`, `shellcheck`, `swiftformat`, and `swiftlint`.
 
 ## Package structure
 

@@ -125,7 +125,7 @@ advanced mount options.
 ## Development
 
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
-(including its standard Psych YAML library), and `make`.
+(including its standard JSON and Psych YAML libraries), and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,
 stock Apple `container`, real Docker, the pinned Dev Container CLI, and the
 selected Compose provider.

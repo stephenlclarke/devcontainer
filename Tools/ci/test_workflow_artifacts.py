@@ -308,11 +308,13 @@ jobs:
             encoding="utf-8"
         )
 
-        self.assertIn("Ruby 2.7 or newer", readme)
-        self.assertIn("Ruby 2.7 or newer with Psych", build)
-        self.assertIn("Ruby 2.7 or newer with its standard Psych", build)
+        self.assertIn("standard JSON and Psych YAML libraries", readme)
+        self.assertIn("Ruby 2.7 or newer with JSON and Psych", build)
+        self.assertIn("standard JSON and\nPsych YAML libraries", build)
         self.assertIn('minimum_ruby_version="2.7"', bootstrap)
         self.assertIn("RUBY_VERSION", bootstrap)
+        self.assertIn('require "json"', bootstrap)
+        self.assertIn("JSON.parse(JSON.generate", bootstrap)
         self.assertIn('require "yaml"', bootstrap)
         self.assertIn("YAML.safe_load", bootstrap)
 
