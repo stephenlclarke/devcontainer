@@ -22,14 +22,12 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         return
     try:
         process.wait(timeout=TERMINATION_GRACE_SECONDS)
-        return
     except subprocess.TimeoutExpired:
         pass
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
-        process.wait()
-        return
+        pass
     process.wait()
 
 

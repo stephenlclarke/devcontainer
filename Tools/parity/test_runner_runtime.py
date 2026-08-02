@@ -72,10 +72,16 @@ case "${1:-}" in
   start)
     if [[ "${MOCK_COLIMA_HANG_ONCE:-0}" == "1" && ! -f "${state}.hung" ]]; then
       : > "${state}.hung"
+      (
+        trap '' TERM INT
+        while :; do
+          sleep 60
+        done
+      ) &
+      resistant_child=$!
+      printf '%s\n' "$resistant_child" > "${state}.child"
       trap 'exit 143' TERM INT
-      while :; do
-        sleep 60
-      done
+      wait "$resistant_child"
     fi
     if [[ "${MOCK_COLIMA_FAIL_ALWAYS:-0}" == "1" ]]; then
       exit 17
@@ -191,6 +197,15 @@ esac
         self.assertLess(time.monotonic() - started_at, 10)
         operations = self.log.read_text(encoding="utf-8")
         self.assertEqual(operations.count("colima start"), 2)
+        child_id = int((self.root / "colima.state.child").read_text().strip())
+        for _ in range(20):
+            try:
+                os.kill(child_id, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail(f"timed-out Colima descendant survived: {child_id}")
 
     def test_reuses_an_already_running_colima(self) -> None:
         (self.root / "colima.state").write_text("running\n", encoding="utf-8")
