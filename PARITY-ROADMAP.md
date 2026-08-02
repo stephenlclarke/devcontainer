@@ -243,7 +243,7 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 ### ENG-002: Disconnecting a hijacked stream does not reliably cancel the owned runtime session
 
-**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.1.0.
+**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.2.1.
 
 **Evidence:** The shared `DockerRawStreamHandler.channelInactive` now owns one `DockerHijackCancellation`, calls the session's cancellation operation directly and exactly once on abnormal closure, and leaves the ordered input pump responsible only for input ordering. Devcontainer's ten shared-listener integration tests retain the early-half-close, completed-hijack, disconnect, and connection-budget coverage.
 
@@ -289,7 +289,7 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 ### ENG-004: Server-generated Docker error JSON is not safely encoded
 
-**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.1.0.
+**Status:** Closed in the current source candidate by adopting `container-engine-api` 0.2.1.
 
 **Evidence:** `ContainerUnixHTTPServer.writeError` uses the shared `DockerErrorEnvelope` and deterministic `DockerJSON` encoder. Devcontainer retains a regression test with quotes, Unicode, backslashes, control characters, and newlines.
 

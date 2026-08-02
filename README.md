@@ -64,8 +64,9 @@ flowchart LR
     VS["VS Code Dev Containers"] --> DC["Official @devcontainers/cli"]
     DC --> Docker["Unmodified Docker CLI"]
     Docker --> API["Local Docker Engine compatibility socket"]
-    API --> Shared["container-engine-api wire, router and Unix server"]
-    Shared --> Core["Provider-neutral runtime core"]
+    API --> Shared["container-engine generated API 1.44 through 1.53 gateway"]
+    Shared --> Session["Private fingerprint-bound provider session"]
+    Session --> Core["devcontainer stock adapter and provider-neutral runtime core"]
     Core --> Stock["Stock apple/container"]
     DC --> ComposeChoice{"Compose provider"}
     ComposeChoice --> DockerCompose["Docker Compose over the bridge"]
@@ -118,10 +119,10 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `container-engine-api` 0.1.0 | Shared Docker wire types, request-target parsing, hardened Unix server, and immutable provider identity |
+| `container-engine-api` 0.2.1 | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, private provider-session transport, and provider-owned immutable state-root identity |
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
-| `Sources/DevContainerService` | Stock-provider bootstrap for the shared Unix-socket compatibility engine |
+| `Sources/DevContainerService` | Stock-provider adapter; it can retain the standalone compatibility listener or expose only a private `container-engine` provider-session socket |
 | `Sources/DevContainerComposeProvider` | Optional external `container-compose` dispatcher |
 
 ## Development

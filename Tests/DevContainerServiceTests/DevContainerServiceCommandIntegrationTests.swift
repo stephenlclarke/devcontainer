@@ -14,6 +14,8 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerEngineProviderSession
+import ContainerEngineWire
 import Darwin
 import Foundation
 import Testing
@@ -69,6 +71,56 @@ struct ServiceCommandIntegrationTests {
             providerSelection: root.appendingPathComponent("engine-provider.json")
         )
     }
+
+    @Test
+    func `engine executable serves a private provider session`() async throws {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent(
+                "dcs-provider-\(UUID().uuidString.prefix(8))",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let container = root.appendingPathComponent("container")
+        try Data(fakeContainerCLI.utf8).write(to: container)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: container.path
+        )
+        let providerSocket = root.appendingPathComponent("provider.sock").path
+        let state = root.appendingPathComponent("state.sqlite").path
+        let executable = try engineExecutable()
+        let process = Process()
+        let log = root.appendingPathComponent("provider.log")
+        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        let output = try FileHandle(forWritingTo: log)
+        defer { try? output.close() }
+        process.executableURL = executable
+        process.arguments = [
+            "--provider-socket",
+            providerSocket,
+            "--state",
+            state,
+            "--container",
+            container.path
+        ]
+        process.environment = try engineEnvironment(executable: executable)
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+
+        try await exerciseProviderProcess(
+            process,
+            socket: providerSocket,
+            root: root,
+            log: log
+        )
+    }
 }
 
 private func engineEnvironment(executable: URL) throws -> [String: String] {
@@ -111,6 +163,58 @@ private func exerciseEngineProcess(
         var selectionStatus = stat()
         #expect(lstat(providerSelection.path, &selectionStatus) == 0)
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+
+        #expect(kill(process.processIdentifier, SIGTERM) == 0)
+        try await waitForExit(process, log: log)
+        #expect(process.terminationStatus == 0)
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    } catch {
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+            try? await waitForExit(process, log: log, timeout: .seconds(2))
+        }
+        throw error
+    }
+}
+
+private func exerciseProviderProcess(
+    _ process: Process,
+    socket: String,
+    root: URL,
+    log: URL
+) async throws {
+    do {
+        try await waitForSocket(socket, process: process, log: log)
+        let descriptor = try await ContainerEngineProviderSessionClient.probe(
+            socketPath: socket
+        )
+        #expect(descriptor.fingerprint.declaration.profile == .stock)
+        #expect(descriptor.fingerprint.declaration.kind == .devcontainerStock)
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.route.SystemPing" && $0.status == .native
+        })
+        let client = ContainerEngineProviderSessionClient(
+            socketPath: socket,
+            expectedFingerprint: descriptor.fingerprint
+        )
+        let response = await client.respond(
+            to: DockerHTTPRequest(method: .get, target: "/_ping")
+        )
+        #expect(response.status == 200)
+        guard case let .bytes(body) = response.body else {
+            throw ServiceIntegrationError("provider ping did not return a byte response")
+        }
+        #expect(String(data: body, encoding: .utf8) == "OK")
+
+        let selection = root.appendingPathComponent("engine-provider.json")
+        #expect(!FileManager.default.fileExists(atPath: selection.path))
+        let stateRootIdentity = root.appendingPathComponent("engine-state-root-id")
+        var identityStatus = stat()
+        #expect(lstat(stateRootIdentity.path, &identityStatus) == 0)
+        #expect(identityStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+        var socketStatus = stat()
+        #expect(lstat(socket, &socketStatus) == 0)
+        #expect(socketStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
         try await waitForExit(process, log: log)
@@ -178,22 +282,37 @@ private func engineExecutable() throws -> URL {
         includingPropertiesForKeys: [.isExecutableKey],
         options: [.skipsHiddenFiles, .skipsPackageDescendants]
     )
+    let expectsCoverageBuild = startingPoints.contains {
+        $0.path.contains("/coverage/")
+    }
     let matches = (enumerator?.allObjects as? [URL] ?? [])
         .filter {
             $0.lastPathComponent == "devcontainer-engine"
                 && FileManager.default.isExecutableFile(atPath: $0.path)
         }
         .sorted {
-            let leftCoverage = $0.path.contains("/coverage/")
-            let rightCoverage = $1.path.contains("/coverage/")
-            return leftCoverage == rightCoverage
-                ? $0.path < $1.path
-                : leftCoverage && !rightCoverage
+            executableCandidatePrecedes(
+                $0,
+                $1,
+                expectsCoverageBuild: expectsCoverageBuild
+            )
         }
     if let match = matches.first {
         return match
     }
     throw ServiceIntegrationError("could not locate the built devcontainer-engine")
+}
+
+private func executableCandidatePrecedes(
+    _ left: URL,
+    _ right: URL,
+    expectsCoverageBuild: Bool
+) -> Bool {
+    let leftMatchesBuild = left.path.contains("/coverage/") == expectsCoverageBuild
+    let rightMatchesBuild = right.path.contains("/coverage/") == expectsCoverageBuild
+    return leftMatchesBuild == rightMatchesBuild
+        ? left.path < right.path
+        : leftMatchesBuild && !rightMatchesBuild
 }
 
 private func configuredEngineExecutable() throws -> URL? {
@@ -216,15 +335,23 @@ private func configuredEngineExecutable() throws -> URL? {
     return executable
 }
 
-private func waitForSocket(_ path: String, process: Process) async throws {
+private func waitForSocket(
+    _ path: String,
+    process: Process,
+    log: URL? = nil
+) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while ContinuousClock.now < deadline {
         if FileManager.default.fileExists(atPath: path) {
             return
         }
         if !process.isRunning {
+            let diagnostic = log.flatMap {
+                try? String(contentsOf: $0, encoding: .utf8)
+            }?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? "no engine output"
             throw ServiceIntegrationError(
-                "devcontainer-engine exited \(process.terminationStatus) before creating its socket"
+                "devcontainer-engine exited \(process.terminationStatus) before creating its socket: \(diagnostic)"
             )
         }
         try await Task.sleep(for: .milliseconds(20))

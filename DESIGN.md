@@ -78,9 +78,10 @@ flowchart TB
     NativeCLI --> Control["Configuration and diagnostic XPC API"]
     ReferenceCLI --> DockerCLI["Unmodified Docker CLI"]
     ReferenceCLI --> ComposeSelector{"Configured Compose executable"}
-    DockerCLI --> Socket["User-owned Unix socket"]
-    Socket --> Shared["container-engine-api Unix server"]
-    Shared --> Service["devcontainer stock provider adapter"]
+    DockerCLI --> Socket["User-owned public Unix socket"]
+    Socket --> Shared["container-engine API 1.44 through 1.53 gateway"]
+    Shared --> Private["Private fingerprint-bound provider session"]
+    Private --> Service["devcontainer stock provider adapter"]
     Service --> RuntimeCore["Runtime-neutral application core"]
     RuntimeCore --> AppleAdapter["Stock Apple runtime adapter"]
     AppleAdapter --> AppleAPI["ContainerAPIClient and Apple XPC services"]
@@ -103,8 +104,9 @@ service and Compose-dispatch executables:
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
 | `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, privacy-redacted `diagnostics`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
-| `devcontainer-engine` | Normal executable | Stock-provider bootstrap for the shared Docker Engine Unix listener, immutable provider selection, state reconciliation, and event handling |
-| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, and `ContainerEngineRuntimeSPI` | Exact `container-engine-api` 0.1.0 libraries | Shared Docker wire and request-target contracts, hardened listener, and immutable provider identity; no Apple or Compose dependency |
+| `container-engine` | Normal executable from exact `container-engine-api` 0.2.1 | Owns the public Docker Engine Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed dispatch to one private provider session |
+| `devcontainer-engine` | Normal executable | Stock-provider adapter, state reconciliation, and event handling; `--provider-socket` exposes only the private session while the option-free compatibility mode retains the legacy standalone listener during rollout |
+| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` 0.2.1 libraries | Shared Docker wire, generated route ledger, hardened listener, provider-owned immutable state-root identity, private session protocol, and gateway dispatch; no Apple or Compose dependency |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
@@ -195,7 +197,7 @@ or archive upload.
 
 ## Docker Engine compatibility boundary
 
-The service advertises only the Docker API versions proven by the parity suite. It returns Docker-shaped identifiers, JSON, headers, streams, status codes, and errors for this tested surface:
+The generated shared route ledger contains all 107 method/path operations in the pinned Moby Engine API specifications from 1.44 through 1.53. The gateway advertises only operations declared by the selected provider, rejects every known but unavailable operation with a Docker-shaped `501`, and returns `404` for paths outside the ledger. The stock adapter currently declares and returns Docker-shaped identifiers, JSON, headers, streams, status codes, and errors for this tested surface:
 
 | Area | Required endpoints or behavior |
 | --- | --- |

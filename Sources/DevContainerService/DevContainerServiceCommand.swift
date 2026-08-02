@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import ContainerEngineProviderSession
 import ContainerEngineRuntimeSPI
 import Darwin
 import DevContainerAppleRuntime
@@ -44,6 +45,12 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
 
     @Option(name: .long, help: "Backend provider recorded for resource ownership.")
     var provider: String = BackendProvider.stock.rawValue
+
+    @Option(
+        name: .long,
+        help: "Serve only the private provider-session socket for container-engine."
+    )
+    var providerSocket: String?
 
     // Service bootstrap remains linear so ownership and rollback order are
     // reviewable in one place.
@@ -90,6 +97,12 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 deadline: Date().addingTimeInterval(5 * 60)
             )
         )
+        let routeCapabilities = try Self.stockRouteIdentifiers.map { identifier in
+            try ContainerEngineProviderCapability(
+                identifier: "engine.route.\(identifier)",
+                status: .native
+            )
+        }
         let providerDeclaration = try ContainerEngineProviderDeclaration(
             profile: .stock,
             kind: .devcontainerStock,
@@ -114,12 +127,30 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     identifier: "engine.\(capability.rawValue)",
                     status: sharedStatus
                 )
-            }
+            } + routeCapabilities
         )
-        let providerFingerprint = try ContainerEngineProviderSelectionStore(
+        let providerSelectionPath = stateURL.deletingLastPathComponent()
+            .appendingPathComponent("engine-provider.json")
+        let providerSelectionStore = ContainerEngineProviderSelectionStore(
+            path: providerSelectionPath
+        )
+        let previousSelection = try Self.previousProviderSelection(
+            store: providerSelectionStore
+        )
+        let stateRootUUID = try ContainerEngineStateRootIdentityStore(
             path: stateURL.deletingLastPathComponent()
-                .appendingPathComponent("engine-provider.json")
-        ).select(providerDeclaration)
+                .appendingPathComponent("engine-state-root-id")
+        ).loadOrCreate(initial: previousSelection?.stateRootUUID ?? UUID())
+        let providerFingerprint = try ContainerEngineProviderFingerprint(
+            declaration: providerDeclaration,
+            stateRootUUID: stateRootUUID
+        )
+        if providerSocket == nil {
+            _ = try providerSelectionStore.select(
+                providerDeclaration,
+                stateRootUUID: stateRootUUID
+            )
+        }
         logger.info(
             "Engine provider selected",
             metadata: [
@@ -138,7 +169,20 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             provider: selectedProvider,
             providerFingerprint: providerFingerprint.digest
         )
-        let server = EngineServer(router: router, socketPath: socket, logger: logger)
+        let server: ServiceServer = if let providerSocket {
+            try .provider(
+                ContainerEngineProviderSessionServer(
+                    responder: router,
+                    socketPath: providerSocket,
+                    declaration: providerDeclaration,
+                    stateRootUUID: stateRootUUID
+                )
+            )
+        } else {
+            .legacy(
+                EngineServer(router: router, socketPath: socket, logger: logger)
+            )
+        }
         try await server.start()
         let signals = Self.terminationSignals()
         try await withThrowingTaskGroup(of: ServiceCompletion.self) { group in
@@ -166,6 +210,28 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 // Drain cancelled child tasks before leaving the structured scope.
             }
         }
+    }
+
+    private static let stockRouteIdentifiers = [
+        "SystemPing", "SystemPingHead", "SystemVersion", "SystemInfo",
+        "ContainerList", "ContainerCreate", "ContainerInspect", "ContainerStart",
+        "ContainerStop", "ContainerRestart", "ContainerKill", "ContainerRename",
+        "ContainerWait", "ContainerExec", "ContainerLogs", "ContainerAttach",
+        "ContainerArchive", "ContainerArchiveInfo", "PutContainerArchive",
+        "ContainerDelete", "ExecInspect", "ExecStart", "ExecResize", "ImageList",
+        "ImageInspect", "ImageCreate", "ImageLoad", "ImageBuild", "ImageTag",
+        "ImageDelete", "NetworkList", "NetworkCreate", "NetworkInspect",
+        "NetworkConnect", "NetworkDisconnect", "NetworkDelete", "VolumeList",
+        "VolumeCreate", "VolumeInspect", "VolumeDelete", "SystemEvents"
+    ]
+
+    private static func previousProviderSelection(
+        store: ContainerEngineProviderSelectionStore
+    ) throws -> ContainerEngineProviderFingerprint? {
+        guard FileManager.default.fileExists(atPath: store.path.path) else {
+            return nil
+        }
+        return try store.load()
     }
 
     private static func terminationSignals() -> AsyncStream<Int32> {
@@ -202,6 +268,38 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
 private enum ServiceCompletion: Sendable {
     case serverClosed
     case signal(Int32)
+}
+
+private enum ServiceServer: Sendable {
+    case legacy(EngineServer)
+    case provider(ContainerEngineProviderSessionServer)
+
+    func start() async throws {
+        switch self {
+        case let .legacy(server):
+            try await server.start()
+        case let .provider(server):
+            try server.start()
+        }
+    }
+
+    func wait() async throws {
+        switch self {
+        case let .legacy(server):
+            try await server.wait()
+        case let .provider(server):
+            await server.wait()
+        }
+    }
+
+    func shutdown() async throws {
+        switch self {
+        case let .legacy(server):
+            try await server.shutdown()
+        case let .provider(server):
+            await server.shutdown()
+        }
+    }
 }
 
 enum DefaultPaths {

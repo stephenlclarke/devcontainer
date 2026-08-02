@@ -47,6 +47,7 @@ DevContainerRuntimeSPI -> DevContainerAppleRuntime
 DevContainerRuntimeSPI -> DevContainerComposeProvider
 DevContainerDockerAPI -> DevContainerTestSupport
 ContainerEngineRuntimeSPI -> DevContainerService
+ContainerEngineProviderSession -> DevContainerService
 ContainerUnixHTTPServer -> DevContainerService
 ```
 
@@ -55,7 +56,8 @@ The three executable products are:
 | Product | Purpose |
 | --- | --- |
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
-| `devcontainer-engine` | Select one immutable stock-provider fingerprint, serve the tested API subset through the shared user-owned Unix listener, and translate requests to stock Apple runtime operations |
+| `container-engine` (from the exact `container-engine-api` dependency) | Own the public user socket, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed provider dispatch |
+| `devcontainer-engine` | Translate requests to stock Apple runtime operations; serve the legacy standalone endpoint or only the private provider-session socket selected by `--provider-socket` |
 | `devcontainer-compose` | Docker Compose-compatible dispatcher that selects upstream Docker Compose or an explicitly configured external `container-compose` executable |
 
 Only `DevContainerAppleRuntime` links Apple runtime products. The Compose
@@ -90,6 +92,8 @@ swift build --disable-automatic-resolution
 swift run --disable-automatic-resolution devcontainer version --format json
 swift run --disable-automatic-resolution devcontainer-engine --help
 ```
+
+The dependency-first shared-gateway development path starts `devcontainer-engine --provider-socket PRIVATE_PATH`, then starts `container-engine --provider-socket PRIVATE_PATH --socket PUBLIC_PATH --state-directory PRIVATE_STATE`. Both sockets are local Unix sockets; the provider socket and parent directory are private to the current user, and the gateway refuses a provider identity that differs from its persisted selection.
 
 ## Hosted-safe test workflow
 
