@@ -401,7 +401,7 @@ jobs:
             printf '(https://github.com/%s/blob/%s/INSTALL.md) ' \
               "${GITHUB_REPOSITORY}" "${PUBLISH_SHA}"
             printf 'and [DocC documentation]'
-            printf '(https://stephenlclarke.github.io/devcontainer/) '
+            printf '(https://stephenlclarke.github.io/api/devcontainer/) '
             printf 'for runtime selection, service control, upgrades, '
             printf 'and uninstalling.\n'
           } >"${notes}"

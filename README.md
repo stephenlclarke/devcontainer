@@ -157,8 +157,9 @@ Start with the [user guide](USER_GUIDE.md), then consult the
 [compatibility contract](COMPATIBILITY.md), [standards conformance
 audit](CONFORMANCE.md), [full parity and performance roadmap](PARITY-ROADMAP.md),
 and [parity timing analysis](PERFORMANCE.md). The
-generated [DocC site](https://stephenlclarke.github.io/devcontainer/) contains
-the public Swift API reference plus architecture, use, compatibility,
+generated [DocC site](https://stephenlclarke.github.io/api/devcontainer/) in the
+[Container developer API collection](https://stephenlclarke.github.io/api/)
+contains the public Swift API reference plus architecture, use, compatibility,
 conformance, testing, and performance articles. GitHub Pages publishes it from
 the exact `main` commit that passes the documentation workflow.
 
