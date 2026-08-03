@@ -39,7 +39,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            exact: "0.2.2"
+            exact: "0.3.0"
         ),
         .package(url: "https://github.com/apple/container.git", exact: "1.1.0"),
         .package(url: "https://github.com/apple/containerization.git", exact: "0.35.0"),
@@ -143,6 +143,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 "DevContainerState",
+                .product(name: "ContainerEngineGateway", package: "container-engine-api"),
                 .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerEngineProviderSession", package: "container-engine-api"),
                 .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),

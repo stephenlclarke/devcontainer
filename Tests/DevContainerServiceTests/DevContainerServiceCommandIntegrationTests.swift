@@ -163,11 +163,25 @@ private func exerciseEngineProcess(
         var selectionStatus = stat()
         #expect(lstat(providerSelection.path, &selectionStatus) == 0)
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+        let providerSocket = providerSelection.deletingLastPathComponent()
+            .appendingPathComponent("engine-provider.sock")
+        var providerSocketStatus = stat()
+        #expect(lstat(providerSocket.path, &providerSocketStatus) == 0)
+        #expect(providerSocketStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+
+        let unsupportedResize = try runCurlResponse(
+            socket: socket,
+            path: "/v1.53/containers/missing/resize?h=24&w=80",
+            method: "POST"
+        )
+        #expect(unsupportedResize.status == 501)
+        #expect(unsupportedResize.body.contains("ContainerResize"))
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
         try await waitForExit(process, log: log)
         #expect(process.terminationStatus == 0)
         #expect(!FileManager.default.fileExists(atPath: socket))
+        #expect(!FileManager.default.fileExists(atPath: providerSocket.path))
     } catch {
         if process.isRunning {
             _ = kill(process.processIdentifier, SIGKILL)
@@ -192,6 +206,14 @@ private func exerciseProviderProcess(
         #expect(descriptor.fingerprint.declaration.kind == .devcontainerStock)
         #expect(descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.SystemPing" && $0.status == .native
+        })
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.route.ContainerAttachWebsocket"
+                && $0.status == .emulated
+        })
+        #expect(!descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.route.ContainerResize"
+                && $0.status != .unavailable
         })
         let client = ContainerEngineProviderSessionClient(
             socketPath: socket,
@@ -360,16 +382,33 @@ private func waitForSocket(
 }
 
 private func runCurl(socket: String, path: String) throws -> String {
+    let response = try runCurlResponse(socket: socket, path: path)
+    guard response.status >= 200, response.status < 300 else {
+        throw ServiceIntegrationError(
+            "GET \(path) returned HTTP \(response.status): \(response.body)"
+        )
+    }
+    return response.body
+}
+
+private func runCurlResponse(
+    socket: String,
+    path: String,
+    method: String = "GET"
+) throws -> (status: Int, body: String) {
     let process = Process()
     let output = Pipe()
     let error = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
     process.arguments = [
-        "--fail-with-body",
         "--silent",
         "--show-error",
         "--unix-socket",
         socket,
+        "--request",
+        method,
+        "--write-out",
+        "\n%{http_code}",
         "http://localhost\(path)"
     ]
     process.standardOutput = output
@@ -387,8 +426,16 @@ private func runCurl(socket: String, path: String) throws -> String {
             "\(curlDiagnostic.trimmingCharacters(in: .whitespacesAndNewlines)): \(response)"
         )
     }
-    return String(data: data, encoding: .utf8)
+    let text = String(data: data, encoding: .utf8)
         ?? "non-UTF-8 service response"
+    guard let newline = text.lastIndex(of: "\n"),
+          let status = Int(text[text.index(after: newline)...])
+    else {
+        throw ServiceIntegrationError(
+            "curl response did not contain an HTTP status: \(text)"
+        )
+    }
+    return (status, String(text[..<newline]))
 }
 
 private let fakeContainerCLI = """

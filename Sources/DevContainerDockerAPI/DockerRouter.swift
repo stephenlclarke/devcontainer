@@ -879,27 +879,50 @@ extension DockerRouter {
                 body: .stream(stream.mapData { DockerStreamFraming.encode($0, terminal: false) })
             )
         case (.post, "attach"):
-            let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
-            let session = try await runtime.attachContainer(
+            return try await containerAttachResponse(
                 id: id,
-                terminal: terminal,
-                context: context
+                context: context,
+                webSocket: false
             )
-            return DockerHTTPResponse(
-                status: 101,
-                headers: [
-                    "Connection": "Upgrade",
-                    "Upgrade": "tcp",
-                    "Content-Type": "application/vnd.docker.raw-stream"
-                ],
-                body: .hijack(
-                    DockerRuntimeHijackSession(session),
-                    terminal: terminal
-                )
+        case (.get, "attach") where segments.count == 4 && segments[3] == "ws":
+            return try await containerAttachResponse(
+                id: id,
+                context: context,
+                webSocket: true
             )
         default:
             return nil
         }
+    }
+
+    private func containerAttachResponse(
+        id: String,
+        context: RuntimeRequestContext,
+        webSocket: Bool
+    ) async throws -> DockerHTTPResponse {
+        let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
+        let session = try await runtime.attachContainer(
+            id: id,
+            terminal: terminal,
+            context: context
+        )
+        let adaptedSession = DockerRuntimeHijackSession(session)
+        if webSocket {
+            return DockerHTTPResponse(
+                status: 101,
+                headers: ["Connection": "Upgrade", "Upgrade": "websocket"],
+                body: .webSocket(adaptedSession)
+            )
+        }
+        return DockerHTTPResponse(
+            status: 101,
+            headers: [
+                "Connection": "Upgrade",
+                "Upgrade": "tcp",
+                "Content-Type": "application/vnd.docker.raw-stream"
+            ],
+            body: .hijack(adaptedSession, terminal: terminal)
+        )
     }
 
     private func execSpec(from request: DockerCreateExecRequest) throws -> ExecSpec {

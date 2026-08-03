@@ -15,8 +15,10 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import ContainerEngineGateway
 import ContainerEngineProviderSession
 import ContainerEngineRuntimeSPI
+import ContainerUnixHTTPServer
 import Darwin
 import DevContainerAppleRuntime
 import DevContainerCore
@@ -100,7 +102,9 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         let routeCapabilities = try Self.stockRouteIdentifiers.map { identifier in
             try ContainerEngineProviderCapability(
                 identifier: "engine.route.\(identifier)",
-                status: .native
+                status: identifier == "ContainerAttachWebsocket"
+                    ? .emulated
+                    : .native
             )
         }
         let providerDeclaration = try ContainerEngineProviderDeclaration(
@@ -179,8 +183,23 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 )
             )
         } else {
-            .legacy(
-                EngineServer(router: router, socketPath: socket, logger: logger)
+            try .gateway(
+                provider: ContainerEngineProviderSessionServer(
+                    responder: router,
+                    socketPath: stateURL.deletingLastPathComponent()
+                        .appendingPathComponent("engine-provider.sock").path,
+                    declaration: providerDeclaration,
+                    stateRootUUID: stateRootUUID
+                ),
+                publicServer: ContainerUnixHTTPServer(
+                    responder: ContainerEngineGatewayResponder(
+                        providerSocketPath: stateURL.deletingLastPathComponent()
+                            .appendingPathComponent("engine-provider.sock").path,
+                        fingerprint: providerFingerprint
+                    ),
+                    socketPath: socket,
+                    logger: logger
+                )
             )
         }
         try await server.start()
@@ -217,6 +236,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         "ContainerList", "ContainerCreate", "ContainerInspect", "ContainerStart",
         "ContainerStop", "ContainerRestart", "ContainerKill", "ContainerRename",
         "ContainerWait", "ContainerExec", "ContainerLogs", "ContainerAttach",
+        "ContainerAttachWebsocket",
         "ContainerArchive", "ContainerArchiveInfo", "PutContainerArchive",
         "ContainerDelete", "ExecInspect", "ExecStart", "ExecResize", "ImageList",
         "ImageInspect", "ImageCreate", "ImageLoad", "ImageBuild", "ImageTag",
@@ -271,13 +291,22 @@ private enum ServiceCompletion: Sendable {
 }
 
 private enum ServiceServer: Sendable {
-    case legacy(EngineServer)
+    case gateway(
+        provider: ContainerEngineProviderSessionServer,
+        publicServer: ContainerUnixHTTPServer
+    )
     case provider(ContainerEngineProviderSessionServer)
 
     func start() async throws {
         switch self {
-        case let .legacy(server):
-            try await server.start()
+        case let .gateway(provider, publicServer):
+            try provider.start()
+            do {
+                try await publicServer.start()
+            } catch {
+                await provider.shutdown()
+                throw error
+            }
         case let .provider(server):
             try server.start()
         }
@@ -285,8 +314,8 @@ private enum ServiceServer: Sendable {
 
     func wait() async throws {
         switch self {
-        case let .legacy(server):
-            try await server.wait()
+        case let .gateway(_, publicServer):
+            try await publicServer.wait()
         case let .provider(server):
             await server.wait()
         }
@@ -294,8 +323,14 @@ private enum ServiceServer: Sendable {
 
     func shutdown() async throws {
         switch self {
-        case let .legacy(server):
-            try await server.shutdown()
+        case let .gateway(provider, publicServer):
+            do {
+                try await publicServer.shutdown()
+            } catch {
+                await provider.shutdown()
+                throw error
+            }
+            await provider.shutdown()
         case let .provider(server):
             await server.shutdown()
         }

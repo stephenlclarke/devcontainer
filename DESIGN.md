@@ -104,9 +104,9 @@ service and Compose-dispatch executables:
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
 | `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, privacy-redacted `diagnostics`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
-| `container-engine` | Normal executable from exact `container-engine-api` 0.2.1 | Owns the public Docker Engine Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed dispatch to one private provider session |
-| `devcontainer-engine` | Normal executable | Stock-provider adapter, state reconciliation, and event handling; `--provider-socket` exposes only the private session while the option-free compatibility mode retains the legacy standalone listener during rollout |
-| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` 0.2.1 libraries | Shared Docker wire, generated route ledger, hardened listener, provider-owned immutable state-root identity, private session protocol, and gateway dispatch; no Apple or Compose dependency |
+| `container-engine` | Normal executable from exact `container-engine-api` 0.3.0 | Owns the public Docker Engine Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, RFC 6455 framing, and fail-closed dispatch to one private provider session |
+| `devcontainer-engine` | Normal executable | Stock-provider adapter, state reconciliation, and event handling; normal mode starts an internal private provider session behind the shared public gateway, while `--provider-socket` exposes only that private session for an external `container-engine` process |
+| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` 0.3.0 libraries | Shared Docker wire, generated route ledger, hardened bounded raw/WebSocket listener, provider-owned immutable state-root identity, private schema-2 session protocol, and gateway dispatch; no Apple or Compose dependency |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
@@ -202,7 +202,7 @@ The generated shared route ledger contains all 107 method/path operations in the
 | Area | Required endpoints or behavior |
 | --- | --- |
 | Negotiation | `/_ping`, `/version`, `/info`, version-prefixed routes |
-| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, attach |
+| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; running-container resize remains unavailable on stock Apple because the public API cannot retrieve the exact active init-process handle |
 | Exec | create, start, resize, inspect, stdin/stdout/stderr multiplexing |
 | Files | archive upload/download and path stat headers |
 | Images | list, inspect, create/pull, build, tag, remove |

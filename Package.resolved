@@ -1,5 +1,5 @@
 {
-  "originHash" : "d8b4d3f495537354c977fa01f6fd8b9c75dbb0249c73860afced2d3c6d89d501",
+  "originHash" : "0f77f740d8fa97e83ee2795dbef1de6e28ab8ae7feb89ac309f5764ec24a24a0",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/stephenlclarke/container-engine-api.git",
       "state" : {
-        "revision" : "bb6144ba79284829e6bf0e00b938b6aa19a6f0c1",
-        "version" : "0.2.2"
+        "revision" : "6dfb568e904797804c8d3bb437f06c247031335d",
+        "version" : "0.3.0"
       }
     },
     {

@@ -443,6 +443,7 @@ func assertAdvancedAttachLogsAndArchives(
     } else {
         Issue.record("attach did not return a hijacked session")
     }
+    try await assertAdvancedWebSocketAttach(router, containerID: containerID)
     let logs = await router.respond(
         to: DockerHTTPRequest(
             method: .get,
@@ -463,6 +464,36 @@ func assertAdvancedAttachLogsAndArchives(
             to: DockerHTTPRequest(method: .get, target: "/containers/\(containerID)/archive")
         ).status == 400
     )
+}
+
+private func assertAdvancedWebSocketAttach(
+    _ router: DockerRouter,
+    containerID: String
+) async throws {
+    let webSocketAttach = try await router.respond(
+        to: DockerHTTPRequest(
+            method: .get,
+            target:
+            "/containers/\(containerID)/attach/ws?logs=0&stream=1&stdin=0&stdout=1&stderr=1",
+            uniqueHeaders: [
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+                "Sec-WebSocket-Version": "13"
+            ]
+        )
+    )
+    #expect(webSocketAttach.status == 101)
+    if case let .webSocket(session) = webSocketAttach.body {
+        var iterator = session.frames.makeAsyncIterator()
+        let frame = try await iterator.next()
+        #expect(frame?.channel == .standardOutput)
+        #expect(frame?.data == Data("attached\n".utf8))
+        #expect(try await iterator.next() == nil)
+        #expect(try await session.wait() == 0)
+    } else {
+        Issue.record("attach did not return a WebSocket session")
+    }
 }
 
 func createAdvancedExec(
