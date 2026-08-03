@@ -18,10 +18,19 @@ swift package \
   --scratch-path "$scratch_path" \
   --allow-writing-to-directory "$output_path" \
   generate-documentation \
+  --target DevContainerModel \
+  --target DevContainerProcess \
+  --target DevContainerRuntimeSPI \
+  --target DevContainerState \
   --target DevContainerCore \
+  --target DevContainerDockerAPI \
+  --target DevContainerAppleRuntime \
+  --target DevContainerComposeProvider \
+  --target DevContainerTestSupport \
   --output-path "$output_path" \
   --disable-indexing \
   --transform-for-static-hosting \
+  --enable-experimental-combined-documentation \
   --hosting-base-path "$hosting_base_path" \
   --source-service github \
   --source-service-base-url \
@@ -33,6 +42,6 @@ printf '%s\n' \
   '<!DOCTYPE html>' \
   '<html lang="en-US">' \
   '<head><meta charset="utf-8"><title>devcontainer documentation</title>' \
-  '<meta http-equiv="refresh" content="0; url=./documentation/devcontainercore/"></head>' \
-  '<body><a href="./documentation/devcontainercore/">Open the documentation.</a></body>' \
+  '<meta http-equiv="refresh" content="0; url=./documentation/"></head>' \
+  '<body><a href="./documentation/">Open the documentation.</a></body>' \
   '</html>' >"$output_path/index.html"
