@@ -19,6 +19,7 @@ import ContainerEngineGateway
 import ContainerEngineProviderSession
 import ContainerEngineRuntimeSPI
 import ContainerUnixHTTPServer
+import CryptoKit
 import Darwin
 import DevContainerAppleRuntime
 import DevContainerCore
@@ -173,6 +174,9 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             provider: selectedProvider,
             providerFingerprint: providerFingerprint.digest
         )
+        let internalProviderSocket = DefaultPaths.providerSocket(
+            publicSocket: socket
+        )
         let server: ServiceServer = if let providerSocket {
             try .provider(
                 ContainerEngineProviderSessionServer(
@@ -186,15 +190,13 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             try .gateway(
                 provider: ContainerEngineProviderSessionServer(
                     responder: router,
-                    socketPath: stateURL.deletingLastPathComponent()
-                        .appendingPathComponent("engine-provider.sock").path,
+                    socketPath: internalProviderSocket,
                     declaration: providerDeclaration,
                     stateRootUUID: stateRootUUID
                 ),
                 publicServer: ContainerUnixHTTPServer(
                     responder: ContainerEngineGatewayResponder(
-                        providerSocketPath: stateURL.deletingLastPathComponent()
-                            .appendingPathComponent("engine-provider.sock").path,
+                        providerSocketPath: internalProviderSocket,
                         fingerprint: providerFingerprint
                     ),
                     socketPath: socket,
@@ -305,6 +307,9 @@ private enum ServiceServer: Sendable {
                 try await publicServer.start()
             } catch {
                 await provider.shutdown()
+                try? DefaultPaths.removeProviderSocketArtifacts(
+                    socketPath: provider.socketPath
+                )
                 throw error
             }
         case let .provider(server):
@@ -328,9 +333,15 @@ private enum ServiceServer: Sendable {
                 try await publicServer.shutdown()
             } catch {
                 await provider.shutdown()
+                try? DefaultPaths.removeProviderSocketArtifacts(
+                    socketPath: provider.socketPath
+                )
                 throw error
             }
             await provider.shutdown()
+            try DefaultPaths.removeProviderSocketArtifacts(
+                socketPath: provider.socketPath
+            )
         case let .provider(server):
             await server.shutdown()
         }
@@ -354,6 +365,62 @@ enum DefaultPaths {
             .appendingPathComponent("devcontainer", isDirectory: true)
             .appendingPathComponent("state.sqlite")
             .path
+    }
+
+    static func providerSocket(publicSocket: String) -> String {
+        let digest = SHA256.hash(data: Data(publicSocket.utf8))
+            .prefix(12)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "/tmp/devcontainer-engine-\(getuid())-\(digest)/provider.sock"
+    }
+
+    static func removeProviderSocketArtifacts(socketPath: String) throws {
+        let socketURL = URL(fileURLWithPath: socketPath)
+        let directoryURL = socketURL.deletingLastPathComponent()
+        let lockURL = URL(fileURLWithPath: socketPath + ".lock")
+        var directoryStatus = stat()
+        guard lstat(directoryURL.path, &directoryStatus) == 0 else {
+            if errno == ENOENT {
+                return
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard
+            directoryStatus.st_uid == getuid(),
+            directoryStatus.st_mode & S_IFMT == S_IFDIR,
+            directoryStatus.st_mode & (S_IRWXG | S_IRWXO) == 0,
+            !FileManager.default.fileExists(atPath: socketURL.path)
+        else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "unsafe private provider socket directory: \(directoryURL.path)"
+            )
+        }
+        let contents = try FileManager.default.contentsOfDirectory(
+            atPath: directoryURL.path
+        )
+        guard contents == [lockURL.lastPathComponent] else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "unexpected private provider socket artifacts: \(directoryURL.path)"
+            )
+        }
+        var lockStatus = stat()
+        guard
+            lstat(lockURL.path, &lockStatus) == 0,
+            lockStatus.st_uid == getuid(),
+            lockStatus.st_mode & S_IFMT == S_IFREG,
+            lockStatus.st_mode & (S_IRWXG | S_IRWXO) == 0,
+            lockStatus.st_nlink == 1
+        else {
+            throw DevContainerError(
+                .stateCorruption,
+                message: "unsafe private provider socket lock: \(lockURL.path)"
+            )
+        }
+        try FileManager.default.removeItem(at: lockURL)
+        try FileManager.default.removeItem(at: directoryURL)
     }
 
     static var containerExecutable: String {

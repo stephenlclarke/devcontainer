@@ -17,6 +17,7 @@
 import ContainerEngineProviderSession
 import ContainerEngineWire
 import Darwin
+@testable import DevContainerService
 import Foundation
 import Testing
 
@@ -163,11 +164,7 @@ private func exerciseEngineProcess(
         var selectionStatus = stat()
         #expect(lstat(providerSelection.path, &selectionStatus) == 0)
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
-        let providerSocket = providerSelection.deletingLastPathComponent()
-            .appendingPathComponent("engine-provider.sock")
-        var providerSocketStatus = stat()
-        #expect(lstat(providerSocket.path, &providerSocketStatus) == 0)
-        #expect(providerSocketStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+        let providerArtifacts = inspectProviderArtifacts(publicSocket: socket)
 
         let unsupportedResize = try runCurlResponse(
             socket: socket,
@@ -181,7 +178,9 @@ private func exerciseEngineProcess(
         try await waitForExit(process, log: log)
         #expect(process.terminationStatus == 0)
         #expect(!FileManager.default.fileExists(atPath: socket))
-        #expect(!FileManager.default.fileExists(atPath: providerSocket.path))
+        #expect(!FileManager.default.fileExists(atPath: providerArtifacts.socket.path))
+        #expect(!FileManager.default.fileExists(atPath: providerArtifacts.lock.path))
+        #expect(!FileManager.default.fileExists(atPath: providerArtifacts.directory.path))
     } catch {
         if process.isRunning {
             _ = kill(process.processIdentifier, SIGKILL)
@@ -189,6 +188,37 @@ private func exerciseEngineProcess(
         }
         throw error
     }
+}
+
+private func inspectProviderArtifacts(
+    publicSocket: String
+) -> ProviderArtifacts {
+    let socket = URL(
+        fileURLWithPath: DefaultPaths.providerSocket(publicSocket: publicSocket)
+    )
+    let directory = socket.deletingLastPathComponent()
+    let lock = URL(fileURLWithPath: socket.path + ".lock")
+    var directoryStatus = stat()
+    #expect(lstat(directory.path, &directoryStatus) == 0)
+    #expect(directoryStatus.st_mode & S_IFMT == S_IFDIR)
+    #expect(directoryStatus.st_uid == getuid())
+    #expect(directoryStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+    var socketStatus = stat()
+    #expect(lstat(socket.path, &socketStatus) == 0)
+    #expect(socketStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+    var lockStatus = stat()
+    #expect(lstat(lock.path, &lockStatus) == 0)
+    #expect(lockStatus.st_mode & S_IFMT == S_IFREG)
+    #expect(lockStatus.st_uid == getuid())
+    #expect(lockStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
+    #expect(lockStatus.st_nlink == 1)
+    return ProviderArtifacts(socket: socket, lock: lock, directory: directory)
+}
+
+private struct ProviderArtifacts {
+    var socket: URL
+    var lock: URL
+    var directory: URL
 }
 
 private func exerciseProviderProcess(
