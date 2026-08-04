@@ -109,6 +109,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerProcess",
                 "DevContainerRuntimeSPI",
+                .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerBuild", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
@@ -241,6 +242,7 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 "DevContainerState",
+                .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
                 .product(name: "Containerization", package: "containerization"),
@@ -258,6 +260,7 @@ let package = Package(
                 "DevContainerService",
                 "DevContainerTestSupport",
                 .product(name: "ContainerEngineProviderSession", package: "container-engine-api"),
+                .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerEngineWire", package: "container-engine-api"),
                 .product(name: "Logging", package: "swift-log")
             ]
