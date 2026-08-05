@@ -50,6 +50,26 @@ socket paths left owner-only directories under `/private/tmp` after shutdown.
 - No `devcontainer-engine-*` directory remains under `/private/tmp` after either
   final Apple lane.
 
+## Current C04 revalidation blocker
+
+On 5 August 2026, the isolated C04 Docker oracle reached `devcontainer up` and
+received a valid `remoteWorkspaceFolder`, but the parity runner's probe exited
+before it could record lifecycle observations because the official CLI did not
+execute `./probe.sh` from that remote workspace. Signed local checkpoint
+`56f20056c88eb9fa2acd857ce375adf84e44d59b` records the initial
+remote-workspace transition and option-boundary correction with 16 focused
+runner tests passing. The live C04 invocation still emits
+`/bin/sh: can't open './probe.sh'`; therefore this is a current harness blocker,
+not new evidence about the Compose alias/recreate implementation.
+
+The isolated evidence root retains the Docker Compose 5.3.1 SHA-256 match,
+current Docker endpoint fingerprint, digest-pinned Alpine fixture, raw `up` and
+probe logs, and marker-protected cleanup boundary. Do not reclassify the
+historical C04 runtime gap or claim fresh C04 parity until
+[devcontainer #46](https://github.com/stephenlclarke/devcontainer/issues/46)
+has a source-backed exec-forwarding correction and the exact C04 fixture runs
+through all lifecycle assertions.
+
 ## Tracking
 
 - GitHub issue: [#40](https://github.com/stephenlclarke/devcontainer/issues/40)
