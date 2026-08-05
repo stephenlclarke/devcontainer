@@ -70,6 +70,79 @@ public extension AppleContainerRuntime {
         }
     }
 
+    /// Freezes stopped Apple-container log history as bounded, one-shot
+    /// record streams for direct file-backed handoff packaging.
+    func portableLoggingHandoffContainerSources(
+        resourceIDs: [String],
+        providerVersion: String,
+        context: RuntimeRequestContext
+    ) async throws -> [ProviderHandoffPortableLoggingContainerSourceV2] {
+        try context.checkActive()
+        guard
+            !resourceIDs.isEmpty,
+            resourceIDs.count == Set(resourceIDs).count,
+            !providerVersion.isEmpty
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "logging handoff requires unique resource IDs"
+            )
+        }
+
+        var containers: [ProviderHandoffPortableLoggingContainerSourceV2] = []
+        var resolvedDockerIDs = Set<String>()
+        for resourceID in resourceIDs {
+            try context.checkActive()
+            let snapshot = try await inspectContainer(
+                id: resourceID,
+                context: context
+            )
+            let runtimeID = snapshot.runtimeID.rawValue
+            guard
+                snapshot.state == .stopped,
+                containerStartOperations[runtimeID] == nil,
+                !execs.values.contains(where: {
+                    $0.containerID.rawValue == runtimeID && $0.running
+                }),
+                resolvedDockerIDs.insert(snapshot.dockerID.rawValue).inserted
+            else {
+                throw DevContainerError(
+                    .conflict,
+                    message:
+                    "container \(snapshot.dockerID.rawValue) is not quiesced for logging handoff"
+                )
+            }
+            let records = try await apiClient.logRecordStream(
+                id: runtimeID,
+                replay: ContainerLogReplayOptions(includeRotated: true)
+            )
+            containers.append(
+                ProviderHandoffPortableLoggingContainerSourceV2(
+                    containerID: snapshot.dockerID.rawValue,
+                    providerID: "devcontainer.apple-container",
+                    providerVersion: providerVersion,
+                    records: Self.portableLogRecordStream(records: records)
+                )
+            )
+        }
+        return containers.sorted {
+            $0.containerID.utf8.lexicographicallyPrecedes($1.containerID.utf8)
+        }
+    }
+
+    static func portableLogRecordStream(
+        records: AsyncThrowingStream<ContainerLogRecord, any Error>
+    ) -> AsyncThrowingStream<ProviderHandoffPortableLogRecordV1, any Error> {
+        let mapper = PortableLoggingRecordMapper(
+            iterator: records.makeAsyncIterator()
+        )
+        return AsyncThrowingStream(
+            unfolding: {
+                try await mapper.next()
+            }
+        )
+    }
+
     static func portableLogRecord(
         _ record: ContainerLogRecord
     ) throws -> ProviderHandoffPortableLogRecordV1 {
@@ -118,5 +191,23 @@ public extension AppleContainerRuntime {
             stream: stream,
             data: record.data
         )
+    }
+}
+
+private final class PortableLoggingRecordMapper: @unchecked Sendable {
+    private var iterator:
+        AsyncThrowingStream<ContainerLogRecord, any Error>.Iterator
+
+    init(
+        iterator: AsyncThrowingStream<ContainerLogRecord, any Error>.Iterator
+    ) {
+        self.iterator = iterator
+    }
+
+    func next() async throws -> ProviderHandoffPortableLogRecordV1? {
+        guard let record = try await iterator.next() else {
+            return nil
+        }
+        return try AppleContainerRuntime.portableLogRecord(record)
     }
 }

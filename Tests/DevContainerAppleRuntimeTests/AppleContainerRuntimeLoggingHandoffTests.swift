@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 //===----------------------------------------------------------------------===//
 
+import ContainerEngineRuntimeSPI
 import ContainerResource
 @testable import DevContainerAppleRuntime
 import Foundation
@@ -38,5 +39,39 @@ struct AppleContainerRuntimeLoggingHandoffTests {
 
         #expect(value.secondsSinceUnixEpoch == -1)
         #expect(value.nanoseconds == 750_000_000)
+    }
+
+    @Test
+    func `runtime record stream is mapped incrementally`() async throws {
+        let records = [
+            ContainerLogRecord(
+                timestamp: Date(timeIntervalSince1970: 1_786_000_000.125),
+                stream: .stdout,
+                data: Data("first\n".utf8)
+            ),
+            ContainerLogRecord(
+                timestamp: Date(timeIntervalSince1970: 1_786_000_001.25),
+                stream: .stderr,
+                data: Data([0x00, 0xFF, 0x0A])
+            ),
+        ]
+        let recordsStream = AsyncThrowingStream<ContainerLogRecord, any Error> {
+            continuation in
+            for record in records {
+                continuation.yield(record)
+            }
+            continuation.finish()
+        }
+
+        var values: [ProviderHandoffPortableLogRecordV1] = []
+        for try await value in AppleContainerRuntime.portableLogRecordStream(
+            records: recordsStream
+        ) {
+            values.append(value)
+        }
+
+        #expect(values.count == 2)
+        #expect(values.map(\.stream) == [.stdout, .stderr])
+        #expect(values.map(\.data) == records.map(\.data))
     }
 }

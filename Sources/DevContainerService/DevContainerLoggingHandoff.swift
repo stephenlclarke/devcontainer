@@ -76,9 +76,9 @@ extension DevContainerServiceCommand {
                     "trust-registry-v1.\(stateRootUUID.uuidString.lowercased())"
             ),
             providerIdentity: identity,
-            exportPackage: { request in
+            exportPackageSourceToDirectory: { request, temporaryDirectoryURL in
                 let containers = try await runtime
-                    .portableLoggingHandoffContainers(
+                    .portableLoggingHandoffContainerSources(
                         resourceIDs: request.selectedResourceIDs,
                         providerVersion: providerVersion,
                         context: RuntimeRequestContext(
@@ -87,9 +87,11 @@ extension DevContainerServiceCommand {
                             request.sourceProviderFingerprint
                         )
                     )
-                return try ProviderHandoffPortableLoggingPayloadCodec.package(
+                return try await ProviderHandoffPortableLoggingPayloadCodec
+                    .packageSource(
                     containers: containers,
-                    sourceStateRootUUID: request.sourceStateRootUUID
+                    sourceStateRootUUID: request.sourceStateRootUUID,
+                    temporaryDirectoryURL: temporaryDirectoryURL
                 )
             },
             downstream: objectControl
