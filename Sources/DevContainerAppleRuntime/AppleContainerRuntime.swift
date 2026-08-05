@@ -60,6 +60,25 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let inventory: any AppleContainerInventoryClient
         let files: any AppleContainerFileClient
         let networks: any AppleNetworkClient
+        let loggingRecords: any AppleContainerLoggingRecordClient
+        let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
+
+        init(
+            api: ContainerClient,
+            inventory: any AppleContainerInventoryClient,
+            files: any AppleContainerFileClient,
+            networks: any AppleNetworkClient,
+            loggingRecords: (any AppleContainerLoggingRecordClient)? = nil,
+            loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)? = nil
+        ) {
+            self.api = api
+            self.inventory = inventory
+            self.files = files
+            self.networks = networks
+            self.loggingRecords = loggingRecords
+                ?? LiveAppleContainerLoggingRecordClient(client: api)
+            self.loggingHandoffClientOverride = loggingHandoffClientOverride
+        }
     }
 
     static let dockerIDLabel = "io.github.stephenlclarke.devcontainer.docker-id"
@@ -71,6 +90,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let useDirectProcessAPI: Bool
     let useDirectContainerAPI: Bool
     let apiClient: ContainerClient
+    let loggingRecordClient: any AppleContainerLoggingRecordClient
+    let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
     let inventoryClient: any AppleContainerInventoryClient
     let fileClient: any AppleContainerFileClient
     let networkClient: any AppleNetworkClient
@@ -136,6 +157,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         self.useDirectProcessAPI = useDirectProcessAPI
         self.useDirectContainerAPI = useDirectContainerAPI
         apiClient = clients.api
+        loggingRecordClient = clients.loggingRecords
+        loggingHandoffClientOverride = clients.loggingHandoffClientOverride
         inventoryClient = clients.inventory
         fileClient = clients.files
         networkClient = clients.networks

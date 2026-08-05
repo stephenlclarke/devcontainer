@@ -3,10 +3,62 @@
 // Licensed under the Apache License, Version 2.0.
 //===----------------------------------------------------------------------===//
 
+import ContainerAPIClient
 import ContainerEngineRuntimeSPI
 import ContainerResource
 import DevContainerModel
 import Foundation
+
+protocol AppleContainerLoggingRecordClient: Sendable {
+    func loggingRecords(
+        id: String
+    ) async throws -> [ContainerLogRecord]
+
+    func loggingRecordStream(
+        id: String
+    ) async throws -> AsyncThrowingStream<ContainerLogRecord, any Error>
+}
+
+struct LiveAppleContainerLoggingRecordClient: AppleContainerLoggingRecordClient {
+    let client: ContainerClient
+
+    func loggingRecords(
+        id: String
+    ) async throws -> [ContainerLogRecord] {
+        try await client.logRecords(
+            id: id,
+            replay: ContainerLogReplayOptions(includeRotated: true)
+        )
+    }
+
+    func loggingRecordStream(
+        id: String
+    ) async throws -> AsyncThrowingStream<ContainerLogRecord, any Error> {
+        try await client.logRecordStream(
+            id: id,
+            replay: ContainerLogReplayOptions(includeRotated: true)
+        )
+    }
+}
+
+protocol AppleContainerLoggingHandoffClient: Sendable {
+    func loggingHandoffSnapshot(
+        id: String,
+        context: RuntimeRequestContext
+    ) async throws -> DevContainerModel.ContainerSnapshot
+
+    func loggingHandoffIsQuiesced(
+        _ snapshot: DevContainerModel.ContainerSnapshot
+    ) async -> Bool
+
+    func loggingHandoffRecords(
+        id: String
+    ) async throws -> [ContainerLogRecord]
+
+    func loggingHandoffRecordStream(
+        id: String
+    ) async throws -> AsyncThrowingStream<ContainerLogRecord, any Error>
+}
 
 public extension AppleContainerRuntime {
     /// Freezes stopped Apple-container log history into the provider-neutral
@@ -16,6 +68,37 @@ public extension AppleContainerRuntime {
         resourceIDs: [String],
         providerVersion: String,
         context: RuntimeRequestContext
+    ) async throws -> [ProviderHandoffPortableLoggingContainerV1] {
+        try await Self.collectPortableLoggingHandoffContainers(
+            resourceIDs: resourceIDs,
+            providerVersion: providerVersion,
+            context: context,
+            client: loggingHandoffClientOverride ?? self
+        )
+    }
+
+    /// Freezes stopped Apple-container log history as bounded, one-shot
+    /// record streams for direct file-backed handoff packaging.
+    func portableLoggingHandoffContainerSources(
+        resourceIDs: [String],
+        providerVersion: String,
+        context: RuntimeRequestContext
+    ) async throws -> [ProviderHandoffPortableLoggingContainerSourceV2] {
+        try await Self.collectPortableLoggingHandoffContainerSources(
+            resourceIDs: resourceIDs,
+            providerVersion: providerVersion,
+            context: context,
+            client: loggingHandoffClientOverride ?? self
+        )
+    }
+}
+
+extension AppleContainerRuntime {
+    static func collectPortableLoggingHandoffContainers(
+        resourceIDs: [String],
+        providerVersion: String,
+        context: RuntimeRequestContext,
+        client: any AppleContainerLoggingHandoffClient
     ) async throws -> [ProviderHandoffPortableLoggingContainerV1] {
         try context.checkActive()
         guard
@@ -33,17 +116,13 @@ public extension AppleContainerRuntime {
         var resolvedDockerIDs = Set<String>()
         for resourceID in resourceIDs {
             try context.checkActive()
-            let snapshot = try await inspectContainer(
+            let snapshot = try await client.loggingHandoffSnapshot(
                 id: resourceID,
                 context: context
             )
-            let runtimeID = snapshot.runtimeID.rawValue
             guard
                 snapshot.state == .stopped,
-                containerStartOperations[runtimeID] == nil,
-                !execs.values.contains(where: {
-                    $0.containerID.rawValue == runtimeID && $0.running
-                }),
+                await client.loggingHandoffIsQuiesced(snapshot),
                 resolvedDockerIDs.insert(snapshot.dockerID.rawValue).inserted
             else {
                 throw DevContainerError(
@@ -52,9 +131,8 @@ public extension AppleContainerRuntime {
                     "container \(snapshot.dockerID.rawValue) is not quiesced for logging handoff"
                 )
             }
-            let records = try await apiClient.logRecords(
-                id: runtimeID,
-                replay: ContainerLogReplayOptions(includeRotated: true)
+            let records = try await client.loggingHandoffRecords(
+                id: snapshot.runtimeID.rawValue
             )
             try containers.append(
                 ProviderHandoffPortableLoggingContainerV1(
@@ -70,12 +148,11 @@ public extension AppleContainerRuntime {
         }
     }
 
-    /// Freezes stopped Apple-container log history as bounded, one-shot
-    /// record streams for direct file-backed handoff packaging.
-    func portableLoggingHandoffContainerSources(
+    static func collectPortableLoggingHandoffContainerSources(
         resourceIDs: [String],
         providerVersion: String,
-        context: RuntimeRequestContext
+        context: RuntimeRequestContext,
+        client: any AppleContainerLoggingHandoffClient
     ) async throws -> [ProviderHandoffPortableLoggingContainerSourceV2] {
         try context.checkActive()
         guard
@@ -93,17 +170,13 @@ public extension AppleContainerRuntime {
         var resolvedDockerIDs = Set<String>()
         for resourceID in resourceIDs {
             try context.checkActive()
-            let snapshot = try await inspectContainer(
+            let snapshot = try await client.loggingHandoffSnapshot(
                 id: resourceID,
                 context: context
             )
-            let runtimeID = snapshot.runtimeID.rawValue
             guard
                 snapshot.state == .stopped,
-                containerStartOperations[runtimeID] == nil,
-                !execs.values.contains(where: {
-                    $0.containerID.rawValue == runtimeID && $0.running
-                }),
+                await client.loggingHandoffIsQuiesced(snapshot),
                 resolvedDockerIDs.insert(snapshot.dockerID.rawValue).inserted
             else {
                 throw DevContainerError(
@@ -112,9 +185,8 @@ public extension AppleContainerRuntime {
                     "container \(snapshot.dockerID.rawValue) is not quiesced for logging handoff"
                 )
             }
-            let records = try await apiClient.logRecordStream(
-                id: runtimeID,
-                replay: ContainerLogReplayOptions(includeRotated: true)
+            let records = try await client.loggingHandoffRecordStream(
+                id: snapshot.runtimeID.rawValue
             )
             containers.append(
                 ProviderHandoffPortableLoggingContainerSourceV2(
@@ -191,6 +263,37 @@ public extension AppleContainerRuntime {
             stream: stream,
             data: record.data
         )
+    }
+}
+
+extension AppleContainerRuntime: AppleContainerLoggingHandoffClient {
+    func loggingHandoffSnapshot(
+        id: String,
+        context: RuntimeRequestContext
+    ) async throws -> DevContainerModel.ContainerSnapshot {
+        try await inspectContainer(id: id, context: context)
+    }
+
+    func loggingHandoffIsQuiesced(
+        _ snapshot: DevContainerModel.ContainerSnapshot
+    ) async -> Bool {
+        let runtimeID = snapshot.runtimeID.rawValue
+        return containerStartOperations[runtimeID] == nil
+            && !execs.values.contains(where: {
+                $0.containerID.rawValue == runtimeID && $0.running
+            })
+    }
+
+    func loggingHandoffRecords(
+        id: String
+    ) async throws -> [ContainerLogRecord] {
+        try await loggingRecordClient.loggingRecords(id: id)
+    }
+
+    func loggingHandoffRecordStream(
+        id: String
+    ) async throws -> AsyncThrowingStream<ContainerLogRecord, any Error> {
+        try await loggingRecordClient.loggingRecordStream(id: id)
     }
 }
 
