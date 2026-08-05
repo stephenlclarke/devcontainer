@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from parity_lib import ParityError
+from parity_lib import Fixture, ParityError
 from run_lane import (
     LaneRunner,
     create_socket_root,
@@ -192,6 +192,69 @@ class FingerprintTests(unittest.TestCase):
             run.call_args_list[1].args[0],
             ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.88.0", "--version"],
         )
+
+
+class FixtureProbeTests(unittest.TestCase):
+    def test_fixture_probe_uses_the_resolved_remote_workspace(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "probe.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = Path("/repository")
+            runner.devcontainer_docker = "/usr/bin/docker"
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={"ready": "true"},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            calls: list[list[str]] = []
+            up = mock.Mock(
+                returncode=0,
+                stdout=(
+                    '{"containerId":"fixture",'
+                    '"remoteWorkspaceFolder":"/workspaces/fixture"}'
+                ),
+                stderr="",
+            )
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+
+            def devcontainer(arguments: list[str], timeout: int) -> mock.Mock:
+                self.assertIn(timeout, {120, 1800})
+                calls.append(arguments)
+                return up if len(calls) == 1 else probe
+
+            runner.devcontainer = devcontainer
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(return_value="")
+            with mock.patch("run_lane.assert_contract", return_value=[]):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            calls[1][-6:],
+            [
+                "--",
+                "/bin/sh",
+                '-c',
+                'cd "$1" && exec /bin/sh ./probe.sh',
+                "probe",
+                "/workspaces/fixture",
+            ],
+        )
+
+    def test_remote_workspace_requires_an_absolute_path(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+
+        with self.assertRaisesRegex(
+            ParityError,
+            "absolute remoteWorkspaceFolder",
+        ):
+            runner.remote_workspace_from_up('{"remoteWorkspaceFolder":"relative"}')
 
 
 class PortEvidenceTests(unittest.TestCase):

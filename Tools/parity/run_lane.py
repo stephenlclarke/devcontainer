@@ -690,13 +690,18 @@ class LaneRunner:
             (raw / "up.stderr").write_text(up.stderr, encoding="utf-8")
             if up.returncode != 0:
                 raise ParityError(f"devcontainer up exited {up.returncode}")
+            remote_workspace = self.remote_workspace_from_up(up.stdout)
             probe = self.devcontainer(
                 [
                     "exec",
                     "--workspace-folder",
                     str(runtime_fixture.directory),
+                    "--",
                     "/bin/sh",
-                    "./probe.sh",
+                    "-c",
+                    'cd "$1" && exec /bin/sh ./probe.sh',
+                    "probe",
+                    remote_workspace,
                 ],
                 timeout=120,
             )
@@ -1213,6 +1218,18 @@ class LaneRunner:
         if not isinstance(identifier, str) or not identifier:
             raise ParityError("devcontainer up did not return a containerId")
         return identifier
+
+    def remote_workspace_from_up(self, output: str) -> str:
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError as error:
+            raise ParityError("devcontainer up returned invalid JSON") from error
+        workspace = value.get("remoteWorkspaceFolder") if isinstance(value, dict) else None
+        if not isinstance(workspace, str) or not workspace.startswith("/"):
+            raise ParityError(
+                "devcontainer up did not return an absolute remoteWorkspaceFolder"
+            )
+        return workspace
 
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
