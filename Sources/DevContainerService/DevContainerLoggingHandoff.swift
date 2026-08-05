@@ -71,7 +71,10 @@ extension DevContainerServiceCommand {
                 "io.github.stephenlclarke.devcontainer.provider-handoff",
                 accountPrefix: "lineage-\(accountSuffix)"
             ),
-            trustRegistryStore: ProviderHandoffTrustRegistryStore(),
+            trustRegistryStore: ProviderHandoffTrustRegistryStore(
+                account:
+                    "trust-registry-v1.\(stateRootUUID.uuidString.lowercased())"
+            ),
             providerIdentity: identity,
             exportPackage: { request in
                 let containers = try await runtime
