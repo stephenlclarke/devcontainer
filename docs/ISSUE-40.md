@@ -50,25 +50,24 @@ socket paths left owner-only directories under `/private/tmp` after shutdown.
 - No `devcontainer-engine-*` directory remains under `/private/tmp` after either
   final Apple lane.
 
-## Current C04 revalidation blocker
+## C04 revalidation resolution
 
-On 5 August 2026, the isolated C04 Docker oracle reached `devcontainer up` and
-received a valid `remoteWorkspaceFolder`, but the parity runner's probe exited
-before it could record lifecycle observations because the official CLI did not
-execute `./probe.sh` from that remote workspace. Signed local checkpoint
-`56f20056c88eb9fa2acd857ce375adf84e44d59b` records the initial
-remote-workspace transition and option-boundary correction with 16 focused
-runner tests passing. The live C04 invocation still emits
-`/bin/sh: can't open './probe.sh'`; therefore this is a current harness blocker,
-not new evidence about the Compose alias/recreate implementation.
+On 6 August 2026, the exact C04 Docker oracle passed all lifecycle observations
+after [devcontainer #46](https://github.com/stephenlclarke/devcontainer/issues/46)
+identified the remaining failure as a Docker-visible-root defect. The initial
+signed remote-workspace correction `56f20056c88eb9fa2acd857ce375adf84e44d59b`
+was necessary and remains valid: the runner selects the `remoteWorkspaceFolder`
+before it invokes `probe.sh`. It was insufficient because the copied fixture
+lived under `/private/tmp`, which Colima exposed as an empty bind source.
 
-The isolated evidence root retains the Docker Compose 5.3.1 SHA-256 match,
-current Docker endpoint fingerprint, digest-pinned Alpine fixture, raw `up` and
-probe logs, and marker-protected cleanup boundary. Do not reclassify the
-historical C04 runtime gap or claim fresh C04 parity until
-[devcontainer #46](https://github.com/stephenlclarke/devcontainer/issues/46)
-has a source-backed exec-forwarding correction and the exact C04 fixture runs
-through all lifecycle assertions.
+Signed local checkpoint `3d0b6f9fd2d34b7d46278873996056f9f30517a9` copies the
+fixture below the repository's marker-owned `.build/parity-workspaces` root and
+removes only that verified disposable root. The pinned Docker Compose 5.3.1
+oracle completed in 4.337 seconds with all C04 observations and no copied-root
+or Docker-label residue. This removes the harness blocker only. The historical
+container-compose alias/recreate gap remains a separate candidate result in
+[container-compose #184](https://github.com/stephenlclarke/container-compose/issues/184)
+and requires a fresh candidate run before its status changes.
 
 ## Tracking
 
