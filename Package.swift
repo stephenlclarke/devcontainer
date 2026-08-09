@@ -39,14 +39,24 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            exact: "0.3.3"
+            revision: "5e6e24d017691596783515285e1ff56d29701235"
         ),
-        .package(url: "https://github.com/apple/container.git", exact: "1.1.0"),
-        .package(url: "https://github.com/apple/containerization.git", exact: "0.35.0"),
+        .package(
+            url: "https://github.com/stephenlclarke/container.git",
+            revision: "b62df248d324883ddd64d4de1ed013230476a235"
+        ),
+        .package(
+            url: "https://github.com/stephenlclarke/containerization.git",
+            revision: "7f62f5b940630811573a34f70cdd6f3fa11d014d"
+        ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
+        .package(
+            url: "https://github.com/stephenlclarke/swift-nio-ssl.git",
+            revision: "a9d648535c62e640d1df258a70c9117a8ddea43e"
+        ),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],
     targets: [
