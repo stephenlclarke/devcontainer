@@ -60,11 +60,17 @@ extension AppleContainerRuntime {
             startedAt: value.startedDate,
             finishedAt: nil,
             exitCode: nil,
-            networkAddresses: Dictionary(
-                uniqueKeysWithValues: value.networks.map {
-                    ($0.network, $0.ipv4Address.address.description)
+            networkAddresses: Self.networkAddresses(value.networks)
+        )
+    }
+
+    static func networkAddresses(_ attachments: [Attachment]) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: attachments.compactMap { attachment in
+                attachment.ipv4Address.map {
+                    (attachment.network, $0.address.description)
                 }
-            )
+            }
         )
     }
 
@@ -619,6 +625,7 @@ extension AppleContainerRuntime {
             "CONTAINER_APP_ROOT",
             "CONTAINER_HOST",
             "CONTAINER_INSTALL_ROOT",
+            "CONTAINER_SERVICE_NAMESPACE",
             "HOME",
             "LANG",
             "LC_ALL",

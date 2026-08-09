@@ -28,27 +28,23 @@ class ReadmeBadgeTests(unittest.TestCase):
             "coverage",
             "duplicated_lines_density",
             "ncloc",
-            "reliability_rating",
             "security_rating",
-            "sqale_index",
             "sqale_rating",
-            "vulnerabilities",
         }
         actual_metrics = re.findall(
-            r"project=stephenlclarke_devcontainer&metric=([a-z_]+)",
+            r"project=stephenlclarke_devcontainer&amp;metric=([a-z_]+)",
             README,
         )
         self.assertEqual(set(actual_metrics), expected_metrics)
         self.assertEqual(len(actual_metrics), len(expected_metrics))
 
-    def test_delivery_and_project_badges_are_present(self) -> None:
+    def test_workflow_and_project_badges_are_present(self) -> None:
         for marker in (
-            'alt="CodeQL disabled"',
-            "img.shields.io/badge/CodeQL-disabled-lightgrey",
             "actions/workflows/ci.yml/badge.svg?branch=main",
+            "actions/workflows/codeql.yml/badge.svg?branch=main",
             "actions/workflows/docs.yml/badge.svg?branch=main",
-            "img.shields.io/github/v/release/stephenlclarke/devcontainer",
-            "license-Apache--2.0",
+            "actions/workflows/homebrew.yml/badge.svg?branch=main",
+            "actions/workflows/prebuilt-binaries.yml/badge.svg?branch=main",
             "page_id=stephenlclarke.devcontainer",
         ):
             self.assertIn(marker, README)

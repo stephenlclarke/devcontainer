@@ -15,10 +15,12 @@
 //===----------------------------------------------------------------------===//
 
 import ContainerEngineProviderSession
+import ContainerEngineRuntimeSPI
 import ContainerEngineWire
 import Darwin
 @testable import DevContainerService
 import Foundation
+import Security
 import Testing
 
 @Suite(.serialized)
@@ -159,7 +161,9 @@ private func exerciseEngineProcess(
         let selection = try #require(
             JSONSerialization.jsonObject(with: selectionData) as? [String: Any]
         )
-        #expect((selection["digest"] as? String)?.hasPrefix("sha256:") == true)
+        let fingerprint = try #require(selection["digest"] as? String)
+        defer { removeProviderIdentity(fingerprint: fingerprint) }
+        #expect(fingerprint.hasPrefix("sha256:"))
         #expect(selection["stateRootUUID"] is String)
         var selectionStatus = stat()
         #expect(lstat(providerSelection.path, &selectionStatus) == 0)
@@ -221,6 +225,7 @@ private struct ProviderArtifacts {
     var directory: URL
 }
 
+// swiftlint:disable:next function_body_length
 private func exerciseProviderProcess(
     _ process: Process,
     socket: String,
@@ -241,6 +246,14 @@ private func exerciseProviderProcess(
             $0.identifier == "engine.route.ContainerAttachWebsocket"
                 && $0.status == .emulated
         })
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.handoff.provider-key-enrollment.v1"
+                && $0.status == .native
+        })
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.handoff.part.logging.v1"
+                && $0.status == .native
+        })
         #expect(!descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.ContainerResize"
                 && $0.status != .unavailable
@@ -248,6 +261,50 @@ private func exerciseProviderProcess(
         let client = ContainerEngineProviderSessionClient(
             socketPath: socket,
             expectedFingerprint: descriptor.fingerprint
+        )
+        defer {
+            removeProviderIdentity(
+                fingerprint: descriptor.fingerprint.digest
+            )
+        }
+        let stateRoot = descriptor.fingerprint.stateRootUUID.uuidString
+            .lowercased()
+        let snapshotBody = try ProviderHandoffProviderKeyControlCodec
+            .encodeSnapshotRequest(
+                ProviderHandoffProviderKeySnapshotRequestV1(
+                    expectedProviderFingerprint:
+                    descriptor.fingerprint.digest,
+                    expectedStateRootUUID: stateRoot
+                )
+            )
+        let snapshotRequest = try ContainerEngineProviderHandoffControlRequestV1(
+            requestID: "devcontainer-provider-key-snapshot",
+            operation: .destinationKeySnapshot,
+            bodyMediaType: ProviderHandoffProviderKeyControlCodec
+                .snapshotRequestMediaType,
+            body: snapshotBody
+        )
+        let snapshotResult = try await client.performHandoffControl(
+            snapshotRequest,
+            body: snapshotBody
+        )
+        #expect(snapshotResult.response.disposition == .completed)
+        let keySnapshot = try ProviderHandoffProviderKeyControlCodec
+            .decodeSnapshot(snapshotResult.body)
+        #expect(
+            keySnapshot.context.providerFingerprint
+                == descriptor.fingerprint.digest
+        )
+        #expect(keySnapshot.context.stateRootUUID == stateRoot)
+        #expect(
+            Set(keySnapshot.trustKeys.map(\.purpose))
+                == Set([
+                    .destinationLineageKeyEncryption,
+                    .destinationPayloadEncryption,
+                    .destinationPossessionSigning,
+                    .lineageKeyEnvelopeSigning,
+                    .sourceManifestSigning
+                ] as [ProviderHandoffKeyPurposeV1])
         )
         let response = await client.respond(
             to: DockerHTTPRequest(method: .get, target: "/_ping")
@@ -279,6 +336,17 @@ private func exerciseProviderProcess(
         }
         throw error
     }
+}
+
+private func removeProviderIdentity(fingerprint: String) {
+    let accountSuffix = String(fingerprint.dropFirst("sha256:".count))
+    SecItemDelete([
+        kSecClass: kSecClassGenericPassword,
+        kSecAttrService:
+            "io.github.stephenlclarke.devcontainer.provider-handoff",
+        kSecAttrAccount: "provider-\(accountSuffix)",
+        kSecAttrSynchronizable: kCFBooleanFalse as Any
+    ] as CFDictionary)
 }
 
 private func waitForExit(

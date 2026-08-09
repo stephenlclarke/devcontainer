@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from parity_lib import ParityError
+from parity_lib import Fixture, ParityError
 from run_lane import (
     LaneRunner,
     create_socket_root,
@@ -33,8 +33,10 @@ class SafeEnvironmentTests(unittest.TestCase):
         environment = safe_environment(
             {
                 "BASH_ENV": "/tmp/host-shell-hook",
+                "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "GITHUB_TOKEN": "must-not-leak",
@@ -49,8 +51,10 @@ class SafeEnvironmentTests(unittest.TestCase):
         self.assertEqual(
             environment,
             {
+                "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
@@ -194,6 +198,304 @@ class FingerprintTests(unittest.TestCase):
         )
 
 
+class FixtureProbeTests(unittest.TestCase):
+    def test_fixture_probe_uses_the_resolved_remote_workspace(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "probe.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            repository = root / "repository"
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = repository
+            runner.devcontainer_docker = "/usr/bin/docker"
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={"ready": "true"},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            calls: list[list[str]] = []
+            up = mock.Mock(
+                returncode=0,
+                stdout=(
+                    '{"containerId":"fixture",'
+                    '"remoteWorkspaceFolder":"/workspaces/fixture"}'
+                ),
+                stderr="",
+            )
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+
+            def devcontainer(arguments: list[str], timeout: int) -> mock.Mock:
+                self.assertIn(timeout, {120, 1800})
+                calls.append(arguments)
+                return up if len(calls) == 1 else probe
+
+            runner.devcontainer = devcontainer
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(return_value="")
+            with mock.patch("run_lane.assert_contract", return_value=[]):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            calls[1][-6:],
+            [
+                "--",
+                "/bin/sh",
+                '-c',
+                'cd "$1" && exec /bin/sh ./probe.sh',
+                "probe",
+                "/workspaces/fixture",
+            ],
+        )
+
+    def test_remote_workspace_requires_an_absolute_path(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+
+        with self.assertRaisesRegex(
+            ParityError,
+            "absolute remoteWorkspaceFolder",
+        ):
+            runner.remote_workspace_from_up('{"remoteWorkspaceFolder":"relative"}')
+
+    def test_fixture_reports_a_workspace_cleanup_failure(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = root / "repository"
+            runner.repository.mkdir()
+            runner.devcontainer_docker = "/usr/bin/docker"
+            workspace_root = root / "workspace-root"
+            workspace = workspace_root / "fixture"
+            workspace.mkdir(parents=True)
+            fixture = Fixture(
+                directory=root / "source",
+                identifier="fixture",
+                expected={"ready": "true"},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            up = mock.Mock(
+                returncode=0,
+                stdout=(
+                    '{"containerId":"fixture",'
+                    '"remoteWorkspaceFolder":"/workspaces/fixture"}'
+                ),
+                stderr="",
+            )
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+            runner.create_fixture_workspace = mock.Mock(
+                return_value=(workspace_root, workspace)
+            )
+            runner.devcontainer = mock.Mock(side_effect=[up, probe])
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(return_value="")
+            runner.cleanup_fixture_workspace = mock.Mock(
+                return_value="ERROR: fixture workspace cleanup failed"
+            )
+
+            with mock.patch("run_lane.assert_contract", return_value=[]):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("workspace cleanup failed", result["diagnostic"])
+
+    def test_engine_fixture_skips_the_bind_mount_workspace_copy(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            fixture = Fixture(
+                directory=root / "source",
+                identifier="engine-fixture",
+                expected={},
+                backends=("docker",),
+                runner="engine",
+            )
+            expected = {"id": "engine-fixture", "status": "passed"}
+            runner.run_engine_fixture = mock.Mock(return_value=expected)
+
+            result = runner.run_fixture(fixture)
+
+        self.assertIs(result, expected)
+        runner.run_engine_fixture.assert_called_once()
+
+
+class FixtureWorkspaceTests(unittest.TestCase):
+    def test_fixture_workspace_is_copied_under_the_repository_build_root(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            source = root / "source"
+            source.mkdir()
+            (source / "probe.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+
+            workspace_root, workspace = runner.create_fixture_workspace(fixture)
+
+            self.assertEqual(workspace, workspace_root / "fixture")
+            self.assertTrue((workspace / "probe.sh").is_file())
+            self.assertEqual(
+                (workspace_root / ".devcontainer-parity-workspace-root").read_text(
+                    encoding="utf-8"
+                ),
+                "devcontainer parity workspace root v1\n",
+            )
+            self.assertEqual(
+                workspace_root.parent,
+                repository / ".build" / "parity-workspaces",
+            )
+            self.assertEqual(runner.cleanup_fixture_workspace(workspace_root), "")
+            self.assertFalse(workspace_root.exists())
+
+    def test_workspace_cleanup_preserves_a_root_without_its_marker(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            source = root / "source"
+            source.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            workspace_root, _ = runner.create_fixture_workspace(fixture)
+            (workspace_root / ".devcontainer-parity-workspace-root").unlink()
+
+            cleanup = runner.cleanup_fixture_workspace(workspace_root)
+
+            self.assertIn("marker is unsafe", cleanup)
+            self.assertTrue(workspace_root.is_dir())
+
+    def test_workspace_cleanup_rejects_a_missing_root(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+
+            cleanup = runner.cleanup_fixture_workspace(
+                repository / ".build" / "parity-workspaces" / "missing"
+            )
+
+            self.assertIn("unsafe fixture workspace root", cleanup)
+
+    def test_workspace_copy_failure_removes_its_owned_root(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            source = root / "source"
+            source.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+
+            with mock.patch(
+                "run_lane.shutil.copytree",
+                side_effect=OSError("copy failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "copy failed"):
+                    runner.create_fixture_workspace(fixture)
+
+            self.assertFalse((repository / ".build" / "parity-workspaces").exists())
+
+    def test_workspace_cleanup_rejects_escaped_and_modified_roots(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            source = root / "source"
+            source.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            escaped = root / "escaped"
+            escaped.mkdir()
+            (escaped / ".devcontainer-parity-workspace-root").write_text(
+                "devcontainer parity workspace root v1\n",
+                encoding="utf-8",
+            )
+            workspace_root, _ = runner.create_fixture_workspace(fixture)
+            (workspace_root / ".devcontainer-parity-workspace-root").write_text(
+                "changed\n",
+                encoding="utf-8",
+            )
+
+            escaped_cleanup = runner.cleanup_fixture_workspace(escaped)
+            modified_cleanup = runner.cleanup_fixture_workspace(workspace_root)
+
+            self.assertIn("escaped its parent", escaped_cleanup)
+            self.assertIn("did not match", modified_cleanup)
+            self.assertTrue(escaped.is_dir())
+            self.assertTrue(workspace_root.is_dir())
+
+    def test_workspace_cleanup_leaves_a_shared_parent_and_reports_removal_errors(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            source = root / "source"
+            source.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            fixture = Fixture(
+                directory=source,
+                identifier="fixture",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            first_root, _ = runner.create_fixture_workspace(fixture)
+            second_root, _ = runner.create_fixture_workspace(fixture)
+
+            self.assertEqual(runner.cleanup_fixture_workspace(first_root), "")
+            self.assertTrue(second_root.parent.is_dir())
+
+            with mock.patch(
+                "run_lane.shutil.rmtree",
+                side_effect=OSError("permission denied"),
+            ):
+                failed_cleanup = runner.cleanup_fixture_workspace(second_root)
+
+            self.assertIn("cleanup failed", failed_cleanup)
+            self.assertTrue(second_root.is_dir())
+
+
 class PortEvidenceTests(unittest.TestCase):
     def test_failed_host_connections_are_preserved_as_evidence(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -280,6 +582,60 @@ class CleanupFixtureTests(unittest.TestCase):
 
 
 class BuilderCleanupTests(unittest.TestCase):
+    def test_container_compose_client_routes_compose_subcommand_to_wrapper(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docker = root / "docker"
+            docker.write_text(
+                "#!/bin/sh\nprintf 'docker:%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o700)
+            repository = root / "repository"
+            compose = repository / ".build" / "debug" / "devcontainer-compose"
+            compose.parent.mkdir(parents=True)
+            compose.write_text(
+                "#!/bin/sh\nprintf 'compose:%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            compose.chmod(0o700)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "container-compose"
+            runner.repository = repository
+            runner.docker = str(docker)
+            runner.devcontainer_docker = runner.docker
+            runner.socket_root = root
+            runner.environment = {}
+
+            runner.configure_devcontainer_client()
+            compose_version = subprocess.run(
+                [runner.devcontainer_docker, "compose", "version", "--short"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            docker_version = subprocess.run(
+                [runner.devcontainer_docker, "version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            wrapper_source = Path(runner.devcontainer_docker).read_text(
+                encoding="utf-8"
+            )
+
+        self.assertEqual(compose_version.returncode, 0)
+        self.assertEqual(compose_version.stdout.strip(), "compose:version --short")
+        self.assertEqual(docker_version.returncode, 0)
+        self.assertEqual(docker_version.stdout.strip(), "docker:version")
+        self.assertIn('exec "$compose" "$@"', wrapper_source)
+        self.assertEqual(
+            runner.environment["DEVCONTAINER_DOCKER_BIN"],
+            runner.devcontainer_docker,
+        )
+
     def test_stock_client_reports_buildx_unavailable(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

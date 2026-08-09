@@ -66,6 +66,7 @@ enum CLIPaths {
             "CONTAINER_APP_ROOT",
             "CONTAINER_HOST",
             "CONTAINER_INSTALL_ROOT",
+            "CONTAINER_SERVICE_NAMESPACE",
             "HOME",
             "LANG",
             "LC_ALL",

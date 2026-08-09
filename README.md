@@ -116,7 +116,7 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `container-engine-api` 0.3.0 | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity |
+| `container-engine-api` 0.3.3 published baseline | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity. The logging-handoff source requires the coordinated unpublished Engine API/Container stack recorded in the Compose logging design; it is not representable by the published baseline yet. |
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Stock-provider adapter; normal mode starts one internal private provider session behind the shared public gateway, while `--provider-socket` exposes only the private session for an external `container-engine` process |

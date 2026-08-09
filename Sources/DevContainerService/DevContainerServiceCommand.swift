@@ -108,6 +108,15 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     : .native
             )
         }
+        let handoffCapabilities = try [
+            "engine.handoff.part.logging.v1",
+            "engine.handoff.provider-key-enrollment.v1"
+        ].map {
+            try ContainerEngineProviderCapability(
+                identifier: $0,
+                status: .native
+            )
+        }
         let providerDeclaration = try ContainerEngineProviderDeclaration(
             profile: .stock,
             kind: .devcontainerStock,
@@ -132,7 +141,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     identifier: "engine.\(capability.rawValue)",
                     status: sharedStatus
                 )
-            } + routeCapabilities
+            } + routeCapabilities + handoffCapabilities
         )
         let providerSelectionPath = stateURL.deletingLastPathComponent()
             .appendingPathComponent("engine-provider.json")
@@ -174,6 +183,13 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             provider: selectedProvider,
             providerFingerprint: providerFingerprint.digest
         )
+        let handoffResponder = try Self.loggingHandoffResponder(
+            runtime: runtime,
+            providerFingerprint: providerFingerprint,
+            stateRootUUID: stateRootUUID,
+            stateDirectory: stateURL.deletingLastPathComponent(),
+            providerVersion: BuildInfo.current.version
+        )
         let internalProviderSocket = DefaultPaths.providerSocket(
             publicSocket: socket
         )
@@ -181,6 +197,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             try .provider(
                 ContainerEngineProviderSessionServer(
                     responder: router,
+                    handoffControlResponder: handoffResponder,
                     socketPath: providerSocket,
                     declaration: providerDeclaration,
                     stateRootUUID: stateRootUUID
@@ -190,6 +207,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             try .gateway(
                 provider: ContainerEngineProviderSessionServer(
                     responder: router,
+                    handoffControlResponder: handoffResponder,
                     socketPath: internalProviderSocket,
                     declaration: providerDeclaration,
                     stateRootUUID: stateRootUUID

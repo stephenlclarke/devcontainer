@@ -405,6 +405,8 @@ private final class MockClientProcess: ClientProcess, @unchecked Sendable {
         }
         return exitCode
     }
+
+    func disconnect() {}
 }
 
 private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
@@ -447,4 +449,6 @@ private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
             return 0
         }.value
     }
+
+    func disconnect() {}
 }

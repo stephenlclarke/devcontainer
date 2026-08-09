@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerResource
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
@@ -138,6 +139,18 @@ struct AppleContainerRuntimeTests {
                 )
             )
         )
+    }
+
+    @Test
+    func `native inventory omits attachments without IPv4 addresses`() {
+        let attachment = Attachment(
+            network: "ipv6-only",
+            hostname: "fixture",
+            ipv6Address: nil,
+            macAddress: nil
+        )
+
+        #expect(AppleContainerRuntime.networkAddresses([attachment]).isEmpty)
     }
 
     @Test

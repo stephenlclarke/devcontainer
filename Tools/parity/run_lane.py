@@ -39,6 +39,10 @@ from parity_lib import (
 )
 
 
+FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
+FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
+
+
 def resolver_nameservers(configuration: str) -> list[str]:
     """Return unique, valid nameservers from a resolver configuration."""
 
@@ -269,9 +273,37 @@ class LaneRunner:
             self.socket_root = None
 
     def configure_devcontainer_client(self) -> None:
-        """Avoid privileged BuildKit hosting on the unmodified stock runtime."""
+        """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
+        if self.lane == "container-compose":
+            if self.socket_root is None or not self.docker:
+                raise ParityError(
+                    "container-compose Docker client wrapper requires a live engine"
+                )
+            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+            if not compose.is_file() or not os.access(compose, os.X_OK):
+                raise ParityError(
+                    f"container-compose wrapper is not executable at {compose}"
+                )
+            wrapper = self.socket_root / "docker-container-compose"
+            docker = self.docker
+            wrapper.write_text(
+                "#!/bin/sh\n"
+                "set -eu\n"
+                f"docker={shlex.quote(docker)}\n"
+                f"compose={shlex.quote(str(compose))}\n"
+                'if [ "${1-}" = "compose" ]; then\n'
+                "    shift\n"
+                '    exec "$compose" "$@"\n'
+                "fi\n"
+                'exec "$docker" "$@"\n',
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o700)
+            self.devcontainer_docker = str(wrapper)
+            self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
+            return
         if self.lane != "apple-stock":
             return
         if self.socket_root is None or not self.docker:
@@ -658,13 +690,10 @@ class LaneRunner:
     def run_fixture(self, fixture: Any) -> dict[str, Any]:
         raw = self.output / "raw" / fixture.identifier
         raw.mkdir(parents=True)
-        workspace = self.output / "workspaces" / fixture.identifier
-        if workspace.exists():
-            shutil.rmtree(workspace)
-        shutil.copytree(fixture.directory, workspace)
+        if fixture.runner == "engine":
+            return self.run_engine_fixture(fixture, raw)
+        workspace_root, workspace = self.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
-        if runtime_fixture.runner == "engine":
-            return self.run_engine_fixture(runtime_fixture, raw)
         started = time.monotonic()
         status = "failed"
         observations: dict[str, str] = {}
@@ -690,13 +719,18 @@ class LaneRunner:
             (raw / "up.stderr").write_text(up.stderr, encoding="utf-8")
             if up.returncode != 0:
                 raise ParityError(f"devcontainer up exited {up.returncode}")
+            remote_workspace = self.remote_workspace_from_up(up.stdout)
             probe = self.devcontainer(
                 [
                     "exec",
                     "--workspace-folder",
                     str(runtime_fixture.directory),
+                    "--",
                     "/bin/sh",
-                    "./probe.sh",
+                    "-c",
+                    'cd "$1" && exec /bin/sh ./probe.sh',
+                    "probe",
+                    remote_workspace,
                 ],
                 timeout=120,
             )
@@ -720,8 +754,11 @@ class LaneRunner:
             diagnostic = str(error)
         finally:
             cleanup = self.cleanup_fixture(runtime_fixture)
+            workspace_cleanup = self.cleanup_fixture_workspace(workspace_root)
+            if workspace_cleanup:
+                cleanup = f"{cleanup}{workspace_cleanup}"
             (raw / "cleanup.log").write_text(cleanup, encoding="utf-8")
-            if cleanup.startswith("ERROR:"):
+            if cleanup.startswith("ERROR:") or workspace_cleanup.startswith("ERROR:"):
                 status = "failed"
                 diagnostic = f"{diagnostic}; {cleanup}".strip("; ")
         return {
@@ -732,6 +769,50 @@ class LaneRunner:
             "differences": differences,
             "diagnostic": diagnostic,
         }
+
+    def fixture_workspace_parent(self) -> Path:
+        """Return the Docker-visible parent for copied fixture workspaces."""
+
+        return self.repository / ".build" / "parity-workspaces"
+
+    def create_fixture_workspace(self, fixture: Any) -> tuple[Path, Path]:
+        """Copy one fixture under the repository so Docker can bind mount it."""
+
+        parent = self.fixture_workspace_parent()
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        root = Path(tempfile.mkdtemp(prefix=f"{fixture.identifier}-", dir=parent))
+        marker = root / FIXTURE_WORKSPACE_MARKER
+        marker.write_text(FIXTURE_WORKSPACE_MARKER_CONTENT, encoding="utf-8")
+        workspace = root / fixture.identifier
+        try:
+            shutil.copytree(fixture.directory, workspace)
+        except OSError:
+            self.cleanup_fixture_workspace(root)
+            raise
+        return root, workspace
+
+    def cleanup_fixture_workspace(self, root: Path) -> str:
+        """Remove only a marker-owned copied fixture workspace after cleanup."""
+
+        parent = self.fixture_workspace_parent()
+        marker = root / FIXTURE_WORKSPACE_MARKER
+        try:
+            if root.is_symlink() or not root.is_dir():
+                return f"ERROR: unsafe fixture workspace root: {root}"
+            if root.parent.resolve() != parent.resolve():
+                return f"ERROR: fixture workspace escaped its parent: {root}"
+            if marker.is_symlink() or not marker.is_file():
+                return f"ERROR: fixture workspace marker is unsafe: {marker}"
+            if marker.read_text(encoding="utf-8") != FIXTURE_WORKSPACE_MARKER_CONTENT:
+                return f"ERROR: fixture workspace marker did not match: {marker}"
+            shutil.rmtree(root)
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        except OSError as error:
+            return f"ERROR: fixture workspace cleanup failed: {error}"
+        return ""
 
     def additional_fixture_observations(
         self,
@@ -1214,6 +1295,18 @@ class LaneRunner:
             raise ParityError("devcontainer up did not return a containerId")
         return identifier
 
+    def remote_workspace_from_up(self, output: str) -> str:
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError as error:
+            raise ParityError("devcontainer up returned invalid JSON") from error
+        workspace = value.get("remoteWorkspaceFolder") if isinstance(value, dict) else None
+        if not isinstance(workspace, str) or not workspace.startswith("/"):
+            raise ParityError(
+                "devcontainer up did not return an absolute remoteWorkspaceFolder"
+            )
+        return workspace
+
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
         if self.lane == "container-compose":
@@ -1445,12 +1538,14 @@ class LaneRunner:
 
 SAFE_ENVIRONMENT_KEYS = frozenset(
     {
+        "CONTAINER_APP_ROOT",
         "CONTAINER_COMPOSE_BUILD_INFO",
         "CONTAINER_COMPOSE_CONTAINER",
         "CONTAINER_HOST",
         "CONTAINER_INSTALLATION_ROOT",
         "CONTAINER_REGISTRY_CONFIG",
         "CONTAINER_RUNTIME_CONFIG",
+        "CONTAINER_SERVICE_NAMESPACE",
         "DEVELOPER_DIR",
         "DEVCONTAINER_ALLOW_CUSTOM_STOCK",
         "DEVCONTAINER_COMPOSE_BIN",

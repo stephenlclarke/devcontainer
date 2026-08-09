@@ -467,9 +467,15 @@ struct AppleContainerRuntimeDirectTests {
         #expect(requestedOverrides.hostname == "requested-host")
         #expect(
             AppleContainerRuntime.filteredEnvironment([
+                "CONTAINER_APP_ROOT": "/stable/runtime",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "HOME": "/fixture",
                 "SECRET": "excluded"
-            ]) == ["HOME": "/fixture"]
+            ]) == [
+                "CONTAINER_APP_ROOT": "/stable/runtime",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
+                "HOME": "/fixture"
+            ]
         )
         #expect(
             AppleContainerRuntime.containerState(

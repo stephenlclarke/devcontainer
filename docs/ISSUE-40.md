@@ -50,6 +50,25 @@ socket paths left owner-only directories under `/private/tmp` after shutdown.
 - No `devcontainer-engine-*` directory remains under `/private/tmp` after either
   final Apple lane.
 
+## C04 revalidation resolution
+
+On 6 August 2026, the exact C04 Docker oracle passed all lifecycle observations
+after [devcontainer #46](https://github.com/stephenlclarke/devcontainer/issues/46)
+identified the remaining failure as a Docker-visible-root defect. The initial
+signed remote-workspace correction `56f20056c88eb9fa2acd857ce375adf84e44d59b`
+was necessary and remains valid: the runner selects the `remoteWorkspaceFolder`
+before it invokes `probe.sh`. It was insufficient because the copied fixture
+lived under `/private/tmp`, which Colima exposed as an empty bind source.
+
+Signed local checkpoint `3d0b6f9fd2d34b7d46278873996056f9f30517a9` copies the
+fixture below the repository's marker-owned `.build/parity-workspaces` root and
+removes only that verified disposable root. The pinned Docker Compose 5.3.1
+oracle completed in 4.337 seconds with all C04 observations and no copied-root
+or Docker-label residue. This removes the harness blocker only. The historical
+container-compose alias/recreate gap remains a separate candidate result in
+[container-compose #184](https://github.com/stephenlclarke/container-compose/issues/184)
+and requires a fresh candidate run before its status changes.
+
 ## Tracking
 
 - GitHub issue: [#40](https://github.com/stephenlclarke/devcontainer/issues/40)
