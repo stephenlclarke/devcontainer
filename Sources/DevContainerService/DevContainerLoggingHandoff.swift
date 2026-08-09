@@ -73,7 +73,7 @@ extension DevContainerServiceCommand {
             ),
             trustRegistryStore: ProviderHandoffTrustRegistryStore(
                 account:
-                    "trust-registry-v1.\(stateRootUUID.uuidString.lowercased())"
+                "trust-registry-v1.\(stateRootUUID.uuidString.lowercased())"
             ),
             providerIdentity: identity,
             exportPackageSourceToDirectory: { request, temporaryDirectoryURL in
@@ -89,10 +89,10 @@ extension DevContainerServiceCommand {
                     )
                 return try await ProviderHandoffPortableLoggingPayloadCodec
                     .packageSource(
-                    containers: containers,
-                    sourceStateRootUUID: request.sourceStateRootUUID,
-                    temporaryDirectoryURL: temporaryDirectoryURL
-                )
+                        containers: containers,
+                        sourceStateRootUUID: request.sourceStateRootUUID,
+                        temporaryDirectoryURL: temporaryDirectoryURL
+                    )
             },
             downstream: objectControl
         )
