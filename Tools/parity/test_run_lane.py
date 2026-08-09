@@ -33,8 +33,10 @@ class SafeEnvironmentTests(unittest.TestCase):
         environment = safe_environment(
             {
                 "BASH_ENV": "/tmp/host-shell-hook",
+                "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "GITHUB_TOKEN": "must-not-leak",
@@ -49,8 +51,10 @@ class SafeEnvironmentTests(unittest.TestCase):
         self.assertEqual(
             environment,
             {
+                "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
@@ -578,6 +582,60 @@ class CleanupFixtureTests(unittest.TestCase):
 
 
 class BuilderCleanupTests(unittest.TestCase):
+    def test_container_compose_client_routes_compose_subcommand_to_wrapper(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docker = root / "docker"
+            docker.write_text(
+                "#!/bin/sh\nprintf 'docker:%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o700)
+            repository = root / "repository"
+            compose = repository / ".build" / "debug" / "devcontainer-compose"
+            compose.parent.mkdir(parents=True)
+            compose.write_text(
+                "#!/bin/sh\nprintf 'compose:%s\\n' \"$*\"\n",
+                encoding="utf-8",
+            )
+            compose.chmod(0o700)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "container-compose"
+            runner.repository = repository
+            runner.docker = str(docker)
+            runner.devcontainer_docker = runner.docker
+            runner.socket_root = root
+            runner.environment = {}
+
+            runner.configure_devcontainer_client()
+            compose_version = subprocess.run(
+                [runner.devcontainer_docker, "compose", "version", "--short"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            docker_version = subprocess.run(
+                [runner.devcontainer_docker, "version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            wrapper_source = Path(runner.devcontainer_docker).read_text(
+                encoding="utf-8"
+            )
+
+        self.assertEqual(compose_version.returncode, 0)
+        self.assertEqual(compose_version.stdout.strip(), "compose:version --short")
+        self.assertEqual(docker_version.returncode, 0)
+        self.assertEqual(docker_version.stdout.strip(), "docker:version")
+        self.assertIn('exec "$compose" "$@"', wrapper_source)
+        self.assertEqual(
+            runner.environment["DEVCONTAINER_DOCKER_BIN"],
+            runner.devcontainer_docker,
+        )
+
     def test_stock_client_reports_buildx_unavailable(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

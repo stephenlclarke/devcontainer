@@ -273,9 +273,37 @@ class LaneRunner:
             self.socket_root = None
 
     def configure_devcontainer_client(self) -> None:
-        """Avoid privileged BuildKit hosting on the unmodified stock runtime."""
+        """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
+        if self.lane == "container-compose":
+            if self.socket_root is None or not self.docker:
+                raise ParityError(
+                    "container-compose Docker client wrapper requires a live engine"
+                )
+            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+            if not compose.is_file() or not os.access(compose, os.X_OK):
+                raise ParityError(
+                    f"container-compose wrapper is not executable at {compose}"
+                )
+            wrapper = self.socket_root / "docker-container-compose"
+            docker = self.docker
+            wrapper.write_text(
+                "#!/bin/sh\n"
+                "set -eu\n"
+                f"docker={shlex.quote(docker)}\n"
+                f"compose={shlex.quote(str(compose))}\n"
+                'if [ "${1-}" = "compose" ]; then\n'
+                "    shift\n"
+                '    exec "$compose" "$@"\n'
+                "fi\n"
+                'exec "$docker" "$@"\n',
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o700)
+            self.devcontainer_docker = str(wrapper)
+            self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
+            return
         if self.lane != "apple-stock":
             return
         if self.socket_root is None or not self.docker:
@@ -1510,12 +1538,14 @@ class LaneRunner:
 
 SAFE_ENVIRONMENT_KEYS = frozenset(
     {
+        "CONTAINER_APP_ROOT",
         "CONTAINER_COMPOSE_BUILD_INFO",
         "CONTAINER_COMPOSE_CONTAINER",
         "CONTAINER_HOST",
         "CONTAINER_INSTALLATION_ROOT",
         "CONTAINER_REGISTRY_CONFIG",
         "CONTAINER_RUNTIME_CONFIG",
+        "CONTAINER_SERVICE_NAMESPACE",
         "DEVELOPER_DIR",
         "DEVCONTAINER_ALLOW_CUSTOM_STOCK",
         "DEVCONTAINER_COMPOSE_BIN",
