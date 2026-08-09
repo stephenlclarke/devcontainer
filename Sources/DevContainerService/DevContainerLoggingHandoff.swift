@@ -10,6 +10,7 @@ import DevContainerModel
 import Foundation
 
 extension DevContainerServiceCommand {
+    // swiftlint:disable:next function_body_length
     static func loggingHandoffResponder(
         runtime: AppleContainerRuntime,
         providerFingerprint: ContainerEngineProviderFingerprint,

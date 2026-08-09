@@ -57,8 +57,7 @@ struct AppleContainerRuntimeLoggingHandoffTests {
                 data: Data([0x00, 0xFF, 0x0A])
             )
         ]
-        let recordsStream = AsyncThrowingStream<ContainerLogRecord, any Error> {
-            continuation in
+        let recordsStream = AsyncThrowingStream<ContainerLogRecord, any Error> { continuation in
             for record in records {
                 continuation.yield(record)
             }
@@ -78,6 +77,7 @@ struct AppleContainerRuntimeLoggingHandoffTests {
     }
 
     @Test
+    // swiftlint:disable:next function_body_length
     func `handoff containers sort Docker IDs and preserve records`() async throws {
         let client = HandoffClient(
             snapshots: [
@@ -198,6 +198,7 @@ struct AppleContainerRuntimeLoggingHandoffTests {
     }
 
     @Test
+    // swiftlint:disable:next function_body_length
     func `handoff collectors reject invalid or nonquiesced requests`() async throws {
         let stopped = handoffSnapshot(
             runtimeID: "stopped-runtime",

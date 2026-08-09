@@ -225,6 +225,7 @@ private struct ProviderArtifacts {
     var directory: URL
 }
 
+// swiftlint:disable:next function_body_length
 private func exerciseProviderProcess(
     _ process: Process,
     socket: String,
