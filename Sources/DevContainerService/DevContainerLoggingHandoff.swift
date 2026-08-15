@@ -11,7 +11,7 @@ import Foundation
 
 extension DevContainerServiceCommand {
     // swiftlint:disable:next function_body_length
-    static func loggingHandoffResponder(
+    static func handoffResponder(
         runtime: AppleContainerRuntime,
         providerFingerprint: ContainerEngineProviderFingerprint,
         stateRootUUID: UUID,
@@ -56,7 +56,7 @@ extension DevContainerServiceCommand {
         let objectControl = ContainerEngineProviderHandoffControlService(
             objectStore: objectStore
         )
-        let sourceControl = try ContainerEngineProviderSourceHandoffResponder(
+        let loggingControl = try ContainerEngineProviderSourceHandoffResponder(
             partKind: .logging,
             mediaType: ProviderHandoffPortableLoggingPayloadCodec.mediaType,
             requiredCapabilities: ["engine.handoff.part.logging.v1"],
@@ -97,9 +97,51 @@ extension DevContainerServiceCommand {
             },
             downstream: objectControl
         )
+        let identityLifecycleControl = try ContainerEngineProviderSourceHandoffResponder(
+            partKind: .identityLifecycleEvents,
+            mediaType: ProviderHandoffIdentityLifecyclePayloadCodec.mediaType,
+            requiredCapabilities: [
+                "engine.handoff.part.identity-lifecycle-events.v1"
+            ],
+            objectStore: objectStore,
+            contributionStore: ProviderHandoffSourceContributionStore(
+                root: handoffRoot.appendingPathComponent(
+                    "source-contributions",
+                    isDirectory: true
+                )
+            ),
+            lineageKeyStore: ProviderHandoffLineageKeyStore(
+                service:
+                "io.github.stephenlclarke.devcontainer.provider-handoff",
+                accountPrefix: "lineage-\(accountSuffix)"
+            ),
+            trustRegistryStore: ProviderHandoffTrustRegistryStore(
+                account:
+                "trust-registry-v1.\(stateRootUUID.uuidString.lowercased())"
+            ),
+            providerIdentity: identity,
+            exportPackage: { request in
+                let containers = try await runtime
+                    .portableIdentityLifecycleHandoffContainers(
+                        resourceIDs: request.selectedResourceIDs,
+                        providerFingerprint:
+                        request.sourceProviderFingerprint,
+                        context: RuntimeRequestContext(
+                            deadline: Date().addingTimeInterval(5 * 60),
+                            providerFingerprint:
+                            request.sourceProviderFingerprint
+                        )
+                    )
+                return try ProviderHandoffIdentityLifecyclePayloadCodec.package(
+                    containers: containers,
+                    sourceStateRootUUID: request.sourceStateRootUUID
+                )
+            },
+            downstream: loggingControl
+        )
         return ContainerEngineProviderIdentityControlResponder(
             identity: identity,
-            downstream: sourceControl
+            downstream: identityLifecycleControl
         )
     }
 }

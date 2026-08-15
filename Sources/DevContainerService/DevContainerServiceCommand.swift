@@ -109,6 +109,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             )
         }
         let handoffCapabilities = try [
+            "engine.handoff.part.identity-lifecycle-events.v1",
             "engine.handoff.part.logging.v1",
             "engine.handoff.provider-key-enrollment.v1"
         ].map {
@@ -183,7 +184,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             provider: selectedProvider,
             providerFingerprint: providerFingerprint.digest
         )
-        let handoffResponder = try Self.loggingHandoffResponder(
+        let handoffResponder = try Self.handoffResponder(
             runtime: runtime,
             providerFingerprint: providerFingerprint,
             stateRootUUID: stateRootUUID,

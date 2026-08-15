@@ -216,6 +216,7 @@ extension AppleContainerRuntime {
         }
         managedHostsState.removeValue(forKey: id)
         containerExitTasks.removeValue(forKey: id)?.cancel()
+        containerExitRegistrations.removeValue(forKey: id)
         containerExits.removeValue(forKey: id)
     }
 

@@ -103,6 +103,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var startedContainers: Set<String> = []
     var containerStartedAt: [String: Date] = [:]
     var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
+    var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
     var directProcessLaunchTail: Task<Void, Never>?
@@ -481,6 +482,7 @@ public extension AppleContainerRuntime {
             )
         }
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
+        containerExitRegistrations.removeValue(forKey: spec.name)
         containerExits.removeValue(forKey: spec.name)
         let image = try await inspectImage(reference: spec.image, context: context)
         let result = try await command(

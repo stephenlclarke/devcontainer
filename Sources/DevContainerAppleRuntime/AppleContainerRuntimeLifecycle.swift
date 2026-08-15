@@ -105,20 +105,36 @@ public extension AppleContainerRuntime {
                 finishedAt: Date()
             )
         }
+        let registration = UUID()
         containerExitTasks[id]?.cancel()
         containerExitTasks[id] = task
+        containerExitRegistrations[id] = registration
         containerExits.removeValue(forKey: id)
         Task { [weak self] in
             guard let exit = try? await task.value else {
                 return
             }
-            await self?.handleContainerExit(exit, id: id)
+            await self?.handleContainerExit(
+                exit,
+                id: id,
+                registration: registration
+            )
         }
     }
 
-    internal func handleContainerExit(_ exit: ContainerExit, id: String) async {
+    internal func handleContainerExit(
+        _ exit: ContainerExit,
+        id: String,
+        registration: UUID? = nil
+    ) async {
+        if let registration,
+           containerExitRegistrations[id] != registration
+        {
+            return
+        }
         recordContainerExit(exit, id: id)
         containerExitTasks.removeValue(forKey: id)
+        containerExitRegistrations.removeValue(forKey: id)
         await signalEventPollers()
         await portForwarding.stop(containerID: id)
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
@@ -278,6 +294,78 @@ public extension AppleContainerRuntime {
         await signalEventPollers()
     }
 
+    func restartContainer(
+        id: String,
+        timeout: Duration?,
+        context: RuntimeRequestContext
+    ) async throws {
+        let resolved = try await resolveContainerID(id, context: context)
+        if let operation = containerStartOperations[resolved] {
+            return try await operation.task.value
+        }
+        let registration = UUID()
+        let task = Task {
+            try await self.performRestartContainer(
+                requestedID: id,
+                runtimeID: resolved,
+                timeout: timeout,
+                context: context
+            )
+        }
+        containerStartOperations[resolved] = ContainerStartOperation(
+            registration: registration,
+            task: task
+        )
+        do {
+            try await task.value
+            finishStartOperation(id: resolved, registration: registration)
+        } catch {
+            finishStartOperation(id: resolved, registration: registration)
+            throw error
+        }
+    }
+
+    private func performRestartContainer(
+        requestedID id: String,
+        runtimeID resolved: String,
+        timeout: Duration?,
+        context: RuntimeRequestContext
+    ) async throws {
+        var arguments = [useDirectProcessAPI ? "stop" : "restart"]
+        if let timeout {
+            let components = timeout.components
+            let seconds = components.seconds
+                + (components.attoseconds > 0 ? 1 : 0)
+            arguments += ["--time", String(seconds)]
+        }
+        arguments.append(resolved)
+        try await requireSuccess(
+            command(arguments),
+            operation: "container restart"
+        )
+        if useDirectProcessAPI {
+            try await launchContainerProcess(id: resolved)
+        }
+
+        await portForwarding.stop(containerID: resolved)
+        await signalEventPollers()
+        let startedAt = Date()
+        try await recordStartedContainer(
+            requestedID: id,
+            runtimeID: resolved,
+            startedAt: startedAt
+        )
+        let inventory = try await listContainers(
+            all: true,
+            labels: [:],
+            context: context
+        )
+        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
+        try await startPortForwarding(snapshot: snapshot, startedAt: startedAt)
+        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        await signalEventPollers()
+    }
+
     func killContainer(
         id: String,
         signal: String,
@@ -369,6 +457,7 @@ public extension AppleContainerRuntime {
         containerStartedAt.removeValue(forKey: snapshot.dockerID.rawValue)
         containerStartedAt.removeValue(forKey: snapshot.spec.name)
         containerExitTasks.removeValue(forKey: resolved)?.cancel()
+        containerExitRegistrations.removeValue(forKey: resolved)
         containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
         try await synchronizeNetworkHosts(context: context)

@@ -95,6 +95,7 @@ public protocol ContainerRuntime: Sendable {
         -> ContainerSnapshot
     func startContainer(id: String, context: RuntimeRequestContext) async throws
     func stopContainer(id: String, timeout: Duration?, context: RuntimeRequestContext) async throws
+    func restartContainer(id: String, timeout: Duration?, context: RuntimeRequestContext) async throws
     func killContainer(id: String, signal: String, context: RuntimeRequestContext) async throws
     func renameContainer(id: String, name: String, context: RuntimeRequestContext) async throws
     func removeContainer(id: String, force: Bool, context: RuntimeRequestContext) async throws
@@ -111,6 +112,19 @@ public protocol ContainerRuntime: Sendable {
         terminal: Bool,
         context: RuntimeRequestContext
     ) async throws -> any RuntimeProcessSession
+}
+
+public extension ContainerRuntime {
+    /// Compatibility fallback for providers that have not yet adopted an
+    /// authority-owned restart transaction.
+    func restartContainer(
+        id: String,
+        timeout: Duration?,
+        context: RuntimeRequestContext
+    ) async throws {
+        try await stopContainer(id: id, timeout: timeout, context: context)
+        try await startContainer(id: id, context: context)
+    }
 }
 
 public protocol ProcessRuntime: Sendable {
