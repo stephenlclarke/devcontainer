@@ -861,6 +861,17 @@ public extension AppleContainerRuntime {
     ) async throws -> T {
         let resolved = snapshot.runtimeID.rawValue
         let needsTransientStart = snapshot.state != .running
+        let mutation = needsTransientStart
+            ? beginTransientArchiveLifecycleMutation(snapshot: snapshot)
+            : nil
+        defer {
+            if let mutation {
+                finishContainerLifecycleMutation(
+                    identifiers: mutation.identifiers,
+                    registration: mutation.registration
+                )
+            }
+        }
         if needsTransientStart {
             try await requireSuccess(
                 command(["start", resolved]),
@@ -892,6 +903,24 @@ public extension AppleContainerRuntime {
             }
             throw error
         }
+    }
+
+    private func beginTransientArchiveLifecycleMutation(
+        snapshot: ContainerSnapshot
+    ) -> (registration: UUID, identifiers: Set<String>) {
+        let identifiers = Set([
+            snapshot.runtimeID.rawValue,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        let registration = beginContainerLifecycleMutation(
+            id: snapshot.runtimeID.rawValue
+        )
+        includeContainerLifecycleMutation(
+            identifiers: identifiers,
+            registration: registration
+        )
+        return (registration, identifiers)
     }
 
     private func stopTransientArchiveContainer(

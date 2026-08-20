@@ -147,6 +147,39 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         let exitCode = try await result
         #expect(exitCode == 22)
     }
+
+    @Test
+    func `handoff rejects a concurrent transient archive lifecycle`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        try fixture.setMode("slow-list")
+        let runtime = try fixture.runtime()
+        let initialInventoryCount = ((try? fixture.log()) ?? "")
+            .components(separatedBy: "list --all").count
+        let handoff = Task {
+            try await runtime.portableIdentityLifecycleHandoffContainers(
+                resourceIDs: ["fixture"],
+                providerFingerprint: "stock",
+                context: RuntimeRequestContext()
+            )
+        }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while ((try? fixture.log()) ?? "")
+            .components(separatedBy: "list --all").count <= initialInventoryCount,
+            ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        _ = try await runtime.copyArchiveFromContainer(
+            id: "fixture",
+            path: "/tmp/value",
+            context: RuntimeRequestContext()
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await handoff.value
+        }
+    }
 }
 
 private extension AppleContainerRuntime {

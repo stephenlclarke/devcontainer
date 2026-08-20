@@ -888,6 +888,9 @@ struct FakeAppleCLI {
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ "$mode" = slow-list ]; then
+              sleep 0.3
+            fi
             if [ "$state" = missing ]; then
               printf '%s\\n' '[]'
               exit 0
