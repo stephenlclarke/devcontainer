@@ -109,7 +109,7 @@ public extension AppleContainerRuntime {
         runtimeID resolved: String,
         context: RuntimeRequestContext
     ) async throws {
-        try await launchContainerProcess(id: resolved)
+        let processGeneration = try await launchContainerProcess(id: resolved)
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)
@@ -128,7 +128,8 @@ public extension AppleContainerRuntime {
         let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
         try await startPortForwarding(
             snapshot: snapshot,
-            startedAt: startedAt
+            startedAt: startedAt,
+            processGeneration: processGeneration
         )
         try await synchronizeNetworkHosts(context: context, containers: inventory)
         await signalEventPollers()
@@ -141,13 +142,13 @@ public extension AppleContainerRuntime {
         containerStartOperations.removeValue(forKey: id)
     }
 
-    private func launchContainerProcess(id: String) async throws {
+    private func launchContainerProcess(id: String) async throws -> UUID? {
         guard useDirectProcessAPI else {
             try await requireSuccess(
                 command(["start", id]),
                 operation: "container start"
             )
-            return
+            return nil
         }
         let process = try await apiClient.bootstrap(
             id: id,
@@ -175,6 +176,7 @@ public extension AppleContainerRuntime {
                 registration: registration
             )
         }
+        return registration
     }
 
     internal func handleContainerExit(
@@ -198,7 +200,10 @@ public extension AppleContainerRuntime {
         containerExitTasks.removeValue(forKey: id)
         containerExitRegistrations.removeValue(forKey: id)
         await signalEventPollers()
-        await portForwarding.stop(containerID: id)
+        await portForwarding.stop(
+            containerID: id,
+            generation: registration
+        )
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
         var autoRemove = requestedContainers[id]?.spec.autoRemove ?? false
@@ -253,6 +258,7 @@ public extension AppleContainerRuntime {
     private func startPortForwarding(
         snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date,
+        processGeneration: UUID? = nil,
         stopContainerOnFailure: Bool = true
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
@@ -267,7 +273,8 @@ public extension AppleContainerRuntime {
             var replacements = try await portForwarding.start(
                 containerID: resolved,
                 bindings: emulated,
-                networkAddresses: snapshot.networkAddresses
+                networkAddresses: snapshot.networkAddresses,
+                generation: processGeneration
             ).makeIterator()
             let ports = snapshot.spec.ports.map { binding in
                 guard Self.requiresHostForwarding(
@@ -287,7 +294,10 @@ public extension AppleContainerRuntime {
                 startedAt: startedAt
             )
         } catch {
-            await portForwarding.stop(containerID: resolved)
+            await portForwarding.stop(
+                containerID: resolved,
+                generation: processGeneration
+            )
             if stopContainerOnFailure {
                 _ = try? await command(["stop", "--time", "0", resolved])
             }
@@ -441,9 +451,9 @@ public extension AppleContainerRuntime {
             command(arguments),
             operation: "container restart"
         )
-        if useDirectProcessAPI {
-            try await launchContainerProcess(id: resolved)
-        }
+        let processGeneration = useDirectProcessAPI
+            ? try await launchContainerProcess(id: resolved)
+            : nil
 
         // Restart/bootstrap recreates the guest's default /etc/hosts.
         managedHostsState.removeValue(forKey: resolved)
@@ -461,7 +471,11 @@ public extension AppleContainerRuntime {
             context: context
         )
         let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
-        try await startPortForwarding(snapshot: snapshot, startedAt: startedAt)
+        try await startPortForwarding(
+            snapshot: snapshot,
+            startedAt: startedAt,
+            processGeneration: processGeneration
+        )
         try await synchronizeNetworkHosts(context: context, containers: inventory)
         await signalEventPollers()
     }

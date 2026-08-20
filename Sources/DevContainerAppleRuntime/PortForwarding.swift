@@ -23,12 +23,18 @@ import SocketForwarder
 /// Owns host listeners used to make Docker TCP port publishing deterministic
 /// across both stock and custom Apple container distributions.
 actor PortForwarding {
-    private var listeners: [String: [SocketForwarderResult]] = [:]
+    private struct ListenerSet {
+        let generation: UUID?
+        let channels: [SocketForwarderResult]
+    }
+
+    private var listeners: [String: ListenerSet] = [:]
 
     func start(
         containerID: String,
         bindings: [PortBinding],
-        networkAddresses: [String: String]
+        networkAddresses: [String: String],
+        generation: UUID? = nil
     ) async throws -> [PortBinding] {
         await stop(containerID: containerID)
         guard !bindings.isEmpty else {
@@ -52,7 +58,10 @@ actor PortForwarding {
                 opened.append(result)
                 resolvedBindings.append(resolved)
             }
-            listeners[containerID] = opened
+            listeners[containerID] = ListenerSet(
+                generation: generation,
+                channels: opened
+            )
             return resolvedBindings
         } catch {
             await close(opened)
@@ -110,8 +119,15 @@ actor PortForwarding {
         }
     }
 
-    func stop(containerID: String) async {
-        await close(listeners.removeValue(forKey: containerID) ?? [])
+    func stop(containerID: String, generation: UUID? = nil) async {
+        guard let listenerSet = listeners[containerID] else {
+            return
+        }
+        if let generation, listenerSet.generation != generation {
+            return
+        }
+        listeners.removeValue(forKey: containerID)
+        await close(listenerSet.channels)
     }
 
     func stopAll() async {
@@ -122,7 +138,7 @@ actor PortForwarding {
     }
 
     func hasListeners(containerID: String) -> Bool {
-        !(listeners[containerID] ?? []).isEmpty
+        !(listeners[containerID]?.channels ?? []).isEmpty
     }
 
     static func preferredAddress(
