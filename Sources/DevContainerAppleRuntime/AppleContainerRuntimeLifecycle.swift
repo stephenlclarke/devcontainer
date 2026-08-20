@@ -71,6 +71,12 @@ public extension AppleContainerRuntime {
         let resolved = try await resolveContainerID(id, context: context)
         mutationIdentifiers.insert(resolved)
         includeContainerLifecycleMutation(id: resolved, registration: mutation)
+        guard automaticRemovalRegistrations[resolved] == nil else {
+            throw DevContainerError(
+                .conflict,
+                message: "container automatic removal is in progress"
+            )
+        }
         if let operation = containerStartOperations[resolved] {
             return try await operation.task.value
         }
@@ -374,6 +380,12 @@ public extension AppleContainerRuntime {
         let resolved = try await resolveContainerID(id, context: context)
         mutationIdentifiers.insert(resolved)
         includeContainerLifecycleMutation(id: resolved, registration: mutation)
+        guard automaticRemovalRegistrations[resolved] == nil else {
+            throw DevContainerError(
+                .conflict,
+                message: "container automatic removal is in progress"
+            )
+        }
         while let operation = containerStartOperations[resolved] {
             if operation.kind == .restart {
                 return try await operation.task.value

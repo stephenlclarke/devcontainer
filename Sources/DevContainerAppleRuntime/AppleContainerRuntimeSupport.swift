@@ -796,10 +796,32 @@ extension AppleContainerRuntime {
                       id: id,
                       context: RuntimeRequestContext()
                   ),
-                  containerStartOperations[snapshot.runtimeID.rawValue] == nil,
                   snapshot.state == .stopped
             else {
                 return
+            }
+            let identifiers = Set([
+                id,
+                snapshot.runtimeID.rawValue,
+                snapshot.dockerID.rawValue,
+                snapshot.spec.name
+            ])
+            guard identifiers.allSatisfy({
+                containerStartOperations[$0] == nil
+                    && automaticRemovalRegistrations[$0] == nil
+            }) else {
+                return
+            }
+            let registration = UUID()
+            for identifier in identifiers {
+                automaticRemovalRegistrations[identifier] = registration
+            }
+            defer {
+                for identifier in identifiers
+                    where automaticRemovalRegistrations[identifier] == registration
+                {
+                    automaticRemovalRegistrations.removeValue(forKey: identifier)
+                }
             }
             try? await self.removeContainer(
                 id: id,

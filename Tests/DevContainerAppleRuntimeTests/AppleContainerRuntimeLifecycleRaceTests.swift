@@ -89,6 +89,23 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         operation.cancel()
         await runtime.clearTestStartOperation(id: "fixture")
     }
+
+    @Test
+    func `restart rejects an active automatic removal fence`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        await runtime.registerTestAutomaticRemoval(id: "fixture")
+
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.restartContainer(
+                id: "fixture",
+                timeout: nil,
+                context: RuntimeRequestContext()
+            )
+        }
+        #expect(!((try? fixture.log()) ?? "").contains("restart fixture"))
+        await runtime.clearTestAutomaticRemoval(id: "fixture")
+    }
 }
 
 private extension AppleContainerRuntime {
@@ -105,5 +122,13 @@ private extension AppleContainerRuntime {
 
     func clearTestStartOperation(id: String) {
         containerStartOperations.removeValue(forKey: id)
+    }
+
+    func registerTestAutomaticRemoval(id: String) {
+        automaticRemovalRegistrations[id] = UUID()
+    }
+
+    func clearTestAutomaticRemoval(id: String) {
+        automaticRemovalRegistrations.removeValue(forKey: id)
     }
 }

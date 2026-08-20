@@ -112,6 +112,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
+    var automaticRemovalRegistrations: [String: UUID] = [:]
     var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
     var containerLifecycleMutationRevision: UInt64 = 0
     var directProcessLaunchTail: Task<Void, Never>?
