@@ -31,6 +31,18 @@ public extension AppleContainerRuntime {
         containerLifecycleMutationRegistrations[id, default: []].insert(registration)
     }
 
+    internal func includeContainerLifecycleMutation(
+        identifiers: Set<String>,
+        registration: UUID
+    ) {
+        for identifier in identifiers {
+            includeContainerLifecycleMutation(
+                id: identifier,
+                registration: registration
+            )
+        }
+    }
+
     internal func finishContainerLifecycleMutation(
         identifiers: Set<String>,
         registration: UUID
@@ -477,14 +489,12 @@ public extension AppleContainerRuntime {
             snapshot.runtimeID.rawValue,
             snapshot.dockerID.rawValue,
             snapshot.spec.name,
-            name,
+            name
         ])
-        for identifier in mutationIdentifiers {
-            includeContainerLifecycleMutation(
-                id: identifier,
-                registration: mutation
-            )
-        }
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         guard
             !containers.contains(where: {
                 $0.runtimeID != snapshot.runtimeID && $0.spec.name == name
@@ -493,6 +503,14 @@ public extension AppleContainerRuntime {
             throw DevContainerError(.conflict, message: "container name \(name) is already in use")
         }
 
+        try await recordRenamedContainer(snapshot: snapshot, name: name)
+        await signalEventPollers()
+    }
+
+    private func recordRenamedContainer(
+        snapshot: DevContainerModel.ContainerSnapshot,
+        name: String
+    ) async throws {
         var spec = snapshot.spec
         let previousName = spec.name
         spec.name = name
@@ -515,7 +533,6 @@ public extension AppleContainerRuntime {
         requestedContainers[snapshot.runtimeID.rawValue] = request
         requestedContainers[snapshot.dockerID.rawValue] = request
         requestedContainers[name] = request
-        await signalEventPollers()
     }
 
     func removeContainer(
@@ -536,14 +553,12 @@ public extension AppleContainerRuntime {
         mutationIdentifiers.formUnion([
             resolved,
             snapshot.dockerID.rawValue,
-            snapshot.spec.name,
+            snapshot.spec.name
         ])
-        for identifier in mutationIdentifiers {
-            includeContainerLifecycleMutation(
-                id: identifier,
-                registration: mutation
-            )
-        }
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         var arguments = ["delete"]
         if force {
             arguments.append("--force")

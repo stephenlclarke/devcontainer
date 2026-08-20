@@ -507,14 +507,12 @@ public extension AppleContainerRuntime {
         var snapshot = try await inspectContainer(id: spec.name, context: context)
         mutationIdentifiers.formUnion([
             snapshot.runtimeID.rawValue,
-            snapshot.dockerID.rawValue,
+            snapshot.dockerID.rawValue
         ])
-        for identifier in mutationIdentifiers {
-            includeContainerLifecycleMutation(
-                id: identifier,
-                registration: mutation
-            )
-        }
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         snapshot.imageID = image.id
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()

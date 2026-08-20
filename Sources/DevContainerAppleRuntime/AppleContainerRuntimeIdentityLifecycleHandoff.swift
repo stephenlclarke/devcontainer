@@ -34,7 +34,7 @@ public extension AppleContainerRuntime {
                 containerLifecycleMutationRegistrations.keys
             ),
             mutationRevisionUnchanged:
-                lifecycleMutationRevision == containerLifecycleMutationRevision
+            lifecycleMutationRevision == containerLifecycleMutationRevision
         )
         return try Self.collectPortableIdentityLifecycleHandoffContainers(
             resourceIDs: resourceIDs,
