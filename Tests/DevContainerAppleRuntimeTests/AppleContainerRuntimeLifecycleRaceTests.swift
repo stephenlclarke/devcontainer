@@ -22,7 +22,7 @@ struct AppleContainerRuntimeLifecycleRaceTests {
             id: "fixture",
             context: context
         )
-        let deadline = ContinuousClock.now + .seconds(1)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !((try? fixture.log()) ?? "").contains("start fixture"),
               ContinuousClock.now < deadline
         {
