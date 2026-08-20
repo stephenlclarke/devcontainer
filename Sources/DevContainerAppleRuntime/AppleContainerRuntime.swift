@@ -426,37 +426,11 @@ public extension AppleContainerRuntime {
             )
         }
         let registration = UUID()
-        let task = Task { () throws -> RuntimeContainerMetadata in
-            if let persisted = try await store.containerMetadata(id: runtimeID),
-               Self.sameContainerIncarnation(
-                   metadataCreatedAt: persisted.createdAt,
-                   observedCreatedAt: snapshot.createdAt
-               )
-            {
-                return persisted
-            }
-            let candidate = RuntimeContainerMetadata(
-                runtimeID: snapshot.runtimeID,
-                dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
-                imageID: imageID,
-                spec: snapshot.spec,
-                createdAt: snapshot.createdAt,
-                startedAt: snapshot.startedAt
-            )
-            try await store.recordContainerMetadata(candidate)
-            guard let persisted = try await store.containerMetadata(id: runtimeID),
-                  Self.sameContainerIncarnation(
-                      metadataCreatedAt: persisted.createdAt,
-                      observedCreatedAt: snapshot.createdAt
-                  )
-            else {
-                throw DevContainerError(
-                    .stateCorruption,
-                    message: "container identity adoption was not durable"
-                )
-            }
-            return persisted
-        }
+        let task = makeContainerMetadataAdoptionTask(
+            snapshot,
+            imageID: imageID,
+            store: store
+        )
         containerMetadataAdoptionOperations[runtimeID] =
             ContainerMetadataAdoptionOperation(
                 registration: registration,
@@ -476,6 +450,44 @@ public extension AppleContainerRuntime {
                 registration: registration
             )
             throw error
+        }
+    }
+
+    private func makeContainerMetadataAdoptionTask(
+        _ snapshot: ContainerSnapshot,
+        imageID: String?,
+        store: any RuntimeMetadataStore
+    ) -> Task<RuntimeContainerMetadata, any Error> {
+        Task {
+            if let persisted = try await store.containerMetadata(
+                id: snapshot.runtimeID.rawValue
+            ), Self.sameContainerIncarnation(
+                metadataCreatedAt: persisted.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) {
+                return persisted
+            }
+            let candidate = RuntimeContainerMetadata(
+                runtimeID: snapshot.runtimeID,
+                dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+                imageID: imageID,
+                spec: snapshot.spec,
+                createdAt: snapshot.createdAt,
+                startedAt: snapshot.startedAt
+            )
+            try await store.recordContainerMetadata(candidate)
+            guard let persisted = try await store.containerMetadata(
+                id: snapshot.runtimeID.rawValue
+            ), Self.sameContainerIncarnation(
+                metadataCreatedAt: persisted.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message: "container identity adoption was not durable"
+                )
+            }
+            return persisted
         }
     }
 
