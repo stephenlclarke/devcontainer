@@ -195,6 +195,14 @@ timestamp, and desired block. Runtime bootstrap recreates the guest's default
 including transient archive starts, as well as container recreation, removal,
 or archive upload.
 
+For a coordinated provider migration, the adapter exports one atomic,
+quiescence-checked identity/lifecycle view. Each record preserves the canonical
+name, Docker identifier, immutable Apple bundle key, selected-provider
+fingerprint, and exact stopped-state snapshot. Running containers, running
+execs, starts, and create/start/stop/restart/kill/rename/remove/exit mutations
+reject the handoff. The legacy polling event source is not a durable journal,
+so its portable event history is deliberately empty rather than fabricated.
+
 ## Docker Engine compatibility boundary
 
 The generated shared route ledger contains all 107 method/path operations in the pinned Moby Engine API specifications from 1.44 through 1.53. The gateway advertises only operations declared by the selected provider, rejects every known but unavailable operation with a Docker-shaped `501`, and returns `404` for paths outside the ledger. The stock adapter currently declares and returns Docker-shaped identifiers, JSON, headers, streams, status codes, and errors for this tested surface:

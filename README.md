@@ -76,6 +76,13 @@ The `container-compose` integration is first-class but independently installed.
 The core does not import `ComposeCore`, and installing this project never
 silently replaces stock Apple `container` with the matched fork stack.
 
+The stock adapter can export a stopped container's canonical name, stable
+Docker identifier, immutable Apple bundle key, and lifecycle snapshot for a
+coordinated provider handoff. The export fails closed while a selected
+container is running or any create, start, stop, restart, kill, rename, remove,
+exec, or exit transition can race the snapshot; it never invents event history
+that the legacy poller cannot prove.
+
 ## Compatibility target
 
 | Lane | Purpose | Stable-release requirement |

@@ -16,5 +16,12 @@ The dispatcher classifies the complete supported Compose global-option surface
 before execution and uses the selected provider's canonical configuration output
 when explicit project identity is absent.
 
+The stock adapter also supports coordinated identity/lifecycle handoff for
+stopped containers. An atomic quiescence check rejects running containers,
+active execs, starts, and concurrent lifecycle mutations before exporting the
+canonical name, Docker identifier, immutable Apple bundle key, provider
+fingerprint, and stopped-state snapshot. Event history is empty because the
+legacy polling source cannot prove a durable journal.
+
 For the complete diagrams and decisions, see the repository
 [software design](https://github.com/stephenlclarke/devcontainer/blob/main/DESIGN.md).
