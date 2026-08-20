@@ -106,6 +106,47 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         #expect(!((try? fixture.log()) ?? "").contains("restart fixture"))
         await runtime.clearTestAutomaticRemoval(id: "fixture")
     }
+
+    @Test
+    func `wait ignores an exit from the replaced process generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("running")
+        let runtime = try fixture.runtime()
+        let initialInventoryCount = ((try? fixture.log()) ?? "")
+            .components(separatedBy: "list --all").count
+        let oldTask = Task {
+            try await Task.sleep(for: .milliseconds(500))
+            return AppleContainerRuntime.ContainerExit(
+                code: 11,
+                finishedAt: Date()
+            )
+        }
+        await runtime.registerTestExitTask(id: "fixture", task: oldTask)
+
+        async let result = runtime.waitContainer(
+            id: "fixture",
+            context: RuntimeRequestContext()
+        )
+        let deadline = ContinuousClock.now + .seconds(1)
+        while ((try? fixture.log()) ?? "")
+            .components(separatedBy: "list --all").count <= initialInventoryCount,
+            ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        let newTask = Task {
+            try await Task.sleep(for: .milliseconds(700))
+            return AppleContainerRuntime.ContainerExit(
+                code: 22,
+                finishedAt: Date()
+            )
+        }
+        await runtime.registerTestExitTask(id: "fixture", task: newTask)
+
+        let exitCode = try await result
+        #expect(exitCode == 22)
+    }
 }
 
 private extension AppleContainerRuntime {
@@ -130,5 +171,14 @@ private extension AppleContainerRuntime {
 
     func clearTestAutomaticRemoval(id: String) {
         automaticRemovalRegistrations.removeValue(forKey: id)
+    }
+
+    func registerTestExitTask(
+        id: String,
+        task: Task<ContainerExit, any Error>
+    ) {
+        startedContainers.insert(id)
+        containerExitTasks[id] = task
+        containerExitRegistrations[id] = UUID()
     }
 }

@@ -632,17 +632,10 @@ public extension AppleContainerRuntime {
                     return exit.code
                 }
                 if wasStarted(id: id, snapshot: snapshot),
-                   let task = containerExitTasks[snapshot.runtimeID.rawValue]
+                   let exit = try await waitForRegisteredContainerExit(
+                       id: snapshot.runtimeID.rawValue
+                   )
                 {
-                    let exit = try await task.value
-                    recordContainerExit(exit, id: snapshot.runtimeID.rawValue)
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
-                    }
                     return exit.code
                 }
                 if snapshot.state == .stopped, wasStarted(id: id, snapshot: snapshot) {
@@ -668,6 +661,26 @@ public extension AppleContainerRuntime {
 
     private func recordContainerExit(_ exit: ContainerExit, id: String) {
         containerExits[id] = exit
+    }
+
+    private func waitForRegisteredContainerExit(
+        id: String
+    ) async throws -> ContainerExit? {
+        guard let task = containerExitTasks[id],
+              let registration = containerExitRegistrations[id]
+        else {
+            return nil
+        }
+        let exit = try await task.value
+        guard containerExitRegistrations[id] == registration else {
+            return nil
+        }
+        await handleContainerExit(
+            exit,
+            id: id,
+            registration: registration
+        )
+        return exit
     }
 
     func containerLogs(
