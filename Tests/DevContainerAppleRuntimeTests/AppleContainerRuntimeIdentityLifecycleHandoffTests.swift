@@ -117,6 +117,49 @@ struct AppleRuntimeHandoffTests {
     }
 
     @Test
+    func `replacement inventory retries first identity adoption`() async throws {
+        let fixture = try FakeAppleCLI()
+        let store = TestMetadataStore(recordDelay: .milliseconds(100))
+        let runtime = try fixture.runtime(metadataStore: store)
+        let original = DevContainerModel.ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "runtime-api"),
+            dockerID: DockerID(rawValue: "runtime-api"),
+            spec: ContainerSpec(name: "api", image: "fixture:old"),
+            state: .stopped,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let replacement = DevContainerModel.ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "runtime-api"),
+            dockerID: DockerID(rawValue: "runtime-api"),
+            spec: ContainerSpec(name: "api", image: "fixture:new"),
+            state: .stopped,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        async let originalSnapshot = runtime.containerSnapshotWithMetadata(
+            original,
+            metadata: nil,
+            imageID: nil
+        )
+        try await Task.sleep(for: .milliseconds(10))
+        let replacementSnapshot = try await runtime.containerSnapshotWithMetadata(
+            replacement,
+            metadata: nil,
+            imageID: nil
+        )
+        let completedOriginalSnapshot = try await originalSnapshot
+        let persisted = try #require(
+            await store.containerMetadata(id: replacement.runtimeID.rawValue)
+        )
+
+        #expect(replacementSnapshot.dockerID != completedOriginalSnapshot.dockerID)
+        #expect(replacementSnapshot.spec.image == "fixture:new")
+        #expect(persisted.dockerID == replacementSnapshot.dockerID)
+        #expect(persisted.createdAt == replacement.createdAt)
+        #expect(await store.recordCount() == 2)
+    }
+
+    @Test
     func `a start in flight prevents identity lifecycle handoff`() throws {
         let snapshot = DevContainerModel.ContainerSnapshot(
             runtimeID: RuntimeID(rawValue: "runtime-api"),

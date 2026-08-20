@@ -49,6 +49,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct ContainerMetadataAdoptionOperation {
         let registration: UUID
+        let createdAt: Date
         let task: Task<RuntimeContainerMetadata, any Error>
     }
 
@@ -407,7 +408,22 @@ public extension AppleContainerRuntime {
     ) async throws -> RuntimeContainerMetadata {
         let runtimeID = snapshot.runtimeID.rawValue
         if let operation = containerMetadataAdoptionOperations[runtimeID] {
-            return try await operation.task.value
+            if Self.sameContainerIncarnation(
+                metadataCreatedAt: operation.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) {
+                return try await operation.task.value
+            }
+            _ = try? await operation.task.value
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: operation.registration
+            )
+            return try await adoptContainerMetadata(
+                snapshot,
+                imageID: imageID,
+                store: store
+            )
         }
         let registration = UUID()
         let task = Task { () throws -> RuntimeContainerMetadata in
@@ -444,6 +460,7 @@ public extension AppleContainerRuntime {
         containerMetadataAdoptionOperations[runtimeID] =
             ContainerMetadataAdoptionOperation(
                 registration: registration,
+                createdAt: snapshot.createdAt,
                 task: task
             )
         do {
