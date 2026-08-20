@@ -68,4 +68,42 @@ struct AppleContainerRuntimeLifecycleRaceTests {
 
         #expect(try !fixture.log().contains("delete --force fixture"))
     }
+
+    @Test
+    func `automatic removal waits through an active restart`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        let runtime = try fixture.runtime()
+        let operation = Task {
+            try await Task.sleep(for: .seconds(5))
+        }
+        await runtime.registerTestStartOperation(
+            id: "fixture",
+            operation: operation
+        )
+
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+        try await Task.sleep(for: .milliseconds(1100))
+
+        #expect(!((try? fixture.log()) ?? "").contains("delete --force fixture"))
+        operation.cancel()
+        await runtime.clearTestStartOperation(id: "fixture")
+    }
+}
+
+private extension AppleContainerRuntime {
+    func registerTestStartOperation(
+        id: String,
+        operation: Task<Void, any Error>
+    ) {
+        containerStartOperations[id] = ContainerStartOperation(
+            registration: UUID(),
+            kind: .restart,
+            task: operation
+        )
+    }
+
+    func clearTestStartOperation(id: String) {
+        containerStartOperations.removeValue(forKey: id)
+    }
 }

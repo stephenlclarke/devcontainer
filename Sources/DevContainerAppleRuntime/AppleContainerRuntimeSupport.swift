@@ -790,11 +790,13 @@ extension AppleContainerRuntime {
     func scheduleAutomaticRemoval(id: String) {
         Task {
             try? await Task.sleep(for: .seconds(1))
-            guard containerExitRegistrations[id] == nil,
+            guard containerStartOperations[id] == nil,
+                  containerExitRegistrations[id] == nil,
                   let snapshot = try? await inspectContainer(
                       id: id,
                       context: RuntimeRequestContext()
                   ),
+                  containerStartOperations[snapshot.runtimeID.rawValue] == nil,
                   snapshot.state == .stopped
             else {
                 return
