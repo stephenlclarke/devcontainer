@@ -165,6 +165,13 @@ public extension AppleContainerRuntime {
     ) throws -> ContainerPublicStateV2 {
         switch snapshot.state {
         case .created:
+            guard snapshot.startedAt == nil else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message:
+                    "container \(snapshot.dockerID.rawValue) is marked created after it started"
+                )
+            }
             return .created
         case .stopped:
             return snapshot.startedAt == nil ? .created : .exited

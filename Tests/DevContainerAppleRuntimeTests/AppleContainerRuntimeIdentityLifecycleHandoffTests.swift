@@ -88,6 +88,27 @@ struct AppleRuntimeHandoffTests {
     }
 
     @Test
+    func `created records reject evidence of a prior start`() throws {
+        let snapshot = DevContainerModel.ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "runtime-api"),
+            dockerID: DockerID(rawValue: String(repeating: "a", count: 64)),
+            spec: ContainerSpec(name: "api", image: "fixture:latest"),
+            state: .created,
+            createdAt: Date(timeIntervalSince1970: 1),
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime
+                .collectPortableIdentityLifecycleHandoffContainers(
+                    resourceIDs: [],
+                    providerFingerprint: "sha256:provider",
+                    inventory: [snapshot]
+                )
+        }
+    }
+
+    @Test
     func `concurrent first inventory shares one durable identity`() async throws {
         let fixture = try FakeAppleCLI()
         let store = TestMetadataStore(recordDelay: .milliseconds(100))
