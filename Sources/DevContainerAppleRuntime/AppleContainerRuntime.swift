@@ -25,6 +25,11 @@ import Foundation
 // swiftlint:disable file_length
 
 public actor AppleContainerRuntime: DevContainerRuntime {
+    enum ContainerStartOperationKind {
+        case start
+        case restart
+    }
+
     struct RequestedContainer {
         var spec: ContainerSpec
         var imageID: String?
@@ -38,6 +43,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct ContainerStartOperation {
         let registration: UUID
+        let kind: ContainerStartOperationKind
         let task: Task<Void, any Error>
     }
 

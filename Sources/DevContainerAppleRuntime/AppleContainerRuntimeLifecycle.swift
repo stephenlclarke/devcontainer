@@ -84,6 +84,7 @@ public extension AppleContainerRuntime {
         }
         containerStartOperations[resolved] = ContainerStartOperation(
             registration: registration,
+            kind: .start,
             task: task
         )
         do {
@@ -373,8 +374,15 @@ public extension AppleContainerRuntime {
         let resolved = try await resolveContainerID(id, context: context)
         mutationIdentifiers.insert(resolved)
         includeContainerLifecycleMutation(id: resolved, registration: mutation)
-        if let operation = containerStartOperations[resolved] {
-            return try await operation.task.value
+        while let operation = containerStartOperations[resolved] {
+            if operation.kind == .restart {
+                return try await operation.task.value
+            }
+            try await operation.task.value
+            finishStartOperation(
+                id: resolved,
+                registration: operation.registration
+            )
         }
         let registration = UUID()
         let task = Task {
@@ -387,6 +395,7 @@ public extension AppleContainerRuntime {
         }
         containerStartOperations[resolved] = ContainerStartOperation(
             registration: registration,
+            kind: .restart,
             task: task
         )
         do {

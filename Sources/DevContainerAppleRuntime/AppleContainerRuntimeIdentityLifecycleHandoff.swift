@@ -61,9 +61,11 @@ public extension AppleContainerRuntime {
         let selectedMutationInFlight = selected.isEmpty
             ? !mutatingContainerIdentifiers.isEmpty
             : matches.contains(where: { snapshot in
-                mutatingContainerIdentifiers.contains(snapshot.runtimeID.rawValue)
-                    || mutatingContainerIdentifiers.contains(snapshot.dockerID.rawValue)
-                    || mutatingContainerIdentifiers.contains(snapshot.spec.name)
+                mutatingContainerIdentifiers.contains(where: { identifier in
+                    snapshot.runtimeID.rawValue.hasPrefix(identifier)
+                        || snapshot.dockerID.rawValue.hasPrefix(identifier)
+                        || snapshot.spec.name == identifier
+                })
             })
         guard mutationRevisionUnchanged,
               !selectedMutationInFlight,

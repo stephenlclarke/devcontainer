@@ -121,5 +121,15 @@ struct AppleRuntimeHandoffTests {
                     mutationRevisionUnchanged: false
                 )
         }
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime
+                .requireIdentityLifecycleHandoffQuiescence(
+                    resourceIDs: ["api"],
+                    inventory: [snapshot],
+                    startingRuntimeIDs: [],
+                    runningExecRuntimeIDs: [],
+                    mutatingContainerIdentifiers: ["aaaa"]
+                )
+        }
     }
 }

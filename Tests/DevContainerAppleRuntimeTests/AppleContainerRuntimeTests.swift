@@ -561,6 +561,7 @@ struct AppleContainerRuntimeTests {
             id: container.runtimeID.rawValue,
             context: context
         )
+        try fixture.setState("stopped")
 
         await runtime.handleContainerExit(
             AppleContainerRuntime.ContainerExit(
