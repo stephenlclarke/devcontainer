@@ -3,6 +3,7 @@
     "create_state": "created",
     "exit_status": 7,
     "idempotent_cleanup": true,
+    "restart_state": "running",
     "wait_status": 7
   }
 }

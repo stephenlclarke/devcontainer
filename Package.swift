@@ -15,7 +15,22 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Foundation
 import PackageDescription
+
+private func dependency(
+    name: String,
+    environmentVariable: String,
+    url: String,
+    revision: String
+) -> Package.Dependency {
+    if let path = ProcessInfo.processInfo.environment[environmentVariable],
+        !path.isEmpty
+    {
+        return .package(name: name, path: path)
+    }
+    return .package(url: url, revision: revision)
+}
 
 let package = Package(
     name: "devcontainer",
@@ -37,17 +52,23 @@ let package = Package(
         .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"])
     ],
     dependencies: [
-        .package(
+        dependency(
+            name: "container-engine-api",
+            environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "5e6e24d017691596783515285e1ff56d29701235"
+            revision: "c66fac82d3b2368072959414c1c48c6c3711ae38"
         ),
-        .package(
+        dependency(
+            name: "container",
+            environmentVariable: "CONTAINER_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container.git",
-            revision: "b62df248d324883ddd64d4de1ed013230476a235"
+            revision: "99c0244f37c0bf4aabdfbff7b62d0d2d81541633"
         ),
-        .package(
+        dependency(
+            name: "containerization",
+            environmentVariable: "CONTAINERIZATION_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/containerization.git",
-            revision: "7f62f5b940630811573a34f70cdd6f3fa11d014d"
+            revision: "3e078480b85dceb843133392573cdd4d9efeec0d"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),

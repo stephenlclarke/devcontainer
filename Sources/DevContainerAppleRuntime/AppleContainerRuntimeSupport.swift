@@ -216,6 +216,7 @@ extension AppleContainerRuntime {
         }
         managedHostsState.removeValue(forKey: id)
         containerExitTasks.removeValue(forKey: id)?.cancel()
+        containerExitRegistrations.removeValue(forKey: id)
         containerExits.removeValue(forKey: id)
     }
 
@@ -787,8 +788,48 @@ extension AppleContainerRuntime {
     }
 
     func scheduleAutomaticRemoval(id: String) {
+        guard automaticRemovalRegistrations[id] == nil else {
+            return
+        }
+        let registration = UUID()
+        automaticRemovalRegistrations[id] = registration
         Task {
+            var identifiers: Set<String> = [id]
+            defer {
+                for identifier in identifiers
+                    where automaticRemovalRegistrations[identifier] == registration
+                {
+                    automaticRemovalRegistrations.removeValue(forKey: identifier)
+                }
+            }
             try? await Task.sleep(for: .seconds(1))
+            guard automaticRemovalRegistrations[id] == registration,
+                  containerStartOperations[id] == nil,
+                  containerExitRegistrations[id] == nil,
+                  let snapshot = try? await inspectContainer(
+                      id: id,
+                      context: RuntimeRequestContext()
+                  ),
+                  snapshot.state == .stopped
+            else {
+                return
+            }
+            identifiers.formUnion([
+                id,
+                snapshot.runtimeID.rawValue,
+                snapshot.dockerID.rawValue,
+                snapshot.spec.name
+            ])
+            guard identifiers.allSatisfy({
+                containerStartOperations[$0] == nil
+                    && (automaticRemovalRegistrations[$0] == nil
+                        || automaticRemovalRegistrations[$0] == registration)
+            }) else {
+                return
+            }
+            for identifier in identifiers {
+                automaticRemovalRegistrations[identifier] = registration
+            }
             try? await self.removeContainer(
                 id: id,
                 force: true,

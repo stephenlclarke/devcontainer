@@ -123,7 +123,7 @@ class Probe:
             "alpine:latest",
             "sh",
             "-c",
-            "exit 7",
+            "trap 'exit 7' TERM; while :; do sleep 1; done",
         ).stdout.decode().strip()
         self.containers.append(created)
         created_state = (
@@ -132,6 +132,13 @@ class Probe:
             .strip()
         )
         self.command("start", created)
+        self.command("restart", created)
+        restart_state = (
+            self.command("inspect", "-f", "{{.State.Status}}", created)
+            .stdout.decode()
+            .strip()
+        )
+        self.command("kill", "--signal", "TERM", created)
         wait_code = self.command("wait", created).stdout.decode().strip()
         inspect_code = (
             self.command("inspect", "-f", "{{.State.ExitCode}}", created)
@@ -145,6 +152,7 @@ class Probe:
             create_state=created_state,
             exit_status=inspect_code,
             idempotent_cleanup=repeated.returncode != 0,
+            restart_state=restart_state,
             wait_status=wait_code,
         )
 

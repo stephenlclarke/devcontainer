@@ -25,6 +25,11 @@ import Foundation
 // swiftlint:disable file_length
 
 public actor AppleContainerRuntime: DevContainerRuntime {
+    enum ContainerStartOperationKind {
+        case start
+        case restart
+    }
+
     struct RequestedContainer {
         var spec: ContainerSpec
         var imageID: String?
@@ -38,7 +43,14 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct ContainerStartOperation {
         let registration: UUID
+        let kind: ContainerStartOperationKind
         let task: Task<Void, any Error>
+    }
+
+    struct ContainerMetadataAdoptionOperation {
+        let registration: UUID
+        let createdAt: Date
+        let task: Task<RuntimeContainerMetadata, any Error>
     }
 
     struct CreateOptionSupport: Sendable {
@@ -103,8 +115,14 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var startedContainers: Set<String> = []
     var containerStartedAt: [String: Date] = [:]
     var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
+    var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
+    var containerMetadataAdoptionOperations:
+        [String: ContainerMetadataAdoptionOperation] = [:]
+    var automaticRemovalRegistrations: [String: UUID] = [:]
+    var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
+    var containerLifecycleMutationRevision: UInt64 = 0
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
     var directContainerInventorySupported: Bool?
@@ -375,16 +393,112 @@ public extension AppleContainerRuntime {
         if snapshot.spec.labels[Self.dockerIDLabel] != nil {
             return snapshot
         }
-        let metadata = RuntimeContainerMetadata(
-            runtimeID: snapshot.runtimeID,
-            dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+        let metadata = try await adoptContainerMetadata(
+            snapshot,
             imageID: imageID,
-            spec: snapshot.spec,
-            createdAt: snapshot.createdAt,
-            startedAt: snapshot.startedAt
+            store: metadataStore
         )
-        try await metadataStore.recordContainerMetadata(metadata)
         return apply(metadata: metadata, to: snapshot)
+    }
+
+    private func adoptContainerMetadata(
+        _ snapshot: ContainerSnapshot,
+        imageID: String?,
+        store: any RuntimeMetadataStore
+    ) async throws -> RuntimeContainerMetadata {
+        let runtimeID = snapshot.runtimeID.rawValue
+        if let operation = containerMetadataAdoptionOperations[runtimeID] {
+            if Self.sameContainerIncarnation(
+                metadataCreatedAt: operation.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) {
+                return try await operation.task.value
+            }
+            _ = try? await operation.task.value
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: operation.registration
+            )
+            return try await adoptContainerMetadata(
+                snapshot,
+                imageID: imageID,
+                store: store
+            )
+        }
+        let registration = UUID()
+        let task = makeContainerMetadataAdoptionTask(
+            snapshot,
+            imageID: imageID,
+            store: store
+        )
+        containerMetadataAdoptionOperations[runtimeID] =
+            ContainerMetadataAdoptionOperation(
+                registration: registration,
+                createdAt: snapshot.createdAt,
+                task: task
+            )
+        do {
+            let metadata = try await task.value
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: registration
+            )
+            return metadata
+        } catch {
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: registration
+            )
+            throw error
+        }
+    }
+
+    private func makeContainerMetadataAdoptionTask(
+        _ snapshot: ContainerSnapshot,
+        imageID: String?,
+        store: any RuntimeMetadataStore
+    ) -> Task<RuntimeContainerMetadata, any Error> {
+        Task {
+            if let persisted = try await store.containerMetadata(
+                id: snapshot.runtimeID.rawValue
+            ), Self.sameContainerIncarnation(
+                metadataCreatedAt: persisted.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) {
+                return persisted
+            }
+            let candidate = RuntimeContainerMetadata(
+                runtimeID: snapshot.runtimeID,
+                dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+                imageID: imageID,
+                spec: snapshot.spec,
+                createdAt: snapshot.createdAt,
+                startedAt: snapshot.startedAt
+            )
+            try await store.recordContainerMetadata(candidate)
+            guard let persisted = try await store.containerMetadata(
+                id: snapshot.runtimeID.rawValue
+            ), Self.sameContainerIncarnation(
+                metadataCreatedAt: persisted.createdAt,
+                observedCreatedAt: snapshot.createdAt
+            ) else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message: "container identity adoption was not durable"
+                )
+            }
+            return persisted
+        }
+    }
+
+    private func finishContainerMetadataAdoption(
+        id: String,
+        registration: UUID
+    ) {
+        guard containerMetadataAdoptionOperations[id]?.registration == registration else {
+            return
+        }
+        containerMetadataAdoptionOperations.removeValue(forKey: id)
     }
 
     private static func syntheticDockerIdentifier() -> String {
@@ -473,6 +587,14 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
         var spec = spec
+        let mutation = beginContainerLifecycleMutation(id: spec.name)
+        var mutationIdentifiers: Set<String> = [spec.name]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let optionSupport = try await supportedCreateOptions()
         spec.ports = spec.ports.map {
             Self.configuredPortBinding(
@@ -481,6 +603,7 @@ public extension AppleContainerRuntime {
             )
         }
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
+        containerExitRegistrations.removeValue(forKey: spec.name)
         containerExits.removeValue(forKey: spec.name)
         let image = try await inspectImage(reference: spec.image, context: context)
         let result = try await command(
@@ -493,6 +616,14 @@ public extension AppleContainerRuntime {
             createdAt: nil
         )
         var snapshot = try await inspectContainer(id: spec.name, context: context)
+        mutationIdentifiers.formUnion([
+            snapshot.runtimeID.rawValue,
+            snapshot.dockerID.rawValue
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         snapshot.imageID = image.id
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()
@@ -696,13 +827,31 @@ public extension AppleContainerRuntime {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func copyArchiveFromContainer(
         id: String,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> RuntimeArchive {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         return try await withContainerRunningForArchiveTransfer(
             snapshot: snapshot,
             context: context
@@ -753,12 +902,29 @@ public extension AppleContainerRuntime {
         archive: Data,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         guard archive.count <= 1_073_741_824 else {
             throw DevContainerError(.invalidRequest, message: "archive exceeds the 1 GiB request limit")
         }
         let extractionInput = try TarArchiveValidator.validatedForExtraction(archive)
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         try await withContainerRunningForArchiveTransfer(
             snapshot: snapshot,
             context: context

@@ -254,6 +254,11 @@ private func exerciseProviderProcess(
             $0.identifier == "engine.handoff.part.logging.v1"
                 && $0.status == .native
         })
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier
+                == "engine.handoff.part.identity-lifecycle-events.v1"
+                && $0.status == .native
+        })
         #expect(!descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.ContainerResize"
                 && $0.status != .unavailable

@@ -16,6 +16,7 @@
 
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import Foundation
 import Testing
 
 struct PortForwardingTests {
@@ -35,6 +36,40 @@ struct PortForwardingTests {
             networkAddresses: ["bridge": "127.0.0.1/8"]
         )
         #expect(resolved.first?.hostPort != nil)
+        await forwarding.stopAll()
+    }
+
+    @Test
+    func `stale generation cannot stop replacement listeners`() async throws {
+        let forwarding = PortForwarding()
+        let originalGeneration = UUID()
+        let replacementGeneration = UUID()
+        let binding = PortBinding(
+            containerPort: 65000,
+            hostPort: nil,
+            protocolName: "tcp",
+            hostAddress: "127.0.0.1"
+        )
+        let addresses = ["bridge": "127.0.0.1/8"]
+
+        _ = try await forwarding.start(
+            containerID: "fixture",
+            bindings: [binding],
+            networkAddresses: addresses,
+            generation: originalGeneration
+        )
+        _ = try await forwarding.start(
+            containerID: "fixture",
+            bindings: [binding],
+            networkAddresses: addresses,
+            generation: replacementGeneration
+        )
+        await forwarding.stop(
+            containerID: "fixture",
+            generation: originalGeneration
+        )
+
+        #expect(await forwarding.hasListeners(containerID: "fixture"))
         await forwarding.stopAll()
     }
 

@@ -259,6 +259,13 @@ operation recovery metadata; it is not a second Compose lifecycle database.
 Out-of-band `container compose` resources may be adopted only when their
 project identity and provider are unambiguous.
 
+A provider handoff may carry stopped-container identity and lifecycle state
+only after an atomic quiescence check. Canonical names, Docker identifiers,
+immutable Apple bundle keys, and the selected-provider fingerprint are
+preserved. Running containers, active execs, starts, and concurrent lifecycle
+mutations reject the export. The stock poller cannot prove historical events,
+so the handoff reports no event history instead of manufacturing it.
+
 The optional `container-compose` provider's compatibility labels happen to use
 the `com.apple.container.compose.*` namespace; they do not identify an
 Apple-authored Compose product. They are projected to the

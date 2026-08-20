@@ -561,6 +561,7 @@ struct AppleContainerRuntimeTests {
             id: container.runtimeID.rawValue,
             context: context
         )
+        try fixture.setState("stopped")
 
         await runtime.handleContainerExit(
             AppleContainerRuntime.ContainerExit(
@@ -887,6 +888,9 @@ struct FakeAppleCLI {
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ "$mode" = slow-list ]; then
+              sleep 0.3
+            fi
             if [ "$state" = missing ]; then
               printf '%s\\n' '[]'
               exit 0

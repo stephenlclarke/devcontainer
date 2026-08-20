@@ -19,14 +19,28 @@ import DevContainerRuntimeSPI
 import Foundation
 
 actor TestMetadataStore: RuntimeMetadataStore {
+    private let recordDelay: Duration?
     private var values: [String: RuntimeContainerMetadata] = [:]
     private var listCount = 0
     private var lookupCount = 0
+    private var records = 0
+
+    init(recordDelay: Duration? = nil) {
+        self.recordDelay = recordDelay
+    }
 
     func recordContainerMetadata(
         _ metadata: RuntimeContainerMetadata
-    ) {
+    ) async {
+        if let recordDelay {
+            try? await Task.sleep(for: recordDelay)
+        }
+        records += 1
         values[metadata.runtimeID.rawValue] = metadata
+    }
+
+    func recordCount() -> Int {
+        records
     }
 
     func containerMetadata(

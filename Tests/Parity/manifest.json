@@ -111,7 +111,7 @@
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["create through remove", "inspect state", "wait and idempotent cleanup"]
+      "assertions": ["create through remove", "inspect and restart state", "wait and idempotent cleanup"]
     },
     {
       "id": "E03-exec-streams",

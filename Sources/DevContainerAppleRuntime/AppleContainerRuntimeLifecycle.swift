@@ -20,11 +20,65 @@ import DevContainerRuntimeSPI
 import Foundation
 
 public extension AppleContainerRuntime {
+    internal func beginContainerLifecycleMutation(id: String) -> UUID {
+        let registration = UUID()
+        containerLifecycleMutationRevision &+= 1
+        containerLifecycleMutationRegistrations[id, default: []].insert(registration)
+        return registration
+    }
+
+    internal func includeContainerLifecycleMutation(id: String, registration: UUID) {
+        containerLifecycleMutationRegistrations[id, default: []].insert(registration)
+    }
+
+    internal func includeContainerLifecycleMutation(
+        identifiers: Set<String>,
+        registration: UUID
+    ) {
+        for identifier in identifiers {
+            includeContainerLifecycleMutation(
+                id: identifier,
+                registration: registration
+            )
+        }
+    }
+
+    internal func finishContainerLifecycleMutation(
+        identifiers: Set<String>,
+        registration: UUID
+    ) {
+        for identifier in identifiers {
+            containerLifecycleMutationRegistrations[identifier]?.remove(registration)
+            if containerLifecycleMutationRegistrations[identifier]?.isEmpty == true {
+                containerLifecycleMutationRegistrations.removeValue(forKey: identifier)
+            }
+        }
+        containerLifecycleMutationRevision &+= 1
+    }
+
     func startContainer(
         id: String,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let resolved = try await resolveContainerID(id, context: context)
+        mutationIdentifiers.insert(resolved)
+        includeContainerLifecycleMutation(id: resolved, registration: mutation)
+        guard automaticRemovalRegistrations[id] == nil,
+              automaticRemovalRegistrations[resolved] == nil
+        else {
+            throw DevContainerError(
+                .conflict,
+                message: "container automatic removal is in progress"
+            )
+        }
         if let operation = containerStartOperations[resolved] {
             return try await operation.task.value
         }
@@ -38,6 +92,7 @@ public extension AppleContainerRuntime {
         }
         containerStartOperations[resolved] = ContainerStartOperation(
             registration: registration,
+            kind: .start,
             task: task
         )
         do {
@@ -54,7 +109,7 @@ public extension AppleContainerRuntime {
         runtimeID resolved: String,
         context: RuntimeRequestContext
     ) async throws {
-        try await launchContainerProcess(id: resolved)
+        let processGeneration = try await launchContainerProcess(id: resolved)
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)
@@ -73,7 +128,8 @@ public extension AppleContainerRuntime {
         let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
         try await startPortForwarding(
             snapshot: snapshot,
-            startedAt: startedAt
+            startedAt: startedAt,
+            processGeneration: processGeneration
         )
         try await synchronizeNetworkHosts(context: context, containers: inventory)
         await signalEventPollers()
@@ -86,13 +142,13 @@ public extension AppleContainerRuntime {
         containerStartOperations.removeValue(forKey: id)
     }
 
-    private func launchContainerProcess(id: String) async throws {
+    private func launchContainerProcess(id: String) async throws -> UUID? {
         guard useDirectProcessAPI else {
             try await requireSuccess(
                 command(["start", id]),
                 operation: "container start"
             )
-            return
+            return nil
         }
         let process = try await apiClient.bootstrap(
             id: id,
@@ -105,22 +161,49 @@ public extension AppleContainerRuntime {
                 finishedAt: Date()
             )
         }
+        let registration = UUID()
         containerExitTasks[id]?.cancel()
         containerExitTasks[id] = task
+        containerExitRegistrations[id] = registration
         containerExits.removeValue(forKey: id)
         Task { [weak self] in
             guard let exit = try? await task.value else {
                 return
             }
-            await self?.handleContainerExit(exit, id: id)
+            await self?.handleContainerExit(
+                exit,
+                id: id,
+                registration: registration
+            )
         }
+        return registration
     }
 
-    internal func handleContainerExit(_ exit: ContainerExit, id: String) async {
+    internal func handleContainerExit(
+        _ exit: ContainerExit,
+        id: String,
+        registration: UUID? = nil
+    ) async {
+        if let registration,
+           containerExitRegistrations[id] != registration
+        {
+            return
+        }
+        let mutation = beginContainerLifecycleMutation(id: id)
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: [id],
+                registration: mutation
+            )
+        }
         recordContainerExit(exit, id: id)
         containerExitTasks.removeValue(forKey: id)
+        containerExitRegistrations.removeValue(forKey: id)
         await signalEventPollers()
-        await portForwarding.stop(containerID: id)
+        await portForwarding.stop(
+            containerID: id,
+            generation: registration
+        )
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
         var autoRemove = requestedContainers[id]?.spec.autoRemove ?? false
@@ -175,6 +258,7 @@ public extension AppleContainerRuntime {
     private func startPortForwarding(
         snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date,
+        processGeneration: UUID? = nil,
         stopContainerOnFailure: Bool = true
     ) async throws {
         let resolved = snapshot.runtimeID.rawValue
@@ -189,7 +273,8 @@ public extension AppleContainerRuntime {
             var replacements = try await portForwarding.start(
                 containerID: resolved,
                 bindings: emulated,
-                networkAddresses: snapshot.networkAddresses
+                networkAddresses: snapshot.networkAddresses,
+                generation: processGeneration
             ).makeIterator()
             let ports = snapshot.spec.ports.map { binding in
                 guard Self.requiresHostForwarding(
@@ -209,7 +294,10 @@ public extension AppleContainerRuntime {
                 startedAt: startedAt
             )
         } catch {
-            await portForwarding.stop(containerID: resolved)
+            await portForwarding.stop(
+                containerID: resolved,
+                generation: processGeneration
+            )
             if stopContainerOnFailure {
                 _ = try? await command(["stop", "--time", "0", resolved])
             }
@@ -259,7 +347,17 @@ public extension AppleContainerRuntime {
         timeout: Duration?,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let resolved = try await resolveContainerID(id, context: context)
+        mutationIdentifiers.insert(resolved)
+        includeContainerLifecycleMutation(id: resolved, registration: mutation)
         var arguments = ["stop"]
         if let timeout {
             let components = timeout.components
@@ -278,12 +376,126 @@ public extension AppleContainerRuntime {
         await signalEventPollers()
     }
 
+    func restartContainer(
+        id: String,
+        timeout: Duration?,
+        context: RuntimeRequestContext
+    ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
+        let resolved = try await resolveContainerID(id, context: context)
+        mutationIdentifiers.insert(resolved)
+        includeContainerLifecycleMutation(id: resolved, registration: mutation)
+        guard automaticRemovalRegistrations[id] == nil,
+              automaticRemovalRegistrations[resolved] == nil
+        else {
+            throw DevContainerError(
+                .conflict,
+                message: "container automatic removal is in progress"
+            )
+        }
+        while let operation = containerStartOperations[resolved] {
+            if operation.kind == .restart {
+                return try await operation.task.value
+            }
+            try await operation.task.value
+            finishStartOperation(
+                id: resolved,
+                registration: operation.registration
+            )
+        }
+        let registration = UUID()
+        let task = Task {
+            try await self.performRestartContainer(
+                requestedID: id,
+                runtimeID: resolved,
+                timeout: timeout,
+                context: context
+            )
+        }
+        containerStartOperations[resolved] = ContainerStartOperation(
+            registration: registration,
+            kind: .restart,
+            task: task
+        )
+        do {
+            try await task.value
+            finishStartOperation(id: resolved, registration: registration)
+        } catch {
+            finishStartOperation(id: resolved, registration: registration)
+            throw error
+        }
+    }
+
+    private func performRestartContainer(
+        requestedID id: String,
+        runtimeID resolved: String,
+        timeout: Duration?,
+        context: RuntimeRequestContext
+    ) async throws {
+        var arguments = [useDirectProcessAPI ? "stop" : "restart"]
+        if let timeout {
+            let components = timeout.components
+            let seconds = components.seconds
+                + (components.attoseconds > 0 ? 1 : 0)
+            arguments += ["--time", String(seconds)]
+        }
+        arguments.append(resolved)
+        try await requireSuccess(
+            command(arguments),
+            operation: "container restart"
+        )
+        let processGeneration = useDirectProcessAPI
+            ? try await launchContainerProcess(id: resolved)
+            : nil
+
+        // Restart/bootstrap recreates the guest's default /etc/hosts.
+        managedHostsState.removeValue(forKey: resolved)
+        await portForwarding.stop(containerID: resolved)
+        await signalEventPollers()
+        let startedAt = Date()
+        try await recordStartedContainer(
+            requestedID: id,
+            runtimeID: resolved,
+            startedAt: startedAt
+        )
+        let inventory = try await listContainers(
+            all: true,
+            labels: [:],
+            context: context
+        )
+        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
+        try await startPortForwarding(
+            snapshot: snapshot,
+            startedAt: startedAt,
+            processGeneration: processGeneration
+        )
+        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        await signalEventPollers()
+    }
+
     func killContainer(
         id: String,
         signal: String,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let resolved = try await resolveContainerID(id, context: context)
+        mutationIdentifiers.insert(resolved)
+        includeContainerLifecycleMutation(id: resolved, registration: mutation)
         try await requireSuccess(
             command(["kill", "--signal", signal, resolved]),
             operation: "container kill"
@@ -299,11 +511,29 @@ public extension AppleContainerRuntime {
         name: String,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         guard !name.isEmpty else {
             throw DevContainerError(.invalidRequest, message: "container name is empty")
         }
         let containers = try await listContainers(all: true, labels: [:], context: context)
         let snapshot = try resolvedContainerSnapshot(id: id, in: containers)
+        mutationIdentifiers.formUnion([
+            snapshot.runtimeID.rawValue,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name,
+            name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         guard
             !containers.contains(where: {
                 $0.runtimeID != snapshot.runtimeID && $0.spec.name == name
@@ -312,6 +542,14 @@ public extension AppleContainerRuntime {
             throw DevContainerError(.conflict, message: "container name \(name) is already in use")
         }
 
+        try await recordRenamedContainer(snapshot: snapshot, name: name)
+        await signalEventPollers()
+    }
+
+    private func recordRenamedContainer(
+        snapshot: DevContainerModel.ContainerSnapshot,
+        name: String
+    ) async throws {
         var spec = snapshot.spec
         let previousName = spec.name
         spec.name = name
@@ -334,7 +572,6 @@ public extension AppleContainerRuntime {
         requestedContainers[snapshot.runtimeID.rawValue] = request
         requestedContainers[snapshot.dockerID.rawValue] = request
         requestedContainers[name] = request
-        await signalEventPollers()
     }
 
     func removeContainer(
@@ -342,8 +579,25 @@ public extension AppleContainerRuntime {
         force: Bool,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         var arguments = ["delete"]
         if force {
             arguments.append("--force")
@@ -369,6 +623,7 @@ public extension AppleContainerRuntime {
         containerStartedAt.removeValue(forKey: snapshot.dockerID.rawValue)
         containerStartedAt.removeValue(forKey: snapshot.spec.name)
         containerExitTasks.removeValue(forKey: resolved)?.cancel()
+        containerExitRegistrations.removeValue(forKey: resolved)
         containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
         try await synchronizeNetworkHosts(context: context)
@@ -395,17 +650,10 @@ public extension AppleContainerRuntime {
                     return exit.code
                 }
                 if wasStarted(id: id, snapshot: snapshot),
-                   let task = containerExitTasks[snapshot.runtimeID.rawValue]
+                   let exit = try await waitForRegisteredContainerExit(
+                       id: snapshot.runtimeID.rawValue
+                   )
                 {
-                    let exit = try await task.value
-                    recordContainerExit(exit, id: snapshot.runtimeID.rawValue)
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
-                    }
                     return exit.code
                 }
                 if snapshot.state == .stopped, wasStarted(id: id, snapshot: snapshot) {
@@ -431,6 +679,26 @@ public extension AppleContainerRuntime {
 
     private func recordContainerExit(_ exit: ContainerExit, id: String) {
         containerExits[id] = exit
+    }
+
+    private func waitForRegisteredContainerExit(
+        id: String
+    ) async throws -> ContainerExit? {
+        guard let task = containerExitTasks[id],
+              let registration = containerExitRegistrations[id]
+        else {
+            return nil
+        }
+        let exit = try await task.value
+        guard containerExitRegistrations[id] == registration else {
+            return nil
+        }
+        await handleContainerExit(
+            exit,
+            id: id,
+            registration: registration
+        )
+        return exit
     }
 
     func containerLogs(
