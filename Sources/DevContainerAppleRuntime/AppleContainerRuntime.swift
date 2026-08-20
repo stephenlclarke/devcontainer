@@ -723,13 +723,31 @@ public extension AppleContainerRuntime {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func copyArchiveFromContainer(
         id: String,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> RuntimeArchive {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         return try await withContainerRunningForArchiveTransfer(
             snapshot: snapshot,
             context: context
@@ -780,12 +798,29 @@ public extension AppleContainerRuntime {
         archive: Data,
         context: RuntimeRequestContext
     ) async throws {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         guard archive.count <= 1_073_741_824 else {
             throw DevContainerError(.invalidRequest, message: "archive exceeds the 1 GiB request limit")
         }
         let extractionInput = try TarArchiveValidator.validatedForExtraction(archive)
         let snapshot = try await inspectContainer(id: id, context: context)
         let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
         try await withContainerRunningForArchiveTransfer(
             snapshot: snapshot,
             context: context
@@ -861,17 +896,6 @@ public extension AppleContainerRuntime {
     ) async throws -> T {
         let resolved = snapshot.runtimeID.rawValue
         let needsTransientStart = snapshot.state != .running
-        let mutation = needsTransientStart
-            ? beginTransientArchiveLifecycleMutation(snapshot: snapshot)
-            : nil
-        defer {
-            if let mutation {
-                finishContainerLifecycleMutation(
-                    identifiers: mutation.identifiers,
-                    registration: mutation.registration
-                )
-            }
-        }
         if needsTransientStart {
             try await requireSuccess(
                 command(["start", resolved]),
@@ -903,24 +927,6 @@ public extension AppleContainerRuntime {
             }
             throw error
         }
-    }
-
-    private func beginTransientArchiveLifecycleMutation(
-        snapshot: ContainerSnapshot
-    ) -> (registration: UUID, identifiers: Set<String>) {
-        let identifiers = Set([
-            snapshot.runtimeID.rawValue,
-            snapshot.dockerID.rawValue,
-            snapshot.spec.name
-        ])
-        let registration = beginContainerLifecycleMutation(
-            id: snapshot.runtimeID.rawValue
-        )
-        includeContainerLifecycleMutation(
-            identifiers: identifiers,
-            registration: registration
-        )
-        return (registration, identifiers)
     }
 
     private func stopTransientArchiveContainer(
