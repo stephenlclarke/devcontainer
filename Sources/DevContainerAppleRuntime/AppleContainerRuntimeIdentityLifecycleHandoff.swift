@@ -32,7 +32,7 @@ public extension AppleContainerRuntime {
             ),
             mutatingContainerIdentifiers: Set(
                 containerLifecycleMutationRegistrations.keys
-            ),
+            ).union(automaticRemovalRegistrations.keys),
             mutationRevisionUnchanged:
             lifecycleMutationRevision == containerLifecycleMutationRevision
         )

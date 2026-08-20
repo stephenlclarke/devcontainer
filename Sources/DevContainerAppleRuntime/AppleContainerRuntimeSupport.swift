@@ -788,9 +788,23 @@ extension AppleContainerRuntime {
     }
 
     func scheduleAutomaticRemoval(id: String) {
+        guard automaticRemovalRegistrations[id] == nil else {
+            return
+        }
+        let registration = UUID()
+        automaticRemovalRegistrations[id] = registration
         Task {
+            var identifiers: Set<String> = [id]
+            defer {
+                for identifier in identifiers
+                    where automaticRemovalRegistrations[identifier] == registration
+                {
+                    automaticRemovalRegistrations.removeValue(forKey: identifier)
+                }
+            }
             try? await Task.sleep(for: .seconds(1))
-            guard containerStartOperations[id] == nil,
+            guard automaticRemovalRegistrations[id] == registration,
+                  containerStartOperations[id] == nil,
                   containerExitRegistrations[id] == nil,
                   let snapshot = try? await inspectContainer(
                       id: id,
@@ -800,7 +814,7 @@ extension AppleContainerRuntime {
             else {
                 return
             }
-            let identifiers = Set([
+            identifiers.formUnion([
                 id,
                 snapshot.runtimeID.rawValue,
                 snapshot.dockerID.rawValue,
@@ -808,20 +822,13 @@ extension AppleContainerRuntime {
             ])
             guard identifiers.allSatisfy({
                 containerStartOperations[$0] == nil
-                    && automaticRemovalRegistrations[$0] == nil
+                    && (automaticRemovalRegistrations[$0] == nil
+                        || automaticRemovalRegistrations[$0] == registration)
             }) else {
                 return
             }
-            let registration = UUID()
             for identifier in identifiers {
                 automaticRemovalRegistrations[identifier] = registration
-            }
-            defer {
-                for identifier in identifiers
-                    where automaticRemovalRegistrations[identifier] == registration
-                {
-                    automaticRemovalRegistrations.removeValue(forKey: identifier)
-                }
             }
             try? await self.removeContainer(
                 id: id,

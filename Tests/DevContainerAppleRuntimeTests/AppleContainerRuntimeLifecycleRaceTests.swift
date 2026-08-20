@@ -180,6 +180,22 @@ struct AppleContainerRuntimeLifecycleRaceTests {
             try await handoff.value
         }
     }
+
+    @Test
+    func `handoff rejects scheduled automatic removal`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        let runtime = try fixture.runtime()
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.portableIdentityLifecycleHandoffContainers(
+                resourceIDs: ["fixture"],
+                providerFingerprint: "stock",
+                context: RuntimeRequestContext()
+            )
+        }
+    }
 }
 
 private extension AppleContainerRuntime {
