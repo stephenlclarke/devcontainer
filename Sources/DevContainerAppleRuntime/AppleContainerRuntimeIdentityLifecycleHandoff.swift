@@ -117,6 +117,7 @@ public extension AppleContainerRuntime {
         providerFingerprint: String
     ) throws -> ProviderHandoffIdentityLifecycleContainerV1 {
         let state = try portableLifecycleState(snapshot)
+        let exit = try portableExitDetails(snapshot, state: state)
         return ProviderHandoffIdentityLifecycleContainerV1(
             lifecycle: ContainerLifecycleRecordV2(
                 containerID: snapshot.dockerID.rawValue,
@@ -129,15 +130,34 @@ public extension AppleContainerRuntime {
                 snapshot: ContainerLifecycleSnapshotV2(
                     state: state,
                     removalInProgress: state == .removing,
-                    exitCode: snapshot.exitCode ?? 0,
+                    exitCode: exit.code,
                     startedAt: snapshot.startedAt,
-                    finishedAt: snapshot.finishedAt,
+                    finishedAt: exit.finishedAt,
                     processGeneration: snapshot.startedAt == nil ? nil : 1,
                     transitionRevision: 1,
                     operationGeneration: 0
                 )
             )
         )
+    }
+
+    private static func portableExitDetails(
+        _ snapshot: DevContainerModel.ContainerSnapshot,
+        state: ContainerPublicStateV2
+    ) throws -> (code: Int32, finishedAt: Date?) {
+        guard state == .exited else {
+            return (snapshot.exitCode ?? 0, snapshot.finishedAt)
+        }
+        guard let exitCode = snapshot.exitCode,
+              let finishedAt = snapshot.finishedAt
+        else {
+            throw DevContainerError(
+                .stateCorruption,
+                message:
+                "container \(snapshot.dockerID.rawValue) has incomplete exit details"
+            )
+        }
+        return (exitCode, finishedAt)
     }
 
     private static func portableLifecycleState(
