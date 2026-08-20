@@ -88,4 +88,38 @@ struct AppleRuntimeHandoffTests {
                 )
         }
     }
+
+    @Test
+    func `a concurrent lifecycle mutation prevents identity lifecycle handoff`() throws {
+        let snapshot = DevContainerModel.ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "runtime-api"),
+            dockerID: DockerID(
+                rawValue: String(repeating: "a", count: 64)
+            ),
+            spec: ContainerSpec(name: "api", image: "fixture:latest"),
+            state: .stopped,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime
+                .requireIdentityLifecycleHandoffQuiescence(
+                    resourceIDs: ["api"],
+                    inventory: [snapshot],
+                    startingRuntimeIDs: [],
+                    runningExecRuntimeIDs: [],
+                    mutatingContainerIdentifiers: [snapshot.dockerID.rawValue]
+                )
+        }
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime
+                .requireIdentityLifecycleHandoffQuiescence(
+                    resourceIDs: ["api"],
+                    inventory: [snapshot],
+                    startingRuntimeIDs: [],
+                    runningExecRuntimeIDs: [],
+                    mutationRevisionUnchanged: false
+                )
+        }
+    }
 }

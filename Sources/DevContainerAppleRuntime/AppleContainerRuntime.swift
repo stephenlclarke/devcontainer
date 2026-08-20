@@ -106,6 +106,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
+    var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
+    var containerLifecycleMutationRevision: UInt64 = 0
     var directProcessLaunchTail: Task<Void, Never>?
     var createOptionSupport: CreateOptionSupport?
     var directContainerInventorySupported: Bool?
@@ -474,6 +476,14 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
         var spec = spec
+        let mutation = beginContainerLifecycleMutation(id: spec.name)
+        var mutationIdentifiers: Set<String> = [spec.name]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
         let optionSupport = try await supportedCreateOptions()
         spec.ports = spec.ports.map {
             Self.configuredPortBinding(
@@ -495,6 +505,16 @@ public extension AppleContainerRuntime {
             createdAt: nil
         )
         var snapshot = try await inspectContainer(id: spec.name, context: context)
+        mutationIdentifiers.formUnion([
+            snapshot.runtimeID.rawValue,
+            snapshot.dockerID.rawValue,
+        ])
+        for identifier in mutationIdentifiers {
+            includeContainerLifecycleMutation(
+                id: identifier,
+                registration: mutation
+            )
+        }
         snapshot.imageID = image.id
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()

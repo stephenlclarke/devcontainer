@@ -17,6 +17,7 @@ public extension AppleContainerRuntime {
         providerFingerprint: String,
         context: RuntimeRequestContext
     ) async throws -> [ProviderHandoffIdentityLifecycleContainerV1] {
+        let lifecycleMutationRevision = containerLifecycleMutationRevision
         let inventory = try await listContainers(
             all: true,
             labels: [:],
@@ -28,7 +29,12 @@ public extension AppleContainerRuntime {
             startingRuntimeIDs: Set(containerStartOperations.keys),
             runningExecRuntimeIDs: Set(
                 execs.values.lazy.filter(\.running).map(\.containerID.rawValue)
-            )
+            ),
+            mutatingContainerIdentifiers: Set(
+                containerLifecycleMutationRegistrations.keys
+            ),
+            mutationRevisionUnchanged:
+                lifecycleMutationRevision == containerLifecycleMutationRevision
         )
         return try Self.collectPortableIdentityLifecycleHandoffContainers(
             resourceIDs: resourceIDs,
@@ -41,7 +47,9 @@ public extension AppleContainerRuntime {
         resourceIDs: [String],
         inventory: [DevContainerModel.ContainerSnapshot],
         startingRuntimeIDs: Set<String>,
-        runningExecRuntimeIDs: Set<String>
+        runningExecRuntimeIDs: Set<String>,
+        mutatingContainerIdentifiers: Set<String> = [],
+        mutationRevisionUnchanged: Bool = true
     ) throws {
         let selected = Set(resourceIDs)
         let matches = inventory.filter { snapshot in
@@ -50,10 +58,20 @@ public extension AppleContainerRuntime {
                 || selected.contains(snapshot.dockerID.rawValue)
                 || selected.contains(snapshot.spec.name)
         }
-        guard !matches.contains(where: {
-            startingRuntimeIDs.contains($0.runtimeID.rawValue)
-                || runningExecRuntimeIDs.contains($0.runtimeID.rawValue)
-        }) else {
+        let selectedMutationInFlight = selected.isEmpty
+            ? !mutatingContainerIdentifiers.isEmpty
+            : matches.contains(where: { snapshot in
+                mutatingContainerIdentifiers.contains(snapshot.runtimeID.rawValue)
+                    || mutatingContainerIdentifiers.contains(snapshot.dockerID.rawValue)
+                    || mutatingContainerIdentifiers.contains(snapshot.spec.name)
+            })
+        guard mutationRevisionUnchanged,
+              !selectedMutationInFlight,
+              !matches.contains(where: {
+                  startingRuntimeIDs.contains($0.runtimeID.rawValue)
+                      || runningExecRuntimeIDs.contains($0.runtimeID.rawValue)
+              })
+        else {
             throw DevContainerError(
                 .conflict,
                 message:

@@ -236,6 +236,26 @@ struct AppleContainerRuntimeDirectTests {
                 "# BEGIN devcontainer managed network hosts"
             )
         )
+
+        await files.resetHostsForBootstrap()
+        try await runtime.restartContainer(
+            id: "fixture",
+            timeout: nil,
+            context: context
+        )
+        try await runtime.synchronizeNetworkHosts(
+            target: target,
+            containers: [target],
+            context: context
+        )
+
+        #expect(await files.copyOutCallCount() == 3)
+        #expect(await files.copyInCallCount() == 3)
+        #expect(
+            await files.hosts().contains(
+                "# BEGIN devcontainer managed network hosts"
+            )
+        )
     }
 
     @Test
