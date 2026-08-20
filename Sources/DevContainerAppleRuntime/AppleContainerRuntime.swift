@@ -47,6 +47,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let task: Task<Void, any Error>
     }
 
+    struct ContainerMetadataAdoptionOperation {
+        let registration: UUID
+        let task: Task<RuntimeContainerMetadata, any Error>
+    }
+
     struct CreateOptionSupport: Sendable {
         let hostname: Bool
         let publish: Bool
@@ -112,6 +117,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
+    var containerMetadataAdoptionOperations:
+        [String: ContainerMetadataAdoptionOperation] = [:]
     var automaticRemovalRegistrations: [String: UUID] = [:]
     var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
     var containerLifecycleMutationRevision: UInt64 = 0
@@ -385,16 +392,84 @@ public extension AppleContainerRuntime {
         if snapshot.spec.labels[Self.dockerIDLabel] != nil {
             return snapshot
         }
-        let metadata = RuntimeContainerMetadata(
-            runtimeID: snapshot.runtimeID,
-            dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+        let metadata = try await adoptContainerMetadata(
+            snapshot,
             imageID: imageID,
-            spec: snapshot.spec,
-            createdAt: snapshot.createdAt,
-            startedAt: snapshot.startedAt
+            store: metadataStore
         )
-        try await metadataStore.recordContainerMetadata(metadata)
         return apply(metadata: metadata, to: snapshot)
+    }
+
+    private func adoptContainerMetadata(
+        _ snapshot: ContainerSnapshot,
+        imageID: String?,
+        store: any RuntimeMetadataStore
+    ) async throws -> RuntimeContainerMetadata {
+        let runtimeID = snapshot.runtimeID.rawValue
+        if let operation = containerMetadataAdoptionOperations[runtimeID] {
+            return try await operation.task.value
+        }
+        let registration = UUID()
+        let task = Task { () throws -> RuntimeContainerMetadata in
+            if let persisted = try await store.containerMetadata(id: runtimeID),
+               Self.sameContainerIncarnation(
+                   metadataCreatedAt: persisted.createdAt,
+                   observedCreatedAt: snapshot.createdAt
+               )
+            {
+                return persisted
+            }
+            let candidate = RuntimeContainerMetadata(
+                runtimeID: snapshot.runtimeID,
+                dockerID: DockerID(rawValue: Self.syntheticDockerIdentifier()),
+                imageID: imageID,
+                spec: snapshot.spec,
+                createdAt: snapshot.createdAt,
+                startedAt: snapshot.startedAt
+            )
+            try await store.recordContainerMetadata(candidate)
+            guard let persisted = try await store.containerMetadata(id: runtimeID),
+                  Self.sameContainerIncarnation(
+                      metadataCreatedAt: persisted.createdAt,
+                      observedCreatedAt: snapshot.createdAt
+                  )
+            else {
+                throw DevContainerError(
+                    .stateCorruption,
+                    message: "container identity adoption was not durable"
+                )
+            }
+            return persisted
+        }
+        containerMetadataAdoptionOperations[runtimeID] =
+            ContainerMetadataAdoptionOperation(
+                registration: registration,
+                task: task
+            )
+        do {
+            let metadata = try await task.value
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: registration
+            )
+            return metadata
+        } catch {
+            finishContainerMetadataAdoption(
+                id: runtimeID,
+                registration: registration
+            )
+            throw error
+        }
+    }
+
+    private func finishContainerMetadataAdoption(
+        id: String,
+        registration: UUID
+    ) {
+        guard containerMetadataAdoptionOperations[id]?.registration == registration else {
+            return
+        }
+        containerMetadataAdoptionOperations.removeValue(forKey: id)
     }
 
     private static func syntheticDockerIdentifier() -> String {

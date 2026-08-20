@@ -88,6 +88,35 @@ struct AppleRuntimeHandoffTests {
     }
 
     @Test
+    func `concurrent first inventory shares one durable identity`() async throws {
+        let fixture = try FakeAppleCLI()
+        let store = TestMetadataStore(recordDelay: .milliseconds(100))
+        let runtime = try fixture.runtime(metadataStore: store)
+        let observed = DevContainerModel.ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "runtime-api"),
+            dockerID: DockerID(rawValue: "runtime-api"),
+            spec: ContainerSpec(name: "api", image: "fixture:latest"),
+            state: .stopped,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        async let first = runtime.containerSnapshotWithMetadata(
+            observed,
+            metadata: nil,
+            imageID: nil
+        )
+        async let second = runtime.containerSnapshotWithMetadata(
+            observed,
+            metadata: nil,
+            imageID: nil
+        )
+        let (firstSnapshot, secondSnapshot) = try await (first, second)
+
+        #expect(firstSnapshot.dockerID == secondSnapshot.dockerID)
+        #expect(await store.recordCount() == 1)
+    }
+
+    @Test
     func `a start in flight prevents identity lifecycle handoff`() throws {
         let snapshot = DevContainerModel.ContainerSnapshot(
             runtimeID: RuntimeID(rawValue: "runtime-api"),
