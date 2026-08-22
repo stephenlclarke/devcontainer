@@ -62,7 +62,7 @@ let package = Package(
             name: "container",
             environmentVariable: "CONTAINER_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container.git",
-            revision: "99c0244f37c0bf4aabdfbff7b62d0d2d81541633"
+            revision: "e76a28de2dcf2c3650871d8e5240d41d6a36cf12"
         ),
         dependency(
             name: "containerization",
