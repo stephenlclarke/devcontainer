@@ -56,19 +56,19 @@ let package = Package(
             name: "container-engine-api",
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "c66fac82d3b2368072959414c1c48c6c3711ae38"
+            revision: "84830606abf971110071248e087a80ff4abb86d4"
         ),
         dependency(
             name: "container",
             environmentVariable: "CONTAINER_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container.git",
-            revision: "d28f51eeb5a5cc0189b4c29e5dd7e40ac322ee04"
+            revision: "228897171d71975988ccdc690f1982e7433952af"
         ),
         dependency(
             name: "containerization",
             environmentVariable: "CONTAINERIZATION_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/containerization.git",
-            revision: "3e078480b85dceb843133392573cdd4d9efeec0d"
+            revision: "b404e03bb914904107a6a9305ba1f0e44c79a59c"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
