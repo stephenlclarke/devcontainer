@@ -8,13 +8,12 @@ class @FORMULA_CLASS@ < Formula
   depends_on arch: :arm64
   depends_on macos: :tahoe
   depends_on "node"
-  depends_on "stephenlclarke/tap/container-compose"
 @CONFLICT_DECLARATION@  def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
+    libexec.install Dir["libexec/*"]
     pkgshare.install Dir["share/devcontainer/*"]
   end
 
@@ -42,7 +41,7 @@ class @FORMULA_CLASS@ < Formula
         brew services start #{name}
 
       The devcontainer command automatically uses the local Apple-backed
-      compatibility adapter and native container-compose. Docker is neither
+      compatibility adapter and bundled native Compose provider. Docker is neither
       installed nor required.
 
       Create a development container:
@@ -61,7 +60,12 @@ class @FORMULA_CLASS@ < Formula
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
     assert_match "Docker version", shell_output("#{bin}/devcontainer-docker --version")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    compose_version = shell_output(
+      "#{libexec}/devcontainer-compose/bin/compose version --format json",
+    )
+    assert_match "bundled-stock", compose_version
     assert_path_exists pkgshare/"reference-cli/devcontainer.js"
+    assert_predicate libexec/"devcontainer-compose/resources/compose-normalizer", :executable?
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end

@@ -363,3 +363,13 @@ private final class ComposeCommandFixture {
             .map(String.init)
     }
 }
+
+@Test
+func `packaged compose is resolved beside the dispatcher archive`() {
+    #expect(
+        Paths.bundledComposePath(
+            executablePath: "/opt/homebrew/Cellar/devcontainer/1.0.2/bin/devcontainer-compose"
+        )
+            == "/opt/homebrew/Cellar/devcontainer/1.0.2/libexec/devcontainer-compose/bin/compose"
+    )
+}

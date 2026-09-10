@@ -488,15 +488,39 @@ class ReleaseToolTests(unittest.TestCase):
         template = (TOOLS / "devcontainer.rb.in").read_text(encoding="utf-8")
 
         self.assertIn('depends_on "node"', template)
-        self.assertIn(
+        self.assertNotIn(
             'depends_on "stephenlclarke/tap/container-compose"', template
         )
         self.assertNotIn('depends_on "docker"', template)
         self.assertNotIn('depends_on "docker-compose"', template)
         self.assertIn('bin.install "bin/devcontainer-docker"', template)
+        self.assertIn('libexec.install Dir["libexec/*"]', template)
+        self.assertIn(
+            'libexec/"devcontainer-compose/resources/compose-normalizer"',
+            template,
+        )
         self.assertIn('pkgshare.install Dir["share/devcontainer/*"]', template)
         self.assertIn('"dev.containers.dockerPath"', template)
         self.assertIn('"dev.containers.dockerComposePath"', template)
+
+    def test_release_archive_builds_a_pinned_stock_native_compose(self) -> None:
+        metadata = json.loads(
+            (TOOLS / "native-compose.json").read_text(encoding="utf-8")
+        )
+        builder = (TOOLS / "build-native-compose.sh").read_text(encoding="utf-8")
+        package = (TOOLS.parents[1] / "scripts" / "package.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(metadata["schemaVersion"], 1)
+        self.assertRegex(metadata["commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(metadata["appleContainerVersion"], "1.4.1")
+        self.assertEqual(metadata["appleContainerizationVersion"], "0.45.0")
+        self.assertIn("CONTAINER_COMPOSE_BUILD_PROFILE=stock", builder)
+        self.assertIn("Package.stock.resolved", builder)
+        self.assertIn("--runtime-profile stock", builder)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", package)
+        self.assertIn("Tools/release/build-native-compose.sh", package)
 
     def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

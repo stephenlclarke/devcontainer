@@ -72,6 +72,8 @@ BINARIES=(
   "$STAGE_DIRECTORY/bin/devcontainer"
   "$STAGE_DIRECTORY/bin/devcontainer-docker"
   "$STAGE_DIRECTORY/bin/devcontainer-compose"
+  "$STAGE_DIRECTORY/libexec/devcontainer-compose/bin/compose"
+  "$STAGE_DIRECTORY/libexec/devcontainer-compose/resources/compose-normalizer"
   "$STAGE_DIRECTORY/bin/devcontainer-engine"
   "$STAGE_DIRECTORY/libexec/container/plugins/devcontainer/bin/devcontainer"
 )

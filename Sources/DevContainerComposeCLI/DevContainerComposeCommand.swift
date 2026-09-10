@@ -395,13 +395,16 @@ private struct ComposeExecutionEnvironment {
     let containerExecutable: String
 }
 
-private struct Paths {
+struct Paths {
     let configuration: URL
     var state: URL
     var socket: String
     let containerCompose: URL
 
-    init(environment: [String: String]) {
+    init(
+        environment: [String: String],
+        executablePath: String = Self.currentExecutablePath()
+    ) {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let configRoot = environment["XDG_CONFIG_HOME"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -434,9 +437,32 @@ private struct Paths {
         containerCompose = URL(
             fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]
                 ?? Self.firstExecutable([
+                    Self.bundledComposePath(executablePath: executablePath),
                     "/opt/homebrew/bin/container-compose",
                     "/usr/local/bin/container-compose"
                 ])
+        )
+    }
+
+    static func bundledComposePath(executablePath: String) -> String {
+        URL(fileURLWithPath: executablePath)
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("libexec/devcontainer-compose/bin/compose")
+            .path
+    }
+
+    private static func currentExecutablePath() -> String {
+        var size: UInt32 = 0
+        _NSGetExecutablePath(nil, &size)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        guard _NSGetExecutablePath(&buffer, &size) == 0 else {
+            return CommandLine.arguments.first ?? "devcontainer-compose"
+        }
+        return FileManager.default.string(
+            withFileSystemRepresentation: buffer,
+            length: Int(strlen(buffer))
         )
     }
 

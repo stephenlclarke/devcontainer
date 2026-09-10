@@ -4,6 +4,15 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repository_root"
 
+resolved_backup="$(mktemp "${TMPDIR:-/tmp}/devcontainer-package-resolved.XXXXXX")"
+cp Package.resolved "$resolved_backup"
+restore_resolved() {
+  cp "$resolved_backup" Package.resolved
+  rm -f "$resolved_backup"
+}
+trap restore_resolved EXIT
+cp Package.stock.resolved Package.resolved
+
 version="$(
   awk '$1 == "DEVCONTAINER_VERSION" && $2 == "?=" { print $3; exit }' \
     Makefile
@@ -60,10 +69,12 @@ python3 Tools/ci/safe-package-path.py "$stage" "$dist"
 rm -rf "$dist/stage"
 mkdir -p \
   "$stage/bin" \
+  "$stage/libexec" \
   "$stage/libexec/container/plugins/devcontainer/bin" \
   "$stage/share/devcontainer/reference-cli"
 
 GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
+  DEVCONTAINER_RUNTIME_PROFILE=stock \
   swift build --disable-automatic-resolution \
     -Xswiftc -warnings-as-errors \
     -c release
@@ -72,6 +83,16 @@ install -m 0755 .build/release/devcontainer "$stage/bin/devcontainer"
 install -m 0755 .build/release/devcontainer-engine "$stage/bin/devcontainer-engine"
 install -m 0755 .build/release/devcontainer-docker "$stage/bin/devcontainer-docker"
 install -m 0755 .build/release/devcontainer-compose "$stage/bin/devcontainer-compose"
+if [[ -n "${DEVCONTAINER_NATIVE_COMPOSE_ROOT:-}" ]]; then
+  test -x "$DEVCONTAINER_NATIVE_COMPOSE_ROOT/bin/compose"
+  test -x "$DEVCONTAINER_NATIVE_COMPOSE_ROOT/resources/compose-normalizer"
+  test -s "$DEVCONTAINER_NATIVE_COMPOSE_ROOT/resources/build-info.json"
+  cp -R "$DEVCONTAINER_NATIVE_COMPOSE_ROOT" \
+    "$stage/libexec/devcontainer-compose"
+else
+  Tools/release/build-native-compose.sh \
+    "$stage/libexec/devcontainer-compose"
+fi
 install -m 0755 .build/release/devcontainer \
   "$stage/libexec/container/plugins/devcontainer/bin/devcontainer"
 install -m 0644 Packaging/devcontainer-plugin-config.toml \
@@ -97,13 +118,22 @@ python3 Tools/release/write-build-info.py \
   --lane "$lane" \
   --architecture "$architecture" \
   --output "$stage/share/devcontainer/build-info.json"
+compose_version="$(jq -er '.version' Tools/release/native-compose.json)"
+compose_commit="$(jq -er '.commit' Tools/release/native-compose.json)"
+compose_checksum="$(
+  shasum -a 256 "$stage/libexec/devcontainer-compose/bin/compose" \
+    | awk '{ print $1 }'
+)"
 python3 Tools/release/write-sbom.py \
   --version "$version" \
   --commit "$commit" \
   --source-date-epoch "$source_date_epoch" \
+  --license-manifest Tools/release/dependency-licenses.stock.json \
   --bundled-dependency "devcontainers-cli|${DEVCONTAINER_CLI_VERSION:-0.88.0}|${DEVCONTAINER_CLI_REVISION:-f683c29f64a20109b4453e5149807e390ff65133}|https://registry.npmjs.org/@devcontainers/cli/-/cli-${DEVCONTAINER_CLI_VERSION:-0.88.0}.tgz|${DEVCONTAINER_CLI_SHA256:-5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b}|MIT" \
+  --bundled-dependency "container-compose|${compose_version}|${compose_commit}|https://github.com/stephenlclarke/container-compose|${compose_checksum}|Apache-2.0" \
   --output "$stage/share/devcontainer/devcontainer.spdx.json"
 python3 Tools/release/write-third-party-notices.py \
+  --license-manifest Tools/release/dependency-licenses.stock.json \
   --checkouts .build/checkouts \
   --output "$stage/share/devcontainer/THIRD-PARTY-NOTICES.txt"
 
@@ -125,6 +155,7 @@ verification_arguments=(
   --expected-version "$version"
   --expected-lane "$lane"
   --expected-commit "$commit"
+  --license-manifest Tools/release/dependency-licenses.stock.json
   --output "$archive.verification.json"
 )
 if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then

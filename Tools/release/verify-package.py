@@ -27,6 +27,7 @@ IMMUTABLE_SOURCE_PATTERN = re.compile(
     r"|raw\.githubusercontent\.com/stephenlclarke/devcontainer)"
     r"/(?P<revision>[0-9a-f]{40})/"
 )
+NATIVE_COMPOSE_METADATA = Path(__file__).with_name("native-compose.json")
 
 
 @dataclass(frozen=True)
@@ -171,7 +172,12 @@ def require_sbom(
         raise ValueError("package SBOM contains a non-object package")
     by_name = {package.get("name"): package for package in packages}
     resolved_names = {dependency.identity for dependency in dependencies}
-    expected_names = {"devcontainer", *resolved_names, "devcontainers-cli"}
+    expected_names = {
+        "devcontainer",
+        *resolved_names,
+        "devcontainers-cli",
+        "container-compose",
+    }
     if set(by_name) != expected_names or len(packages) != len(expected_names):
         raise ValueError("package SBOM dependency set is incomplete")
     root = by_name["devcontainer"]
@@ -218,7 +224,10 @@ def require_sbom(
             raise ValueError(
                 f"package SBOM metadata is invalid for {dependency.identity}"
             )
-    for name, license_name in (("devcontainers-cli", "MIT"),):
+    for name, license_name in (
+        ("devcontainers-cli", "MIT"),
+        ("container-compose", "Apache-2.0"),
+    ):
         package = by_name[name]
         checksums = package.get("checksums")
         if (
@@ -252,6 +261,29 @@ def require_sbom(
     }
     if related != expected_related or len(relationships) != len(expected_related):
         raise ValueError("package SBOM dependency relationships are incomplete")
+
+
+def require_native_compose_build_info(value: object) -> None:
+    """Require the bundled Compose executable to prove its stock Apple graph."""
+
+    if not isinstance(value, dict):
+        raise ValueError("native Compose build-info.json must be a JSON object")
+    metadata = json.loads(NATIVE_COMPOSE_METADATA.read_text(encoding="utf-8"))
+    expected = {
+        "version": metadata["version"],
+        "source": "stephenlclarke/container-compose",
+        "lane": "bundled-stock",
+        "commit": metadata["commit"],
+        "buildType": "release",
+        "containerSource": "apple/container",
+        "containerRef": metadata["appleContainerRevision"],
+        "containerizationSource": "apple/containerization",
+        "containerizationRef": metadata["appleContainerizationRevision"],
+        "runtimeCapabilitySchemaVersion": 1,
+        "runtimeCapabilities": [],
+    }
+    if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+        raise ValueError("bundled native Compose does not match its stock Apple pin")
 
 
 def require_third_party_notices(
@@ -321,6 +353,8 @@ def verify_archive(
         f"{root}/bin/devcontainer-compose",
         f"{root}/bin/devcontainer-engine",
         f"{root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+        f"{root}/libexec/devcontainer-compose/bin/compose",
+        f"{root}/libexec/devcontainer-compose/resources/compose-normalizer",
         f"{root}/share/devcontainer/reference-cli/devcontainer.js",
     }
     with tarfile.open(archive_path, "r:gz") as archive:
@@ -353,6 +387,20 @@ def verify_archive(
         require_nonempty_regular_member(
             archive,
             f"{root}/libexec/container/plugins/devcontainer/config.toml",
+        )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/resources/build-info.json",
+        )
+        require_native_compose_build_info(
+            read_json_member(
+                archive,
+                f"{root}/libexec/devcontainer-compose/resources/build-info.json",
+            )
+        )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/LICENSE",
         )
         for legal_file in ("LICENSE.txt", "ThirdPartyNotices.txt"):
             require_nonempty_regular_member(

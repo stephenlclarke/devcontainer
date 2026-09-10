@@ -75,15 +75,14 @@ flowchart LR
     NativeCompose -->|enhanced profile| Enhanced["Enhanced Container runtime"]
 ```
 
-The `container-compose` integration remains process-isolated and independently
-released. The release design requires its stock profile to use the same local
-Engine socket and stock adapter rather than loading enhanced XPC types into
-Apple's service; its enhanced profile is selected explicitly. That stock
-provider and a runtime-neutral Homebrew formula are release blockers. The core
-does not import `ComposeCore`, and no completed product path may silently
-replace stock Apple `container` with the matched fork stack. No product path
-installs or launches the Docker CLI, Docker Compose, Docker Desktop, or a
-Docker daemon.
+The `container-compose` integration remains process-isolated. Release archives
+bundle an exact, stock-profile build that uses the local Engine socket and
+stock adapter rather than loading enhanced XPC types into Apple's service.
+Users of the enhanced Container runtime may select it explicitly without
+changing the Dev Containers installation. The core does not import
+`ComposeCore`, and no product path may silently replace stock Apple `container`
+with the enhanced stack. No product path installs or launches the Docker CLI,
+Docker Compose, Docker Desktop, Docker Engine, or Colima.
 
 The stock adapter can export a stopped container's canonical name, stable
 Docker identifier, immutable Apple bundle key, and lifecycle snapshot for a
@@ -240,7 +239,9 @@ devcontainer plugin register
 container devcontainer doctor
 ```
 
-The stable formula installs this project, Node.js, and native `container-compose`; it does not install Docker software or a container runtime.
+The stable formula installs this project, Node.js, and a pinned stock-profile
+native Compose provider in the same archive. It does not install Docker
+software, Colima, an external Compose formula, or a container runtime.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
 See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,

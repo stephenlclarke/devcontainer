@@ -11,7 +11,8 @@
 `devcontainer` provides Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe.
 
 The formula installs this project's commands, its pinned Dev Containers CLI,
-and the separately versioned native `container-compose` dependency. It does
+and a pinned stock-profile native `container-compose` build in the same signed
+archive. It does
 not install, remove, replace, relink, start, or stop:
 
 - Apple's `container` package.
@@ -74,7 +75,6 @@ Both formulae declare:
 depends_on arch: :arm64
 depends_on macos: :tahoe
 depends_on "node"
-depends_on "stephenlclarke/tap/container-compose"
 ```
 
 Published ports require Local Network access for the selected runtime's
@@ -87,13 +87,14 @@ Neither formula declares a dependency on:
 ```ruby
 "stephenlclarke/tap/container"
 "stephenlclarke/tap/container-current"
+"stephenlclarke/tap/container-compose"
 "stephenlclarke/tap/container-compose-current"
 ```
 
 This separation is intentional. `devcontainer`'s supported core compatibility
-boundary is Apple's stock runtime. `container-compose` supplies the native
-multi-service implementation but must not install or select a custom runtime
-as a side effect of this formula.
+boundary is Apple's stock runtime. The bundled `container-compose` executable
+supplies the native multi-service implementation without installing or
+selecting a custom runtime.
 
 ### Verify
 
@@ -110,14 +111,11 @@ The `devcontainer` output reports its source commit and release lane. The `conta
 
 ### Native Compose Provider
 
-The tap installs `container-compose` as a separate formula dependency for
-multi-service configurations.
-
-The compatible formula is runtime-neutral: it does not depend on a Container
-distribution, defaults to the stock profile when launched by `devcontainer`,
-and selects enhanced behavior only when the user selects that backend. It is
-independently maintained and is never described as Compose support supplied by
-Apple.
+The archive contains an exact `container-compose` source revision compiled
+against its stock Apple lock. The dispatcher launches this private executable
+for multi-service configurations. It talks to the project-owned Engine socket,
+which can be backed by stock Apple `container` or the optional enhanced
+Container runtime. Apple does not supply this Compose implementation.
 
 ## Formula Publication Contract
 
@@ -151,14 +149,13 @@ class Devcontainer < Formula
   depends_on arch: :arm64
   depends_on macos: :tahoe
   depends_on "node"
-  depends_on "stephenlclarke/tap/container-compose"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
+    libexec.install Dir["libexec/*"]
     pkgshare.install Dir["share/devcontainer/*"]
   end
 

@@ -129,6 +129,13 @@ class PackageVerificationTests(unittest.TestCase):
                 "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.88.0.tgz",
                 "MIT",
             ),
+            (
+                "container-compose",
+                "0.14.3",
+                "a72b15b459042a1abfc4ca81799ae7c3e75eb33a",
+                "https://github.com/stephenlclarke/container-compose",
+                "Apache-2.0",
+            ),
         ):
             identifier = "SPDXRef-" + name
             sbom["packages"].append(
@@ -158,6 +165,8 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/bin/devcontainer-compose",
                 f"{package_root}/bin/devcontainer-engine",
                 f"{package_root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+                f"{package_root}/libexec/devcontainer-compose/bin/compose",
+                f"{package_root}/libexec/devcontainer-compose/resources/compose-normalizer",
                 f"{package_root}/share/devcontainer/reference-cli/devcontainer.js",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
@@ -171,6 +180,32 @@ class PackageVerificationTests(unittest.TestCase):
                 archive,
                 f"{package_root}/libexec/container/plugins/devcontainer/config.toml",
                 b'abstract = "fixture"\n',
+            )
+            self.add_bytes(
+                archive,
+                f"{package_root}/libexec/devcontainer-compose/resources/build-info.json",
+                json.dumps(
+                    {
+                        "version": "0.14.3",
+                        "source": "stephenlclarke/container-compose",
+                        "branch": "detached",
+                        "lane": "bundled-stock",
+                        "commit": "a72b15b459042a1abfc4ca81799ae7c3e75eb33a",
+                        "buildType": "release",
+                        "containerSource": "apple/container",
+                        "containerRef": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
+                        "containerizationSource": "apple/containerization",
+                        "containerizationRef": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
+                        "composeGoVersion": "v2.12.1",
+                        "runtimeCapabilitySchemaVersion": 1,
+                        "runtimeCapabilities": [],
+                    }
+                ).encode(),
+            )
+            self.add_bytes(
+                archive,
+                f"{package_root}/libexec/devcontainer-compose/LICENSE",
+                b"Apache License, Version 2.0\n",
             )
             self.add_bytes(
                 archive,

@@ -67,7 +67,11 @@ Then run **Dev Containers: Reopen in Container**.
 
 ## Runtime boundary
 
-Apple does not supply a Compose plug-in. Every Compose-backed project uses the independently maintained native `container-compose` executable installed by the Homebrew formula. The bundled `devcontainer-compose` dispatcher never launches Docker Compose. The same process boundary supports stock Apple `container` and Stephen Clarke's enhanced Container distribution.
+Apple does not supply a Compose plug-in. Every Compose-backed project uses the
+pinned stock-profile `container-compose` executable bundled inside the signed
+devcontainer archive. The `devcontainer-compose` dispatcher never launches
+Docker Compose. The same Engine-socket boundary supports stock Apple
+`container` and Stephen Clarke's optional enhanced Container distribution.
 
 Version 1.0.1 certifies the checked-in image, Dockerfile, Feature, user,
 environment, lifecycle, port, reuse, Compose, engine, fault, and real VS Code

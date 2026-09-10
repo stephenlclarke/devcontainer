@@ -33,6 +33,14 @@ class SigningToolTests(unittest.TestCase):
             stage / "bin" / "devcontainer-compose",
             stage / "bin" / "devcontainer-docker",
             stage / "bin" / "devcontainer-engine",
+            stage / "libexec" / "devcontainer-compose" / "bin" / "compose",
+            (
+                stage
+                / "libexec"
+                / "devcontainer-compose"
+                / "resources"
+                / "compose-normalizer"
+            ),
             (
                 stage
                 / "libexec"
@@ -97,12 +105,14 @@ class SigningToolTests(unittest.TestCase):
             )
 
             trace_lines = trace.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(trace_lines), 10)
+            self.assertEqual(len(trace_lines), 14)
             for executable in (
                 "devcontainer",
                 "devcontainer-compose",
                 "devcontainer-docker",
                 "devcontainer-engine",
+                "compose",
+                "compose-normalizer",
             ):
                 expected = 4 if executable == "devcontainer" else 2
                 self.assertEqual(
