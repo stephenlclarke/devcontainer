@@ -1,0 +1,135 @@
+//===----------------------------------------------------------------------===//
+// Copyright 2026 devcontainer project authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//===----------------------------------------------------------------------===//
+
+import ArgumentParser
+@testable import DevContainerCLI
+import Foundation
+import Testing
+
+@Suite("Reference Dev Containers CLI")
+struct ReferenceCLICommandTests {
+    @Test
+    func `all upstream commands are registered`() {
+        let registered = DevContainerCommand.configuredSubcommands()
+        let expected: [(String, ParsableCommand.Type)] = [
+            ("up", ReferenceUpCommand.self),
+            ("set-up", ReferenceSetUpCommand.self),
+            ("build", ReferenceBuildCommand.self),
+            ("run-user-commands", ReferenceRunUserCommandsCommand.self),
+            ("read-configuration", ReferenceReadConfigurationCommand.self),
+            ("outdated", ReferenceOutdatedCommand.self),
+            ("upgrade", ReferenceUpgradeCommand.self),
+            ("features", ReferenceFeaturesCommand.self),
+            ("templates", ReferenceTemplatesCommand.self),
+            ("exec", ReferenceExecCommand.self)
+        ]
+
+        for (name, command) in expected {
+            #expect(command.configuration.commandName == name)
+            #expect(registered.contains { $0 == command })
+        }
+    }
+
+    @Test
+    func `invocation pins the packaged CLI and Apple adapters`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let invocation = try ReferenceCLIInvocation.configured(
+            command: "up",
+            arguments: ["--workspace-folder", "/work"],
+            injectRuntimeAdapters: true,
+            environment: fixture.environment,
+            executable: fixture.devcontainer
+        )
+
+        #expect(invocation.node == fixture.node)
+        #expect(invocation.arguments == [
+            fixture.script.path,
+            "up",
+            "--docker-path", fixture.docker.path,
+            "--docker-compose-path", fixture.compose.path,
+            "--workspace-folder", "/work"
+        ])
+        #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.88.0")
+        #expect(invocation.environment["DOCKER_HOST"] == "unix:///tmp/fixture.sock")
+        #expect(invocation.environment["UNSAFE_SECRET"] == nil)
+    }
+
+    @Test
+    func `runtime override is rejected`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+
+        #expect(throws: Error.self) {
+            try ReferenceCLIInvocation.configured(
+                command: "up",
+                arguments: ["--docker-path", "/usr/bin/docker"],
+                injectRuntimeAdapters: true,
+                environment: fixture.environment,
+                executable: fixture.devcontainer
+            )
+        }
+    }
+}
+
+private struct InvocationFixture {
+    let root: URL
+    let devcontainer: URL
+    let docker: URL
+    let compose: URL
+    let node: URL
+    let script: URL
+
+    init() throws {
+        root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("dcref-\(UUID().uuidString.prefix(8))")
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        let share = root.appendingPathComponent(
+            "share/devcontainer/reference-cli",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: share, withIntermediateDirectories: true)
+        devcontainer = bin.appendingPathComponent("devcontainer")
+        docker = bin.appendingPathComponent("devcontainer-docker")
+        compose = bin.appendingPathComponent("devcontainer-compose")
+        node = bin.appendingPathComponent("node")
+        script = share.appendingPathComponent("devcontainer.js")
+        for executable in [devcontainer, docker, compose, node] {
+            #expect(FileManager.default.createFile(atPath: executable.path, contents: Data()))
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: executable.path
+            )
+        }
+        #expect(FileManager.default.createFile(atPath: script.path, contents: Data()))
+    }
+
+    var environment: [String: String] {
+        [
+            "DEVCONTAINER_NODE_BIN": node.path,
+            "DEVCONTAINER_REFERENCE_CLI": script.path,
+            "DOCKER_HOST": "unix:///tmp/fixture.sock",
+            "HOME": "/tmp",
+            "PATH": "/usr/bin:/bin",
+            "UNSAFE_SECRET": "must-not-propagate"
+        ]
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: root)
+    }
+}

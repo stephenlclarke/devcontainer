@@ -36,7 +36,17 @@ struct DevContainerCommand: AsyncParsableCommand {
             ContextCommand.self,
             BackendCommand.self,
             DiagnosticsCommand.self,
-            PluginCommand.self
+            PluginCommand.self,
+            ReferenceBuildCommand.self,
+            ReferenceExecCommand.self,
+            ReferenceFeaturesCommand.self,
+            ReferenceOutdatedCommand.self,
+            ReferenceReadConfigurationCommand.self,
+            ReferenceRunUserCommandsCommand.self,
+            ReferenceSetUpCommand.self,
+            ReferenceTemplatesCommand.self,
+            ReferenceUpCommand.self,
+            ReferenceUpgradeCommand.self
         ]
     }
 }

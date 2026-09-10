@@ -124,9 +124,11 @@ class PackageVerificationTests(unittest.TestCase):
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
                 f"{package_root}/bin/devcontainer",
+                f"{package_root}/bin/devcontainer-docker",
                 f"{package_root}/bin/devcontainer-compose",
                 f"{package_root}/bin/devcontainer-engine",
                 f"{package_root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+                f"{package_root}/share/devcontainer/reference-cli/devcontainer.js",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
             self.add_bytes(

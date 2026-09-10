@@ -13,6 +13,7 @@ fi
 
 readonly BIN_DIRECTORY="$1"
 readonly DEVCONTAINER="$BIN_DIRECTORY/devcontainer"
+readonly DEVCONTAINER_DOCKER="$BIN_DIRECTORY/devcontainer-docker"
 readonly DEVCONTAINER_COMPOSE="$BIN_DIRECTORY/devcontainer-compose"
 readonly PROFILE_DIRECTORY="$BIN_DIRECTORY/codecov"
 TEMPORARY_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/devcontainer-cli-coverage.XXXXXX")"
@@ -28,7 +29,7 @@ readonly CONTAINER_INSTALL_ROOT="$TEMPORARY_DIRECTORY/container-root"
 readonly DIAGNOSTIC_LOG="$TEMPORARY_DIRECTORY/devcontainer.log"
 readonly DIAGNOSTIC_ARCHIVE="$TEMPORARY_DIRECTORY/diagnostics.tar.gz"
 
-for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
+for executable in "$DEVCONTAINER" "$DEVCONTAINER_DOCKER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
     printf 'instrumented executable is missing: %s\n' "$executable" >&2
     exit 2
@@ -118,6 +119,7 @@ readonly COMMON_ENV=(
 )
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --short
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER_DOCKER" --version
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format pretty
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format json
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format invalid

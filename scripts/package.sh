@@ -61,7 +61,7 @@ rm -rf "$dist/stage"
 mkdir -p \
   "$stage/bin" \
   "$stage/libexec/container/plugins/devcontainer/bin" \
-  "$stage/share/devcontainer"
+  "$stage/share/devcontainer/reference-cli"
 
 GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
   swift build --disable-automatic-resolution \
@@ -70,12 +70,17 @@ GIT_COMMIT="$commit" DEVCONTAINER_BUILD_LANE="$lane" \
 
 install -m 0755 .build/release/devcontainer "$stage/bin/devcontainer"
 install -m 0755 .build/release/devcontainer-engine "$stage/bin/devcontainer-engine"
+install -m 0755 .build/release/devcontainer-docker "$stage/bin/devcontainer-docker"
 install -m 0755 .build/release/devcontainer-compose "$stage/bin/devcontainer-compose"
 install -m 0755 .build/release/devcontainer \
   "$stage/libexec/container/plugins/devcontainer/bin/devcontainer"
 install -m 0644 Packaging/devcontainer-plugin-config.toml \
   "$stage/libexec/container/plugins/devcontainer/config.toml"
 install -m 0644 LICENSE NOTICE.md "$stage/share/devcontainer/"
+Tools/release/fetch-reference-cli.sh \
+  "${DEVCONTAINER_CLI_VERSION:-0.88.0}" \
+  "${DEVCONTAINER_CLI_SHA256:-5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b}" \
+  "$stage/share/devcontainer/reference-cli"
 python3 Tools/release/render-package-readme.py \
   --source README.md \
   --repository-root "$repository_root" \

@@ -70,6 +70,7 @@ done
 
 BINARIES=(
   "$STAGE_DIRECTORY/bin/devcontainer"
+  "$STAGE_DIRECTORY/bin/devcontainer-docker"
   "$STAGE_DIRECTORY/bin/devcontainer-compose"
   "$STAGE_DIRECTORY/bin/devcontainer-engine"
   "$STAGE_DIRECTORY/libexec/container/plugins/devcontainer/bin/devcontainer"

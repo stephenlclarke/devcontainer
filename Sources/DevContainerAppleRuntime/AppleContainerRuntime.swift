@@ -87,8 +87,9 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             self.inventory = inventory
             self.files = files
             self.networks = networks
-            self.loggingRecords = loggingRecords
-                ?? LiveAppleContainerLoggingRecordClient(client: api)
+            self.loggingRecords =
+                loggingRecords
+                    ?? LiveAppleContainerLoggingRecordClient(client: api)
             self.loggingHandoffClientOverride = loggingHandoffClientOverride
         }
     }
@@ -118,8 +119,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
-    var containerMetadataAdoptionOperations:
-        [String: ContainerMetadataAdoptionOperation] = [:]
+    var containerMetadataAdoptionOperations: [String: ContainerMetadataAdoptionOperation] = [:]
     var automaticRemovalRegistrations: [String: UUID] = [:]
     var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
     var containerLifecycleMutationRevision: UInt64 = 0
@@ -310,13 +310,15 @@ public extension AppleContainerRuntime {
             $0.imageID == nil
                 && metadata[$0.runtimeID.rawValue]?.imageID == nil
         }
-        let images = requiresImageResolution
-            ? try await listImages(context: context)
-            : []
+        let images =
+            requiresImageResolution
+                ? try await listImages(context: context)
+                : []
         for observed in observed {
-            let imageID = observed.imageID
-                ?? metadata[observed.runtimeID.rawValue]?.imageID
-                ?? Self.imageID(for: observed.spec.image, in: images)
+            let imageID =
+                observed.imageID
+                    ?? metadata[observed.runtimeID.rawValue]?.imageID
+                    ?? Self.imageID(for: observed.spec.image, in: images)
             let snapshot = try await containerSnapshotWithMetadata(
                 observed,
                 metadata: metadata[observed.runtimeID.rawValue],
@@ -469,10 +471,12 @@ public extension AppleContainerRuntime {
         Task {
             if let persisted = try await store.containerMetadata(
                 id: snapshot.runtimeID.rawValue
-            ), Self.sameContainerIncarnation(
-                metadataCreatedAt: persisted.createdAt,
-                observedCreatedAt: snapshot.createdAt
-            ) {
+            ),
+                Self.sameContainerIncarnation(
+                    metadataCreatedAt: persisted.createdAt,
+                    observedCreatedAt: snapshot.createdAt
+                )
+            {
                 return persisted
             }
             let candidate = RuntimeContainerMetadata(
@@ -484,12 +488,15 @@ public extension AppleContainerRuntime {
                 startedAt: snapshot.startedAt
             )
             try await store.recordContainerMetadata(candidate)
-            guard let persisted = try await store.containerMetadata(
-                id: snapshot.runtimeID.rawValue
-            ), Self.sameContainerIncarnation(
-                metadataCreatedAt: persisted.createdAt,
-                observedCreatedAt: snapshot.createdAt
-            ) else {
+            guard
+                let persisted = try await store.containerMetadata(
+                    id: snapshot.runtimeID.rawValue
+                ),
+                Self.sameContainerIncarnation(
+                    metadataCreatedAt: persisted.createdAt,
+                    observedCreatedAt: snapshot.createdAt
+                )
+            else {
                 throw DevContainerError(
                     .stateCorruption,
                     message: "container identity adoption was not durable"
@@ -1184,14 +1191,28 @@ public extension AppleContainerRuntime {
             buildInput.temporary?.remove()
             temporary.remove()
         }
+        let arguments = Self.nativeBuildArguments(
+            request: request,
+            input: buildInput,
+            dnsArguments: Self.hostBuildDNSArguments()
+        )
+        let result = try await command(arguments)
+        try requireSuccess(result, operation: "image build")
+        return AsyncThrowingStream { continuation in
+            continuation.yield(result.standardOutput)
+            continuation.finish()
+        }
+    }
+
+    private static func nativeBuildArguments(
+        request: ImageBuildRequest,
+        input: NativeBuildInput,
+        dnsArguments: [String]
+    ) -> [String] {
         var arguments = [
-            "build",
-            "--file",
-            buildInput.dockerfile.path,
-            "--progress",
-            "plain"
+            "build", "--file", input.dockerfile.path, "--progress", "plain"
         ]
-        arguments += Self.hostBuildDNSArguments()
+        arguments += dnsArguments
         for tag in request.tags {
             arguments += ["--tag", tag]
         }
@@ -1204,13 +1225,17 @@ public extension AppleContainerRuntime {
         for (key, value) in request.labels.sorted(by: { $0.key < $1.key }) {
             arguments += ["--label", "\(key)=\(value)"]
         }
-        arguments.append(buildInput.contextRoot.path)
-        let result = try await command(arguments)
-        try requireSuccess(result, operation: "image build")
-        return AsyncThrowingStream { continuation in
-            continuation.yield(result.standardOutput)
-            continuation.finish()
+        if request.noCache {
+            arguments.append("--no-cache")
         }
+        if request.pull {
+            arguments.append("--pull")
+        }
+        if let platform = request.platform {
+            arguments += ["--platform", platform]
+        }
+        arguments.append(input.contextRoot.path)
+        return arguments
     }
 
     static func buildDNSArguments(
@@ -1291,13 +1316,14 @@ public extension AppleContainerRuntime {
 
     private func isFeatureContentStagingDockerfile(_ dockerfile: URL) throws -> Bool {
         let contents = try String(contentsOf: dockerfile, encoding: .utf8)
-        let instructions = contents
-            .split(whereSeparator: \.isNewline)
-            .map {
-                $0.split(whereSeparator: \.isWhitespace)
-                    .joined(separator: " ")
-            }
-            .filter { !$0.isEmpty }
+        let instructions =
+            contents
+                .split(whereSeparator: \.isNewline)
+                .map {
+                    $0.split(whereSeparator: \.isWhitespace)
+                        .joined(separator: " ")
+                }
+                .filter { !$0.isEmpty }
         return instructions == [
             "FROM scratch",
             "COPY . /tmp/build-features/"
@@ -1485,9 +1511,11 @@ public extension AppleContainerRuntime {
             try context.checkActive()
             let networks = try await networkClient.list()
             try context.checkActive()
-            guard let network = networks.first(where: {
-                $0.id == id || $0.spec.name == id
-            }) else {
+            guard
+                let network = networks.first(where: {
+                    $0.id == id || $0.spec.name == id
+                })
+            else {
                 throw DevContainerError(
                     .notFound,
                     message: "network \(id) was not found"

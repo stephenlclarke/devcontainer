@@ -407,7 +407,10 @@ struct AppleContainerRuntimeLoggingHandoffTests {
 
     @Test
     func `live record client forwards read-only missing-container calls`() async {
-        let client = LiveAppleContainerLoggingRecordClient(client: ContainerClient())
+        let client = LiveAppleContainerLoggingRecordClient(
+            client: ContainerClient(),
+            responseTimeout: .milliseconds(100)
+        )
         let missingID = "devcontainer-logging-handoff-\(UUID().uuidString)"
         var recordsSucceeded = false
         var streamSucceeded = false

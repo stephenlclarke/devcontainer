@@ -302,9 +302,11 @@ def verify_archive(
     root = f"devcontainer-{version}"
     required_executables = {
         f"{root}/bin/devcontainer",
+        f"{root}/bin/devcontainer-docker",
         f"{root}/bin/devcontainer-compose",
         f"{root}/bin/devcontainer-engine",
         f"{root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+        f"{root}/share/devcontainer/reference-cli/devcontainer.js",
     }
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()

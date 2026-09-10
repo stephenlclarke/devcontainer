@@ -208,12 +208,14 @@ extension DockerRouter {
     ) -> RuntimeRequestContext {
         let requestedCorrelation = request.header("X-Request-ID")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let correlation = requestedCorrelation.flatMap {
-            $0.isEmpty || $0.utf8.count > 128 ? nil : $0
-        } ?? UUID().uuidString.lowercased()
-        let operationID = idempotencyKey(for: request).map {
-            OperationID(rawValue: Self.digest(Data($0.utf8)))
-        } ?? .random()
+        let correlation =
+            requestedCorrelation.flatMap {
+                $0.isEmpty || $0.utf8.count > 128 ? nil : $0
+            } ?? UUID().uuidString.lowercased()
+        let operationID =
+            idempotencyKey(for: request).map {
+                OperationID(rawValue: Self.digest(Data($0.utf8)))
+            } ?? .random()
         return RuntimeRequestContext(
             operationID: operationID,
             correlationID: correlation,
@@ -223,7 +225,8 @@ extension DockerRouter {
     }
 
     private func idempotencyKey(for request: DockerHTTPRequest) -> String? {
-        guard let value = request.header("Idempotency-Key")
+        guard
+            let value = request.header("Idempotency-Key")
             ?? request.header("X-Idempotency-Key")
         else {
             return nil
@@ -236,7 +239,8 @@ extension DockerRouter {
     }
 
     private func isReplayableMutation(_ request: DockerHTTPRequest) -> Bool {
-        guard request.method == .post
+        guard
+            request.method == .post
             || request.method == .put
             || request.method == .delete,
             let target = try? ParsedTarget(request.target)
@@ -273,7 +277,8 @@ extension DockerRouter {
         for request: DockerHTTPRequest,
         context: RuntimeRequestContext
     ) async throws -> ProjectMutation? {
-        guard request.method == .post
+        guard
+            request.method == .post
             || request.method == .put
             || request.method == .delete
         else {
@@ -285,11 +290,13 @@ extension DockerRouter {
             separator: "/",
             omittingEmptySubsequences: true
         ).map(String.init)
-        guard isJournalledMutation(
-            method: request.method,
-            path: path,
-            segments: segments
-        ) else {
+        guard
+            isJournalledMutation(
+                method: request.method,
+                path: path,
+                segments: segments
+            )
+        else {
             return nil
         }
 
@@ -351,7 +358,8 @@ extension DockerRouter {
         {
             throw DevContainerError(
                 .conflict,
-                message: "resource ownership selects provider \(requestedProvider), not \(provider.rawValue)"
+                message:
+                "resource ownership selects provider \(requestedProvider), not \(provider.rawValue)"
             )
         }
         let requestHash = Self.digest(
@@ -1177,13 +1185,14 @@ extension DockerRouter {
             guard let source = target.first("fromImage"), !source.isEmpty else {
                 throw DevContainerError(.invalidRequest, message: "fromImage is required")
             }
-            let reference: String = if let tag = target.first("tag"), !tag.isEmpty {
-                tag.hasPrefix("sha256:")
-                    ? "\(source)@\(tag)"
-                    : "\(source):\(tag)"
-            } else {
-                source
-            }
+            let reference: String =
+                if let tag = target.first("tag"), !tag.isEmpty {
+                    tag.hasPrefix("sha256:")
+                        ? "\(source)@\(tag)"
+                        : "\(source):\(tag)"
+                } else {
+                    source
+                }
             let stream = try await runtime.pullImage(reference: reference, context: context)
             return DockerHTTPResponse(
                 status: 200,
@@ -1224,7 +1233,10 @@ extension DockerRouter {
                 tags: target.query["t"] ?? [],
                 buildArguments: stringDictionary(target.first("buildargs"), name: "buildargs"),
                 target: target.first("target"),
-                labels: stringDictionary(target.first("labels"), name: "labels")
+                labels: stringDictionary(target.first("labels"), name: "labels"),
+                noCache: target.first("nocache").map(Self.boolValue) ?? false,
+                pull: target.first("pull").map(Self.boolValue) ?? false,
+                platform: target.first("platform")
             ),
             context: context
         )

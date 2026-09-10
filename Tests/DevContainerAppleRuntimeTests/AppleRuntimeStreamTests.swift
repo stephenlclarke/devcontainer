@@ -23,6 +23,37 @@ import Testing
 @Suite(.serialized)
 struct AppleRuntimeStreamTests {
     @Test
+    func `cancelling a followed log stream terminates its owned process`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("follow-logs")
+        let runtime = try fixture.runtime()
+        var stream: AsyncThrowingStream<RuntimeIOFrame, any Error>? = try await runtime.containerLogs(
+            id: "fixture",
+            follow: true,
+            standardOutput: true,
+            standardError: true,
+            context: RuntimeRequestContext()
+        )
+        let consumer = Task { [stream] in
+            for try await _ in try #require(stream) {
+                try await Task.sleep(for: .seconds(30))
+            }
+        }
+        for _ in 0 ..< 100 where try !(fixture.log()).contains("logs --follow fixture") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        consumer.cancel()
+        _ = try? await consumer.value
+        stream = nil
+        for _ in 0 ..< 200 where try !(fixture.log()).contains("logs-terminated") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(try fixture.log().contains("logs-terminated"))
+    }
+
+    @Test
     func `stream failures and invalid requests surface typed errors`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()

@@ -6,12 +6,12 @@ class @FORMULA_CLASS@ < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
+  depends_on "node"
   depends_on macos: :tahoe
 @CONFLICT_DECLARATION@  def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
     libexec.install "libexec/container"
     pkgshare.install "share/devcontainer"
@@ -40,11 +40,11 @@ class @FORMULA_CLASS@ < Formula
       Start the compatibility engine:
         brew services start #{name}
 
-      Use it without changing your default Docker context:
-        eval "$(devcontainer context)"
+      The devcontainer command automatically uses the local Apple-backed
+      compatibility adapter. Docker is neither installed nor required.
 
-      Configure VS Code's Dev Containers extension to use:
-        #{opt_bin}/devcontainer-compose
+      Create a development container:
+        devcontainer up --workspace-folder "$PWD"
 
       Register the optional Apple container CLI plug-in explicitly:
         devcontainer plugin register
@@ -53,7 +53,9 @@ class @FORMULA_CLASS@ < Formula
 
   test do
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
+    assert_match "Docker version", shell_output("#{bin}/devcontainer-docker --version")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_path_exists pkgshare/"reference-cli/devcontainer.js"
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
   end

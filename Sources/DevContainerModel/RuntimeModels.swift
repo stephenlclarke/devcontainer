@@ -472,6 +472,9 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
     public var buildArguments: [String: String]
     public var target: String?
     public var labels: [String: String]
+    public var noCache: Bool
+    public var pull: Bool
+    public var platform: String?
 
     public init(
         context: Data,
@@ -479,7 +482,10 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
         tags: [String] = [],
         buildArguments: [String: String] = [:],
         target: String? = nil,
-        labels: [String: String] = [:]
+        labels: [String: String] = [:],
+        noCache: Bool = false,
+        pull: Bool = false,
+        platform: String? = nil
     ) {
         self.context = context
         self.dockerfile = dockerfile
@@ -487,6 +493,37 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
         self.buildArguments = buildArguments
         self.target = target
         self.labels = labels
+        self.noCache = noCache
+        self.pull = pull
+        self.platform = platform
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case context
+        case dockerfile
+        case tags
+        case buildArguments
+        case target
+        case labels
+        case noCache
+        case pull
+        case platform
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        context = try values.decode(Data.self, forKey: .context)
+        dockerfile = try values.decodeIfPresent(String.self, forKey: .dockerfile) ?? "Dockerfile"
+        tags = try values.decodeIfPresent([String].self, forKey: .tags) ?? []
+        buildArguments = try values.decodeIfPresent(
+            [String: String].self,
+            forKey: .buildArguments
+        ) ?? [:]
+        target = try values.decodeIfPresent(String.self, forKey: .target)
+        labels = try values.decodeIfPresent([String: String].self, forKey: .labels) ?? [:]
+        noCache = try values.decodeIfPresent(Bool.self, forKey: .noCache) ?? false
+        pull = try values.decodeIfPresent(Bool.self, forKey: .pull) ?? false
+        platform = try values.decodeIfPresent(String.self, forKey: .platform)
     }
 }
 

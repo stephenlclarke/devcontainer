@@ -31,6 +31,7 @@ class SigningToolTests(unittest.TestCase):
         binaries = [
             stage / "bin" / "devcontainer",
             stage / "bin" / "devcontainer-compose",
+            stage / "bin" / "devcontainer-docker",
             stage / "bin" / "devcontainer-engine",
             (
                 stage
@@ -96,10 +97,11 @@ class SigningToolTests(unittest.TestCase):
             )
 
             trace_lines = trace.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(trace_lines), 8)
+            self.assertEqual(len(trace_lines), 10)
             for executable in (
                 "devcontainer",
                 "devcontainer-compose",
+                "devcontainer-docker",
                 "devcontainer-engine",
             ):
                 expected = 4 if executable == "devcontainer" else 2

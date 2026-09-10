@@ -26,6 +26,7 @@ SWIFT_RESOLVED_FLAGS ?= --disable-automatic-resolution
 DIST_DIR ?= dist
 PARITY_EVIDENCE_DIR ?= .build/parity
 DEVCONTAINER_CLI_VERSION ?= 0.88.0
+DEVCONTAINER_CLI_SHA256 ?= 5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 DEVCONTAINER_SIGNING_REQUIRED ?= 0
@@ -125,6 +126,11 @@ coverage:
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
 		--enable-code-coverage \
 		--product devcontainer-compose
+	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage \
+		--product devcontainer-docker
 	@Tools/coverage/run-cli-coverage.sh \
 		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 			--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \

@@ -18,9 +18,10 @@
 import Foundation
 import PackageDescription
 
-let runtimeProfile = ProcessInfo.processInfo.environment[
-    "DEVCONTAINER_RUNTIME_PROFILE"
-] ?? "enhanced"
+let runtimeProfile =
+    ProcessInfo.processInfo.environment[
+        "DEVCONTAINER_RUNTIME_PROFILE"
+    ] ?? "enhanced"
 let enhancedRuntime: Bool = {
     switch runtimeProfile {
     case "enhanced":
@@ -33,9 +34,11 @@ let enhancedRuntime: Bool = {
         )
     }
 }()
-let runtimeSwiftSettings: [SwiftSetting] = enhancedRuntime
-    ? [.define("DEVCONTAINER_ENHANCED_RUNTIME")]
-    : []
+
+let runtimeSwiftSettings: [SwiftSetting] =
+    enhancedRuntime
+        ? [.define("DEVCONTAINER_ENHANCED_RUNTIME")]
+        : []
 
 private func dependency(
     name: String,
@@ -44,7 +47,7 @@ private func dependency(
     revision: String
 ) -> Package.Dependency {
     if let path = ProcessInfo.processInfo.environment[environmentVariable],
-        !path.isEmpty
+       !path.isEmpty
     {
         return .package(name: name, path: path)
     }
@@ -60,7 +63,7 @@ private func runtimeDependency(
     enhancedRevision: String
 ) -> Package.Dependency {
     if let path = ProcessInfo.processInfo.environment[environmentVariable],
-        !path.isEmpty
+       !path.isEmpty
     {
         return .package(name: name, path: path)
     }
@@ -82,11 +85,13 @@ let package = Package(
         .library(name: "DevContainerState", targets: ["DevContainerState"]),
         .library(name: "DevContainerCore", targets: ["DevContainerCore"]),
         .library(name: "DevContainerDockerAPI", targets: ["DevContainerDockerAPI"]),
+        .library(name: "DevContainerDockerCLI", targets: ["DevContainerDockerCLI"]),
         .library(name: "DevContainerAppleRuntime", targets: ["DevContainerAppleRuntime"]),
         .library(name: "DevContainerComposeProvider", targets: ["DevContainerComposeProvider"]),
         .library(name: "DevContainerTestSupport", targets: ["DevContainerTestSupport"]),
         .executable(name: "devcontainer", targets: ["DevContainerCLI"]),
         .executable(name: "devcontainer-engine", targets: ["DevContainerService"]),
+        .executable(name: "devcontainer-docker", targets: ["DevContainerDockerCommand"]),
         .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"])
     ],
     dependencies: [
@@ -102,7 +107,7 @@ let package = Package(
             stockURL: "https://github.com/apple/container.git",
             stockVersion: "1.4.1",
             enhancedURL: "https://github.com/stephenlclarke/container.git",
-            enhancedRevision: "228897171d71975988ccdc690f1982e7433952af"
+            enhancedRevision: "84bb1cf1ab506ee68534e39ac12d8fbe50302415"
         ),
         runtimeDependency(
             name: "containerization",
@@ -110,7 +115,7 @@ let package = Package(
             stockURL: "https://github.com/apple/containerization.git",
             stockVersion: "0.45.0",
             enhancedURL: "https://github.com/stephenlclarke/containerization.git",
-            enhancedRevision: "b404e03bb914904107a6a9305ba1f0e44c79a59c"
+            enhancedRevision: "bd8130fea851f6ee264f00fc684e2543a7d2faa3"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
@@ -170,6 +175,14 @@ let package = Package(
                 .product(name: "ContainerEngineWire", package: "container-engine-api"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio")
+            ]
+        ),
+        .target(
+            name: "DevContainerDockerCLI",
+            dependencies: [
+                "DevContainerCore",
+                "DevContainerModel",
+                "DevContainerProcess"
             ]
         ),
         .target(
@@ -236,6 +249,10 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "DevContainerDockerCommand",
+            dependencies: ["DevContainerDockerCLI"]
+        ),
+        .executableTarget(
             name: "DevContainerComposeCLI",
             dependencies: [
                 "DevContainerComposeProvider",
@@ -288,6 +305,16 @@ let package = Package(
                 "DevContainerModel",
                 "DevContainerState",
                 "DevContainerTestSupport"
+            ]
+        ),
+        .testTarget(
+            name: "DevContainerDockerCLITests",
+            dependencies: [
+                "DevContainerDockerAPI",
+                "DevContainerDockerCLI",
+                "DevContainerTestSupport",
+                .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),
+                .product(name: "Logging", package: "swift-log")
             ]
         ),
         .testTarget(

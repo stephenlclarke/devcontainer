@@ -462,7 +462,7 @@ jobs:
             makefile.count("devcontainerPackageTests.xctest/Contents/MacOS"),
             4,
         )
-        self.assertEqual(makefile.count("--enable-code-coverage"), 5)
+        self.assertEqual(makefile.count("--enable-code-coverage"), 6)
         self.assertEqual(makefile.count("--sanitize=address"), 3)
         self.assertEqual(makefile.count("--sanitize=thread"), 3)
 

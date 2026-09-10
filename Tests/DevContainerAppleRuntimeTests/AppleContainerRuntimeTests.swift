@@ -789,6 +789,7 @@ struct AppleContainerRuntimeTests {
             }
         }
         #expect(actions == [.create, .start, .stop, .destroy])
+        await runtime.shutdown()
     }
 }
 
@@ -1066,6 +1067,10 @@ struct FakeAppleCLI {
           "logs "*)
             printf '%s\\n' 'log-output'
             printf '%s\\n' 'log-error' >&2
+            if [ "$mode" = follow-logs ]; then
+              trap 'printf "%s\\n" logs-terminated >> "$LOG"; exit 0' TERM
+              while :; do sleep 1; done
+            fi
             ;;
           "exec "*)
             printf '%s\\n' 'exec-output'

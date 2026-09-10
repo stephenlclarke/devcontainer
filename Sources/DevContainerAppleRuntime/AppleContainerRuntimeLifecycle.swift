@@ -731,7 +731,26 @@ public extension AppleContainerRuntime {
             arguments.append("--follow")
         }
         arguments.append(resolved)
-        return try process(arguments).frames
+        let session = try process(arguments)
+        return AsyncThrowingStream { continuation in
+            let relay = Task {
+                do {
+                    for try await frame in session.frames {
+                        try Task.checkCancellation()
+                        continuation.yield(frame)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                relay.cancel()
+                session.cancel()
+            }
+        }
     }
 
     func attachContainer(

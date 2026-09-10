@@ -109,6 +109,19 @@ func `runtime models round trip through JSON`() throws {
 }
 
 @Test
+func `image build request decodes payloads from before build controls were added`() throws {
+    let legacy = Data(
+        #"{"context":"Y29udGV4dA==","dockerfile":"Dockerfile","tags":[],"buildArguments":{},"labels":{}}"#.utf8
+    )
+    let request = try JSONDecoder().decode(ImageBuildRequest.self, from: legacy)
+
+    #expect(request.context == Data("context".utf8))
+    #expect(!request.noCache)
+    #expect(!request.pull)
+    #expect(request.platform == nil)
+}
+
+@Test
 func `errors include correlation when present`() {
     let error = DevContainerError(
         .invalidRequest,
