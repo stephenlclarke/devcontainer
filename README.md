@@ -35,6 +35,16 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > records the newer exact fingerprints required by the current source
 > candidate without rewriting that historical release evidence.
 
+<!-- dockerless-contract -->
+
+> [!NOTE]
+> The install and every candidate runtime path are Docker-less: they do not
+> install, discover, invoke, or depend on Docker or Colima. The executable named
+> `devcontainer-docker` is this project's Apple-backed protocol adapter, retained
+> because VS Code calls its compatibility setting `dockerPath`. A pinned real
+> Docker environment exists only in the isolated parity workflow as the
+> behavioral oracle and is never packaged or installed.
+
 Current main additionally has a clean compile gate against unmodified Apple
 `container` 1.4.1 and `containerization` 0.45.0. That build result is not a
 substitute for the outstanding real-runtime parity rerun.
