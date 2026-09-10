@@ -44,6 +44,9 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > because VS Code calls its compatibility setting `dockerPath`. A pinned real
 > Docker environment exists only in the isolated parity workflow as the
 > behavioral oracle and is never packaged or installed.
+> Dockerfile/Compose input syntax and open-source compatibility protocol/model
+> libraries may retain their upstream names; none can discover or launch Docker
+> software in a candidate lane.
 
 Current main additionally has a clean compile gate against unmodified Apple
 `container` 1.4.1 and `containerization` 0.45.0. That build result is not a
