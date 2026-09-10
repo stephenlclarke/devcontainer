@@ -182,13 +182,20 @@ public enum DevContainerRuntimeSelectionResolver {
         let value = nonempty(explicit)
             ?? nonempty(environment["DEVCONTAINER_COMPOSE_PROVIDER"])
             ?? stored.rawValue
-        guard let result = ComposeProviderKind(rawValue: value) else {
+        guard let result = composeProvider(value) else {
             throw DevContainerError(
                 .invalidRequest,
                 message: "invalid Compose provider \(value)"
             )
         }
         return result
+    }
+
+    private static func composeProvider(_ value: String) -> ComposeProviderKind? {
+        if value == "docker" {
+            return .containerCompose
+        }
+        return ComposeProviderKind(rawValue: value)
     }
 
     private static func absolutePath(_ value: String, name: String) throws -> String {
@@ -328,7 +335,10 @@ public enum DevContainerConfigurationStore {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
         let composeText = values["compose.provider"] ?? ComposeProviderKind.containerCompose.rawValue
-        guard let compose = ComposeProviderKind(rawValue: composeText) else {
+        let compose = composeText == "docker"
+            ? ComposeProviderKind.containerCompose
+            : ComposeProviderKind(rawValue: composeText)
+        guard let compose else {
             throw DevContainerError(
                 .invalidRequest,
                 message: "invalid Compose provider \(composeText)"

@@ -43,7 +43,7 @@ struct DevContainerComposeCommandTests {
         let project = try await store.project(
             key: ProjectKey(rawValue: "\(getuid()):canonical-project")
         )
-        #expect(project?.provider == .containerCompose)
+        #expect(project?.provider == .stock)
         let invocations = try fixture.invocations()
         #expect(
             invocations.contains(
@@ -56,6 +56,28 @@ struct DevContainerComposeCommandTests {
                 "--env-file \(fixture.root.appendingPathComponent(".env").path) "
                     + "-f /projects/example/compose.yaml up --profile debug --detach"
             )
+        )
+    }
+
+    @Test
+    func `enhanced runtime claims projects with its engine provider`() async throws {
+        let fixture = try ComposeCommandFixture(
+            projectName: "enhanced-project",
+            backend: .containerCompose
+        )
+
+        #expect(
+            try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "enhanced-project", "up", "--detach"],
+                environment: fixture.environment
+            ) == 0
+        )
+
+        let store = try SQLiteStateStore(path: fixture.state)
+        #expect(
+            try await store.project(
+                key: ProjectKey(rawValue: "\(getuid()):enhanced-project")
+            )?.provider == .containerCompose
         )
     }
 
@@ -95,7 +117,7 @@ struct DevContainerComposeCommandTests {
         #expect(
             try await store.project(
                 key: ProjectKey(rawValue: "\(getuid()):explicit-project")
-            )?.provider == .containerCompose
+            )?.provider == .stock
         )
         #expect(try fixture.invocations() == ["scale --project-name explicit-project web=2"])
     }
@@ -153,7 +175,7 @@ struct DevContainerComposeCommandTests {
         )
 
         let store = try SQLiteStateStore(path: fixture.state)
-        #expect(try await store.project(key: project)?.provider == .containerCompose)
+        #expect(try await store.project(key: project)?.provider == .stock)
         #expect(
             try fixture.invocations() == [
                 "--project-name \(projectName) down",
@@ -179,7 +201,7 @@ struct DevContainerComposeCommandTests {
         )
 
         let store = try SQLiteStateStore(path: fixture.state)
-        #expect(try await store.project(key: project)?.provider == .containerCompose)
+        #expect(try await store.project(key: project)?.provider == .stock)
     }
 
     @Test
@@ -194,7 +216,7 @@ struct DevContainerComposeCommandTests {
             let store = try SQLiteStateStore(path: fixture.state)
             _ = try await store.claimProject(
                 key: project,
-                provider: .containerCompose,
+                provider: .stock,
                 composeProject: projectName,
                 projectDirectory: fixture.root.path,
                 configurationHash: "previous"
@@ -208,7 +230,7 @@ struct DevContainerComposeCommandTests {
                     project: project,
                     logicalName: "app",
                     role: "primary",
-                    provider: .containerCompose,
+                    provider: .stock,
                     specificationHash: "specification",
                     generation: 1,
                     observedState: "running",
@@ -240,16 +262,19 @@ private final class ComposeCommandFixture {
     private let invocationLog: URL
     private let trapLog: URL
     private let runtimeSelectionLog: URL
+    private let backend: BackendProvider
     private let exitStatus: Int32
     private let liveVolumes: [String]
     private let volumeProbeStatus: Int32
 
     init(
         projectName: String,
+        backend: BackendProvider = .stock,
         exitStatus: Int32 = 0,
         liveVolumes: [String] = [],
         volumeProbeStatus: Int32 = 0
     ) throws {
+        self.backend = backend
         self.exitStatus = exitStatus
         self.liveVolumes = liveVolumes
         self.volumeProbeStatus = volumeProbeStatus
@@ -322,6 +347,7 @@ private final class ComposeCommandFixture {
     var environment: [String: String] {
         var result = [
             "DEVCONTAINER_COMPOSE_PROVIDER": ComposeProviderKind.containerCompose.rawValue,
+            "DEVCONTAINER_BACKEND": backend.rawValue,
             "DEVCONTAINER_CONFIG": root.appendingPathComponent("config.toml").path,
             "DEVCONTAINER_SOCKET": socket.path,
             "DEVCONTAINER_STATE": state.path,

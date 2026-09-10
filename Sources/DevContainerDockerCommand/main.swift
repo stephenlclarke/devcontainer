@@ -21,8 +21,9 @@ import Foundation
 do {
     let application = try DockerCLIApplication.configured()
     let arguments = Array(CommandLine.arguments.dropFirst())
-    let standardInputFileDescriptor = arguments.first == "exec"
-        && arguments.contains(where: { $0 == "-i" || $0 == "--interactive" })
+    let standardInputFileDescriptor = try DockerCLIApplication.requiresInteractiveInput(
+        arguments: arguments
+    )
         ? STDIN_FILENO
         : nil
     let result = try application.run(

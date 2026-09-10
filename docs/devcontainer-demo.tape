@@ -26,12 +26,12 @@ Sleep 1s
 
 Type "$DEVCONTAINER_DEMO_BIN version"
 Enter
-Wait+Screen@20s /devcontainer 1.0.0/
+Wait+Screen@20s /devcontainer 1[.]0[.][0-9]+/
 Sleep 2s
 
 Type "export DEVCONTAINER_SOCKET=$DEVCONTAINER_DEMO_SOCKET; $DEVCONTAINER_DEMO_DOCKER_BIN version | sed -n '1,16p'"
 Enter
-Wait+Screen@30s /API version: +1[.]53/
+Wait+Screen@30s /Docker version/
 Sleep 3s
 Ctrl+L
 Sleep 1s

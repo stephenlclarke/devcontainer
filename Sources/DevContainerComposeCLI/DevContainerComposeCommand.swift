@@ -215,7 +215,7 @@ enum DevContainerComposeCommand {
             key: projectKey,
             store: store,
             coordinator: ProjectCoordinator(store: store),
-            provider: .containerCompose,
+            provider: execution.backend,
             projectName: projectName,
             projectDirectory: envelope.projectDirectory
                 ?? FileManager.default.currentDirectoryPath

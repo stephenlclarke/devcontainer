@@ -76,6 +76,97 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `build archive does not restore an ignored descendant through its directory`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-descendant-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        let subdirectory = root.appendingPathComponent("subdir")
+        try FileManager.default.createDirectory(
+            at: subdirectory,
+            withIntermediateDirectories: false
+        )
+        try Data("secret\n".utf8).write(
+            to: subdirectory.appendingPathComponent("secret.pem")
+        )
+        try Data("keep\n".utf8).write(
+            to: subdirectory.appendingPathComponent("public.txt")
+        )
+        try Data("secret.pem\n".utf8).write(to: root.appendingPathComponent(".dockerignore"))
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(entries.contains("subdir/"))
+        #expect(entries.contains("subdir/public.txt"))
+        #expect(!entries.contains("subdir/secret.pem"))
+    }
+
+    @Test
+    func `build archive cannot reinclude a child of an excluded directory`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-parent-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        let privateDirectory = root.appendingPathComponent("private")
+        try FileManager.default.createDirectory(
+            at: privateDirectory,
+            withIntermediateDirectories: false
+        )
+        try Data("secret\n".utf8).write(
+            to: privateDirectory.appendingPathComponent("keep.txt")
+        )
+        try Data("private\n!private/keep.txt\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(!entries.contains("private"))
+        #expect(!entries.contains("private/keep.txt"))
+    }
+
+    @Test
+    func `build archive preserves symlinks without archiving their targets`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-symlink-\(UUID().uuidString)")
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-symlink-target-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try Data("outside\n".utf8).write(to: outside)
+        let link = root.appendingPathComponent("outside-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+        let archive = try DockerBuildOptions(arguments: [root.path]).archive()
+        let entries = try archiveEntries(archive)
+        let extracted = root.appendingPathComponent("extracted")
+        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: false)
+        _ = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-xf", "-", "-C", extracted.path],
+            environment: ["PATH": "/usr/bin:/bin"],
+            input: archive
+        )
+
+        #expect(entries.contains("outside-link"))
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(
+                atPath: extracted.appendingPathComponent("outside-link").path
+            ) == outside.path
+        )
+    }
+
+    @Test
     func `dockerfile specific ignore file takes precedence`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("dockerfile-ignore-\(UUID().uuidString)")
@@ -142,6 +233,20 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `detects interactive exec after supported global options`() throws {
+        #expect(
+            try DockerCLIApplication.requiresInteractiveInput(
+                arguments: ["--host", "unix:///tmp/example.sock", "exec", "-i", "box", "cat"]
+            )
+        )
+        #expect(
+            try !DockerCLIApplication.requiresInteractiveInput(
+                arguments: ["--context=example", "exec", "box", "cat"]
+            )
+        )
+    }
+
+    @Test
     func `formats the server version expected by the upstream CLI`() throws {
         let transport = StubTransport([.json(["Version": "1.4.1"])])
         let result = try DockerCLIApplication(transport: transport).run(
@@ -197,6 +302,47 @@ struct DockerCLIApplicationTests {
         #expect(target.hasPrefix("/containers/json?"))
         #expect(target.contains("all=true"))
         #expect(target.contains("filters="))
+    }
+
+    @Test
+    func `accepts combined all and quiet ps flags`() throws {
+        let transport = StubTransport([.json([["Id": "one"]])])
+
+        let result = try DockerCLIApplication(transport: transport).run(
+            arguments: ["ps", "-aq"]
+        )
+
+        #expect(result.standardOutput == Data("one\n".utf8))
+        #expect(try #require(transport.requests.first?.target).contains("all=true"))
+    }
+
+    @Test
+    func `prints a Docker shaped container table when quiet is omitted`() throws {
+        let transport = StubTransport([
+            .json([
+                [
+                    "Id": "1234567890abcdef",
+                    "Image": "example:latest",
+                    "Command": "/bin/sh",
+                    "Created": 123,
+                    "Status": "Up 1 minute",
+                    "Ports": [["PrivatePort": 8080, "Type": "tcp"]],
+                    "Names": ["/workspace"]
+                ]
+            ])
+        ])
+
+        let result = try DockerCLIApplication(transport: transport).run(
+            arguments: ["ps", "--all"]
+        )
+        let output = try #require(String(data: result.standardOutput, encoding: .utf8))
+
+        #expect(output.hasPrefix("CONTAINER ID\tIMAGE\tCOMMAND\tCREATED\tSTATUS\tPORTS\tNAMES\n"))
+        #expect(
+            output.contains(
+                "1234567890ab\texample:latest\t/bin/sh\t123\tUp 1 minute\t8080/tcp\tworkspace"
+            )
+        )
     }
 
     @Test
@@ -374,14 +520,16 @@ struct DockerCLIApplicationTests {
             .json(["Id": "foreground"], status: 201),
             .init(status: 204),
             .init(status: 200, body: frame(channel: 1, text: "logs")),
+            .json(["StatusCode": 17]),
             .init(status: 200, body: Data("build-output".utf8)),
             .json(["Id": "terminal-exec"], status: 201),
             .init(status: 101, body: Data("terminal-output".utf8)),
             .json(["ExitCode": 0])
         ])
         let application = DockerCLIApplication(transport: transport)
-        #expect(try application.run(arguments: ["run", "image", "true"]).standardOutput
-            == Data("logs".utf8))
+        let foreground = try application.run(arguments: ["run", "image", "true"])
+        #expect(foreground.standardOutput == Data("logs".utf8))
+        #expect(foreground.exitCode == 17)
 
         var streamed = Data()
         let build = try application.run(arguments: ["build", root.path]) { data, _ in

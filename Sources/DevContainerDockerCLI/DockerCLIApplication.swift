@@ -71,6 +71,12 @@ public final class DockerCLIApplication: @unchecked Sendable {
         )
     }
 
+    public static func requiresInteractiveInput(arguments: [String]) throws -> Bool {
+        let commandArguments = try stripGlobalOptions(arguments)
+        return commandArguments.first == "exec"
+            && commandArguments.contains(where: { $0 == "-i" || $0 == "--interactive" })
+    }
+
     public func run(
         arguments: [String],
         standardInput: Data? = nil,
@@ -233,54 +239,54 @@ public final class DockerCLIApplication: @unchecked Sendable {
     }
 
     private func listContainers(_ arguments: [String]) throws -> DockerCLIResult {
-        var all = false
-        var quiet = false
-        var labels: [String] = []
-        var format: String?
-        var index = 0
-        while index < arguments.count {
-            switch arguments[index] {
-            case "-a", "--all": all = true
-            case "-q", "--quiet": quiet = true
-            case "--filter":
-                index += 1
-                guard index < arguments.count else {
-                    throw DockerCLIError.invalidArguments("--filter requires a value")
-                }
-                if arguments[index].hasPrefix("label=") {
-                    labels.append(String(arguments[index].dropFirst("label=".count)))
-                } else {
-                    throw DockerCLIError.invalidArguments(
-                        "unsupported ps filter \(arguments[index])"
-                    )
-                }
-            case "--format":
-                index += 1
-                guard index < arguments.count else {
-                    throw DockerCLIError.invalidArguments("--format requires a value")
-                }
-                format = arguments[index]
-            default: throw DockerCLIError.invalidArguments("unsupported ps option \(arguments[index])")
-            }
-            index += 1
-        }
-        let filters = try Self.jsonString(["label": labels])
+        let options = try DockerContainerListOptions(arguments: arguments)
+        let filters = try Self.jsonString(["label": options.labels])
         let path = Self.target(
             "/containers/json",
             query: [
-                ("all", all ? "true" : "false"),
+                ("all", options.all ? "true" : "false"),
                 ("filters", filters)
             ]
         )
-        let array = try Self.array(request("GET", path).body)
-        let ids = array.compactMap { ($0 as? [String: Any])?["Id"] as? String }
-        guard quiet || format == "{{.ID}}" else {
+        let containers = try Self.array(request("GET", path).body).compactMap {
+            $0 as? [String: Any]
+        }
+        let ids = containers.compactMap { $0["Id"] as? String }
+        if options.quiet || options.format == "{{.ID}}" {
+            return .stdout(ids.isEmpty ? "" : ids.joined(separator: "\n") + "\n")
+        }
+        guard options.format == nil else {
             throw DockerCLIError.invalidArguments(
-                format.map { "unsupported ps format \($0)" }
-                    ?? "ps requires --quiet or the supported {{.ID}} format"
+                "unsupported ps format \(options.format ?? "")"
             )
         }
-        return .stdout(ids.isEmpty ? "" : ids.joined(separator: "\n") + "\n")
+        let header = "CONTAINER ID\tIMAGE\tCOMMAND\tCREATED\tSTATUS\tPORTS\tNAMES"
+        let rows = containers.map(Self.containerSummary)
+        return .stdout(([header] + rows).joined(separator: "\n") + "\n")
+    }
+
+    private static func containerSummary(_ container: [String: Any]) -> String {
+        let identifier = (container["Id"] as? String).map { String($0.prefix(12)) } ?? ""
+        let image = container["Image"] as? String ?? ""
+        let command = container["Command"] as? String ?? ""
+        let created = (container["Created"] as? NSNumber)?.stringValue ?? ""
+        let status = container["Status"] as? String ?? container["State"] as? String ?? ""
+        let ports = (container["Ports"] as? [[String: Any]] ?? []).compactMap { port in
+            guard let privatePort = port["PrivatePort"] as? NSNumber else {
+                return nil
+            }
+            let type = port["Type"] as? String ?? "tcp"
+            if let publicPort = port["PublicPort"] as? NSNumber {
+                let address = port["IP"] as? String ?? "0.0.0.0"
+                return "\(address):\(publicPort)-\(privatePort)/\(type)"
+            }
+            return "\(privatePort)/\(type)"
+        }.joined(separator: ", ")
+        let names = (container["Names"] as? [String] ?? []).map {
+            $0.hasPrefix("/") ? String($0.dropFirst()) : $0
+        }.joined(separator: ",")
+        return [identifier, image, command, created, status, ports, names]
+            .joined(separator: "\t")
     }
 
     private func removeContainer(_ arguments: [String]) throws -> DockerCLIResult {
@@ -529,6 +535,48 @@ public final class DockerCLIApplication: @unchecked Sendable {
             return (value, nil)
         }
         return (String(value[..<colon]), String(value[value.index(after: colon)...]))
+    }
+}
+
+private struct DockerContainerListOptions {
+    var all = false
+    var quiet = false
+    var labels: [String] = []
+    var format: String?
+
+    init(arguments: [String]) throws {
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "-a", "--all": all = true
+            case "-q", "--quiet": quiet = true
+            case "-aq", "-qa":
+                all = true
+                quiet = true
+            case "--filter":
+                index += 1
+                guard index < arguments.count else {
+                    throw DockerCLIError.invalidArguments("--filter requires a value")
+                }
+                guard arguments[index].hasPrefix("label=") else {
+                    throw DockerCLIError.invalidArguments(
+                        "unsupported ps filter \(arguments[index])"
+                    )
+                }
+                labels.append(String(arguments[index].dropFirst("label=".count)))
+            case "--format":
+                index += 1
+                guard index < arguments.count else {
+                    throw DockerCLIError.invalidArguments("--format requires a value")
+                }
+                format = arguments[index]
+            default:
+                throw DockerCLIError.invalidArguments(
+                    "unsupported ps option \(arguments[index])"
+                )
+            }
+            index += 1
+        }
     }
 }
 

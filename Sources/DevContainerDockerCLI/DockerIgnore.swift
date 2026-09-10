@@ -41,6 +41,19 @@ struct DockerIgnoreMatcher {
     }
 
     func includes(_ path: String) -> Bool {
+        let components = path.split(separator: "/")
+        if components.count > 1 {
+            for end in 1 ..< components.count {
+                let ancestor = components[..<end].joined(separator: "/")
+                if !ruleResult(for: ancestor) {
+                    return false
+                }
+            }
+        }
+        return ruleResult(for: path)
+    }
+
+    private func ruleResult(for path: String) -> Bool {
         var result = true
         for rule in rules where rule.matches(path) {
             result = rule.includes

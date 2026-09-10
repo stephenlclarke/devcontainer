@@ -76,7 +76,15 @@ extension DockerCLIApplication {
             }
         }
         try decoder.finish()
-        return DockerCLIResult(standardOutput: captured)
+        let wait = try request(
+            "POST",
+            "/containers/\(Self.path(identifier))/wait"
+        )
+        let statusCode = try (Self.object(wait.body)["StatusCode"] as? NSNumber)?.int32Value ?? 1
+        return DockerCLIResult(
+            standardOutput: captured,
+            exitCode: statusCode
+        )
     }
 
     func exec(
@@ -312,7 +320,7 @@ struct DockerBuildOptions: Equatable {
         )
         let input = Data(entries.joined(separator: "\0").utf8)
         var arguments = [
-            "--no-xattrs", "-cf", "-", "-C", contextURL.path,
+            "--no-xattrs", "--no-recursion", "-cf", "-", "-C", contextURL.path,
             "--null", "-T", "-"
         ]
         if !dockerfileURL.path.hasPrefix(contextURL.path + "/") {
@@ -382,12 +390,12 @@ struct DockerBuildOptions: Equatable {
     }
 
     private func relativePath(_ url: URL, within root: URL) -> String? {
-        let resolvedURL = url.resolvingSymlinksInPath()
-        let resolvedRoot = root.resolvingSymlinksInPath()
-        guard resolvedURL.path.hasPrefix(resolvedRoot.path + "/") else {
+        let lexicalURL = url.standardizedFileURL
+        let lexicalRoot = root.standardizedFileURL
+        guard lexicalURL.path.hasPrefix(lexicalRoot.path + "/") else {
             return nil
         }
-        return String(resolvedURL.path.dropFirst(resolvedRoot.path.count + 1))
+        return String(lexicalURL.path.dropFirst(lexicalRoot.path.count + 1))
     }
 
     private var archivedDockerfile: String {

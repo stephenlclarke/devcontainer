@@ -107,6 +107,25 @@ struct CoreBehaviorTests {
     }
 
     @Test
+    func `legacy Docker compose provider migrates to native compose`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.toml")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        try Data("[compose]\nprovider = \"docker\"\n".utf8).write(to: path)
+
+        let migrated = try DevContainerConfigurationStore.load(
+            from: path,
+            defaultSocket: "unused"
+        )
+
+        #expect(migrated.composeProvider == .containerCompose)
+    }
+
+    @Test
     // The single scenario makes all four precedence levels directly comparable.
     // swiftlint:disable:next function_body_length
     func `runtime selection uses override environment configuration default precedence`() throws {
