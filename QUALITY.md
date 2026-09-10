@@ -387,8 +387,8 @@ depends_on arch: :arm64
 depends_on macos: :tahoe
 ```
 
-`container-compose` remains independently released and is a required native
-Compose dependency. The mutable
+An exact stock-profile `container-compose` build is bundled privately and is
+not a Homebrew dependency. The mutable
 `devcontainer-current` formula conflicts with the stable formula and does not
 share stable release claims.
 

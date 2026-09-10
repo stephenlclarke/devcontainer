@@ -44,7 +44,7 @@ audit also uses `delegated`, `partial`, and `unverified`; see
 | --- | --- | --- | --- |
 | `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
 | `apple-stock` | Official `@devcontainers/cli` through this project's adapters, native `container-compose`, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen Container fork and no Docker software dependency | `supported` |
-| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
+| `container-compose` | The same inspection, exec, copy, attach, and event bridge, with the exact native Compose provider selected for planning and lifecycle | Stock-profile provider is bundled; an enhanced external provider is optional, explicit, and separately provenance-checked; neither is supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
@@ -52,10 +52,10 @@ all Compose-backed Dev Container fixtures must pass through both
 `apple-stock` and `container-compose` before a stable release.
 
 `container-compose` is not a Swift package dependency of the runtime-neutral
-core, is not copied into this product, and is not a service startup
-prerequisite. Its adapter discovers and launches an explicitly configured
-executable using argv-based process creation. It must not import `ComposeCore`
-or another implementation module.
+core. Packaging builds its exact stock profile as a private process-isolated
+artifact, records its provenance and SBOM entry, and launches it with argv-based
+process creation. An external enhanced build requires an explicit override. The
+core must not import `ComposeCore` or another implementation module.
 
 ## Pinned candidate provenance
 

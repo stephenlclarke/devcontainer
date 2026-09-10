@@ -2,8 +2,8 @@
 
 ## Current status
 
-The repository contains the implemented Swift package, Docker Engine
-compatibility service, stock Apple runtime adapter, optional external
+The repository contains the implemented Swift package, Docker Engine protocol
+compatibility service, stock Apple runtime adapter, privately bundled native
 `container-compose` provider, command-line tools, tests, parity harness, DocC
 site, and package/Homebrew tooling.
 
@@ -58,7 +58,7 @@ The three executable products are:
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
 | `container-engine` (from the exact `container-engine-api` dependency) | Own the public user socket, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed provider dispatch |
 | `devcontainer-engine` | Translate requests to stock Apple runtime operations; serve the legacy standalone endpoint or only the private provider-session socket selected by `--provider-socket` |
-| `devcontainer-compose` | Docker-shaped invocation adapter that selects only an explicitly configured native `container-compose` executable |
+| `devcontainer-compose` | Docker-shaped invocation adapter that selects the bundled stock-profile native `container-compose` executable or an explicit development override |
 
 Only `DevContainerAppleRuntime` links Apple runtime products. The Compose
 provider invokes an executable and has no `ComposeCore` or custom Apple-stack

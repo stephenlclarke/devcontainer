@@ -306,15 +306,14 @@ The three lanes are:
 | Lane | Runtime | Compose | Release meaning |
 | --- | --- | --- | --- |
 | Docker oracle | Pinned Docker engine | Pinned Docker Compose | Expected Dev Containers behavior |
-| Stock Apple | Apple-signed `container` | None | Required core compatibility |
-| Compose provider | Explicitly supplied runtime and `container-compose` | Required | Optional multi-service integration evidence |
+| Stock Apple | Apple-signed `container` | Bundled stock-profile `container-compose` | Required Docker-less compatibility |
+| Enhanced provider | Explicitly supplied enhanced runtime | Explicit compatible enhanced `container-compose` | Optional enhanced-stack evidence |
 
 The provider lane must state whether its underlying runtime is `apple` or
-`custom`. Current supported `stephenlclarke/tap/container-compose` depends on a
-custom matched runtime, so installing that formula is forbidden in the stock
-lane. Until the provider works against stock Apple, its live evidence is valid
-only as a separately labelled provider comparison and cannot be used to claim
-that Apple supplies Compose support.
+`custom`. The release-bundled stock profile must work against unmodified Apple
+Container without installing the external formula. Any enhanced Compose formula
+and matched custom runtime are forbidden in the stock lane and remain a
+separately labelled comparison; Apple does not supply Compose support.
 
 Each lane uses:
 
@@ -436,21 +435,20 @@ class Devcontainer < Formula
   depends_on arch: :arm64
   depends_on macos: :tahoe
   depends_on "node"
-  depends_on "stephenlclarke/tap/container-compose"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
+    libexec.install Dir["libexec/*"]
     pkgshare.install Dir["share/devcontainer/*"]
   end
 
   def caveats
     <<~EOS
       This formula installs devcontainer's own compatibility adapters and the
-      native container-compose provider. Docker software is not required.
+      bundled native container-compose provider. Docker software is not required.
       Install Apple's stock container runtime separately from Apple.
       Register the optional Apple CLI plugin explicitly:
         devcontainer plugin register
@@ -460,8 +458,10 @@ class Devcontainer < Formula
   test do
     assert_match version.to_s, shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_match "bundled-stock", shell_output("#{libexec}/devcontainer-compose/bin/compose version --format json")
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
+    assert_predicate libexec/"devcontainer-compose/resources/compose-normalizer", :executable?
   end
 end
 ```

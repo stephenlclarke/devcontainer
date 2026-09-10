@@ -23,7 +23,9 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Work with the stock VS Code Dev Containers extension and the official `@devcontainers/cli` without patching either.
 - Target official, tagged Apple `container` releases without requiring Stephen's forks.
 - Support image, Dockerfile, Feature, and Compose `devcontainer.json` scenarios.
-- Use `container-compose` as the separately released native Compose implementation for both runtime modes.
+- Bundle an exact stock-profile `container-compose` build as the native Compose
+  implementation, while permitting a separately fingerprinted enhanced build
+  only through explicit selection.
 - Reproduce the Docker-visible behavior that Dev Containers actually consumes, including JSON shapes, labels, streams, events, mounts, users, ports, and errors.
 - Fail explicitly when an Apple runtime cannot represent a requested operation; never silently discard a security, mount, network, or lifecycle option.
 - Bind every compatibility claim to pinned Docker, Dev Containers, Apple, Compose, macOS, and project versions.

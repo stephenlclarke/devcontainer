@@ -35,8 +35,8 @@ The stable package supports:
 - official `@devcontainers/cli` 0.88.0;
 - VS Code 1.131.0 with Dev Containers extension 0.467.0;
 - packaged `devcontainer-docker` and `devcontainer-compose` adapters;
-- the separately released native `container-compose` executable installed as a
-  Homebrew dependency, or selected explicitly for archive/source installs.
+- the exact stock-profile native `container-compose` executable bundled inside
+  the Homebrew or archive installation.
 
 These are the exact release-certified versions, not minimum-version promises. See the fingerprint table in [COMPATIBILITY.md](COMPATIBILITY.md) before changing one component independently.
 
@@ -51,8 +51,10 @@ There are two Apple runtime paths:
 
 Apple does not make a Compose plug-in for `container`. The native
 `container-compose` project is independently maintained by Stephen Clarke.
-Homebrew installs it as a separate dependency but must not replace stock Apple
-`container`; selecting an enhanced runtime is always explicit.
+This project privately bundles its stock-profile executable; Homebrew does not
+install a separate Compose formula or replace stock Apple `container`.
+Selecting an enhanced runtime or external enhanced Compose installation is
+always explicit.
 
 ## Install the stock path
 
@@ -401,7 +403,8 @@ Do not edit the database directly.
 
 The same native Compose provider supports an enhanced Container runtime when
 that distribution is installed and selected explicitly. Installing
-`devcontainer` or its Compose dependency never selects this runtime for you.
+`devcontainer` and its bundled stock Compose provider never select this runtime
+for you.
 
 Stop the stock service and runtime:
 
