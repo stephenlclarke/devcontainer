@@ -299,6 +299,15 @@ live validation:
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
 
+The standard `lint` target also runs
+`Tools/ci/check-dockerless-product.py`. This fail-closed inventory scans the
+product sources, dependency locks, package/release scripts, formula template,
+and every non-parity workflow. It rejects Docker or Colima executable discovery,
+execution, installation, application launch, and Homebrew dependencies. The
+serialized real-Docker parity workflow is deliberately outside that inventory:
+it is a behavioral oracle and cannot become a candidate backend or release
+dependency.
+
 Swift build and test jobs on hosted `macos-26` explicitly select Xcode 26.6,
 matching the development and live-parity host instead of inheriting a moving
 runner-image default. All workflows use explicit least-privilege `permissions`,

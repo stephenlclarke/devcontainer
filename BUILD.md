@@ -31,6 +31,15 @@ Psych YAML libraries, `make`, and `git`, and reports missing optional quality
 tools. The full local quality aggregate also expects `actionlint`,
 `markdownlint`, `shellcheck`, `swiftformat`, and `swiftlint`.
 
+Run the Docker-less product-boundary audit independently with:
+
+```console
+python3 Tools/ci/check-dockerless-product.py
+```
+
+It is also mandatory within `make lint`; only the isolated parity oracle is
+permitted to discover or execute Docker or Colima.
+
 ## Package structure
 
 The package targets enforce the provider boundary described in
