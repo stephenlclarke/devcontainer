@@ -454,6 +454,28 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `supports volume inspect and removal used by parity cleanup`() throws {
+        let transport = StubTransport([
+            .json(["Name": "cache"]),
+            .init(status: 204),
+            .init(status: 204)
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        #expect(try application.run(arguments: ["volume", "inspect", "cache"])
+            .standardOutput.contains(Data("cache".utf8)))
+        #expect(try application.run(arguments: ["volume", "rm", "cache"])
+            .standardOutput == Data("cache\n".utf8))
+        #expect(try application.run(arguments: ["volume", "remove", "--force", "other"])
+            .standardOutput == Data("other\n".utf8))
+        #expect(transport.requests.map(\.target) == [
+            "/volumes/cache",
+            "/volumes/cache",
+            "/volumes/other?force=true"
+        ])
+    }
+
+    @Test
     func `maps the complete supported build and run option sets`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-options-\(UUID().uuidString)")
@@ -552,7 +574,8 @@ struct DockerCLIApplicationTests {
             ["stop", "--time"], ["start", "--unknown", "box"], ["pull"],
             ["tag", "only-one"], ["events", "--format"], ["events", "--filter"],
             ["events", "--filter", "invalid"], ["events", "--unknown"],
-            ["buildx", "build"]
+            ["buildx", "build"], ["volume"], ["volume", "ls"],
+            ["volume", "rm"], ["volume", "rm", "--unknown", "cache"]
         ]
         for arguments in invalid {
             #expect(throws: (any Error).self) {

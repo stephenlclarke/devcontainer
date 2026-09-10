@@ -147,6 +147,8 @@ public final class DockerCLIApplication: @unchecked Sendable {
             try pull(arguments, streamingOutput: streamingOutput)
         case "tag":
             try tag(arguments)
+        case "volume":
+            try volume(arguments)
         default:
             try runWorkloadCommand(
                 command,
@@ -359,6 +361,45 @@ public final class DockerCLIApplication: @unchecked Sendable {
             Self.target("/images/\(Self.path(arguments[0]))/tag", query: query)
         )
         return DockerCLIResult()
+    }
+
+    private func volume(_ arguments: [String]) throws -> DockerCLIResult {
+        guard let command = arguments.first else {
+            throw DockerCLIError.invalidArguments("volume requires a command")
+        }
+        let values = Array(arguments.dropFirst())
+        switch command {
+        case "inspect":
+            return try inspect(["--type", "volume"] + values)
+        case "rm", "remove":
+            return try removeVolumes(values)
+        default:
+            throw DockerCLIError.unsupported("volume \(command)")
+        }
+    }
+
+    private func removeVolumes(_ arguments: [String]) throws -> DockerCLIResult {
+        var force = false
+        var identifiers: [String] = []
+        for argument in arguments {
+            switch argument {
+            case "-f", "--force":
+                force = true
+            case _ where argument.hasPrefix("-"):
+                throw DockerCLIError.invalidArguments("unsupported volume rm option \(argument)")
+            default:
+                identifiers.append(argument)
+            }
+        }
+        guard !identifiers.isEmpty else {
+            throw DockerCLIError.invalidArguments("volume rm requires a volume")
+        }
+        for identifier in identifiers {
+            let path = "/volumes/\(Self.path(identifier))"
+            let target = force ? Self.target(path, query: [("force", "true")]) : path
+            _ = try request("DELETE", target)
+        }
+        return .stdout(identifiers.joined(separator: "\n") + "\n")
     }
 
     private func events(
