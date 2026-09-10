@@ -269,11 +269,35 @@ private final class ComposeCommandFixture {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        let script = """
+        try Data(Self.composeScript(
+            projectName: projectName,
+            exitStatus: exitStatus
+        ).utf8).write(to: executable, options: .atomic)
+        #expect(chmod(executable.path, S_IRWXU) == 0)
+        for forbidden in ["docker", "docker-compose", "colima"] {
+            let trap = root.appendingPathComponent(forbidden)
+            let trapScript = """
+            #!/bin/sh
+            printf '%s\n' '\(forbidden)' >> '\(trapLog.path)'
+            exit 97
+            """
+            try Data(trapScript.utf8).write(to: trap, options: .atomic)
+            #expect(chmod(trap.path, S_IRWXU) == 0)
+        }
+    }
+
+    private static func composeScript(
+        projectName: String,
+        exitStatus: Int32
+    ) -> String {
+        """
         #!/bin/sh
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
-        printf '%s|%s|%s\n' "$CONTAINER_COMPOSE_RUNTIME_PROFILE" "$CONTAINER_COMPOSE_CONTAINER" "$CONTAINER_COMPOSE_ENGINE_SOCKET" >> "$RUNTIME_SELECTION_LOG"
+        printf '%s|%s|%s\n' \
+          "$CONTAINER_COMPOSE_RUNTIME_PROFILE" \
+          "$CONTAINER_COMPOSE_CONTAINER" \
+          "$CONTAINER_COMPOSE_ENGINE_SOCKET" >> "$RUNTIME_SELECTION_LOG"
         case " $* " in
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'
@@ -289,18 +313,6 @@ private final class ComposeCommandFixture {
             ;;
         esac
         """
-        try Data(script.utf8).write(to: executable, options: .atomic)
-        #expect(chmod(executable.path, S_IRWXU) == 0)
-        for forbidden in ["docker", "docker-compose", "colima"] {
-            let trap = root.appendingPathComponent(forbidden)
-            let trapScript = """
-            #!/bin/sh
-            printf '%s\n' '\(forbidden)' >> '\(trapLog.path)'
-            exit 97
-            """
-            try Data(trapScript.utf8).write(to: trap, options: .atomic)
-            #expect(chmod(trap.path, S_IRWXU) == 0)
-        }
     }
 
     deinit {

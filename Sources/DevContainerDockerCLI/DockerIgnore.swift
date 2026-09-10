@@ -92,19 +92,7 @@ struct DockerIgnoreMatcher {
         while index < characters.count {
             switch characters[index] {
             case "*":
-                if index + 1 < characters.count, characters[index + 1] == "*" {
-                    while index + 1 < characters.count, characters[index + 1] == "*" {
-                        index += 1
-                    }
-                    if index + 1 < characters.count, characters[index + 1] == "/" {
-                        result += "(?:.*/)?"
-                        index += 1
-                    } else {
-                        result += ".*"
-                    }
-                } else {
-                    result += "[^/]*"
-                }
+                result += starExpression(characters, index: &index)
             case "?":
                 result += "[^/]"
             case "[":
@@ -134,6 +122,25 @@ struct DockerIgnoreMatcher {
             index += 1
         }
         return result
+    }
+
+    private static func starExpression(
+        _ characters: [Character],
+        index: inout Int
+    ) -> String {
+        guard index + 1 < characters.count,
+              characters[index + 1] == "*"
+        else {
+            return "[^/]*"
+        }
+        while index + 1 < characters.count, characters[index + 1] == "*" {
+            index += 1
+        }
+        guard index + 1 < characters.count, characters[index + 1] == "/" else {
+            return ".*"
+        }
+        index += 1
+        return "(?:.*/)?"
     }
 
     private static func characterClassExpression(
