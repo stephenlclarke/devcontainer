@@ -312,6 +312,7 @@ let package = Package(
             dependencies: [
                 "DevContainerDockerAPI",
                 "DevContainerDockerCLI",
+                "DevContainerProcess",
                 "DevContainerTestSupport",
                 .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),
                 .product(name: "Logging", package: "swift-log")

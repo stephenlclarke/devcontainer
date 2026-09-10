@@ -2,8 +2,9 @@
 
 ## Status
 
-The repository contains the production Docker compatibility service, stock
-Apple runtime adapter, optional `container-compose` provider, differential
+The repository contains the production Docker-protocol compatibility service,
+stock Apple runtime adapter, required native `container-compose` provider,
+differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
 driver. The hosted-safe suite is discovered at execution time and must record
 greater than 90% first-party line coverage; documentation does not maintain a

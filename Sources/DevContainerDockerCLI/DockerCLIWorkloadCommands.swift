@@ -306,7 +306,15 @@ struct DockerBuildOptions: Equatable {
         // macOS bsdtar otherwise serializes Finder/provenance xattrs as binary
         // PAX values. Build contexts need file contents and modes, not opaque
         // host metadata that cannot be represented as portable PAX text.
-        var arguments = ["--no-xattrs", "-cf", "-", "-C", contextURL.path, "."]
+        let entries = try archiveEntries(
+            contextURL: contextURL,
+            dockerfileURL: dockerfileURL
+        )
+        let input = Data(entries.joined(separator: "\0").utf8)
+        var arguments = [
+            "--no-xattrs", "-cf", "-", "-C", contextURL.path,
+            "--null", "-T", "-"
+        ]
         if !dockerfileURL.path.hasPrefix(contextURL.path + "/") {
             arguments.append(contentsOf: [
                 "-C", dockerfileURL.deletingLastPathComponent().path, dockerfileURL.lastPathComponent
@@ -318,7 +326,8 @@ struct DockerBuildOptions: Equatable {
             environment: [
                 "COPYFILE_DISABLE": "1",
                 "PATH": "/usr/bin:/bin"
-            ]
+            ],
+            input: input
         )
         guard result.exitCode == 0 else {
             throw DockerCLIError.invalidArguments(
@@ -326,6 +335,59 @@ struct DockerBuildOptions: Equatable {
             )
         }
         return result.standardOutput
+    }
+
+    private func archiveEntries(
+        contextURL: URL,
+        dockerfileURL: URL
+    ) throws -> [String] {
+        let ignoreURL = dockerfileIgnoreURL(
+            contextURL: contextURL,
+            dockerfileURL: dockerfileURL
+        )
+        let matcher = try DockerIgnoreMatcher(
+            contents: (try? String(contentsOf: ignoreURL, encoding: .utf8)) ?? ""
+        )
+        let dockerfilePath = relativePath(dockerfileURL, within: contextURL)
+        let ignorePath = relativePath(ignoreURL, within: contextURL)
+        let enumerator = FileManager.default.enumerator(
+            at: contextURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsPackageDescendants]
+        )
+        var entries: [String] = []
+        while let url = enumerator?.nextObject() as? URL {
+            guard let path = relativePath(url, within: contextURL) else {
+                continue
+            }
+            if path == ".dockerignore" || path == ignorePath {
+                continue
+            }
+            if path == dockerfilePath || matcher.includes(path) {
+                entries.append(path)
+            }
+        }
+        return entries.sorted()
+    }
+
+    private func dockerfileIgnoreURL(
+        contextURL: URL,
+        dockerfileURL: URL
+    ) -> URL {
+        let specific = dockerfileURL.appendingPathExtension("dockerignore")
+        if FileManager.default.fileExists(atPath: specific.path) {
+            return specific
+        }
+        return contextURL.appendingPathComponent(".dockerignore")
+    }
+
+    private func relativePath(_ url: URL, within root: URL) -> String? {
+        let resolvedURL = url.resolvingSymlinksInPath()
+        let resolvedRoot = root.resolvingSymlinksInPath()
+        guard resolvedURL.path.hasPrefix(resolvedRoot.path + "/") else {
+            return nil
+        }
+        return String(resolvedURL.path.dropFirst(resolvedRoot.path.count + 1))
     }
 
     private var archivedDockerfile: String {

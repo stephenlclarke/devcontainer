@@ -36,7 +36,7 @@ struct DoctorCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Configuration file path.")
     var config: String?
 
-    @Option(name: .long, help: "Optional container-compose executable.")
+    @Option(name: .long, help: "Native container-compose executable.")
     var compose: String?
 
     @Option(name: .long, help: "Output format: pretty or json.")

@@ -1,12 +1,20 @@
 # Docker-free Dev Containers: review and implementation design
 
-Review date: 10 September 2026. Status: proposed architecture and remediation plan; no runtime implementation changes are made by this review.
+Review date: 10 September 2026. Status: active implementation record. Product-path Docker executable fallbacks have been removed and the local quality gate passes; stock multi-service runtime certification remains blocked on the Engine-socket provider described below.
 
 ## Decision
 
 Build a Docker-free Dev Containers product that uses unmodified, tagged Apple `container` as its baseline and can select Stephen's enhanced Container implementation explicitly. Reuse the Dev Containers reference configuration/lifecycle engine and the useful parts of Container Compose. Replace the remaining Docker CLI and Docker Compose executable dependencies with project-owned frontends. Preserve the existing shared Engine gateway as a compatibility boundary; speaking the Docker protocol does not require installing Docker.
 
-The current repository does not yet meet this goal. It is an Engine compatibility service with a configuration CLI, not a standalone implementation of the `devcontainer up/build/exec` commands. Homebrew installs Docker clients, the default Compose path invokes them, the Swift dependency graph uses Stephen's forks, and the latest main revision has failing build and parity checks.
+The current branch implements the Docker-less product boundary. It
+packages the pinned Dev Containers CLI, provides project-owned
+`devcontainer-docker` and `devcontainer-compose` invocation adapters, and
+routes Compose only to native `container-compose`. Homebrew has no Docker or
+Colima dependency. A live probe against the signed Apple 1.4.1 distribution
+proved that the current `container-compose` concrete provider still binds to
+enhanced XPC APIs and is therefore not stock-safe. Release requires its new
+Engine-socket provider, stock and enhanced runtime evidence, closure of every
+conformance gap, and isolated real-Docker differential tests.
 
 "Docker-free" in this design means no Docker Desktop, Docker Engine daemon, Docker CLI, Docker Compose executable, Buildx executable, or Colima installation is required to install or use either candidate runtime. OCI images, Dockerfile syntax, Compose files, Docker-compatible command/protocol contracts, and the BuildKit implementation already used by Apple's builder remain acceptable. The real Docker stack remains an isolated test oracle. This is an installation/runtime independence requirement, not a prohibition on all open-source code originating in Docker or Moby.
 
@@ -37,7 +45,9 @@ Validation performed for this review:
 - In-memory comparator reproductions returned `passed` for identical observations at both 10x and 100x slowdown, for three empty fixture lists, and for lane-level `status: failed` with individually passing fixtures.
 - [Current-head runtime parity](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600302) fails: both candidate builds reject the resolved dependency file; Docker preflight rejects the installed CLI digest. [Current-head CodeQL build](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600347) records the dependency-resolution error and competing `swift-nio-ssl` origins.
 - The public Sonar API reports gate `OK`, 95.5% coverage, and zero bugs, vulnerabilities, code smells, and hotspots. Its latest analysis is **`5d2facc69520cad421a027cd99fa6f0c5beb466d` on 5 September**, not reviewed main `d0d72eb`. These metrics cannot certify the current source.
-- No Swift rebuild, live runtime parity, fresh timing benchmark, packaging, release, service restart, or remote repository mutation was performed for this design review. Current build failures are supported by exact-revision CI logs, not represented as a new local build result.
+- The current implementation branch passes its complete local gate: formatting and static analysis, 251 Swift tests in 24 suites, parity/release harness tests, 94.89% line coverage, and a combined DocC build. This does not replace live stock/enhanced/oracle certification.
+- The signed and notarized Apple 1.4.1 installer was expanded into a private temporary directory without installing it. Both that executable and the installed stock 1.1.0 executable were started only for bounded probes and restored to `unregistered`. The current enhanced-linked `container-compose` reached model loading and then failed with an XPC connection interruption against both, proving that a relaxed version/profile preflight alone is insufficient.
+- No fresh timing benchmark was recorded because the complete parity matrix was not available and benchmarks are accepted only on a quiet machine.
 
 ## Findings and repair contracts
 
@@ -45,7 +55,7 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 
 ### DF-01 - P0: Docker is still a product dependency
 
-**Evidence:** [`Tools/release/devcontainer.rb.in`](../Tools/release/devcontainer.rb.in), lines 8-10, declares `docker` and `docker-compose`. [`DevContainerConfiguration.swift`](../Sources/DevContainerCore/DevContainerConfiguration.swift), lines 21-36, defaults Compose to `.docker`. [`DevContainerComposeCommand.swift`](../Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift), lines 323-345, dispatches that path to `DockerComposeCommand`. Selecting `container-compose` replaces orchestration but does not replace the Docker CLI used by the official Dev Containers client.
+**Resolved in the current release candidate:** the formula depends on native `container-compose`, `ComposeProviderKind` has no Docker provider, and `devcontainer-compose` has no Docker or Docker Compose executable discovery/fallback. The official Dev Containers CLI still speaks Docker-compatible protocols to the bundled Swift adapters, but no Docker software is installed or launched.
 
 **Fix design:** ship a `devcontainer-docker` compatibility executable and a `devcontainer-compose` frontend backed by reusable Compose planning. Configure the reference CLI and VS Code to use these exact executables. Remove Homebrew Docker dependencies only after real client tests pass without either Docker executable. Never replace them with a wrapper that invokes Docker internally.
 

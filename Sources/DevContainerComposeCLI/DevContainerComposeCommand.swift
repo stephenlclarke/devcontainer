@@ -62,69 +62,52 @@ enum DevContainerComposeCommand {
         paths.state = URL(fileURLWithPath: selection.stateDatabase)
         let provider = selection.composeProvider
         let envelope = try ComposeCommandEnvelope(arguments: arguments)
-        let child = childCommand(
-            provider: provider,
-            arguments: arguments,
+        let execution = ComposeExecutionEnvironment(
             paths: paths,
             environment: environment,
-            socket: selection.socket
+            socket: selection.socket,
+            backend: selection.backend,
+            containerExecutable: selection.containerExecutable
         )
+        let child = childCommand(arguments: arguments, execution: execution)
         let claim = try await claimIfNeeded(
             envelope: envelope,
-            provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: selection.socket
+            execution: execution
         )
 
         let result: Int32
         if let claim {
             let encodedArguments = Data(arguments.joined(separator: "\u{0}").utf8)
             let requestHash = digest(encodedArguments)
-            if provider == .docker {
-                _ = try await claim.coordinator.claim(
-                    project: claim.key,
-                    provider: claim.provider,
-                    composeProject: claim.projectName,
-                    projectDirectory: claim.projectDirectory,
-                    configurationHash: requestHash
-                )
-                result = try await execute(
-                    executable: child.executable,
-                    arguments: child.arguments,
-                    environment: child.environment
-                )
-            } else {
-                do {
-                    result = try await claim.coordinator.withMutation(
-                        request: ProjectMutation(
-                            project: claim.key,
-                            provider: claim.provider,
-                            composeProject: claim.projectName,
-                            projectDirectory: claim.projectDirectory,
-                            configurationHash: requestHash,
-                            requestKind: "compose \(envelope.command ?? "unknown")",
-                            requestHash: requestHash,
-                            resourceKey: "compose-project:\(claim.projectName)"
-                        ),
-                        context: RuntimeRequestContext(
-                            deadline: Date().addingTimeInterval(30 * 60)
-                        )
-                    ) { context in
-                        try context.checkActive()
-                        let status = try await execute(
-                            executable: child.executable,
-                            arguments: child.arguments,
-                            environment: child.environment
-                        )
-                        guard status == 0 else {
-                            throw ChildCommandFailure(status: status)
-                        }
-                        return status
+            do {
+                result = try await claim.coordinator.withMutation(
+                    request: ProjectMutation(
+                        project: claim.key,
+                        provider: claim.provider,
+                        composeProject: claim.projectName,
+                        projectDirectory: claim.projectDirectory,
+                        configurationHash: requestHash,
+                        requestKind: "compose \(envelope.command ?? "unknown")",
+                        requestHash: requestHash,
+                        resourceKey: "compose-project:\(claim.projectName)"
+                    ),
+                    context: RuntimeRequestContext(
+                        deadline: Date().addingTimeInterval(30 * 60)
+                    )
+                ) { context in
+                    try context.checkActive()
+                    let status = try await execute(
+                        executable: child.executable,
+                        arguments: child.arguments,
+                        environment: child.environment
+                    )
+                    guard status == 0 else {
+                        throw ChildCommandFailure(status: status)
                     }
-                } catch let failure as ChildCommandFailure {
-                    result = failure.status
+                    return status
                 }
+            } catch let failure as ChildCommandFailure {
+                result = failure.status
             }
         } else {
             result = try await execute(
@@ -138,11 +121,7 @@ enum DevContainerComposeCommand {
                 envelope: envelope,
                 provider: provider,
                 claim: claim,
-                execution: ComposeExecutionEnvironment(
-                    paths: paths,
-                    environment: environment,
-                    socket: selection.socket
-                )
+                execution: execution
             )
         }
         return result
@@ -150,14 +129,10 @@ enum DevContainerComposeCommand {
 
     private static func reconcileProjectRemoval(
         envelope: ComposeCommandEnvelope,
-        provider: ComposeProviderKind,
+        provider _: ComposeProviderKind,
         claim: ComposeProjectClaim,
         execution: ComposeExecutionEnvironment
     ) async throws {
-        if provider == .docker {
-            try await releaseProjectIfEmpty(claim)
-            return
-        }
         guard let liveVolumes = await liveContainerComposeVolumes(
             envelope: envelope,
             execution: execution
@@ -179,11 +154,8 @@ enum DevContainerComposeCommand {
         execution: ComposeExecutionEnvironment
     ) async -> Set<String>? {
         let child = childCommand(
-            provider: .containerCompose,
             arguments: envelope.projectArguments + ["volumes", "--quiet"],
-            paths: execution.paths,
-            environment: execution.environment,
-            socket: execution.socket
+            execution: execution
         )
         guard let result = try? await executeCaptured(
             executable: child.executable,
@@ -228,29 +200,22 @@ enum DevContainerComposeCommand {
 
     private static func claimIfNeeded(
         envelope: ComposeCommandEnvelope,
-        provider: ComposeProviderKind,
-        paths: Paths,
-        environment: [String: String],
-        socket: String
+        execution: ComposeExecutionEnvironment
     ) async throws -> ComposeProjectClaim? {
         guard envelope.mutating else {
             return nil
         }
         let projectName = try await resolvedProjectName(
             envelope: envelope,
-            provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: socket
+            execution: execution
         )
         let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
-        let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
-        let store = try SQLiteStateStore(path: paths.state)
+        let store = try SQLiteStateStore(path: execution.paths.state)
         return ComposeProjectClaim(
             key: projectKey,
             store: store,
             coordinator: ProjectCoordinator(store: store),
-            provider: backend,
+            provider: .containerCompose,
             projectName: projectName,
             projectDirectory: envelope.projectDirectory
                 ?? FileManager.default.currentDirectoryPath
@@ -259,20 +224,14 @@ enum DevContainerComposeCommand {
 
     private static func resolvedProjectName(
         envelope: ComposeCommandEnvelope,
-        provider: ComposeProviderKind,
-        paths: Paths,
-        environment: [String: String],
-        socket: String
+        execution: ComposeExecutionEnvironment
     ) async throws -> String {
-        if let explicit = envelope.projectName ?? environment["COMPOSE_PROJECT_NAME"] {
+        if let explicit = envelope.projectName ?? execution.environment["COMPOSE_PROJECT_NAME"] {
             return try validatedProjectName(explicit)
         }
         let child = childCommand(
-            provider: provider,
             arguments: envelope.configurationArguments,
-            paths: paths,
-            environment: environment,
-            socket: socket
+            execution: execution
         )
         let result = try await executeCaptured(
             executable: child.executable,
@@ -321,28 +280,17 @@ enum DevContainerComposeCommand {
     }
 
     private static func childCommand(
-        provider: ComposeProviderKind,
         arguments: [String],
-        paths: Paths,
-        environment: [String: String],
-        socket: String
+        execution: ComposeExecutionEnvironment
     ) -> ComposeChildCommand {
-        var childEnvironment = safeChildEnvironment(environment)
+        var childEnvironment = safeChildEnvironment(execution.environment)
+        childEnvironment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] =
+            execution.backend == .stock ? "stock" : "enhanced"
+        childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.containerExecutable
+        childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = execution.socket
         var childArguments = arguments
         let executable: URL
-        switch provider {
-        case .docker:
-            let command = DockerComposeCommand(
-                arguments: arguments,
-                docker: paths.docker,
-                standaloneCompose: paths.dockerCompose
-            )
-            executable = command.executable
-            childArguments = command.arguments
-            childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
-        case .containerCompose:
-            executable = paths.containerCompose
-        }
+        executable = execution.paths.containerCompose
         if childArguments.isEmpty {
             childArguments = ["help"]
         }
@@ -443,14 +391,14 @@ private struct ComposeExecutionEnvironment {
     let paths: Paths
     let environment: [String: String]
     let socket: String
+    let backend: BackendProvider
+    let containerExecutable: String
 }
 
 private struct Paths {
     let configuration: URL
     var state: URL
     var socket: String
-    let docker: URL
-    let dockerCompose: URL?
     let containerCompose: URL
 
     init(environment: [String: String]) {
@@ -483,20 +431,6 @@ private struct Paths {
                 .appendingPathComponent("docker.sock")
                 .path
         }
-        docker = URL(
-            fileURLWithPath: environment["DEVCONTAINER_DOCKER_BIN"]
-                ?? Self.firstExecutable(["/opt/homebrew/bin/docker", "/usr/local/bin/docker"])
-        )
-        if let configured = environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] {
-            dockerCompose = configured.isEmpty
-                ? nil
-                : URL(fileURLWithPath: configured)
-        } else {
-            dockerCompose = Self.firstExecutableURL([
-                "/opt/homebrew/bin/docker-compose",
-                "/usr/local/bin/docker-compose"
-            ])
-        }
         containerCompose = URL(
             fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]
                 ?? Self.firstExecutable([
@@ -509,10 +443,5 @@ private struct Paths {
     private static func firstExecutable(_ candidates: [String]) -> String {
         candidates.first(where: FileManager.default.isExecutableFile(atPath:))
             ?? candidates[0]
-    }
-
-    private static func firstExecutableURL(_ candidates: [String]) -> URL? {
-        candidates.first(where: FileManager.default.isExecutableFile(atPath:))
-            .map(URL.init(fileURLWithPath:))
     }
 }

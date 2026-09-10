@@ -95,33 +95,6 @@ func `project removing commands release provider ownership`() throws {
 }
 
 @Test
-func `docker Compose command prefers standalone executable`() {
-    let docker = URL(fileURLWithPath: "/opt/homebrew/bin/docker")
-    let compose = URL(fileURLWithPath: "/opt/homebrew/bin/docker-compose")
-    let command = DockerComposeCommand(
-        arguments: ["version", "--short"],
-        docker: docker,
-        standaloneCompose: compose
-    )
-
-    #expect(command.executable == compose)
-    #expect(command.arguments == ["version", "--short"])
-}
-
-@Test
-func `docker Compose command falls back to CLI plugin`() {
-    let docker = URL(fileURLWithPath: "/usr/local/bin/docker")
-    let command = DockerComposeCommand(
-        arguments: ["up", "--detach"],
-        docker: docker,
-        standaloneCompose: nil
-    )
-
-    #expect(command.executable == docker)
-    #expect(command.arguments == ["compose", "up", "--detach"])
-}
-
-@Test
 func `command envelope accepts every global option spelling and separator`() throws {
     let split = try ComposeCommandEnvelope(
         arguments: [

@@ -1,14 +1,12 @@
 # Architecture
 
-The compatibility service listens only on a user-owned Unix socket. Docker CLI,
-Docker Compose, the official Dev Container CLI, and the VS Code extension use
-that socket without modification. Requests are decoded into provider-neutral
+The compatibility service listens only on a user-owned Unix socket. The bundled
+`devcontainer-docker` adapter, official Dev Containers CLI, and VS Code extension
+use that Docker-shaped protocol surface. Requests are decoded into provider-neutral
 models, executed through the runtime SPI, and returned with Docker-compatible
 JSON, streaming, archive, and connection-hijack behavior.
 
-The stock adapter launches an exact Apple `container` executable without a
-shell. The optional Compose adapter launches an exact `container-compose`
-executable and never links its implementation into this package.
+The stock adapter launches an exact Apple `container` executable without a shell. The Compose dispatcher launches an exact native `container-compose` executable and never links its implementation into this package. No product path launches a Docker CLI, Docker Compose, Docker Desktop, or Docker daemon.
 
 Project provider claims are durable and immutable while resources exist. This
 prevents stock and custom runtime operations from creating split-brain projects.

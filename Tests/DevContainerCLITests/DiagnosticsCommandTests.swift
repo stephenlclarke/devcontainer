@@ -475,7 +475,7 @@ private final class DiagnosticsFixture {
     private static func configurationValue() -> DevContainerConfiguration {
         DevContainerConfiguration(
             backend: .stock,
-            composeProvider: .docker,
+            composeProvider: .containerCompose,
             socket: FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("diagnostics.sock").path,
             strictCompatibility: true

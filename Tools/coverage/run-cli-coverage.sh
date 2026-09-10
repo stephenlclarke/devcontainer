@@ -135,7 +135,7 @@ run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" context --format invalid
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --config "$CONFIGURATION" \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --container "$FAKE_CONTAINER" \
   --state "$STATE_DATABASE" \
   --socket "$TEMPORARY_DIRECTORY/docker.sock" \
@@ -206,16 +206,6 @@ run_failure env "${COMMON_ENV[@]}" \
   "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER"
 
-run_success env "${COMMON_ENV[@]}" \
-  DEVCONTAINER_COMPOSE_PROVIDER=docker \
-  DEVCONTAINER_DOCKER_BIN="$FAKE_DOCKER" \
-  DEVCONTAINER_DOCKER_COMPOSE_BIN="$FAKE_COMPOSE" \
-  "$DEVCONTAINER_COMPOSE" version
-run_success env "${COMMON_ENV[@]}" \
-  DEVCONTAINER_COMPOSE_PROVIDER=docker \
-  DEVCONTAINER_DOCKER_BIN="$FAKE_DOCKER" \
-  DEVCONTAINER_DOCKER_COMPOSE_BIN= \
-  "$DEVCONTAINER_COMPOSE" version
 run_success env "${COMMON_ENV[@]}" \
   DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
   DEVCONTAINER_COMPOSE_BIN="$FAKE_COMPOSE" \

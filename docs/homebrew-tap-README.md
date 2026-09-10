@@ -10,15 +10,16 @@
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe.
 
-The formula installs only this project's `devcontainer`, compatibility-engine, and Compose-dispatch commands. It does not install, remove, replace, relink, start, or stop:
+The formula installs this project's commands, its pinned Dev Containers CLI,
+and the separately versioned native `container-compose` dependency. It does
+not install, remove, replace, relink, start, or stop:
 
 - Apple's `container` package.
 - A custom `container` runtime.
-- `container-compose`.
 
-The formula depends on the upstream Docker CLI and Docker Compose protocol
-client. It does not install or start a Docker engine. Install Apple's stock
-runtime separately from Apple before using the Apple backend.
+It does not depend on or launch Docker CLI, Docker Compose, Docker Desktop,
+Docker Engine, or Colima. Install Apple's stock runtime separately from Apple
+before using the Apple backend.
 
 ### Stable
 
@@ -71,9 +72,9 @@ Both formulae declare:
 
 ```ruby
 depends_on arch: :arm64
-depends_on "docker"
-depends_on "docker-compose"
 depends_on macos: :tahoe
+depends_on "node"
+depends_on "stephenlclarke/tap/container-compose"
 ```
 
 Published ports require Local Network access for the selected runtime's
@@ -86,14 +87,13 @@ Neither formula declares a dependency on:
 ```ruby
 "stephenlclarke/tap/container"
 "stephenlclarke/tap/container-current"
-"stephenlclarke/tap/container-compose"
 "stephenlclarke/tap/container-compose-current"
 ```
 
 This separation is intentional. `devcontainer`'s supported core compatibility
-boundary is Apple's stock runtime. The upstream Docker CLI and Docker Compose
-are required protocol clients; a Docker engine and `container-compose` are
-optional backends/providers.
+boundary is Apple's stock runtime. `container-compose` supplies the native
+multi-service implementation but must not install or select a custom runtime
+as a side effect of this formula.
 
 ### Verify
 
@@ -108,15 +108,16 @@ container system version --format json
 
 The `devcontainer` output reports its source commit and release lane. The `container` output independently confirms which runtime the user selected.
 
-### Optional Compose Provider
+### Native Compose Provider
 
-The tap does not install `container-compose` for `devcontainer`.
+The tap installs `container-compose` as a separate formula dependency for
+multi-service configurations.
 
-Current supported `stephenlclarke/tap/container-compose` formulae depend on a
-matched custom runtime. They must not be installed automatically or described
-as Compose support supplied by Apple. Users who deliberately configure a
-provider are responsible for its installation and runtime compatibility;
-`devcontainer` will report a custom runtime as a separate provider lane.
+The compatible formula is runtime-neutral: it does not depend on a Container
+distribution, defaults to the stock profile when launched by `devcontainer`,
+and selects enhanced behavior only when the user selects that backend. It is
+independently maintained and is never described as Compose support supplied by
+Apple.
 
 ## Formula Publication Contract
 
@@ -148,16 +149,17 @@ class Devcontainer < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
   depends_on macos: :tahoe
+  depends_on "node"
+  depends_on "stephenlclarke/tap/container-compose"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
     libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
+    pkgshare.install Dir["share/devcontainer/*"]
   end
 
   service do
@@ -183,11 +185,12 @@ class Devcontainer < Formula
       Start the compatibility engine:
         brew services start #{name}
 
-      Use it without changing your default Docker context:
-        eval "$(devcontainer context)"
+      Create a development container without Docker software:
+        devcontainer up --workspace-folder "$PWD"
 
-      Configure VS Code's Dev Containers extension to use:
-        #{opt_bin}/devcontainer-compose
+      Configure VS Code's Dev Containers extension to use both:
+        "dev.containers.dockerPath": "#{opt_bin}/devcontainer-docker"
+        "dev.containers.dockerComposePath": "#{opt_bin}/devcontainer-compose"
 
       Register the optional Apple container CLI plug-in explicitly:
         devcontainer plugin register

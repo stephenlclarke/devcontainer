@@ -11,8 +11,8 @@ engine.
 
 The product has two first-class runtime modes:
 
-1. **Stock Apple mode:** only tagged upstream `apple/container` and `apple/containerization` runtime dependencies are used. Single-container and Compose configurations run through the Docker-compatible service; Docker Compose uses the same service.
-2. **container-compose mode:** the same compatibility service handles Docker inspection, exec, copy, event, and attach traffic, while `container-compose` performs Compose planning and lifecycle operations. The provider is process-isolated and optional.
+1. **Stock Apple mode:** only tagged upstream `apple/container` and `apple/containerization` runtime dependencies are used. Single-container operations run through the Docker-compatible service and multi-service operations use the required, process-isolated native `container-compose` executable.
+2. **Enhanced Container mode:** the same compatibility service and native Compose boundary run against Stephen Clarke's enhanced Container distribution. The runtime is selected explicitly and is never installed or substituted by this project.
 
 The selected provider is immutable while a Dev Container project owns resources. Changing providers requires an explicit down/recreate operation so container identifiers, labels, networks, and volumes never become split-brain state.
 
@@ -23,7 +23,7 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Work with the stock VS Code Dev Containers extension and the official `@devcontainers/cli` without patching either.
 - Target official, tagged Apple `container` releases without requiring Stephen's forks.
 - Support image, Dockerfile, Feature, and Compose `devcontainer.json` scenarios.
-- Support `container-compose` as a separately installed, first-class provider.
+- Use `container-compose` as the separately released native Compose implementation for both runtime modes.
 - Reproduce the Docker-visible behavior that Dev Containers actually consumes, including JSON shapes, labels, streams, events, mounts, users, ports, and errors.
 - Fail explicitly when an Apple runtime cannot represent a requested operation; never silently discard a security, mount, network, or lifecycle option.
 - Bind every compatibility claim to pinned Docker, Dev Containers, Apple, Compose, macOS, and project versions.
@@ -35,7 +35,8 @@ These are north-star goals, not claims about version 1.0.1. Current releases rem
 ## Non-goals
 
 - General Docker Engine compatibility outside the endpoint and semantic surface required by the maintained Dev Container fixtures.
-- A fork of VS Code, `@devcontainers/cli`, Docker CLI, Docker Compose, or the Dev Container specification.
+- A fork of VS Code, `@devcontainers/cli`, or the Dev Container specification.
+- Installing or launching Docker CLI, Docker Compose, Docker Desktop, Docker Engine, or Colima in a product path.
 - Reimplementing Compose parsing, interpolation, profiles, dependency planning, or reconciliation inside the core.
 - Exposing a Docker-compatible TCP port by default.
 - Kubernetes orchestration, production container scheduling, or Linux host support.
@@ -76,9 +77,9 @@ flowchart TB
     Developer --> NativeCLI["container devcontainer CLI"]
     VSCode --> ReferenceCLI["Official @devcontainers/cli"]
     NativeCLI --> Control["Configuration and diagnostic XPC API"]
-    ReferenceCLI --> DockerCLI["Unmodified Docker CLI"]
-    ReferenceCLI --> ComposeSelector{"Configured Compose executable"}
-    DockerCLI --> Socket["User-owned public Unix socket"]
+    ReferenceCLI --> DockerAdapter["Bundled devcontainer-docker adapter"]
+    ReferenceCLI --> ComposeAdapter["Bundled devcontainer-compose dispatcher"]
+    DockerAdapter --> Socket["User-owned public Unix socket"]
     Socket --> Shared["container-engine API 1.44 through 1.53 gateway"]
     Shared --> Private["Private fingerprint-bound provider session"]
     Private --> Service["devcontainer stock provider adapter"]
@@ -86,15 +87,14 @@ flowchart TB
     RuntimeCore --> AppleAdapter["Stock Apple runtime adapter"]
     AppleAdapter --> AppleAPI["ContainerAPIClient and Apple XPC services"]
     AppleAPI --> Containerization["apple/containerization"]
-    ComposeSelector --> DockerCompose["Pinned Docker Compose"]
-    DockerCompose --> Socket
-    ComposeSelector --> ComposeAdapter["container-compose process adapter"]
-    ComposeAdapter --> ContainerCompose["container compose"]
-    ContainerCompose --> AppleAPI
+    ComposeAdapter --> ContainerCompose["Native container-compose executable"]
+    ContainerCompose --> ComposeProfile{"Runtime profile"}
+    ComposeProfile -->|stock| Socket
+    ComposeProfile -->|enhanced| AppleAPI
     Service --> State["SQLite compatibility state and event journal"]
 ```
 
-VS Code never talks directly to an Apple API. Its existing toolchain sees a Docker-compatible CLI because the unmodified Docker CLI targets the project Unix socket. This follows Apple's stated preference for ecosystem compatibility in an external bridge rather than Docker-shaped behavior in the native `container` CLI.
+VS Code never talks directly to an Apple API. Its existing toolchain sees the Docker-shaped invocation and protocol contracts it expects because the packaged `devcontainer-docker` adapter targets the project Unix socket. The adapter is first-party project software, not the Docker CLI. This follows Apple's stated preference for ecosystem compatibility in an external bridge rather than Docker-shaped behavior in the native `container` CLI.
 
 ## Deployment units
 
@@ -107,7 +107,7 @@ service and Compose-dispatch executables:
 | `container-engine` | Normal executable from exact `container-engine-api` 0.3.0 | Owns the public Docker Engine Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, RFC 6455 framing, and fail-closed dispatch to one private provider session |
 | `devcontainer-engine` | Normal executable | Stock-provider adapter, state reconciliation, and event handling; normal mode starts an internal private provider session behind the shared public gateway, while `--provider-socket` exposes only that private session for an external `container-engine` process |
 | `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` 0.3.0 libraries | Shared Docker wire, generated route ledger, hardened bounded raw/WebSocket listener, provider-owned immutable state-root identity, private schema-2 session protocol, and gateway dispatch; no Apple or Compose dependency |
-| `devcontainer-compose` | Docker Compose plug-in-compatible executable | Dispatches to upstream Docker Compose over the socket or an explicitly configured external `container-compose` |
+| `devcontainer-compose` | Docker Compose plug-in-compatible executable | Adapts the invocation contract to an explicitly resolved native `container-compose`; it has no Docker executable fallback |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
 | `DevContainerAppleRuntime` | Swift library | Translation to official `ContainerAPIClient` and versioned Apple models |
@@ -157,7 +157,7 @@ roadmap blocker. Decoded unsupported behaviour returns a typed
 `unsupportedCapability` error before resources are created.
 
 The Apple adapter also probes `container create --help` once per selected
-executable. Stock Apple 1.1.0 lacks hostname, security-option, and privileged
+executable. Stock Apple 1.4.1 lacks hostname, security-option, and privileged
 switches: requests for those semantics fail before mount or container side
 effects. A separately fingerprinted enhanced runtime uses its native switches.
 Capability discovery is behavioural and never inferred from an install path
@@ -167,7 +167,7 @@ or attributed across provider lanes.
 
 The adapter keeps reusable official clients for the lifetime of each engine
 process. Stock Apple container inventory and exact inspection use the typed
-1.1.0 schema. A separately fingerprinted enhanced distribution retains its
+1.4.1 schema. A separately fingerprinted enhanced distribution retains its
 CLI JSON inventory path because decoding it through the stock schema would
 discard additive exit, hostname, security, alias, and health fields. Network,
 archive, and managed `/etc/hosts` transfers continue to use distribution-safe
@@ -246,17 +246,23 @@ Provider choice is explicit and recorded in a project lease:
 ```text
 stock
   single-container -> Docker API bridge -> stock Apple adapter
-  Compose          -> Docker Compose -> Docker API bridge -> stock Apple adapter
+  Compose          -> native container-compose -> same Engine socket -> stock Apple adapter
 
 container-compose
   single-container -> Docker API bridge -> selected Apple runtime
-  Compose          -> container-compose -> selected Apple runtime
+  Compose          -> native container-compose -> enhanced Apple runtime
   inspect/exec     -> Docker API bridge -> runtime discovery
 ```
 
 Before every resource-changing Compose command, the dispatcher consumes the complete supported global-option grammar, including inline Boolean forms, and fails closed on an option it cannot classify. Dry-run, help, and version requests do not acquire an ownership claim. Explicit project names are validated against the Compose naming contract; otherwise the selected Compose implementation resolves the canonical name through `config --format json`, preserving the official `-f`, `COMPOSE_FILE`, top-level `name:`, project-directory, and current-directory precedence. The canonical name, rather than an invocation directory alias, keys the immutable provider claim.
 
-The `container-compose` provider probes `container compose version --short` and a machine-readable capability command. It never infers compatibility from an installed path. Because the currently released provider depends on Stephen's matched runtime, reports identify that lane as `container-compose/matched-fork`, not stock Apple. The stock lane is installed and executed separately.
+The dispatcher passes an explicit runtime profile, exact Container executable,
+and local Engine socket to `container-compose`. In stock mode Compose uses that
+socket as its runtime SPI, so it shares the same stock adapter, state authority,
+and lifecycle journal as single-container operations and never loads an
+enhanced XPC client against Apple's service. In enhanced mode the independently
+released provider may use its richer native API after exact capability and
+provenance negotiation. It never infers compatibility from an installed path.
 
 ## Single-container request sequence
 
@@ -264,9 +270,10 @@ The `container-compose` provider probes `container compose version --short` and 
 sequenceDiagram
     participant VS as VS Code
     participant DC as @devcontainers/cli
-    participant D as Docker CLI
+    participant D as devcontainer-docker adapter
     participant S as Compatibility service
     participant A as Stock Apple adapter
+    participant S as Compatibility service
     participant R as Apple runtime
 
     VS->>DC: up(workspace, config)
@@ -299,11 +306,12 @@ sequenceDiagram
     participant R as Apple runtime
 
     DC->>CP: version and normalized config
-    CP->>CC: container compose config
+    CP->>CC: config with explicit runtime profile
     CC-->>CP: Compose-compatible model
     DC->>CP: build and up with generated overrides
     CP->>CC: container compose build/up
-    CC->>R: create networks, volumes and containers
+    CC->>S: Engine requests over the selected local Unix socket
+    S->>R: create networks, volumes and containers
     DC->>S: Docker label-filtered ps
     S->>R: discover native resources
     S-->>DC: projected Docker Compose labels and IDs
@@ -443,7 +451,7 @@ promotion controls described in [RELEASE.md](RELEASE.md) are provisioned.
 A stable tag is prohibited until:
 
 - every fixture in `Tests/Parity/manifest.json` is implemented;
-- Docker oracle, stock Apple 1.1.0, and `container-compose` 0.10.1 recordings pass;
+- Docker oracle, stock Apple 1.4.1, and `container-compose` 0.14.3 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
 - hosted CI, coverage, Sonar, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit; CodeQL remains excluded while it is explicitly disabled by project decision;

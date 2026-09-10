@@ -484,6 +484,20 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertNotIn("version ", rendered)
             self.assertNotIn("conflicts_with", rendered)
 
+    def test_release_formula_is_dockerless_and_installs_flat_payload(self) -> None:
+        template = (TOOLS / "devcontainer.rb.in").read_text(encoding="utf-8")
+
+        self.assertIn('depends_on "node"', template)
+        self.assertIn(
+            'depends_on "stephenlclarke/tap/container-compose"', template
+        )
+        self.assertNotIn('depends_on "docker"', template)
+        self.assertNotIn('depends_on "docker-compose"', template)
+        self.assertIn('bin.install "bin/devcontainer-docker"', template)
+        self.assertIn('pkgshare.install Dir["share/devcontainer/*"]', template)
+        self.assertIn('"dev.containers.dockerPath"', template)
+        self.assertIn('"dev.containers.dockerComposePath"', template)
+
     def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

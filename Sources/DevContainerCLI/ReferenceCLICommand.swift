@@ -228,25 +228,11 @@ struct ReferenceCLIInvocation: Equatable {
     }
 
     private static func safeEnvironment(_ source: [String: String]) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: [
-            "CONTAINER_APP_ROOT",
-            "CONTAINER_HOST",
-            "CONTAINER_INSTALL_ROOT",
-            "CONTAINER_SERVICE_NAMESPACE",
-            "DEVCONTAINER_CONFIG",
-            "DEVCONTAINER_SOCKET",
-            "DEVCONTAINER_STATE",
-            "DOCKER_HOST",
-            "HOME",
-            "LANG",
-            "LC_ALL",
-            "PATH",
-            "TMPDIR",
-            "XDG_CACHE_HOME",
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME"
-        ].compactMap { key in
-            source[key].map { (key, $0) }
-        })
+        source.filter { key, _ in
+            !key.hasPrefix("DYLD_")
+                && !key.hasPrefix("LD_")
+                && key != "BASH_ENV"
+                && key != "ENV"
+        }
     }
 }

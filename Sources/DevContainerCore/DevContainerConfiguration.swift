@@ -19,7 +19,6 @@ import DevContainerModel
 import Foundation
 
 public enum ComposeProviderKind: String, Codable, CaseIterable, Sendable {
-    case docker
     case containerCompose = "container-compose"
 }
 
@@ -33,7 +32,7 @@ public struct DevContainerConfiguration: Codable, Equatable, Sendable {
 
     public init(
         backend: BackendProvider = .stock,
-        composeProvider: ComposeProviderKind = .docker,
+        composeProvider: ComposeProviderKind = .containerCompose,
         containerExecutable: String = DevContainerPathDefaults.containerExecutable,
         socket: String,
         stateDatabase: String = DevContainerPathDefaults.stateDatabase,
@@ -328,7 +327,7 @@ public enum DevContainerConfigurationStore {
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
-        let composeText = values["compose.provider"] ?? ComposeProviderKind.docker.rawValue
+        let composeText = values["compose.provider"] ?? ComposeProviderKind.containerCompose.rawValue
         guard let compose = ComposeProviderKind(rawValue: composeText) else {
             throw DevContainerError(
                 .invalidRequest,

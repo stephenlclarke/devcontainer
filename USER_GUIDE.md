@@ -6,13 +6,18 @@ This manual explains how to install, configure, use, troubleshoot, and remove `d
 
 ## What this project does
 
-`devcontainer` is a local compatibility bridge. The official [`@devcontainers/cli`](https://github.com/devcontainers/cli), VS Code Dev Containers extension, Docker CLI, and Docker Compose client continue to behave as Docker clients. This project provides the user-owned Docker Engine Unix socket they use and translates the release-certified request subset into Apple `container` operations.
+`devcontainer` is a Docker-less local compatibility bridge. It packages the
+official [`@devcontainers/cli`](https://github.com/devcontainers/cli) and two
+project-owned adapters for the Docker-shaped command contracts expected by the
+CLI and VS Code. Those adapters translate the release-certified request subset
+into Apple `container` and native `container-compose` operations. No Docker
+application, executable, daemon, or service is installed or launched.
 
 It does not:
 
 - replace or modify Apple’s `container` installation;
 - install a Docker engine;
-- install `container-compose`;
+- install or replace a Container runtime;
 - make Apple `container` a general-purpose Docker daemon;
 - implement its own `devcontainer.json` parser;
 - claim every property in the Development Containers Specification.
@@ -25,12 +30,13 @@ The stable package supports:
 
 - Apple silicon (`arm64`);
 - macOS Tahoe 26 or later;
-- stock Apple `container` 1.1.0 installed separately;
+- stock Apple `container` 1.4.1 installed separately;
 - `devcontainer` 1.0.1 installed from the stable Homebrew formula or signed release archive;
 - official `@devcontainers/cli` 0.88.0;
 - VS Code 1.131.0 with Dev Containers extension 0.467.0;
-- Docker CLI 29.6.2 and Docker Compose 5.3.1 as protocol clients;
-- optional, separately installed `container-compose` 0.10.1 with its matched custom runtime stack.
+- packaged `devcontainer-docker` and `devcontainer-compose` adapters;
+- the separately released native `container-compose` executable installed as a
+  Homebrew dependency, or selected explicitly for archive/source installs.
 
 These are the exact release-certified versions, not minimum-version promises. See the fingerprint table in [COMPATIBILITY.md](COMPATIBILITY.md) before changing one component independently.
 
@@ -40,18 +46,21 @@ There are two Apple runtime paths:
 
 | Path | Runtime | Compose implementation | Recommended use |
 | --- | --- | --- | --- |
-| Stock | Unmodified Apple `container` 1.1.0 | Upstream Docker Compose over this project’s compatibility socket | Default |
-| Optional provider | The exact custom runtime required by `container-compose` 0.10.1 | Separately installed `container-compose` | Explicit provider testing or features supplied by that stack |
+| Stock | Unmodified Apple `container` 1.4.1 | Native `container-compose` process | Default |
+| Enhanced | Explicit compatible Stephen Clarke Container distribution | The same native `container-compose` process | Enhanced capabilities selected by the user |
 
-Apple does not make a Compose plug-in for `container`. The optional `container-compose` project is independently maintained by Stephen Clarke. Installing `devcontainer` does not install it or its custom runtime.
+Apple does not make a Compose plug-in for `container`. The native
+`container-compose` project is independently maintained by Stephen Clarke.
+Homebrew installs it as a separate dependency but must not replace stock Apple
+`container`; selecting an enhanced runtime is always explicit.
 
 ## Install the stock path
 
-Install Apple’s signed `container` 1.1.0 package first. Verify the stock executable before installing this project:
+Install Apple’s signed `container` 1.4.1 package first. Verify the stock executable before installing this project:
 
 ```console
 $ /usr/local/bin/container --version
-container CLI version 1.1.0 (build: release, commit: 5973b9c)
+container CLI version 1.4.1 (build: release, commit: 9a8917c)
 ```
 
 Install the stable formula:
@@ -86,7 +95,7 @@ Write an explicit stock configuration:
 ```console
 devcontainer configure \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --container /usr/local/bin/container
 ```
 
@@ -98,23 +107,14 @@ The default configuration file is:
 
 The engine, `context`, `doctor`, `diagnostics`, and Compose wrapper all read the
 same configuration. Explicit command options override environment variables;
-environment variables override the file. Configuration does not change
-Docker’s global context and does not start or stop either runtime.
-
-Use the compatibility socket only in shells that need it:
-
-```console
-eval "$(devcontainer context)"
-```
-
-Confirm that the Docker client now sees the bridge:
+environment variables override the file. Configuration does not start or stop
+either runtime. Confirm that the packaged compatibility adapter sees the
+bridge:
 
 ```console
-docker version
-docker info
+devcontainer-docker version
+devcontainer-docker info
 ```
-
-The server platform is reported as `devcontainer Apple runtime bridge`. Open a new shell without evaluating `devcontainer context` when you want to use Docker’s normal context again.
 
 ## Run the first Dev Container
 
@@ -129,26 +129,26 @@ The repository’s [hello example](Examples/hello) contains:
 }
 ```
 
-From a shell configured with `devcontainer context`, run the official CLI:
+Run the packaged official CLI through the `devcontainer` command. It injects
+the exact project-owned adapter paths and rejects caller overrides:
 
 ```console
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/devcontainer/Examples/hello
+devcontainer up --workspace-folder /path/to/devcontainer/Examples/hello
 ```
 
 The command returns JSON containing the container ID and remote workspace path. Run a command inside the workspace:
 
 ```console
-npx --yes @devcontainers/cli@0.88.0 exec \
+devcontainer exec \
   --workspace-folder /path/to/devcontainer/Examples/hello \
   /bin/sh -c 'cat hello.txt && cat /tmp/devcontainer-ready'
 ```
 
-Inspect and remove the environment with the Docker client attached to the same socket:
+Inspect and remove the environment with the packaged compatibility adapter:
 
 ```console
-docker ps --all
-docker rm --force CONTAINER_ID
+devcontainer-docker ps --all
+devcontainer-docker rm --force CONTAINER_ID
 ```
 
 ## Use your own image-based configuration
@@ -169,9 +169,7 @@ Create `.devcontainer/devcontainer.json` in a project:
 Then run:
 
 ```console
-eval "$(devcontainer context)"
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder "$PWD"
+devcontainer up --workspace-folder "$PWD"
 ```
 
 Use digest-pinned images when reproducibility matters. Public Linux `arm64` images are in the release-certified scope. Private-registry authentication and cross-architecture images are not certified by 1.0.1.
@@ -197,7 +195,7 @@ A basic Dockerfile configuration is supported:
 
 Dockerfile path, context, build arguments, target, generated Feature build context, and failed-build streaming are in the parity suite. Arbitrary `build.options` and `build.cacheFrom` combinations are not independently certified; check [CONFORMANCE.md](CONFORMANCE.md) before relying on them.
 
-## Use Docker Compose on stock Apple container
+## Use native Compose on stock Apple container
 
 Create a normal Compose file:
 
@@ -227,40 +225,39 @@ Reference it from `.devcontainer/devcontainer.json`:
 }
 ```
 
-The default `devcontainer-compose` wrapper launches upstream Docker Compose against the compatibility socket:
+The `devcontainer-compose` wrapper launches only native `container-compose`:
 
 ```console
 devcontainer configure \
   --backend stock \
-  --compose-provider docker
-eval "$(devcontainer context)"
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder "$PWD" \
-  --docker-compose-path /opt/homebrew/bin/devcontainer-compose
+  --compose-provider container-compose
+devcontainer up --workspace-folder "$PWD"
 ```
 
 The certified Compose scope includes selected services, `runServices`, dependencies and health gates, environment files, workspace projection, named volumes, networks, aliases, recreation, restart, shutdown, signals, and Dev Container discovery labels. It is not a claim that every Docker Compose property or command is implemented.
 
 ## Use VS Code
 
-Install the official Microsoft Dev Containers extension. Configure the Compose wrapper in VS Code settings:
+Install the official Microsoft Dev Containers extension. Configure both
+project-owned adapters in VS Code settings:
 
 ```json
 {
+  "dev.containers.dockerPath": "/opt/homebrew/bin/devcontainer-docker",
   "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
 }
 ```
 
-Launch VS Code from a shell that has selected the compatibility socket:
+Launch VS Code normally:
 
 ```console
-eval "$(devcontainer context)"
 code /path/to/project
 ```
 
 Use **Dev Containers: Reopen in Container**. The 1.0.1 real-VS-Code test covers extension activation, open, attach, VS Code server installation, an integrated command, a forwarded port, rebuild, reopen locally, and cleanup.
 
-If VS Code was already running, quit all VS Code windows before launching it from the configured shell. A process started before `DOCKER_HOST` was set does not inherit the new value.
+If VS Code was already running when settings changed, quit all VS Code windows
+before reopening the workspace.
 
 ## Use lifecycle commands
 
@@ -400,9 +397,11 @@ The default state database is:
 
 Do not edit the database directly.
 
-## Optional container-compose provider
+## Enhanced Container runtime
 
-The provider path is separately installed and separately selected. It must use the exact runtime stack certified with `container-compose` 0.10.1.
+The same native Compose provider supports an enhanced Container runtime when
+that distribution is installed and selected explicitly. Installing
+`devcontainer` or its Compose dependency never selects this runtime for you.
 
 Stop the stock service and runtime:
 
@@ -411,7 +410,7 @@ brew services stop stephenlclarke/tap/devcontainer
 /usr/local/bin/container system stop
 ```
 
-Start the matched optional runtime and bridge explicitly:
+Start the compatible enhanced runtime and bridge explicitly:
 
 ```console
 /opt/homebrew/bin/container system start
@@ -425,12 +424,8 @@ In another shell:
 devcontainer configure \
   --backend container-compose \
   --compose-provider container-compose
-eval "$(devcontainer context)"
-DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
 DEVCONTAINER_COMPOSE_BIN=/opt/homebrew/bin/container-compose \
-  npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder "$PWD" \
-  --docker-compose-path /opt/homebrew/bin/devcontainer-compose
+  devcontainer up --workspace-folder "$PWD"
 ```
 
 Restore stock mode after stopping the foreground engine:
@@ -481,8 +476,7 @@ Check:
 
 ```console
 devcontainer doctor --container /usr/local/bin/container
-eval "$(devcontainer context)"
-docker ps --all
+devcontainer-docker ps --all
 ```
 
 Restart only this project’s service:
@@ -540,17 +534,14 @@ Restart the compatibility service if the runtime is healthy:
 brew services restart stephenlclarke/tap/devcontainer
 ```
 
-### Docker still connects to another engine
+### The compatibility adapter cannot reach the bridge
 
-Re-evaluate the context in the current shell:
+Check the selected local socket and adapter:
 
 ```console
-eval "$(devcontainer context)"
-printf '%s\n' "$DOCKER_HOST"
-docker version
+devcontainer context
+devcontainer-docker version
 ```
-
-Do not set Docker’s global default context as a workaround.
 
 ### A published port resets or reports `No route to host`
 
@@ -565,7 +556,8 @@ Stock and optional custom runtimes can have separate Local Network entries.
 
 ### VS Code does not use the bridge
 
-Quit VS Code completely, evaluate `devcontainer context`, and launch `code` from that same shell. Confirm `dev.containers.dockerComposePath` points to `/opt/homebrew/bin/devcontainer-compose`.
+Quit VS Code completely and confirm both `dev.containers.dockerPath` and
+`dev.containers.dockerComposePath` point to the packaged adapters.
 
 ### A configuration uses an unsupported property
 
@@ -590,7 +582,9 @@ devcontainer plugin unregister --container /usr/local/bin/container
 brew uninstall --formula stephenlclarke/tap/devcontainer
 ```
 
-Uninstalling the formula does not remove Apple `container`, Docker clients, `container-compose`, runtime resources, or unrelated user data. See [INSTALL.md](INSTALL.md) for channel switching and complete removal behavior.
+Uninstalling the formula does not remove Apple `container`, independently
+installed `container-compose`, runtime resources, or unrelated user data. See
+[INSTALL.md](INSTALL.md) for channel switching and complete removal behavior.
 
 ## Command summary
 
@@ -603,7 +597,7 @@ Uninstalling the formula does not remove Apple `container`, Docker clients, `con
 | `devcontainer backend show/set/reset` | Manage durable project ownership |
 | `devcontainer diagnostics` | Create a bounded, redacted support archive |
 | `devcontainer plugin register/unregister/status` | Manage the optional Apple CLI plug-in link |
-| `devcontainer-compose` | Dispatch upstream Docker Compose or the optional provider |
+| `devcontainer-compose` | Adapt the expected Compose invocation to native `container-compose` |
 | `devcontainer-engine` | Run the local Docker Engine compatibility endpoint |
 
 Use `devcontainer SUBCOMMAND --help` for the authoritative option list.

@@ -101,6 +101,7 @@ python3 Tools/release/write-sbom.py \
   --version "$version" \
   --commit "$commit" \
   --source-date-epoch "$source_date_epoch" \
+  --bundled-dependency "devcontainers-cli|${DEVCONTAINER_CLI_VERSION:-0.88.0}|${DEVCONTAINER_CLI_REVISION:-f683c29f64a20109b4453e5149807e390ff65133}|https://registry.npmjs.org/@devcontainers/cli/-/cli-${DEVCONTAINER_CLI_VERSION:-0.88.0}.tgz|${DEVCONTAINER_CLI_SHA256:-5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b}|MIT" \
   --output "$stage/share/devcontainer/devcontainer.spdx.json"
 python3 Tools/release/write-third-party-notices.py \
   --checkouts .build/checkouts \

@@ -170,9 +170,10 @@ def require_sbom(
     if not all(isinstance(package, dict) for package in packages):
         raise ValueError("package SBOM contains a non-object package")
     by_name = {package.get("name"): package for package in packages}
-    expected_names = {"devcontainer", *(dependency.identity for dependency in dependencies)}
+    resolved_names = {dependency.identity for dependency in dependencies}
+    expected_names = {"devcontainer", *resolved_names, "devcontainers-cli"}
     if set(by_name) != expected_names or len(packages) != len(expected_names):
-        raise ValueError("package SBOM dependency set does not match Package.resolved")
+        raise ValueError("package SBOM dependency set is incomplete")
     root = by_name["devcontainer"]
     namespace_hash = hashlib.sha256(
         f"devcontainer:{version}:{commit}".encode()
@@ -217,6 +218,22 @@ def require_sbom(
             raise ValueError(
                 f"package SBOM metadata is invalid for {dependency.identity}"
             )
+    for name, license_name in (("devcontainers-cli", "MIT"),):
+        package = by_name[name]
+        checksums = package.get("checksums")
+        if (
+            not isinstance(package.get("versionInfo"), str)
+            or not package["versionInfo"]
+            or not str(package.get("downloadLocation", "")).startswith("https://")
+            or package.get("licenseDeclared") != license_name
+            or package.get("licenseConcluded") != license_name
+            or not str(package.get("sourceInfo", "")).startswith("Exact Git revision ")
+            or not isinstance(checksums, list)
+            or len(checksums) != 1
+            or checksums[0].get("algorithm") != "SHA256"
+            or len(str(checksums[0].get("checksumValue", ""))) != 64
+        ):
+            raise ValueError(f"package SBOM metadata is invalid for {name}")
     relationships = value.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError("package SBOM is missing dependency relationships")
@@ -229,11 +246,9 @@ def require_sbom(
     }
     expected_related = {
         "SPDXRef-"
-        + "".join(
-            character if character.isalnum() else "-"
-            for character in dependency.identity
-        )
-        for dependency in dependencies
+        + "".join(character if character.isalnum() else "-" for character in name)
+        for name in expected_names
+        if name != "devcontainer"
     }
     if related != expected_related or len(relationships) != len(expected_related):
         raise ValueError("package SBOM dependency relationships are incomplete")
@@ -339,6 +354,11 @@ def verify_archive(
             archive,
             f"{root}/libexec/container/plugins/devcontainer/config.toml",
         )
+        for legal_file in ("LICENSE.txt", "ThirdPartyNotices.txt"):
+            require_nonempty_regular_member(
+                archive,
+                f"{root}/share/devcontainer/reference-cli/{legal_file}",
+            )
 
         metadata_root = f"{root}/share/devcontainer"
         for legal_file in (

@@ -5,7 +5,7 @@ Use the official Dev Containers CLI and VS Code extension with stock Apple
 
 ## Install
 
-Install and verify Apple `container` 1.1.0 separately, then install the stable
+Install and verify Apple `container` 1.4.1 separately, then install the stable
 formula:
 
 ```console
@@ -26,41 +26,40 @@ reach the container VM.
 ```console
 devcontainer configure \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --container /usr/local/bin/container
-eval "$(devcontainer context)"
 ```
 
 The engine, context, doctor, diagnostics, and Compose commands resolve this
 same configuration. Command options take precedence over environment
-variables, which take precedence over the file. The context command changes
-only the current shell. It does not replace Docker's global context.
+variables, which take precedence over the file. The context command only
+prints an optional shell export for diagnostic compatibility and never changes
+global system configuration.
 
 ## Run the official CLI
 
 ```console
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/project
+devcontainer up --workspace-folder /path/to/project
 
-npx --yes @devcontainers/cli@0.88.0 exec \
+devcontainer exec \
   --workspace-folder /path/to/project \
   /bin/sh -c 'uname -a'
 ```
 
 ## Run VS Code
 
-Configure the Compose wrapper:
+Configure both Apple-backed compatibility adapters:
 
 ```json
 {
+  "dev.containers.dockerPath": "/opt/homebrew/bin/devcontainer-docker",
   "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
 }
 ```
 
-Launch VS Code from the configured shell:
+Launch VS Code normally:
 
 ```console
-eval "$(devcontainer context)"
 code /path/to/project
 ```
 
@@ -68,10 +67,7 @@ Then run **Dev Containers: Reopen in Container**.
 
 ## Runtime boundary
 
-The default path uses upstream Docker Compose over the compatibility socket.
-Apple does not supply a Compose plug-in. The separately installed
-`container-compose` provider is optional, independently maintained, and uses
-its exact matched custom runtime stack.
+Apple does not supply a Compose plug-in. Every Compose-backed project uses the independently maintained native `container-compose` executable installed by the Homebrew formula. The bundled `devcontainer-compose` dispatcher never launches Docker Compose. The same process boundary supports stock Apple `container` and Stephen Clarke's enhanced Container distribution.
 
 Version 1.0.1 certifies the checked-in image, Dockerfile, Feature, user,
 environment, lifecycle, port, reuse, Compose, engine, fault, and real VS Code

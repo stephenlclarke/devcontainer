@@ -6,15 +6,16 @@ class @FORMULA_CLASS@ < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "node"
   depends_on macos: :tahoe
+  depends_on "node"
+  depends_on "stephenlclarke/tap/container-compose"
 @CONFLICT_DECLARATION@  def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
     libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
+    pkgshare.install Dir["share/devcontainer/*"]
   end
 
   service do
@@ -41,10 +42,15 @@ class @FORMULA_CLASS@ < Formula
         brew services start #{name}
 
       The devcontainer command automatically uses the local Apple-backed
-      compatibility adapter. Docker is neither installed nor required.
+      compatibility adapter and native container-compose. Docker is neither
+      installed nor required.
 
       Create a development container:
         devcontainer up --workspace-folder "$PWD"
+
+      Configure VS Code Dev Containers:
+        "dev.containers.dockerPath": "#{opt_bin}/devcontainer-docker"
+        "dev.containers.dockerComposePath": "#{opt_bin}/devcontainer-compose"
 
       Register the optional Apple container CLI plug-in explicitly:
         devcontainer plugin register

@@ -116,7 +116,7 @@ struct CoreBehaviorTests {
         try DevContainerConfigurationStore.save(
             DevContainerConfiguration(
                 backend: .stock,
-                composeProvider: .docker,
+                composeProvider: .containerCompose,
                 containerExecutable: "/config/container",
                 socket: "/config/docker.sock",
                 stateDatabase: "/config/state.sqlite",
@@ -136,14 +136,14 @@ struct CoreBehaviorTests {
             environment: environment,
             configuration: path.path,
             backend: "stock",
-            composeProvider: "docker",
+            composeProvider: "container-compose",
             containerExecutable: "/override/container",
             socket: "/override/docker.sock",
             stateDatabase: "/override/state.sqlite"
         )
         #expect(selected.configuration == path)
         #expect(selected.backend == .stock)
-        #expect(selected.composeProvider == .docker)
+        #expect(selected.composeProvider == .containerCompose)
         #expect(selected.containerExecutable == "/override/container")
         #expect(selected.socket == "/override/docker.sock")
         #expect(selected.stateDatabase == "/override/state.sqlite")
@@ -164,7 +164,7 @@ struct CoreBehaviorTests {
             configuration: path.path
         )
         #expect(fromConfiguration.backend == .stock)
-        #expect(fromConfiguration.composeProvider == .docker)
+        #expect(fromConfiguration.composeProvider == .containerCompose)
         #expect(fromConfiguration.containerExecutable == "/config/container")
         #expect(fromConfiguration.socket == "/config/docker.sock")
         #expect(fromConfiguration.stateDatabase == "/config/state.sqlite")

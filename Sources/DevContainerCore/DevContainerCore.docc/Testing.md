@@ -16,8 +16,8 @@ Compose provider must then match those results. A pinned VS Code and Dev
 Containers extension perform open, attach, terminal, port, rebuild, reopen, and
 cleanup flows.
 
-Real Docker, stock Apple `container` 1.1.0, and the matched
-`container-compose` 0.10.1 provider pass all 18 CLI fixtures and the real VS
+Real Docker, stock Apple `container` 1.4.1, and the matched
+`container-compose` 0.14.3 provider must pass all 18 CLI fixtures and the real VS
 Code fixture without normalized semantic differences and with complete timing
 evidence.
 In the exact 1.0.0 tag run, the largest CLI ratios are 2.876x for stock Apple

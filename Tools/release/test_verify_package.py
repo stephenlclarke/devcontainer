@@ -121,6 +121,36 @@ class PackageVerificationTests(unittest.TestCase):
                     "relatedSpdxElement": identifier,
                 }
             )
+        for name, version, revision, location, license_name in (
+            (
+                "devcontainers-cli",
+                "0.88.0",
+                "f683c29f64a20109b4453e5149807e390ff65133",
+                "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.88.0.tgz",
+                "MIT",
+            ),
+        ):
+            identifier = "SPDXRef-" + name
+            sbom["packages"].append(
+                {
+                    "SPDXID": identifier,
+                    "name": name,
+                    "versionInfo": version,
+                    "downloadLocation": location,
+                    "licenseDeclared": license_name,
+                    "licenseConcluded": license_name,
+                    "filesAnalyzed": False,
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": "a" * 64}],
+                    "sourceInfo": f"Exact Git revision {revision}",
+                }
+            )
+            sbom["relationships"].append(
+                {
+                    "spdxElementId": "SPDXRef-Package-devcontainer",
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": identifier,
+                }
+            )
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
                 f"{package_root}/bin/devcontainer",
@@ -131,6 +161,12 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/share/devcontainer/reference-cli/devcontainer.js",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
+            for name in ("LICENSE.txt", "ThirdPartyNotices.txt"):
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/share/devcontainer/reference-cli/{name}",
+                    f"Dev Containers {name}\n".encode(),
+                )
             self.add_bytes(
                 archive,
                 f"{package_root}/libexec/container/plugins/devcontainer/config.toml",

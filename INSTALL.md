@@ -24,18 +24,21 @@ The supported installation preserves these boundaries:
 
 - Apple's stock `container` runtime is installed separately from Apple.
 - `devcontainer` uses the `container` executable selected by explicit configuration or `PATH`.
-- The Docker CLI and upstream Docker Compose client are protocol clients for
-  VS Code and the stock multi-service path; they do not install or select a
-  Docker engine.
-- `container-compose` is optional and used only when the user explicitly selects or enables its provider.
+- The packaged `devcontainer-docker` compatibility adapter is the only
+  Docker-shaped client used by VS Code and the official Dev Containers CLI.
+  It is project-owned software and is not the Docker CLI.
+- The native `container-compose` executable is the required multi-service
+  implementation and remains process-isolated from this package.
 - Installing `devcontainer` never installs `stephenlclarke/container`.
 - Installing `devcontainer` never removes or replaces Apple's `container`.
-- Installing `devcontainer` never installs `container-compose`.
+- Homebrew resolves the separately versioned `container-compose` dependency;
+  archive users must install a compatible native executable explicitly.
 - Installing `devcontainer` never links a Compose plugin into Apple's install root.
 - The formula does not register itself under Apple's install root. An explicit
   `devcontainer plugin register` command owns one reversible symlink and refuses
   to replace a foreign registration.
-- Missing optional providers produce an actionable capability error, not an automatic installation or runtime replacement.
+- A missing native Compose executable produces an actionable capability error,
+  never a fallback to Docker software or an automatic runtime replacement.
 
 ## Requirements
 
@@ -43,18 +46,17 @@ The prebuilt and Homebrew packages require:
 
 - Apple silicon (`arm64`).
 - macOS Tahoe 26 or later.
-- Apple's stock `container` 1.1.0 runtime for the stock Apple backend.
+- Apple's stock `container` 1.4.1 runtime for the stock Apple backend.
 - Local Network permission for the selected runtime's
   `container-runtime-linux` helper so published host ports can reach the
   container VM.
-- The Docker CLI and upstream Docker Compose client used by VS Code.
+- Node.js and the native `container-compose` executable. The Homebrew formula
+  resolves both dependencies.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
-Optional integrations:
-
-- A Docker engine for Docker-oracle comparison or separately selected
-  Docker-backed execution.
-- An explicitly installed `container-compose` executable for multi-service provider experiments.
+Docker or Colima may be installed only on a parity-test host as an isolated
+reference oracle. Neither is a supported product backend or installation
+dependency.
 
 The release notes and `devcontainer version --format json` identify the exact
 versions used for release validation.
@@ -62,7 +64,7 @@ versions used for release validation.
 ## Verify The Runtime Before Installation
 
 The supported installer does not change runtime state. Install Apple's signed
-[`container` 1.1.0 package](https://github.com/apple/container/releases/tag/1.1.0),
+[`container` 1.4.1 package](https://github.com/apple/container/releases/tag/1.4.1),
 then verify it before installing this project:
 
 ```sh
@@ -124,7 +126,8 @@ brew uninstall --formula stephenlclarke/tap/devcontainer
 brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
-Neither formula may declare a dependency on a custom `container` runtime or `container-compose`.
+Neither formula may declare a dependency on a custom `container` runtime. Both
+declare the separately released native `container-compose` dependency.
 
 ## Package Layout
 
@@ -174,32 +177,26 @@ devcontainer plugin unregister
 
 ## Use With The Official CLI And VS Code
 
-The compatibility engine listens only on its user-owned Unix socket. Select it
-for the current shell without changing Docker's default context:
+The compatibility engine listens only on its user-owned Unix socket. The
+packaged command injects the two project-owned adapter paths automatically:
 
 ```sh
-eval "$(devcontainer context)"
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/project
+devcontainer up --workspace-folder /path/to/project
 ```
 
-For VS Code, set the Compose wrapper and launch the workspace from the same
-configured shell:
+For VS Code, set both adapter paths:
 
 ```json
 {
+  "dev.containers.dockerPath": "/opt/homebrew/bin/devcontainer-docker",
   "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
 }
 ```
 
-```sh
-eval "$(devcontainer context)"
-code /path/to/project
-```
+Open the workspace and choose **Dev Containers: Reopen in Container**.
 
-The wrapper selects upstream Docker Compose over the same socket by default.
-Users who intentionally select `container-compose` configure that independent
-provider as described below.
+The two paths are project-owned adapters. The Compose wrapper always selects
+native `container-compose`; there is no Docker Compose fallback.
 
 ## Verify The Installation
 
@@ -288,7 +285,7 @@ The implemented user configuration uses explicit provider identities:
 ```sh
 devcontainer configure \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --socket "$HOME/.local/state/devcontainer/docker.sock"
 
 devcontainer configure \
@@ -296,11 +293,11 @@ devcontainer configure \
   --compose-provider container-compose
 ```
 
-`stock` selects this project's Apple runtime adapter. `container-compose`
-identifies a project whose Compose lifecycle is owned by the separately
-installed provider; it is never described as stock provenance. Docker Compose
-is selected with `--compose-provider docker` and talks to this project's Unix
-socket.
+`stock` selects this project's Apple runtime adapter. The
+`container-compose` backend identity records enhanced-runtime ownership when
+that runtime is selected explicitly. Both modes use the native
+`container-compose` executable for multi-service planning and lifecycle; the
+provider name does not imply Apple authorship.
 
 Executable paths are explicit command or environment inputs:
 
@@ -312,35 +309,31 @@ devcontainer doctor \
 
 DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
   devcontainer-compose up
-
-DEVCONTAINER_DOCKER_COMPOSE_BIN=/absolute/path/to/docker-compose \
-  devcontainer-compose up
 ```
 
 The Compose dispatcher applies this implemented precedence:
 
-1. `DEVCONTAINER_COMPOSE_PROVIDER`.
-2. User configuration written by `devcontainer configure`.
-3. The safe default, upstream Docker Compose over the compatibility socket.
+1. `DEVCONTAINER_COMPOSE_BIN`.
+2. The executable recorded by user configuration.
+3. A `container-compose` executable on the restricted executable search path.
 
-For that default, the dispatcher prefers the standalone `docker-compose`
-executable so it does not depend on per-user Docker CLI plug-in discovery. It
-falls back to `docker compose` when no standalone executable is installed.
+Failure to resolve that native executable stops before side effects. The
+dispatcher never searches for or launches `docker`, `docker-compose`, Docker
+Desktop, or Colima.
 
 Project ownership is then recorded in the state database. `devcontainer
 backend set`, `show`, and `reset` provide explicit project-scoped control and
 prevent a provider change while owned resources remain.
 
-## Optional container-compose Provider
+## Native container-compose Provider
 
-`container-compose` is not part of the base install. To use it, install and
-configure it separately and accept its runtime compatibility.
+`container-compose` is separately released and is a Homebrew dependency of the
+formula. Archive and source users install or select it explicitly.
 
-The supported `stephenlclarke/tap/container-compose` 0.10.1 formula depends on
-a matched custom runtime. Installing that formula can add a custom
-`/opt/homebrew/bin/container` alongside Apple's `/usr/local/bin/container`.
-`devcontainer` continues to prefer Apple's executable by default and never
-suggests or performs that installation as an automatic fix.
+The compatible `stephenlclarke/tap/container-compose` formula is
+runtime-neutral and must not depend on or install a Container distribution.
+`devcontainer` selects its stock runtime profile by default. An enhanced
+Container installation remains an independent, explicit user choice.
 
 Stop the compatibility service and switch the separately installed Apple
 runtime distribution before running against the Compose stack:
@@ -353,14 +346,13 @@ DEVCONTAINER_CONTAINER_BIN=/opt/homebrew/bin/container \
   /opt/homebrew/bin/devcontainer-engine
 ```
 
-In another shell, select its socket and the Compose provider:
+In another shell, select the Compose provider and enhanced runtime explicitly:
 
 ```sh
-eval "$(devcontainer context)"
 DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
 DEVCONTAINER_COMPOSE_BIN=/opt/homebrew/bin/container-compose \
-  npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/project
+DEVCONTAINER_CONTAINER_BIN=/opt/homebrew/bin/container \
+  devcontainer up --workspace-folder /path/to/project
 ```
 
 This foreground form makes the non-stock runtime choice visible. Stop it with

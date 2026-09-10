@@ -381,7 +381,7 @@ jobs:
             printf "The formula installs the standalone \`devcontainer\` service, "
             printf 'Docker-compatible engine adapter, and Compose adapter. '
             printf "Stock Apple \`container\` is selected by default; "
-            printf "\`container-compose\` remains an optional provider.\\n\\n"
+            printf "Native \`container-compose\` remains independently released and is the required Compose provider.\\n\\n"
             printf '## Certified compatibility\n\n'
             printf -- "- Apple \`container\` \`%s\`\\n" "${apple_version}"
             printf -- "- \`container-compose\` \`%s\`\\n" "${compose_version}"

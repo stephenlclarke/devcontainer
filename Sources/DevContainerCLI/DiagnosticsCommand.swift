@@ -32,7 +32,7 @@ struct DiagnosticsCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Apple container executable.")
     var container: String?
 
-    @Option(name: .long, help: "Optional container-compose executable.")
+    @Option(name: .long, help: "Native container-compose executable.")
     var compose: String?
 
     @Option(name: .long, help: "Devcontainer configuration file.")

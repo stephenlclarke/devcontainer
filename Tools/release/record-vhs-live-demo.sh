@@ -19,7 +19,7 @@ container_bin="${DEVCONTAINER_DEMO_CONTAINER_BIN:-/usr/local/bin/container}"
 vhs_bin="${VHS_BIN:-vhs}"
 retry_count="${VHS_TRANSPORT_RETRIES:-3}"
 
-for required in docker jq npx python3 shasum swift "$container_bin" "$vhs_bin"; do
+for required in jq npx python3 shasum swift "$container_bin" "$vhs_bin"; do
   if [[ "$required" == */* ]]; then
     [[ -x "$required" ]] || {
       printf 'required executable is missing: %s\n' "$required" >&2
@@ -42,6 +42,8 @@ GIT_COMMIT="$source_commit" DEVCONTAINER_BUILD_LANE=release \
 bin_directory="$(swift build --disable-automatic-resolution -c release --show-bin-path)"
 demo_bin="$bin_directory/devcontainer"
 engine_bin="$bin_directory/devcontainer-engine"
+docker_adapter_bin="$bin_directory/devcontainer-docker"
+compose_adapter_bin="$bin_directory/devcontainer-compose"
 runtime_root="$(mktemp -d /private/tmp/devcontainer-demo.XXXXXX)"
 socket_path="$runtime_root/docker.sock"
 state_path="$runtime_root/state.sqlite"
@@ -57,13 +59,13 @@ cleanup() {
     while IFS= read -r identifier; do
       [[ -n "$identifier" ]] && identifiers+=("$identifier")
     done < <(
-      DOCKER_HOST="unix://${socket_path}" docker ps -aq \
+      DEVCONTAINER_SOCKET="$socket_path" "$docker_adapter_bin" ps -aq \
         --filter "label=devcontainer.local_folder=${repository_root}/Examples/hello" \
         2>/dev/null || true
     )
     if (( ${#identifiers[@]} > 0 )); then
       # The IDs come only from the exact demo workspace label.
-      DOCKER_HOST="unix://${socket_path}" docker rm -f \
+      DEVCONTAINER_SOCKET="$socket_path" "$docker_adapter_bin" rm -f \
         "${identifiers[@]}" >/dev/null 2>&1 || true
     fi
   fi
@@ -111,14 +113,16 @@ for _ in $(seq 1 200); do
     printf 'devcontainer-engine exited before becoming ready\n' >&2
     exit 1
   fi
-  if DOCKER_HOST="unix://${socket_path}" docker version >/dev/null 2>&1; then
+  if DEVCONTAINER_SOCKET="$socket_path" "$docker_adapter_bin" version >/dev/null 2>&1; then
     break
   fi
   sleep 0.1
 done
-DOCKER_HOST="unix://${socket_path}" docker version >/dev/null
+DEVCONTAINER_SOCKET="$socket_path" "$docker_adapter_bin" version >/dev/null
 
 export DEVCONTAINER_DEMO_BIN="$demo_bin"
+export DEVCONTAINER_DEMO_DOCKER_BIN="$docker_adapter_bin"
+export DEVCONTAINER_DEMO_COMPOSE_BIN="$compose_adapter_bin"
 DEVCONTAINER_DEMO_CLI_VERSION="$(
   jq -r '.referencePins.devcontainersCli.version' Tests/Parity/manifest.json
 )"

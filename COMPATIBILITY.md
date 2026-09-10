@@ -43,7 +43,7 @@ audit also uses `delegated`, `partial`, and `unverified`; see
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
 | `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
+| `apple-stock` | Official `@devcontainers/cli` through this project's adapters, native `container-compose`, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen Container fork and no Docker software dependency | `supported` |
 | `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
@@ -266,7 +266,7 @@ preserved. Running containers, active execs, starts, and concurrent lifecycle
 mutations reject the export. The stock poller cannot prove historical events,
 so the handoff reports no event history instead of manufacturing it.
 
-The optional `container-compose` provider's compatibility labels happen to use
+The native `container-compose` provider's compatibility labels happen to use
 the `com.apple.container.compose.*` namespace; they do not identify an
 Apple-authored Compose product. They are projected to the
 `com.docker.compose.*` labels consumed by Dev Containers. Docker label filters

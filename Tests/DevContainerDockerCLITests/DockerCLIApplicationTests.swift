@@ -16,6 +16,7 @@
 
 import Darwin
 @testable import DevContainerDockerCLI
+import DevContainerProcess
 import Foundation
 import Testing
 
@@ -44,6 +45,90 @@ struct DockerCLIApplicationTests {
         ).archive()
 
         #expect(!archive.contains(Data("com.apple.provenance".utf8)))
+    }
+
+    @Test
+    func `build archive honors Docker ignore patterns and negation`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(
+            to: root.appendingPathComponent("Dockerfile")
+        )
+        try Data("secret\n".utf8).write(
+            to: root.appendingPathComponent("credentials.pem")
+        )
+        try Data("keep\n".utf8).write(
+            to: root.appendingPathComponent("public.pem")
+        )
+        try Data("*.pem\n!public.pem\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let archive = try DockerBuildOptions(arguments: [root.path]).archive()
+        let entries = try archiveEntries(archive)
+
+        #expect(entries.contains("Dockerfile"))
+        #expect(entries.contains("public.pem"))
+        #expect(!entries.contains("credentials.pem"))
+        #expect(!entries.contains(".dockerignore"))
+    }
+
+    @Test
+    func `dockerfile specific ignore file takes precedence`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dockerfile-ignore-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dockerfile = root.appendingPathComponent("Containerfile")
+        try Data("FROM scratch\n".utf8).write(to: dockerfile)
+        try Data("root-only\n".utf8).write(
+            to: root.appendingPathComponent("root.txt")
+        )
+        try Data("specific-only\n".utf8).write(
+            to: root.appendingPathComponent("specific.txt")
+        )
+        try Data("root.txt\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+        try Data("specific.txt\n".utf8).write(
+            to: root.appendingPathComponent("Containerfile.dockerignore")
+        )
+
+        let archive = try DockerBuildOptions(
+            arguments: ["--file", dockerfile.path, root.path]
+        ).archive()
+        let entries = try archiveEntries(archive)
+
+        #expect(entries.contains("Containerfile"))
+        #expect(entries.contains("root.txt"))
+        #expect(!entries.contains("specific.txt"))
+        #expect(!entries.contains("Containerfile.dockerignore"))
+    }
+
+    @Test
+    func `build archive honors Docker ignore character classes`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-class-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        for name in ["secret1.txt", "secretA.txt", "public1.txt", "publicA.txt"] {
+            try Data(name.utf8).write(to: root.appendingPathComponent(name))
+        }
+        try Data("secret[0-9].txt\npublic*.txt\n!public[!A-Z].txt\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(!entries.contains("secret1.txt"))
+        #expect(entries.contains("secretA.txt"))
+        #expect(entries.contains("public1.txt"))
+        #expect(!entries.contains("publicA.txt"))
     }
 
     @Test
@@ -360,6 +445,20 @@ struct DockerCLIApplicationTests {
         withUnsafeBytes(of: &length) { result.append(contentsOf: $0) }
         result.append(payload)
         return result
+    }
+
+    private func archiveEntries(_ archive: Data) throws -> Set<String> {
+        let result = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-tf", "-"],
+            environment: ["PATH": "/usr/bin:/bin"],
+            input: archive
+        )
+        #expect(result.exitCode == 0)
+        let output = try #require(
+            String(data: result.standardOutput, encoding: .utf8)
+        )
+        return Set(output.split(whereSeparator: \.isNewline).map(String.init))
     }
 }
 

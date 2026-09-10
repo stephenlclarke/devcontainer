@@ -9,10 +9,10 @@
 > commit and signed tag.
 
 This document defines how `devcontainer` validates and publishes an arm64
-macOS command-line tool for Apple's stock `container` runtime. Docker is the
-behavioral oracle, stock Apple `container` is the required runtime, and
-`container-compose` is an optional provider tested in a separate, explicitly
-identified parity lane.
+macOS command-line tool for Apple's stock `container` runtime. Docker is an
+isolated behavioral oracle only, stock Apple `container` is the required
+runtime, and native `container-compose` is the required process-isolated
+multi-service provider tested in both Apple runtime lanes.
 
 ## Release Principles
 
@@ -24,7 +24,9 @@ identified parity lane.
 - Live Docker, stock Apple, and Compose-provider parity runs only on trusted bare-metal Apple silicon.
 - GitHub-hosted macOS validates source, tests, coverage, package structure, formula rendering, and documentation, but is not accepted as live Virtualization.framework evidence.
 - Releases never install, replace, or start a custom `container` runtime as a side effect.
-- Releases never install `container-compose` as a side effect.
+- Releases never install or select a custom Container runtime as a side effect.
+- Product and Homebrew verification fail if they invoke Docker or Colima
+  software; only the isolated parity-oracle lane may do so.
 - Missing runtime or provider prerequisites fail the strict release gate; they are not reported as successful skips.
 - Stable assets, tags, notes, checksums, SBOMs, and formula versions are immutable.
 - GitHub Actions are pinned to complete commit SHAs, with the readable release version retained in a comment.
@@ -432,22 +434,23 @@ class Devcontainer < Formula
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
   depends_on macos: :tahoe
+  depends_on "node"
+  depends_on "stephenlclarke/tap/container-compose"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
     libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
+    pkgshare.install Dir["share/devcontainer/*"]
   end
 
   def caveats
     <<~EOS
-      This formula installs devcontainer and requires the upstream Docker CLI
-      and Docker Compose protocol clients.
+      This formula installs devcontainer's own compatibility adapters and the
+      native container-compose provider. Docker software is not required.
       Install Apple's stock container runtime separately from Apple.
       Register the optional Apple CLI plugin explicitly:
         devcontainer plugin register

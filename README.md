@@ -63,22 +63,27 @@ Apple-native runtime operations.
 ```mermaid
 flowchart LR
     VS["VS Code Dev Containers"] --> DC["Official @devcontainers/cli"]
-    DC --> Docker["Unmodified Docker CLI"]
-    Docker --> API["Local Docker Engine compatibility socket"]
+    DC --> Adapter["Bundled devcontainer-docker protocol adapter"]
+    Adapter --> API["Local Docker Engine compatibility socket"]
     API --> Shared["container-engine generated API 1.44 through 1.53 gateway"]
     Shared --> Session["Private fingerprint-bound provider session"]
     Session --> Core["devcontainer stock adapter and provider-neutral runtime core"]
     Core --> Stock["Stock apple/container"]
-    DC --> ComposeChoice{"Compose provider"}
-    ComposeChoice --> DockerCompose["Docker Compose over the bridge"]
-    ComposeChoice --> ContainerCompose["container-compose adapter"]
-    DockerCompose --> API
-    ContainerCompose --> Stock
+    DC --> ContainerCompose["Bundled devcontainer-compose dispatcher"]
+    ContainerCompose --> NativeCompose["Native container-compose"]
+    NativeCompose -->|stock profile| API
+    NativeCompose -->|enhanced profile| Enhanced["Enhanced Container runtime"]
 ```
 
-The `container-compose` integration is first-class but independently installed.
-The core does not import `ComposeCore`, and installing this project never
-silently replaces stock Apple `container` with the matched fork stack.
+The `container-compose` integration remains process-isolated and independently
+released. The release design requires its stock profile to use the same local
+Engine socket and stock adapter rather than loading enhanced XPC types into
+Apple's service; its enhanced profile is selected explicitly. That stock
+provider and a runtime-neutral Homebrew formula are release blockers. The core
+does not import `ComposeCore`, and no completed product path may silently
+replace stock Apple `container` with the matched fork stack. No product path
+installs or launches the Docker CLI, Docker Compose, Docker Desktop, or a
+Docker daemon.
 
 The stock adapter can export a stopped container's canonical name, stable
 Docker identifier, immutable Apple bundle key, and lifecycle snapshot for a
@@ -92,12 +97,12 @@ that the legacy poller cannot prove.
 | Lane | Purpose | Stable-release requirement |
 | --- | --- | --- |
 | Real Docker | Behavioral oracle using pinned Docker Engine, Docker Compose, and `@devcontainers/cli` | Complete raw and normalized evidence |
-| Stock Apple | Official `apple/container` only; Docker Compose uses the compatibility API | Zero semantic differences in every claimed fixture |
-| `container-compose` provider | Stephen Clarke's separately installed `container-compose`, with its exact runtime provenance recorded | Zero semantic differences in every claimed fixture |
+| Stock Apple | Official `apple/container` plus the required native Engine-socket `container-compose` provider; no Docker software | Zero semantic differences in every claimed fixture |
+| Enhanced Container | Stephen Clarke's matched Container and native `container-compose` stack, with exact runtime provenance | Zero semantic differences in every claimed fixture |
 
 The test plan covers image, Dockerfile, Features, users, environment, lifecycle hooks, workspace mounts, ports, reuse, Compose services, networks, volumes, failure recovery, and real VS Code attach/rebuild behavior. See [TESTING.md](TESTING.md), [COMPATIBILITY.md](COMPATIBILITY.md), and the explicit [standards conformance audit](CONFORMANCE.md).
 
-Stock `apple/container` 1.1.0 does not expose create-time hostname, full Docker
+Stock `apple/container` 1.4.1 does not expose create-time hostname, full Docker
 privileged mode, or most Docker security-option fields. Requests for those
 semantics fail before runtime creation; privileged mode is never approximated
 with `CapAdd ALL`. Runtime-affecting container, exec, network, and volume
@@ -132,7 +137,7 @@ advanced mount options.
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Stock-provider adapter; normal mode starts one internal private provider session behind the shared public gateway, while `--provider-socket` exposes only the private session for an external `container-engine` process |
-| `Sources/DevContainerComposeProvider` | Optional external `container-compose` dispatcher |
+| `Sources/DevContainerComposeProvider` | Process-isolated native `container-compose` dispatcher |
 
 ## Development
 
@@ -142,9 +147,7 @@ Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,
 stock Apple `container`, real Docker, the pinned Dev Container CLI, and the
 selected Compose provider.
 
-The stock multi-service path uses the upstream `docker-compose` client over
-this project's compatibility socket. The separately selected
-`container-compose` provider remains optional and independently installed.
+All multi-service product paths use native `container-compose`. Docker and Colima are restricted to explicitly named reference-oracle parity jobs and are never product, build, package, or Homebrew dependencies.
 
 ```console
 make check
@@ -189,7 +192,7 @@ Runtime references are [Apple container](https://github.com/apple/container), [A
 ## Install
 
 Requirements are an Apple-silicon Mac running macOS Tahoe 26 or later and
-Apple [`container` 1.1.0](https://github.com/apple/container/releases/tag/1.1.0).
+Apple [`container` 1.4.1](https://github.com/apple/container/releases/tag/1.4.1).
 Install Apple's signed package first, then install `devcontainer`:
 
 When macOS asks whether the selected runtime's `container-runtime-linux` may
@@ -216,11 +219,11 @@ npx --yes @devcontainers/cli@0.88.0 up \
   --workspace-folder /path/to/project
 ```
 
-For VS Code, configure the Compose wrapper once and launch the workspace from
-that configured shell:
+For VS Code, configure both bundled adapters once and launch the workspace from that configured shell:
 
 ```json
 {
+  "dev.containers.dockerPath": "/opt/homebrew/bin/devcontainer-docker",
   "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
 }
 ```
@@ -237,12 +240,10 @@ devcontainer plugin register
 container devcontainer doctor
 ```
 
-The stable formula installs this project with upstream Docker CLI and Docker
-Compose protocol-client dependencies; it does not install a container runtime.
+The stable formula installs this project, Node.js, and native `container-compose`; it does not install Docker software or a container runtime.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
-`container-compose` remains an explicit optional installation and provider
-choice. See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
+See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
 service management, upgrades, verification, troubleshooting, and removal.
 
 ## Independence and trademarks

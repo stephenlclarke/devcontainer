@@ -387,7 +387,8 @@ depends_on arch: :arm64
 depends_on macos: :tahoe
 ```
 
-`container-compose` remains optional and independently installed. The mutable
+`container-compose` remains independently released and is a required native
+Compose dependency. The mutable
 `devcontainer-current` formula conflicts with the stable formula and does not
 share stable release claims.
 

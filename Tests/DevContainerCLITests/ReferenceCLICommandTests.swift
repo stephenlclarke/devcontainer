@@ -65,7 +65,10 @@ struct ReferenceCLICommandTests {
         ])
         #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.88.0")
         #expect(invocation.environment["DOCKER_HOST"] == "unix:///tmp/fixture.sock")
-        #expect(invocation.environment["UNSAFE_SECRET"] == nil)
+        #expect(invocation.environment["LOCAL_ENV_FIXTURE"] == "preserved")
+        #expect(invocation.environment["SSH_AUTH_SOCK"] == "/tmp/agent.sock")
+        #expect(invocation.environment["DYLD_INSERT_LIBRARIES"] == nil)
+        #expect(invocation.environment["BASH_ENV"] == nil)
     }
 
     @Test
@@ -125,7 +128,10 @@ private struct InvocationFixture {
             "DOCKER_HOST": "unix:///tmp/fixture.sock",
             "HOME": "/tmp",
             "PATH": "/usr/bin:/bin",
-            "UNSAFE_SECRET": "must-not-propagate"
+            "LOCAL_ENV_FIXTURE": "preserved",
+            "SSH_AUTH_SOCK": "/tmp/agent.sock",
+            "DYLD_INSERT_LIBRARIES": "/tmp/injected.dylib",
+            "BASH_ENV": "/tmp/injected-shell"
         ]
     }
 
