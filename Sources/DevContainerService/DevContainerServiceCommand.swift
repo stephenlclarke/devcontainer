@@ -108,18 +108,26 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     : .native
             )
         }
-        let handoffCapabilities = try [
+        var handoffCapabilityIdentifiers = [
             "engine.handoff.part.identity-lifecycle-events.v1",
-            "engine.handoff.part.logging.v1",
             "engine.handoff.provider-key-enrollment.v1"
-        ].map {
+        ]
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            handoffCapabilityIdentifiers.append("engine.handoff.part.logging.v1")
+        #endif
+        let handoffCapabilities = try handoffCapabilityIdentifiers.map {
             try ContainerEngineProviderCapability(
                 identifier: $0,
                 status: .native
             )
         }
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            let providerProfile = ContainerEngineProviderProfile.enhanced
+        #else
+            let providerProfile = ContainerEngineProviderProfile.stock
+        #endif
         let providerDeclaration = try ContainerEngineProviderDeclaration(
-            profile: .stock,
+            profile: providerProfile,
             kind: .devcontainerStock,
             implementationVersion: BuildInfo.current.version,
             runtimeRevisions: [

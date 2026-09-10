@@ -64,13 +64,40 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
+  stock-test:
+    name: Stock Apple tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVCONTAINER_RUNTIME_PROFILE: stock
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the stock dependency lock
+        run: cp Package.stock.resolved Package.resolved
+      - name: Resolve stock dependencies
+        run: |
+          cp Package.resolved /tmp/devcontainer-stock-Package.resolved
+          swift package resolve
+          cmp /tmp/devcontainer-stock-Package.resolved Package.resolved
+      - name: Test against unmodified Apple packages
+        run: swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors
+      - name: Smoke test stock-profile products
+        run: |
+          .build/debug/devcontainer version --format json | jq -e '.version'
+          .build/debug/devcontainer-engine --help | grep 'Apple container'
+
   validate:
     name: Validate
     if: always()
-    needs: [test]
+    needs: [test, stock-test]
     runs-on: ubuntu-latest
     steps:
       - name: Require successful validation
         env:
-          RESULT: ${{ needs.test.result }}
-        run: test "$RESULT" = success
+          STOCK_RESULT: ${{ needs.stock-test.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success && test "$STOCK_RESULT" = success

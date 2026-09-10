@@ -466,6 +466,40 @@ jobs:
         self.assertEqual(makefile.count("--sanitize=address"), 3)
         self.assertEqual(makefile.count("--sanitize=thread"), 3)
 
+    def test_ci_builds_the_unmodified_stock_apple_graph(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("  stock-test:\n", ci)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", ci)
+        self.assertIn("cp Package.stock.resolved Package.resolved", ci)
+        self.assertIn(
+            "swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors",
+            ci,
+        )
+        self.assertIn("needs: [test, stock-test]", ci)
+
+        resolved = json.loads(
+            (ROOT / "Package.stock.resolved").read_text(encoding="utf-8")
+        )
+        pins = {pin["identity"]: pin for pin in resolved["pins"]}
+        self.assertEqual(
+            pins["container"]["location"],
+            "https://github.com/apple/container.git",
+        )
+        self.assertEqual(pins["container"]["state"]["version"], "1.4.1")
+        self.assertEqual(
+            pins["containerization"]["location"],
+            "https://github.com/apple/containerization.git",
+        )
+        self.assertEqual(
+            pins["containerization"]["state"]["version"],
+            "0.45.0",
+        )
+        self.assertEqual(
+            pins["swift-nio-ssl"]["location"],
+            "https://github.com/apple/swift-nio-ssl.git",
+        )
+
     def test_hosted_swift_jobs_pin_xcode_and_bound_reporter_output(self) -> None:
         swift_workflows = (
             "ci.yml",

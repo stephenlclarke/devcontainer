@@ -237,7 +237,11 @@ private func exerciseProviderProcess(
         let descriptor = try await ContainerEngineProviderSessionClient.probe(
             socketPath: socket
         )
-        #expect(descriptor.fingerprint.declaration.profile == .stock)
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            #expect(descriptor.fingerprint.declaration.profile == .enhanced)
+        #else
+            #expect(descriptor.fingerprint.declaration.profile == .stock)
+        #endif
         #expect(descriptor.fingerprint.declaration.kind == .devcontainerStock)
         #expect(descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.SystemPing" && $0.status == .native
@@ -250,10 +254,16 @@ private func exerciseProviderProcess(
             $0.identifier == "engine.handoff.provider-key-enrollment.v1"
                 && $0.status == .native
         })
-        #expect(descriptor.fingerprint.declaration.capabilities.contains {
-            $0.identifier == "engine.handoff.part.logging.v1"
-                && $0.status == .native
-        })
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            #expect(descriptor.fingerprint.declaration.capabilities.contains {
+                $0.identifier == "engine.handoff.part.logging.v1"
+                    && $0.status == .native
+            })
+        #else
+            #expect(!descriptor.fingerprint.declaration.capabilities.contains {
+                $0.identifier == "engine.handoff.part.logging.v1"
+            })
+        #endif
         #expect(descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier
                 == "engine.handoff.part.identity-lifecycle-events.v1"

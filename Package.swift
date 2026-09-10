@@ -18,6 +18,25 @@
 import Foundation
 import PackageDescription
 
+let runtimeProfile = ProcessInfo.processInfo.environment[
+    "DEVCONTAINER_RUNTIME_PROFILE"
+] ?? "enhanced"
+let enhancedRuntime: Bool = {
+    switch runtimeProfile {
+    case "enhanced":
+        true
+    case "stock":
+        false
+    default:
+        fatalError(
+            "DEVCONTAINER_RUNTIME_PROFILE must be 'stock' or 'enhanced'"
+        )
+    }
+}()
+let runtimeSwiftSettings: [SwiftSetting] = enhancedRuntime
+    ? [.define("DEVCONTAINER_ENHANCED_RUNTIME")]
+    : []
+
 private func dependency(
     name: String,
     environmentVariable: String,
@@ -30,6 +49,25 @@ private func dependency(
         return .package(name: name, path: path)
     }
     return .package(url: url, revision: revision)
+}
+
+private func runtimeDependency(
+    name: String,
+    environmentVariable: String,
+    stockURL: String,
+    stockVersion: Version,
+    enhancedURL: String,
+    enhancedRevision: String
+) -> Package.Dependency {
+    if let path = ProcessInfo.processInfo.environment[environmentVariable],
+        !path.isEmpty
+    {
+        return .package(name: name, path: path)
+    }
+    if enhancedRuntime {
+        return .package(url: enhancedURL, revision: enhancedRevision)
+    }
+    return .package(url: stockURL, exact: stockVersion)
 }
 
 let package = Package(
@@ -58,26 +96,26 @@ let package = Package(
             url: "https://github.com/stephenlclarke/container-engine-api.git",
             revision: "84830606abf971110071248e087a80ff4abb86d4"
         ),
-        dependency(
+        runtimeDependency(
             name: "container",
             environmentVariable: "CONTAINER_PACKAGE_PATH",
-            url: "https://github.com/stephenlclarke/container.git",
-            revision: "228897171d71975988ccdc690f1982e7433952af"
+            stockURL: "https://github.com/apple/container.git",
+            stockVersion: "1.4.1",
+            enhancedURL: "https://github.com/stephenlclarke/container.git",
+            enhancedRevision: "228897171d71975988ccdc690f1982e7433952af"
         ),
-        dependency(
+        runtimeDependency(
             name: "containerization",
             environmentVariable: "CONTAINERIZATION_PACKAGE_PATH",
-            url: "https://github.com/stephenlclarke/containerization.git",
-            revision: "b404e03bb914904107a6a9305ba1f0e44c79a59c"
+            stockURL: "https://github.com/apple/containerization.git",
+            stockVersion: "0.45.0",
+            enhancedURL: "https://github.com/stephenlclarke/containerization.git",
+            enhancedRevision: "b404e03bb914904107a6a9305ba1f0e44c79a59c"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
-        .package(
-            url: "https://github.com/stephenlclarke/swift-nio-ssl.git",
-            revision: "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285"
-        ),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],
     targets: [
@@ -148,7 +186,8 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "SocketForwarder", package: "container")
-            ]
+            ],
+            swiftSettings: runtimeSwiftSettings
         ),
         .target(
             name: "DevContainerComposeProvider",
@@ -181,7 +220,8 @@ let package = Package(
                 .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Logging", package: "swift-log")
-            ]
+            ],
+            swiftSettings: runtimeSwiftSettings
         ),
         .executableTarget(
             name: "DevContainerCLI",
@@ -280,7 +320,11 @@ let package = Package(
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
-            ]
+            ],
+            exclude: enhancedRuntime
+                ? []
+                : ["AppleContainerRuntimeLoggingHandoffTests.swift"],
+            swiftSettings: runtimeSwiftSettings
         ),
         .testTarget(
             name: "DevContainerServiceTests",
@@ -294,7 +338,8 @@ let package = Package(
                 .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerEngineWire", package: "container-engine-api"),
                 .product(name: "Logging", package: "swift-log")
-            ]
+            ],
+            swiftSettings: runtimeSwiftSettings
         )
     ],
     swiftLanguageModes: [.v6]

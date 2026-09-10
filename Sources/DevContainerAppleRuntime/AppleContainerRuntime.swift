@@ -193,7 +193,7 @@ public extension AppleContainerRuntime {
         directContainerInventorySupported =
             Self.supportsDirectContainerInventory(record)
         return ProtocolDescriptor(
-            provider: .stock,
+            provider: Self.backendProvider(record),
             providerVersion: record.version,
             providerCommit: record.commit ?? "unspecified",
             distribution: record.distribution ?? "apple",
@@ -233,6 +233,14 @@ public extension AppleContainerRuntime {
         _ record: AppleVersionRecord
     ) -> Bool {
         (record.distribution ?? "apple") == "apple"
+    }
+
+    private static func backendProvider(
+        _ record: AppleVersionRecord
+    ) -> BackendProvider {
+        (record.distribution ?? "apple") == "apple"
+            ? .stock
+            : .containerCompose
     }
 
     private func canUseDirectContainerInventory(

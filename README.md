@@ -35,6 +35,10 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > records the newer exact fingerprints required by the current source
 > candidate without rewriting that historical release evidence.
 
+Current main additionally has a clean compile gate against unmodified Apple
+`container` 1.4.1 and `containerization` 0.45.0. That build result is not a
+substitute for the outstanding real-runtime parity rerun.
+
 ## See it work
 
 ![Live terminal recording of a Dev Container starting and running on stock Apple container](docs/images/devcontainer-demo.gif)

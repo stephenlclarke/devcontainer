@@ -57,6 +57,14 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 
 **Fix design:** compile the stock provider exclusively against official Apple tags and upstream dependency origins. Put enhanced logging/handoff integrations behind the neutral provider protocol in a separately built enhanced provider. Keep process and core types independent of fork-only APIs. Do not attempt to link two packages both named `container` or `containerization` into one SwiftPM graph. Separate package manifests/products and locked build roots provide that isolation.
 
+**Implementation status:** the package now has explicit `stock` and
+`enhanced` compile profiles. The checked stock lock selects unmodified
+`apple/container` 1.4.1, `apple/containerization` 0.45.0 and Apple's NIO SSL;
+a clean copied checkout builds all products from that graph with automatic
+resolution disabled. Fork-only logging handoff code and capability advertising
+compile only in the enhanced profile. Separate shipped provider processes and
+real-runtime certification remain outstanding.
+
 **Acceptance:** clean stock build with all Stephen-owned Container/Containerization/NIO SSL overrides absent, followed by tests against the official signed stock runtime. Separately build and test the enhanced provider against one matched fork graph. Each resulting SBOM must expose its actual source provenance.
 
 ### DF-03 - P0: main is not reproducibly buildable
@@ -65,6 +73,12 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 
 **Fix design:** define the stock and enhanced graphs first, reconcile their transitive origins, and regenerate each lockfile with its declared toolchain. Add a clean-checkout gate that clears only the gate's private dependency cache and builds every shipped product with automatic resolution disabled. Reject undeclared path overrides in release builds. Coordinate pins after dependency and consumer tests pass, not merely after `swift package resolve` succeeds.
 
+**Implementation status:** main's enhanced lock is current and builds, and CI
+now has an independent stock test lane using `Package.stock.resolved`. The enhanced
+fork graph still emits a conflicting NIO SSL identity warning introduced by
+its transitive dependencies; that must be fixed in the enhanced Container
+family before this finding is closed.
+
 **Acceptance:** a fresh isolated checkout builds all packaged executables without changing its lockfile, without environment-only source overlays, and without conflicting package identities. Update #47 with the actual current failure and close it only with complete source/dependency/binary evidence.
 
 ### DF-04 - P1: runtime identity, orchestration choice and configuration disagree
@@ -72,6 +86,12 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 **Evidence:** [`AppleContainerRuntime.swift`](../Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift), lines 190-212, returns `provider: .stock` regardless of the executable's distribution. [`DevContainerServiceCommand.swift`](../Sources/DevContainerService/DevContainerServiceCommand.swift), lines 131-157, declares profile `.stock` and kind `.devcontainerStock`. The application also conflates a `container-compose` orchestration choice with a runtime provider. [`ConfigureCommand.swift`](../Sources/DevContainerCLI/ConfigureCommand.swift) writes a config file, but the service's startup options do not load it; [`ContextCommand.swift`](../Sources/DevContainerCLI/ContextCommand.swift) prints its default socket unless an option is repeated explicitly. A configured custom socket can therefore disagree with `devcontainer context`.
 
 **Fix design:** one immutable `RuntimeSelection` separates distribution (`apple-stock`/`enhanced`), transport endpoint, orchestration implementation, source/runtime/guest identity, capabilities and state-root identity. CLI, service, Compose, doctor and generated VS Code settings use the same resolution function with explicit precedence: CLI options, documented environment, configuration file, stock default. Mandatory strict behavior is not a decorative saved toggle. Reject selection conflicts and do not infer stock identity solely from an installation path or an absent distribution string.
+
+**Implementation status:** runtime descriptors now classify Apple's
+distribution as stock and a custom distribution as enhanced, and the Engine
+provider profile is derived from that probe. Unifying CLI/configuration/socket
+selection and separating enhanced runtime naming from Compose orchestration
+remain outstanding.
 
 **Acceptance:** configure a non-default socket and enhanced executable, then confirm every public command and service reports the same effective selection. Switching distributions with owned resources fails until the designed down/recreate or migration procedure completes. A mislabeled fork cannot enter the stock test lane.
 

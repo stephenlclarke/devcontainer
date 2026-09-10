@@ -141,17 +141,19 @@ struct AppleContainerRuntimeTests {
         )
     }
 
-    @Test
-    func `native inventory omits attachments without IPv4 addresses`() {
-        let attachment = Attachment(
-            network: "ipv6-only",
-            hostname: "fixture",
-            ipv6Address: nil,
-            macAddress: nil
-        )
+    #if DEVCONTAINER_ENHANCED_RUNTIME
+        @Test
+        func `native inventory omits attachments without IPv4 addresses`() {
+            let attachment = Attachment(
+                network: "ipv6-only",
+                hostname: "fixture",
+                ipv6Address: nil,
+                macAddress: nil
+            )
 
-        #expect(AppleContainerRuntime.networkAddresses([attachment]).isEmpty)
-    }
+            #expect(AppleContainerRuntime.networkAddresses([attachment]).isEmpty)
+        }
+    #endif
 
     @Test
     func `descriptor and inventory decode stock Apple records`() async throws {

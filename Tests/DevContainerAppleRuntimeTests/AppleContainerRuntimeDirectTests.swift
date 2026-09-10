@@ -153,6 +153,12 @@ struct AppleContainerRuntimeDirectTests {
             networks: networks
         )
 
+        let descriptor = try await runtime.descriptor(
+            context: RuntimeRequestContext()
+        )
+        #expect(descriptor.provider == .containerCompose)
+        #expect(descriptor.distribution == "container-compose")
+
         let snapshots = try await runtime.listContainers(
             all: true,
             labels: [:],

@@ -65,13 +65,21 @@ extension AppleContainerRuntime {
     }
 
     static func networkAddresses(_ attachments: [Attachment]) -> [String: String] {
-        Dictionary(
-            uniqueKeysWithValues: attachments.compactMap { attachment in
-                attachment.ipv4Address.map {
-                    (attachment.network, $0.address.description)
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            Dictionary(
+                uniqueKeysWithValues: attachments.compactMap { attachment in
+                    attachment.ipv4Address.map {
+                        (attachment.network, $0.address.description)
+                    }
                 }
-            }
-        )
+            )
+        #else
+            Dictionary(
+                uniqueKeysWithValues: attachments.map { attachment in
+                    (attachment.network, attachment.ipv4Address.address.description)
+                }
+            )
+        #endif
     }
 
     static func mount(_ value: Filesystem) -> RuntimeMount? {
