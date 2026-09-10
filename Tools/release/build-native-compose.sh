@@ -17,10 +17,16 @@ fi
 compose_repository="$(jq -er '.repository' "$metadata")"
 compose_commit="$(jq -er '.commit | select(test("^[0-9a-f]{40}$"))' "$metadata")"
 compose_version="$(jq -er '.version' "$metadata")"
+go_version="$(jq -er '.goVersion' "$metadata")"
 container_version="$(jq -er '.appleContainerVersion' "$metadata")"
 container_revision="$(jq -er '.appleContainerRevision' "$metadata")"
 containerization_version="$(jq -er '.appleContainerizationVersion' "$metadata")"
 containerization_revision="$(jq -er '.appleContainerizationRevision' "$metadata")"
+if [[ "$(go env GOVERSION)" != "go${go_version}" ]]; then
+  printf 'native Compose requires Go %s; found %s\n' \
+    "$go_version" "$(go env GOVERSION)" >&2
+  exit 1
+fi
 
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/devcontainer-native-compose.XXXXXX")"
 cleanup() {

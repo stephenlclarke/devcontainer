@@ -518,6 +518,7 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(metadata["appleContainerizationVersion"], "0.45.0")
         self.assertEqual(metadata["goVersion"], "1.26.3")
         self.assertIn("CONTAINER_COMPOSE_BUILD_PROFILE=stock", builder)
+        self.assertIn('go env GOVERSION', builder)
         self.assertIn("Package.stock.resolved", builder)
         self.assertIn("--runtime-profile stock", builder)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", package)
