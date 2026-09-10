@@ -181,6 +181,172 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `supports the upstream discovery and lifecycle command shapes`() throws {
+        let transport = StubTransport([
+            .json(["Version": "1.4.1"]),
+            .json(["Driver": "apple-container"]),
+            .json(["Name": "cache"]),
+            .json([]),
+            .init(status: 204),
+            .init(status: 204),
+            .init(status: 204),
+            .init(status: 204),
+            .init(status: 200, body: Data("{\"status\":\"done\"}\n".utf8)),
+            .init(status: 201),
+            .init(status: 200, body: Data("{\"Type\":\"container\"}\n".utf8))
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        #expect(try application.run(arguments: ["--host=unix:///ignored", "version"])
+            .standardOutput.contains(Data("1.4.1".utf8)))
+        #expect(try application.run(arguments: ["-H", "unix:///ignored", "info"])
+            .standardOutput.contains(Data("apple-container".utf8)))
+        #expect(try application.run(arguments: ["inspect", "--type", "volume", "cache"])
+            .standardOutput.contains(Data("cache".utf8)))
+        #expect(try application.run(arguments: ["ps", "--format", "{{.ID}}"])
+            .standardOutput.isEmpty)
+        #expect(try application.run(arguments: ["rm", "-f", "first", "second"])
+            .standardOutput == Data("first\nsecond\n".utf8))
+        #expect(try application.run(arguments: ["start", "first"]).exitCode == 0)
+        #expect(try application.run(arguments: ["stop", "--time", "3", "first"]).exitCode == 0)
+        #expect(try application.run(arguments: ["pull", "registry.example/a/b@sha256:abc"])
+            .standardOutput.contains(Data("done".utf8)))
+        #expect(try application.run(arguments: ["tag", "source", "registry.example:5000/a"])
+            .exitCode == 0)
+        #expect(try application.run(
+            arguments: ["events", "--format", "{{json .}}", "--filter", "type=container"]
+        ).standardOutput.contains(Data("container".utf8)))
+
+        let buildx = try application.run(arguments: ["buildx", "version"])
+        #expect(buildx.exitCode == 1)
+        #expect(buildx.standardError.contains(Data("classic build path".utf8)))
+    }
+
+    @Test
+    func `maps the complete supported build and run option sets`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-options-\(UUID().uuidString)")
+        let external = root.deletingLastPathComponent()
+            .appendingPathComponent("External-\(UUID().uuidString).Dockerfile")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try Data("FROM scratch\n".utf8).write(to: external)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: external)
+        }
+
+        let build = try DockerBuildOptions(arguments: [
+            "--file", external.path, "--tag", "one:latest", "-t", "two:latest",
+            "--target", "development", "--build-arg", "A=B", "--label", "x=y",
+            "--platform", "linux/arm64", "--progress", "plain", "--no-cache", "--pull",
+            root.path
+        ])
+        #expect(build.tags == ["one:latest", "two:latest"])
+        #expect(build.target == "development")
+        #expect(build.buildArguments == ["A": "B"])
+        #expect(build.labels == ["x": "y"])
+        #expect(build.platform == "linux/arm64")
+        let archive = try build.archive()
+        #expect(!archive.isEmpty)
+        let query = try build.query()
+        #expect(query.contains { $0 == ("dockerfile", external.lastPathComponent) })
+
+        let inline = try DockerBuildOptions(arguments: [
+            "--build-arg=C=D", "--label=z=w", "--platform=linux/amd64",
+            "--progress=plain", root.path
+        ])
+        #expect(inline.buildArguments == ["C": "D"])
+        #expect(inline.labels == ["z": "w"])
+
+        let run = try DockerRunOptions(arguments: [
+            "-d", "--init", "--privileged", "--name", "box", "--attach", "stdout",
+            "--env", "A=B", "--label", "x=y", "--user", "1000", "--publish", "8080:80",
+            "--mount", "type=volume,src=cache,dst=/cache,ro,consistency=cached",
+            "--cap-add", "SYS_PTRACE", "--security-opt", "seccomp=unconfined",
+            "--sig-proxy=false", "image", "command"
+        ])
+        let request = run.createRequest
+        #expect(request["User"] as? String == "1000")
+        #expect((request["HostConfig"] as? [String: Any])?["Privileged"] as? Bool == true)
+
+        let exec = try DockerExecOptions(arguments: [
+            "--interactive", "--tty", "--user", "vscode", "--workdir", "/work",
+            "--env", "A=B", "box", "sh", "-lc", "true"
+        ])
+        #expect(exec.createRequest["WorkingDir"] as? String == "/work")
+        #expect(exec.createRequest["Tty"] as? Bool == true)
+    }
+
+    @Test
+    func `streams foreground run build and terminal exec output`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-stream-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let transport = StubTransport([
+            .json(["Id": "foreground"], status: 201),
+            .init(status: 204),
+            .init(status: 200, body: frame(channel: 1, text: "logs")),
+            .init(status: 200, body: Data("build-output".utf8)),
+            .json(["Id": "terminal-exec"], status: 201),
+            .init(status: 101, body: Data("terminal-output".utf8)),
+            .json(["ExitCode": 0])
+        ])
+        let application = DockerCLIApplication(transport: transport)
+        #expect(try application.run(arguments: ["run", "image", "true"]).standardOutput
+            == Data("logs".utf8))
+
+        var streamed = Data()
+        let build = try application.run(arguments: ["build", root.path]) { data, _ in
+            streamed.append(data)
+        }
+        #expect(build.standardOutput.isEmpty)
+        #expect(streamed == Data("build-output".utf8))
+
+        let terminal = try application.run(arguments: ["exec", "-t", "box", "printf", "ok"])
+        #expect(terminal.standardOutput == Data("terminal-output".utf8))
+    }
+
+    @Test
+    func `rejects incomplete and unsupported adapter options`() {
+        let application = DockerCLIApplication(transport: StubTransport([]))
+        let invalid: [[String]] = [
+            [], ["--host"], ["version", "extra"], ["info", "--format", "{{json .}}"],
+            ["inspect", "--type", "network", "n"], ["ps", "--filter"],
+            ["ps", "--format"], ["ps", "--help"], ["rm", "-f"], ["start"],
+            ["stop", "--time"], ["start", "--unknown", "box"], ["pull"],
+            ["tag", "only-one"], ["events", "--format"], ["events", "--filter"],
+            ["events", "--filter", "invalid"], ["events", "--unknown"],
+            ["buildx", "build"]
+        ]
+        for arguments in invalid {
+            #expect(throws: (any Error).self) {
+                try application.run(arguments: arguments)
+            }
+        }
+
+        let invalidBuildOptions = [
+            ["--file"], ["--build-arg", "invalid", "."], ["--label=invalid", "."],
+            ["--progress", "tty", "."], ["--progress=tty", "."], ["--security-opt=x", "."],
+            ["--unknown", "."], [".", "second"]
+        ]
+        for arguments in invalidBuildOptions {
+            #expect(throws: (any Error).self) { try DockerBuildOptions(arguments: arguments) }
+        }
+        #expect(throws: (any Error).self) {
+            try DockerBuildOptions(arguments: ["/definitely/missing"]).archive()
+        }
+        #expect(throws: (any Error).self) { try DockerRunOptions(arguments: []) }
+        #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--mount", "type=bind", "image"]) }
+        #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["-p", "1:2:3:4", "image"]) }
+        #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--unknown", "image"]) }
+        #expect(throws: (any Error).self) { try DockerExecOptions(arguments: ["--unknown"]) }
+        #expect(throws: (any Error).self) { try DockerExecOptions(arguments: ["box"]) }
+    }
+
+    @Test
     func `unsupported commands fail closed`() {
         #expect(throws: DockerCLIError.unsupported("system")) {
             try DockerCLIApplication(transport: StubTransport([])).run(arguments: ["system", "prune"])

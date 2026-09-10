@@ -299,10 +299,7 @@ struct DockerBuildOptions: Equatable {
         else {
             throw DockerCLIError.invalidArguments("build context is not a directory: \(context)")
         }
-        let dockerfileURL = URL(
-            fileURLWithPath: dockerfile,
-            relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        ).standardizedFileURL
+        let dockerfileURL = resolvedDockerfileURL(contextURL: contextURL)
         guard FileManager.default.fileExists(atPath: dockerfileURL.path) else {
             throw DockerCLIError.invalidArguments("Dockerfile does not exist: \(dockerfile)")
         }
@@ -333,14 +330,21 @@ struct DockerBuildOptions: Equatable {
 
     private var archivedDockerfile: String {
         let contextURL = URL(fileURLWithPath: context).standardizedFileURL
-        let dockerfileURL = URL(
-            fileURLWithPath: dockerfile,
-            relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        ).standardizedFileURL
+        let dockerfileURL = resolvedDockerfileURL(contextURL: contextURL)
         if dockerfileURL.path.hasPrefix(contextURL.path + "/") {
             return String(dockerfileURL.path.dropFirst(contextURL.path.count + 1))
         }
         return dockerfileURL.lastPathComponent
+    }
+
+    private func resolvedDockerfileURL(contextURL: URL) -> URL {
+        if dockerfile == "Dockerfile" {
+            return contextURL.appendingPathComponent(dockerfile).standardizedFileURL
+        }
+        return URL(
+            fileURLWithPath: dockerfile,
+            relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        ).standardizedFileURL
     }
 
     private static func value(_ arguments: [String], _ index: inout Int, for option: String) throws
