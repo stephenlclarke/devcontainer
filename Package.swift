@@ -107,7 +107,7 @@ let package = Package(
             stockURL: "https://github.com/apple/container.git",
             stockVersion: "1.4.1",
             enhancedURL: "https://github.com/stephenlclarke/container.git",
-            enhancedRevision: "84bb1cf1ab506ee68534e39ac12d8fbe50302415"
+            enhancedRevision: "9e8581d0f20bb5e26c17eaac1ffb00c6a5a03529"
         ),
         runtimeDependency(
             name: "containerization",
