@@ -516,6 +516,7 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertRegex(metadata["commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(metadata["appleContainerVersion"], "1.4.1")
         self.assertEqual(metadata["appleContainerizationVersion"], "0.45.0")
+        self.assertEqual(metadata["goVersion"], "1.26.3")
         self.assertIn("CONTAINER_COMPOSE_BUILD_PROFILE=stock", builder)
         self.assertIn("Package.stock.resolved", builder)
         self.assertIn("--runtime-profile stock", builder)

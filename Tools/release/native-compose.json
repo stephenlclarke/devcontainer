@@ -4,6 +4,7 @@
   "appleContainerizationRevision": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
   "appleContainerizationVersion": "0.45.0",
   "commit": "a72b15b459042a1abfc4ca81799ae7c3e75eb33a",
+  "goVersion": "1.26.3",
   "repository": "https://github.com/stephenlclarke/container-compose.git",
   "schemaVersion": 1,
   "version": "0.14.3"
