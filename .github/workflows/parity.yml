@@ -101,8 +101,8 @@ jobs:
       - name: Require exact CLI and VS Code equivalence
         run: |
           status=0
-          python3 Tools/parity/compare_results.py .build/parity || status=1
-          python3 Tools/parity/compare_results.py .build/parity/vscode || status=1
+          python3 Tools/parity/compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1
+          python3 Tools/parity/compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1
           python3 Tools/parity/validate_manifest.py --release || status=1
           exit "${status}"
       - name: Upload candidate-bound comparison

@@ -603,11 +603,11 @@ jobs:
         self.assertIn("    if: ${{ always() }}\n", compare)
         self.assertIn("          status=0\n", compare)
         self.assertIn(
-            "compare_results.py .build/parity || status=1",
+            "compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1",
             compare,
         )
         self.assertIn(
-            "compare_results.py .build/parity/vscode || status=1",
+            "compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1",
             compare,
         )
         self.assertIn(

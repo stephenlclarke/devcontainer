@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compare_results import compare
+from compare_results import compare, expected_fixtures
 from parity_lib import ParityError, parse_observations
 
 
@@ -53,7 +53,7 @@ class ParityLibraryTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            result, markdown = compare(root)
+            result, markdown = compare(root, {"D01"})
             self.assertEqual(result["status"], "failed")
             self.assertIn("container-compose provider", markdown)
 
@@ -69,10 +69,10 @@ class ParityLibraryTests(unittest.TestCase):
             ):
                 self.write_lane(root, lane, duration)
 
-            result, markdown = compare(root)
+            result, markdown = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["schemaVersion"], 2)
+            self.assertEqual(result["schemaVersion"], 3)
             self.assertTrue(result["performanceInvestigationRequired"])
             fixture = result["fixtures"][0]
             self.assertEqual(fixture["relativeDurations"]["apple-stock"], 2.51)
@@ -95,7 +95,7 @@ class ParityLibraryTests(unittest.TestCase):
             ):
                 self.write_lane(root, lane, duration)
 
-            result, _ = compare(root)
+            result, _ = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "passed")
             self.assertFalse(result["performanceInvestigationRequired"])
@@ -113,7 +113,7 @@ class ParityLibraryTests(unittest.TestCase):
             ):
                 self.write_lane(root, lane, duration)
 
-            result, markdown = compare(root)
+            result, markdown = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "passed")
             self.assertTrue(result["performanceTargetMet"])
@@ -132,7 +132,7 @@ class ParityLibraryTests(unittest.TestCase):
             ):
                 self.write_lane(root, lane, duration)
 
-            result, markdown = compare(root)
+            result, markdown = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "passed")
             self.assertFalse(result["performanceTargetMet"])
@@ -149,7 +149,7 @@ class ParityLibraryTests(unittest.TestCase):
                     None if lane == "apple-stock" else 1.0,
                 )
 
-            result, _ = compare(root)
+            result, _ = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "failed")
             self.assertIn(
@@ -157,8 +157,122 @@ class ParityLibraryTests(unittest.TestCase):
                 result["fixtures"][0]["timingDifferences"],
             )
 
+    def test_comparison_rejects_empty_lane_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane in ("docker", "apple-stock", "container-compose"):
+                directory = root / lane
+                directory.mkdir()
+                (directory / "results.json").write_text(
+                    json.dumps({"backend": lane, "status": "passed", "fixtures": []}),
+                    encoding="utf-8",
+                )
+
+            result, _ = compare(root, {"D01"})
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["evidenceStatus"], "failed")
+            self.assertIn(
+                "docker fixture evidence is empty or invalid",
+                result["evidenceErrors"],
+            )
+
+    def test_comparison_rejects_failed_parent_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane in ("docker", "apple-stock", "container-compose"):
+                self.write_lane(
+                    root,
+                    lane,
+                    1.0,
+                    status="failed" if lane == "apple-stock" else "passed",
+                )
+
+            result, _ = compare(root, {"D01"})
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn(
+                "apple-stock lane status is 'failed', expected 'passed'",
+                result["evidenceErrors"],
+            )
+
+    def test_comparison_rejects_missing_fixture_in_every_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane in ("docker", "apple-stock", "container-compose"):
+                self.write_lane(root, lane, 1.0)
+
+            result, _ = compare(root, {"D01", "D02"})
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn(
+                "docker is missing expected fixtures: D02",
+                result["evidenceErrors"],
+            )
+
+    def test_comparison_rejects_duplicate_and_unexpected_fixtures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane in ("docker", "apple-stock", "container-compose"):
+                self.write_lane(root, lane, 1.0)
+            docker_path = root / "docker" / "results.json"
+            payload = json.loads(docker_path.read_text(encoding="utf-8"))
+            payload["fixtures"] += [
+                payload["fixtures"][0],
+                {**payload["fixtures"][0], "id": "D99"},
+            ]
+            docker_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            result, _ = compare(root, {"D01"})
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn(
+                "docker has duplicate fixture evidence for D01",
+                result["evidenceErrors"],
+            )
+            self.assertIn(
+                "docker has unexpected fixtures: D99",
+                result["evidenceErrors"],
+            )
+
+    def test_timing_acceptance_boundary_is_ten_times(self) -> None:
+        cases = ((9.999, "passed"), (10.0, "failed"), (100.0, "failed"))
+        for ratio, expected_status in cases:
+            with (
+                self.subTest(ratio=ratio),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                self.write_lane(root, "docker", 1.0)
+                self.write_lane(root, "apple-stock", ratio)
+                self.write_lane(root, "container-compose", 1.0)
+
+                result, _ = compare(root, {"D01"})
+
+                self.assertEqual(result["status"], expected_status)
+                self.assertEqual(result["functionalParityStatus"], "passed")
+                self.assertEqual(
+                    result["fixtures"][0]["performanceAcceptancePassed"],
+                    ratio < 10.0,
+                )
+
+    def test_expected_fixtures_selects_cli_and_vscode_suites(self) -> None:
+        manifest = Path(__file__).parents[2] / "Tests" / "Parity" / "manifest.json"
+
+        cli = expected_fixtures(manifest, "cli")
+        vscode = expected_fixtures(manifest, "vscode")
+
+        self.assertIn("D01-image-config", cli)
+        self.assertNotIn("V01-vscode-end-to-end", cli)
+        self.assertEqual(vscode, {"V01-vscode-end-to-end"})
+
     @staticmethod
-    def write_lane(root: Path, lane: str, duration: float | None) -> None:
+    def write_lane(
+        root: Path,
+        lane: str,
+        duration: float | None,
+        status: str = "passed",
+    ) -> None:
         directory = root / lane
         directory.mkdir()
         fixture = {
@@ -172,7 +286,7 @@ class ParityLibraryTests(unittest.TestCase):
             json.dumps(
                 {
                     "backend": lane,
-                    "status": "passed",
+                    "status": status,
                     "fixtures": [fixture],
                 }
             ),

@@ -75,7 +75,9 @@ main() {
 
   if (( ${#lanes[@]} == ${#ALL_LANES[@]} )); then
     python3 "$REPOSITORY_ROOT/Tools/parity/compare_results.py" \
-      "$evidence_dir"
+      "$evidence_dir" \
+      --manifest "$REPOSITORY_ROOT/Tests/Parity/manifest.json" \
+      --suite vscode
   fi
 }
 

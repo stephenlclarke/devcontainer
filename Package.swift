@@ -76,7 +76,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
         .package(
             url: "https://github.com/stephenlclarke/swift-nio-ssl.git",
-            revision: "a9d648535c62e640d1df258a70c9117a8ddea43e"
+            revision: "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285"
         ),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],

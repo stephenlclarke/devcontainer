@@ -7,6 +7,7 @@
     "grpc-swift-2": "Apache-2.0",
     "grpc-swift-nio-transport": "Apache-2.0",
     "grpc-swift-protobuf": "Apache-2.0",
+    "punycodeswift": "MIT",
     "swift-algorithms": "Apache-2.0",
     "swift-argument-parser": "Apache-2.0",
     "swift-asn1": "Apache-2.0",
@@ -35,6 +36,7 @@
     "swift-service-lifecycle": "Apache-2.0",
     "swift-system": "Apache-2.0",
     "swift-toml": "MIT",
+    "tldextractswift": "MIT",
     "yams": "MIT",
     "zstd": "BSD-3-Clause"
   },

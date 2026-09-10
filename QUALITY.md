@@ -30,8 +30,13 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
 - First-party executable source maintains at least 90% overall line coverage and 90% changed-code line coverage.
 - New code has no unresolved blocker or critical security issue, no unreviewed security hotspot, and no sanitizer finding.
 - Reproducible inputs, least-privilege automation, artifact provenance, and meaningful installation tests are release features.
-- Required checks fail closed when evidence is missing, malformed, stale, or bound to a different commit.
+- Required checks fail closed when evidence is empty, missing, duplicated,
+  unexpected, malformed, stale, or bound to a different commit. A failed lane
+  parent cannot be hidden by individually passing fixture records.
 - Functional parity differences, missing fixtures, ignored tests, and accepted signal-13 fallbacks cannot be waived for a stable release.
+- A timeout, non-completion, invalid timing, or candidate fixture taking at
+  least 10.00x its matching Docker oracle duration fails release acceptance;
+  slower completed results below that boundary remain optimization evidence.
 
 ## Quality scorecard
 
