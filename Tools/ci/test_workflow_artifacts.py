@@ -704,7 +704,11 @@ jobs:
                 f"{name} build permits compiler warnings",
             )
 
-    def test_docker_compose_smoke_fixture_is_strict(self) -> None:
+        self.assertIn("Package.stock.resolved", docs)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock swift package", docs)
+        self.assertIn("trap restore_resolved EXIT", docs)
+
+    def test_compose_cli_smoke_fixture_is_strict(self) -> None:
         success = subprocess.run(
             [SMOKE_FIXTURE, "compose", "version"],
             capture_output=True,
