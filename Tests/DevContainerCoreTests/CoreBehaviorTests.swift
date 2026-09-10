@@ -31,7 +31,9 @@ struct CoreBehaviorTests {
         let value = DevContainerConfiguration(
             backend: .containerCompose,
             composeProvider: .containerCompose,
+            containerExecutable: "/opt/example/container",
             socket: "/tmp/example.sock",
+            stateDatabase: "/tmp/example-state.sqlite",
             strictCompatibility: false
         )
         try DevContainerConfigurationStore.save(value, to: path)
@@ -89,6 +91,8 @@ struct CoreBehaviorTests {
 
         for invalid in [
             "not-an-assignment\n",
+            "unknown = \"value\"\n",
+            "socket = \"/one.sock\"\nsocket = \"/two.sock\"\n",
             "[compose]\nprovider = \"invalid\"\n",
             "[compatibility]\nstrict = maybe\n"
         ] {
@@ -99,6 +103,103 @@ struct CoreBehaviorTests {
                     defaultSocket: "unused"
                 )
             }
+        }
+    }
+
+    @Test
+    // The single scenario makes all four precedence levels directly comparable.
+    // swiftlint:disable:next function_body_length
+    func `runtime selection uses override environment configuration default precedence`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.toml")
+        try DevContainerConfigurationStore.save(
+            DevContainerConfiguration(
+                backend: .stock,
+                composeProvider: .docker,
+                containerExecutable: "/config/container",
+                socket: "/config/docker.sock",
+                stateDatabase: "/config/state.sqlite",
+                strictCompatibility: false
+            ),
+            to: path
+        )
+
+        let environment = [
+            "DEVCONTAINER_BACKEND": "container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_CONTAINER_BIN": "/environment/container",
+            "DEVCONTAINER_SOCKET": "/environment/docker.sock",
+            "DEVCONTAINER_STATE": "/environment/state.sqlite"
+        ]
+        let selected = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: environment,
+            configuration: path.path,
+            backend: "stock",
+            composeProvider: "docker",
+            containerExecutable: "/override/container",
+            socket: "/override/docker.sock",
+            stateDatabase: "/override/state.sqlite"
+        )
+        #expect(selected.configuration == path)
+        #expect(selected.backend == .stock)
+        #expect(selected.composeProvider == .docker)
+        #expect(selected.containerExecutable == "/override/container")
+        #expect(selected.socket == "/override/docker.sock")
+        #expect(selected.stateDatabase == "/override/state.sqlite")
+        #expect(!selected.strictCompatibility)
+
+        let fromEnvironment = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: environment,
+            configuration: path.path
+        )
+        #expect(fromEnvironment.backend == .containerCompose)
+        #expect(fromEnvironment.composeProvider == .containerCompose)
+        #expect(fromEnvironment.containerExecutable == "/environment/container")
+        #expect(fromEnvironment.socket == "/environment/docker.sock")
+        #expect(fromEnvironment.stateDatabase == "/environment/state.sqlite")
+
+        let fromConfiguration = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: [:],
+            configuration: path.path
+        )
+        #expect(fromConfiguration.backend == .stock)
+        #expect(fromConfiguration.composeProvider == .docker)
+        #expect(fromConfiguration.containerExecutable == "/config/container")
+        #expect(fromConfiguration.socket == "/config/docker.sock")
+        #expect(fromConfiguration.stateDatabase == "/config/state.sqlite")
+    }
+
+    @Test
+    func `runtime selection accepts only local absolute socket endpoints`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("missing.toml")
+
+        let dockerHost = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: ["DOCKER_HOST": "unix:///tmp/from-docker-host.sock"],
+            configuration: path.path
+        )
+        #expect(dockerHost.socket == "/tmp/from-docker-host.sock")
+
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: ["DEVCONTAINER_SOCKET": "relative.sock"],
+                configuration: path.path
+            )
+        }
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: ["DOCKER_HOST": "tcp://127.0.0.1:2375"],
+                configuration: path.path
+            )
+        }
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: [:],
+                configuration: path.path,
+                containerExecutable: "relative-container"
+            )
         }
     }
 

@@ -86,7 +86,8 @@ Write an explicit stock configuration:
 ```console
 devcontainer configure \
   --backend stock \
-  --compose-provider docker
+  --compose-provider docker \
+  --container /usr/local/bin/container
 ```
 
 The default configuration file is:
@@ -95,7 +96,10 @@ The default configuration file is:
 ~/.config/devcontainer/config.toml
 ```
 
-Configuration does not change Docker’s global context and does not start or stop either runtime.
+The engine, `context`, `doctor`, `diagnostics`, and Compose wrapper all read the
+same configuration. Explicit command options override environment variables;
+environment variables override the file. Configuration does not change
+Docker’s global context and does not start or stop either runtime.
 
 Use the compatibility socket only in shells that need it:
 

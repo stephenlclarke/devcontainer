@@ -14,50 +14,25 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import DevContainerCore
 import Foundation
 
 enum CLIPaths {
     static var configuration: String {
-        let root = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
-            .map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config", isDirectory: true)
-        return root
-            .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("config.toml")
-            .path
+        DevContainerPathDefaults.configuration
     }
 
     static var socket: String {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("docker.sock")
-            .path
+        DevContainerPathDefaults.socket
     }
 
     static var stateDatabase: String {
-        let applicationSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return applicationSupport
-            .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("state.sqlite")
-            .path
+        DevContainerPathDefaults.stateDatabase
     }
 
     static var containerExecutable: String {
-        if let configured = ProcessInfo.processInfo.environment["DEVCONTAINER_CONTAINER_BIN"] {
-            return configured
-        }
-        for candidate in [
-            "/usr/local/bin/container",
-            "/opt/homebrew/bin/container",
-            "/usr/bin/container"
-        ] where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        return "/usr/local/bin/container"
+        ProcessInfo.processInfo.environment["DEVCONTAINER_CONTAINER_BIN"]
+            ?? DevContainerPathDefaults.containerExecutable
     }
 
     static var safeEnvironment: [String: String] {

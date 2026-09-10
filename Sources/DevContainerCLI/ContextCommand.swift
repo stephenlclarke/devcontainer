@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import DevContainerCore
 
 struct ContextCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -23,13 +24,20 @@ struct ContextCommand: ParsableCommand {
     )
 
     @Option(name: .long, help: "Engine Unix socket.")
-    var socket = CLIPaths.socket
+    var socket: String?
+
+    @Option(name: .long, help: "Configuration file path.")
+    var config: String?
 
     @Option(name: .long, help: "Output format: shell or value.")
     var format = "shell"
 
     func run() throws {
-        let endpoint = "unix://\(socket)"
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            configuration: config,
+            socket: socket
+        )
+        let endpoint = "unix://\(selection.socket)"
         switch format {
         case "shell":
             print("export DOCKER_HOST='\(endpoint.replacingOccurrences(of: "'", with: "'\\''"))'")

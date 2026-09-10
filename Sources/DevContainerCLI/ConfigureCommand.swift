@@ -34,6 +34,12 @@ struct ConfigureCommand: ParsableCommand {
     @Option(name: .long, help: "Engine Unix socket.")
     var socket: String?
 
+    @Option(name: .long, help: "Apple container CLI path.")
+    var container: String?
+
+    @Option(name: .long, help: "Crash-recovery SQLite database path.")
+    var state: String?
+
     @Flag(name: .long, inversion: .prefixedNo, help: "Enable strict capability validation.")
     var strict = true
 
@@ -60,6 +66,12 @@ struct ConfigureCommand: ParsableCommand {
         }
         if let socket {
             value.socket = socket
+        }
+        if let container {
+            value.containerExecutable = container
+        }
+        if let state {
+            value.stateDatabase = state
         }
         value.strictCompatibility = strict
         try DevContainerConfigurationStore.save(value, to: url)

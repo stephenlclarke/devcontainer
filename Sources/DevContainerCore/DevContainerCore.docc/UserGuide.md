@@ -26,12 +26,15 @@ reach the container VM.
 ```console
 devcontainer configure \
   --backend stock \
-  --compose-provider docker
+  --compose-provider docker \
+  --container /usr/local/bin/container
 eval "$(devcontainer context)"
 ```
 
-The context command changes only the current shell. It does not replace
-Docker's global context.
+The engine, context, doctor, diagnostics, and Compose commands resolve this
+same configuration. Command options take precedence over environment
+variables, which take precedence over the file. The context command changes
+only the current shell. It does not replace Docker's global context.
 
 ## Run the official CLI
 

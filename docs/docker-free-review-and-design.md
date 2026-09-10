@@ -88,10 +88,12 @@ family before this finding is closed.
 **Fix design:** one immutable `RuntimeSelection` separates distribution (`apple-stock`/`enhanced`), transport endpoint, orchestration implementation, source/runtime/guest identity, capabilities and state-root identity. CLI, service, Compose, doctor and generated VS Code settings use the same resolution function with explicit precedence: CLI options, documented environment, configuration file, stock default. Mandatory strict behavior is not a decorative saved toggle. Reject selection conflicts and do not infer stock identity solely from an installation path or an absent distribution string.
 
 **Implementation status:** runtime descriptors now classify Apple's
-distribution as stock and a custom distribution as enhanced, and the Engine
-provider profile is derived from that probe. Unifying CLI/configuration/socket
-selection and separating enhanced runtime naming from Compose orchestration
-remain outstanding.
+distribution as stock and a custom distribution as enhanced. Stock and
+enhanced provider binaries advertise their compile-time capability profile.
+The engine, context, doctor, diagnostics, and Compose wrapper now use one
+fail-closed resolver with command, environment, configuration, and default
+precedence. Separating enhanced runtime naming from Compose orchestration
+remains outstanding.
 
 **Acceptance:** configure a non-default socket and enhanced executable, then confirm every public command and service reports the same effective selection. Switching distributions with owned resources fails until the designed down/recreate or migration procedure completes. A mislabeled fork cannot enter the stock test lane.
 

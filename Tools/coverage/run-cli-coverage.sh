@@ -126,12 +126,16 @@ run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
   --socket "$TEMPORARY_DIRECTORY/docker.sock" --format shell
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
   --socket "$TEMPORARY_DIRECTORY/docker.sock" --format value
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
+  --config "$CONFIGURATION" --format value
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" context --format invalid
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --config "$CONFIGURATION" \
   --backend stock \
   --compose-provider docker \
+  --container "$FAKE_CONTAINER" \
+  --state "$STATE_DATABASE" \
   --socket "$TEMPORARY_DIRECTORY/docker.sock" \
   --strict
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \

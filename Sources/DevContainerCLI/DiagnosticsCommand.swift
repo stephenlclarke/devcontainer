@@ -30,19 +30,19 @@ struct DiagnosticsCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Apple container executable.")
-    var container = CLIPaths.containerExecutable
+    var container: String?
 
     @Option(name: .long, help: "Optional container-compose executable.")
     var compose: String?
 
     @Option(name: .long, help: "Devcontainer configuration file.")
-    var config = CLIPaths.configuration
+    var config: String?
 
     @Option(name: .long, help: "Engine state database.")
-    var state = CLIPaths.stateDatabase
+    var state: String?
 
     @Option(name: .long, help: "Engine Unix socket.")
-    var socket = CLIPaths.socket
+    var socket: String?
 
     @Option(name: .long, help: "Additional log file; repeat at most eight times.")
     var log: [String] = []
@@ -54,6 +54,12 @@ struct DiagnosticsCommand: AsyncParsableCommand {
     var output: String?
 
     mutating func run() async throws {
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            configuration: config,
+            containerExecutable: container,
+            socket: socket,
+            stateDatabase: state
+        )
         let outputURL = try DiagnosticsPaths.outputURL(output)
         let requestedLogs = log.isEmpty
             ? DiagnosticsPaths.defaultLogs().filter {
@@ -63,11 +69,11 @@ struct DiagnosticsCommand: AsyncParsableCommand {
         let prepared = try await DiagnosticsBundleBuilder().prepare(
             DiagnosticsInputs(
                 archiveName: outputURL.lastPathComponent,
-                container: URL(fileURLWithPath: container),
+                container: URL(fileURLWithPath: selection.containerExecutable),
                 compose: compose.map { URL(fileURLWithPath: $0) },
-                configuration: URL(fileURLWithPath: config),
-                state: URL(fileURLWithPath: state),
-                socket: URL(fileURLWithPath: socket),
+                configuration: selection.configuration,
+                state: URL(fileURLWithPath: selection.stateDatabase),
+                socket: URL(fileURLWithPath: selection.socket),
                 logs: requestedLogs,
                 eventLimit: eventLimit
             )
@@ -340,8 +346,14 @@ struct DiagnosticsBundleBuilder {
                 from: url,
                 defaultSocket: CLIPaths.socket
             )
+            configuration.containerExecutable = DiagnosticsRedactor.redact(
+                configuration.containerExecutable
+            )
             configuration.socket = DiagnosticsRedactor.redact(
                 configuration.socket
+            )
+            configuration.stateDatabase = DiagnosticsRedactor.redact(
+                configuration.stateDatabase
             )
             return DiagnosticsConfigurationSummary(
                 path: path,

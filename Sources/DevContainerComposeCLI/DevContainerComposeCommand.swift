@@ -53,28 +53,28 @@ enum DevContainerComposeCommand {
         arguments: [String],
         environment: [String: String]
     ) async throws -> Int32 {
-        let paths = Paths(environment: environment)
-        let configuration = try DevContainerConfigurationStore.load(
-            from: paths.configuration,
-            defaultSocket: paths.socket
+        var paths = Paths(environment: environment)
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: environment,
+            configuration: paths.configuration.path
         )
-        let provider = environment["DEVCONTAINER_COMPOSE_PROVIDER"]
-            .flatMap(ComposeProviderKind.init(rawValue:))
-            ?? configuration.composeProvider
+        paths.socket = selection.socket
+        paths.state = URL(fileURLWithPath: selection.stateDatabase)
+        let provider = selection.composeProvider
         let envelope = try ComposeCommandEnvelope(arguments: arguments)
         let child = childCommand(
             provider: provider,
             arguments: arguments,
             paths: paths,
             environment: environment,
-            socket: configuration.socket
+            socket: selection.socket
         )
         let claim = try await claimIfNeeded(
             envelope: envelope,
             provider: provider,
             paths: paths,
             environment: environment,
-            socket: configuration.socket
+            socket: selection.socket
         )
 
         let result: Int32
@@ -141,7 +141,7 @@ enum DevContainerComposeCommand {
                 execution: ComposeExecutionEnvironment(
                     paths: paths,
                     environment: environment,
-                    socket: configuration.socket
+                    socket: selection.socket
                 )
             )
         }
@@ -447,8 +447,8 @@ private struct ComposeExecutionEnvironment {
 
 private struct Paths {
     let configuration: URL
-    let state: URL
-    let socket: String
+    var state: URL
+    var socket: String
     let docker: URL
     let dockerCompose: URL?
     let containerCompose: URL

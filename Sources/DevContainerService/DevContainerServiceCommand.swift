@@ -38,16 +38,19 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "User-owned Unix socket path.")
-    var socket: String = DefaultPaths.socket
+    var socket: String?
 
     @Option(name: .long, help: "Apple container CLI path.")
-    var container: String = DefaultPaths.containerExecutable
+    var container: String?
 
     @Option(name: .long, help: "Crash-recovery SQLite database path.")
-    var state: String = DefaultPaths.stateDatabase
+    var state: String?
 
     @Option(name: .long, help: "Backend provider recorded for resource ownership.")
-    var provider: String = BackendProvider.stock.rawValue
+    var provider: String?
+
+    @Option(name: .long, help: "Configuration file path.")
+    var config: String?
 
     @Option(
         name: .long,
@@ -62,6 +65,17 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         var logger = Logger(label: "devcontainer-engine")
         logger.logLevel = .info
 
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            configuration: config,
+            backend: provider,
+            containerExecutable: container,
+            socket: socket,
+            stateDatabase: state
+        )
+        let socket = selection.socket
+        let container = selection.containerExecutable
+        let state = selection.stateDatabase
+
         let stateURL = URL(fileURLWithPath: state)
         let store = try SQLiteStateStore(path: stateURL)
         let retention = try await store.pruneRetainedState()
@@ -75,12 +89,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             ]
         )
         let coordinator = ProjectCoordinator(store: store)
-        guard let selectedProvider = BackendProvider(rawValue: provider) else {
-            throw ValidationError(
-                "provider must be \(BackendProvider.stock.rawValue) or "
-                    + BackendProvider.containerCompose.rawValue
-            )
-        }
+        let selectedProvider = selection.backend
         let recovery = try await coordinator
             .failUnfinishedOperationsForManualRecovery()
         if !recovery.isEmpty {
@@ -377,21 +386,11 @@ private enum ServiceServer: Sendable {
 
 enum DefaultPaths {
     static var socket: String {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("docker.sock")
-            .path
+        DevContainerPathDefaults.socket
     }
 
     static var stateDatabase: String {
-        let applicationSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return applicationSupport
-            .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("state.sqlite")
-            .path
+        DevContainerPathDefaults.stateDatabase
     }
 
     static func providerSocket(publicSocket: String) -> String {
@@ -451,16 +450,7 @@ enum DefaultPaths {
     }
 
     static var containerExecutable: String {
-        if let configured = ProcessInfo.processInfo.environment["DEVCONTAINER_CONTAINER_BIN"] {
-            return configured
-        }
-        for candidate in [
-            "/usr/local/bin/container",
-            "/opt/homebrew/bin/container",
-            "/usr/bin/container"
-        ] where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        return "/usr/local/bin/container"
+        ProcessInfo.processInfo.environment["DEVCONTAINER_CONTAINER_BIN"]
+            ?? DevContainerPathDefaults.containerExecutable
     }
 }

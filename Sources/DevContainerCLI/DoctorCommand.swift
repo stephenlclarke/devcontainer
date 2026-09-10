@@ -28,10 +28,13 @@ struct DoctorCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Apple container executable.")
-    var container = CLIPaths.containerExecutable
+    var container: String?
 
     @Option(name: .long, help: "Engine Unix socket.")
-    var socket = CLIPaths.socket
+    var socket: String?
+
+    @Option(name: .long, help: "Configuration file path.")
+    var config: String?
 
     @Option(name: .long, help: "Optional container-compose executable.")
     var compose: String?
@@ -40,7 +43,15 @@ struct DoctorCommand: AsyncParsableCommand {
     var format = "pretty"
 
     mutating func run() async throws {
-        let checks = await checks()
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            configuration: config,
+            containerExecutable: container,
+            socket: socket
+        )
+        let checks = await checks(
+            container: selection.containerExecutable,
+            socket: selection.socket
+        )
         let report = DoctorReport(
             build: DevContainerProject.buildInfo,
             checks: checks,
@@ -52,7 +63,7 @@ struct DoctorCommand: AsyncParsableCommand {
         }
     }
 
-    private func checks() async -> [DoctorCheck] {
+    private func checks(container: String, socket: String) async -> [DoctorCheck] {
         var checks: [DoctorCheck] = []
         let architecture = machineArchitecture()
         checks.append(

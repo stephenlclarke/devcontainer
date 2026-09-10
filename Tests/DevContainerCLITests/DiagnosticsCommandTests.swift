@@ -117,7 +117,13 @@ struct DiagnosticsCommandTests {
         #expect(summary.present)
         #expect(summary.sha256?.count == 64)
         var expectedConfiguration = expected
+        expectedConfiguration.containerExecutable = DiagnosticsRedactor.redact(
+            expectedConfiguration.containerExecutable
+        )
         expectedConfiguration.socket = "$HOME/diagnostics.sock"
+        expectedConfiguration.stateDatabase = DiagnosticsRedactor.redact(
+            expectedConfiguration.stateDatabase
+        )
         #expect(summary.configuration == expectedConfiguration)
         #expect(summary.error == nil)
     }

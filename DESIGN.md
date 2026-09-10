@@ -390,6 +390,12 @@ User configuration lives in `~/.config/devcontainer/config.toml`:
 backend = "stock"
 socket = "~/.local/run/devcontainer/docker.sock"
 
+[runtime]
+executable = "/usr/local/bin/container"
+
+[state]
+database = "~/Library/Application Support/devcontainer/state.sqlite"
+
 [compose]
 provider = "docker"
 
@@ -397,7 +403,17 @@ provider = "docker"
 strict = true
 ```
 
-Per-project provider choice and configuration digest live in the service database. Environment variables may override paths for tests, but secrets are not accepted in config files. `container devcontainer doctor --format json` emits a machine-readable backend fingerprint and capability report.
+All public commands resolve the same selection with this precedence: explicit
+command option, documented environment variable, configuration file, then the
+user-scoped default. `DEVCONTAINER_CONFIG`, `DEVCONTAINER_BACKEND`,
+`DEVCONTAINER_COMPOSE_PROVIDER`, `DEVCONTAINER_CONTAINER_BIN`,
+`DEVCONTAINER_SOCKET`, and `DEVCONTAINER_STATE` are the supported overrides;
+`DOCKER_HOST` is accepted only when it names an absolute local Unix socket.
+Unknown or duplicate configuration keys and relative runtime, state, or socket
+paths fail closed. Per-project provider choice and configuration digest live in
+the service database. Secrets are not accepted in configuration files.
+`container devcontainer doctor --format json` emits a machine-readable backend
+fingerprint and capability report.
 
 ## Observability
 
