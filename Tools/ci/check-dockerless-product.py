@@ -34,7 +34,18 @@ IGNORED_NAMES = {
     "check-dockerless-product.py",
     "test_dockerless_product.py",
 }
-TEXT_SUFFIXES = {"", ".json", ".py", ".resolved", ".sh", ".swift", ".toml", ".yml", ".yaml"}
+TEXT_SUFFIXES = {
+    "",
+    ".in",
+    ".json",
+    ".py",
+    ".resolved",
+    ".sh",
+    ".swift",
+    ".toml",
+    ".yml",
+    ".yaml",
+}
 
 # Docker vocabulary is intentionally present in the compatibility protocol. These
 # expressions prohibit executable/runtime acquisition, not protocol names such as

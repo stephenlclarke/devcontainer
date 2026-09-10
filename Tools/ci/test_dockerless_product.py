@@ -18,6 +18,10 @@ SPEC.loader.exec_module(MODULE)
 class DockerlessProductTests(unittest.TestCase):
     def test_repository_product_paths_are_dockerless(self) -> None:
         self.assertEqual(MODULE.violations(), [])
+        self.assertIn(
+            MODULE.ROOT / "Tools" / "release" / "devcontainer.rb.in",
+            MODULE.source_files(),
+        )
 
     def test_forbidden_patterns_reject_runtime_acquisition_and_execution(self) -> None:
         rejected = (
