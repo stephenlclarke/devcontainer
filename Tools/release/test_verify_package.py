@@ -132,7 +132,7 @@ class PackageVerificationTests(unittest.TestCase):
             (
                 "container-compose",
                 "0.14.3",
-                "a72b15b459042a1abfc4ca81799ae7c3e75eb33a",
+                "aa3dda83f1322ef70fe985fe11410e9f8201e4fa",
                 "https://github.com/stephenlclarke/container-compose",
                 "Apache-2.0",
             ),
@@ -190,7 +190,7 @@ class PackageVerificationTests(unittest.TestCase):
                         "source": "stephenlclarke/container-compose",
                         "branch": "detached",
                         "lane": "bundled-stock",
-                        "commit": "a72b15b459042a1abfc4ca81799ae7c3e75eb33a",
+                        "commit": "aa3dda83f1322ef70fe985fe11410e9f8201e4fa",
                         "buildType": "release",
                         "containerSource": "apple/container",
                         "containerRef": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
