@@ -133,6 +133,39 @@ public final class DockerCLIApplication: @unchecked Sendable {
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
         switch command {
+        case "cp":
+            try copy(arguments)
+        case "image":
+            try image(arguments)
+        case "network":
+            try network(arguments)
+        case "pull":
+            try pull(arguments, streamingOutput: streamingOutput)
+        case "tag":
+            try tag(arguments)
+        case "volume":
+            try volume(arguments)
+        default:
+            try runContainerCommand(
+                command,
+                arguments: arguments,
+                standardInput: standardInput,
+                standardInputFileDescriptor: standardInputFileDescriptor,
+                streamingOutput: streamingOutput
+            )
+        }
+    }
+
+    private func runContainerCommand(
+        _ command: String,
+        arguments: [String],
+        standardInput: Data?,
+        standardInputFileDescriptor: Int32?,
+        streamingOutput: ((Data, Bool) throws -> Void)?
+    ) throws -> DockerCLIResult {
+        switch command {
+        case "create":
+            try createContainer(arguments)
         case "inspect":
             try inspect(arguments)
         case "ps":
@@ -143,12 +176,12 @@ public final class DockerCLIApplication: @unchecked Sendable {
             try lifecycle(arguments, action: "start")
         case "stop":
             try lifecycle(arguments, action: "stop")
-        case "pull":
-            try pull(arguments, streamingOutput: streamingOutput)
-        case "tag":
-            try tag(arguments)
-        case "volume":
-            try volume(arguments)
+        case "restart":
+            try lifecycle(arguments, action: "restart")
+        case "kill":
+            try killContainer(arguments)
+        case "wait":
+            try waitContainer(arguments)
         default:
             try runWorkloadCommand(
                 command,
@@ -222,9 +255,10 @@ public final class DockerCLIApplication: @unchecked Sendable {
         return DockerCLIResult(standardOutput: response.body + Data("\n".utf8))
     }
 
-    private func inspect(_ arguments: [String]) throws -> DockerCLIResult {
+    func inspect(_ arguments: [String]) throws -> DockerCLIResult {
         var values = arguments
         let type = Self.removeOption("--type", from: &values) ?? "container"
+        let format = Self.removeOption("--format", short: "-f", from: &values)
         guard !values.isEmpty, ["container", "image", "volume"].contains(type) else {
             throw DockerCLIError.invalidArguments("inspect requires --type and at least one identifier")
         }
@@ -237,7 +271,34 @@ public final class DockerCLIApplication: @unchecked Sendable {
             }
             try objects.append(JSONSerialization.jsonObject(with: request("GET", path).body))
         }
+        if let format {
+            let output = try objects.map { try Self.inspectValue($0, format: format) }
+            return .stdout(output.joined(separator: "\n") + "\n")
+        }
         return try DockerCLIResult(standardOutput: Self.json(objects) + Data("\n".utf8))
+    }
+
+    private static func inspectValue(_ value: Any, format: String) throws -> String {
+        guard let object = value as? [String: Any] else {
+            throw DockerCLIError.malformedResponse("inspect response is not an object")
+        }
+        switch format.replacingOccurrences(of: " ", with: "") {
+        case "{{.State.Status}}":
+            return ((object["State"] as? [String: Any])?["Status"] as? String) ?? ""
+        case "{{.State.ExitCode}}":
+            return ((object["State"] as? [String: Any])?["ExitCode"] as? NSNumber)?.stringValue ?? ""
+        default:
+            guard format.contains(".Config.Labels"),
+                  let firstQuote = format.firstIndex(of: "\""),
+                  let lastQuote = format.lastIndex(of: "\""),
+                  firstQuote != lastQuote
+            else {
+                throw DockerCLIError.invalidArguments("unsupported inspect format \(format)")
+            }
+            let key = String(format[format.index(after: firstQuote) ..< lastQuote])
+            let labels = (object["Config"] as? [String: Any])?["Labels"] as? [String: Any]
+            return labels?[key] as? String ?? ""
+        }
     }
 
     private func listContainers(_ arguments: [String]) throws -> DockerCLIResult {
@@ -331,6 +392,40 @@ public final class DockerCLIApplication: @unchecked Sendable {
         return .stdout(identifiers.joined(separator: "\n") + "\n")
     }
 
+    private func killContainer(_ arguments: [String]) throws -> DockerCLIResult {
+        var values = arguments
+        let signal = Self.removeOption("--signal", short: "-s", from: &values) ?? "SIGKILL"
+        guard !values.isEmpty, values.allSatisfy({ !$0.hasPrefix("-") }) else {
+            throw DockerCLIError.invalidArguments("kill requires a container")
+        }
+        for identifier in values {
+            _ = try request(
+                "POST",
+                Self.target(
+                    "/containers/\(Self.path(identifier))/kill",
+                    query: [("signal", signal)]
+                )
+            )
+        }
+        return .stdout(values.joined(separator: "\n") + "\n")
+    }
+
+    private func waitContainer(_ arguments: [String]) throws -> DockerCLIResult {
+        guard !arguments.isEmpty, arguments.allSatisfy({ !$0.hasPrefix("-") }) else {
+            throw DockerCLIError.invalidArguments("wait requires a container")
+        }
+        var statuses: [String] = []
+        for identifier in arguments {
+            let response = try request("POST", "/containers/\(Self.path(identifier))/wait")
+            let status = try (Self.object(response.body)["StatusCode"] as? NSNumber)?.stringValue
+            guard let status else {
+                throw DockerCLIError.malformedResponse("container wait response has no StatusCode")
+            }
+            statuses.append(status)
+        }
+        return .stdout(statuses.joined(separator: "\n") + "\n")
+    }
+
     private func pull(
         _ arguments: [String],
         streamingOutput: ((Data, Bool) throws -> Void)?
@@ -369,6 +464,8 @@ public final class DockerCLIApplication: @unchecked Sendable {
         }
         let values = Array(arguments.dropFirst())
         switch command {
+        case "create":
+            return try createVolume(values)
         case "inspect":
             return try inspect(["--type", "volume"] + values)
         case "rm", "remove":
@@ -514,13 +611,24 @@ public final class DockerCLIApplication: @unchecked Sendable {
         return nil
     }
 
-    private static func removeOption(_ name: String, from arguments: inout [String]) -> String? {
-        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
-            return nil
+    private static func removeOption(
+        _ name: String,
+        short: String? = nil,
+        from arguments: inout [String]
+    ) -> String? {
+        for (index, argument) in arguments.enumerated() {
+            if argument == name || short.map({ argument == $0 }) == true {
+                guard index + 1 < arguments.count else { return nil }
+                let value = arguments[index + 1]
+                arguments.removeSubrange(index ... (index + 1))
+                return value
+            }
+            if argument.hasPrefix(name + "=") {
+                arguments.remove(at: index)
+                return String(argument.dropFirst(name.count + 1))
+            }
         }
-        let value = arguments[index + 1]
-        arguments.removeSubrange(index ... (index + 1))
-        return value
+        return nil
     }
 
     static func object(_ data: Data) throws -> [String: Any] {

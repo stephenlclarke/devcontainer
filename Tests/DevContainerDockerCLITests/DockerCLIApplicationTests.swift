@@ -476,6 +476,89 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `supports direct engine lifecycle image and network probes`() throws {
+        let transport = StubTransport([
+            .json(["Id": "container-1"], status: 201),
+            .json(["State": ["Status": "created", "ExitCode": 7]]),
+            .init(status: 204),
+            .init(status: 204),
+            .json(["StatusCode": 7]),
+            .json(["Config": ["Labels": ["devcontainer.parity": "true"]]]),
+            .json([["Deleted": "image:latest"]]),
+            .json(["Id": "network-1"], status: 201),
+            .json(["Name": "parity-network"]),
+            .init(status: 204),
+            .json(["Name": "parity-volume"], status: 201)
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        #expect(try application.run(arguments: ["create", "image", "true"])
+            .standardOutput == Data("container-1\n".utf8))
+        #expect(try application.run(arguments: ["inspect", "-f", "{{.State.Status}}", "container-1"])
+            .standardOutput == Data("created\n".utf8))
+        #expect(try application.run(arguments: ["restart", "container-1"]).exitCode == 0)
+        #expect(try application.run(arguments: ["kill", "--signal", "TERM", "container-1"])
+            .exitCode == 0)
+        #expect(try application.run(arguments: ["wait", "container-1"])
+            .standardOutput == Data("7\n".utf8))
+        #expect(try application.run(arguments: [
+            "image", "inspect", "-f", "{{index .Config.Labels \"devcontainer.parity\"}}",
+            "image:latest"
+        ]).standardOutput == Data("true\n".utf8))
+        #expect(try application.run(arguments: ["image", "rm", "-f", "image:latest"])
+            .standardOutput == Data("image:latest\n".utf8))
+        #expect(try application.run(arguments: ["network", "create", "parity-network"])
+            .standardOutput == Data("network-1\n".utf8))
+        #expect(try application.run(arguments: ["network", "inspect", "parity-network"])
+            .standardOutput.contains(Data("parity-network".utf8)))
+        #expect(try application.run(arguments: ["network", "rm", "parity-network"])
+            .standardOutput == Data("parity-network\n".utf8))
+        #expect(try application.run(arguments: ["volume", "create", "parity-volume"])
+            .standardOutput == Data("parity-volume\n".utf8))
+
+        #expect(transport.requests.map(\.target) == [
+            "/containers/create", "/containers/container-1/json",
+            "/containers/container-1/restart", "/containers/container-1/kill?signal=TERM",
+            "/containers/container-1/wait", "/images/image:latest/json",
+            "/images/image:latest?force=true", "/networks/create",
+            "/networks/parity-network", "/networks/parity-network", "/volumes/create"
+        ])
+    }
+
+    @Test
+    func `copies archives through the engine without Docker`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("archive-content\n".utf8).write(to: source.appendingPathComponent("value.txt"))
+        let archive = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", "-", "-C", source.path, "."],
+            environment: ["PATH": "/usr/bin:/bin"]
+        ).standardOutput
+        let transport = StubTransport([
+            .init(status: 200),
+            .init(status: 200, body: archive)
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        #expect(try application.run(arguments: ["cp", source.path + "/.", "box:/archive"])
+            .exitCode == 0)
+        #expect(try application.run(arguments: ["cp", "box:/archive", destination.path])
+            .exitCode == 0)
+        #expect(try String(
+            contentsOf: destination.appendingPathComponent("value.txt"),
+            encoding: .utf8
+        ) == "archive-content\n")
+        #expect(transport.requests[0].target == "/containers/box/archive?path=%2Farchive")
+        #expect(!transport.requests[0].body.isEmpty)
+        #expect(transport.requests[1].target == "/containers/box/archive?path=%2Farchive")
+    }
+
+    @Test
     func `maps the complete supported build and run option sets`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-options-\(UUID().uuidString)")
@@ -528,6 +611,18 @@ struct DockerCLIApplicationTests {
         ])
         #expect(exec.createRequest["WorkingDir"] as? String == "/work")
         #expect(exec.createRequest["Tty"] as? Bool == true)
+    }
+
+    @Test
+    func `maps network aliases and automatic removal`() throws {
+        let request = try DockerRunOptions(arguments: [
+            "--rm", "--network", "parity", "--network-alias", "app", "image"
+        ]).createRequest
+
+        #expect((request["HostConfig"] as? [String: Any])?["AutoRemove"] as? Bool == true)
+        let endpoints = (request["NetworkingConfig"] as? [String: Any])?["EndpointsConfig"]
+            as? [String: [String: [String]]]
+        #expect(endpoints?["parity"]?["Aliases"] == ["app"])
     }
 
     @Test

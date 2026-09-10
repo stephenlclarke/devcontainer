@@ -18,6 +18,11 @@ import DevContainerProcess
 import Foundation
 
 extension DockerCLIApplication {
+    func createContainer(_ arguments: [String]) throws -> DockerCLIResult {
+        let identifier = try createContainer(DockerRunOptions(arguments: arguments))
+        return .stdout("\(identifier)\n")
+    }
+
     func build(
         _ arguments: [String],
         streamingOutput: ((Data, Bool) throws -> Void)?
@@ -39,6 +44,15 @@ extension DockerCLIApplication {
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
         let options = try DockerRunOptions(arguments: arguments)
+        let identifier = try createContainer(options)
+        _ = try request("POST", "/containers/\(Self.path(identifier))/start")
+        if options.detach {
+            return .stdout("\(identifier)\n")
+        }
+        return try followContainer(identifier, streamingOutput: streamingOutput)
+    }
+
+    private func createContainer(_ options: DockerRunOptions) throws -> String {
         let createTarget =
             options.name.map {
                 Self.target("/containers/create", query: [("name", $0)])
@@ -51,10 +65,13 @@ extension DockerCLIApplication {
         guard let identifier = try Self.object(create.body)["Id"] as? String else {
             throw DockerCLIError.malformedResponse("container create response has no Id")
         }
-        _ = try request("POST", "/containers/\(Self.path(identifier))/start")
-        if options.detach {
-            return .stdout("\(identifier)\n")
-        }
+        return identifier
+    }
+
+    private func followContainer(
+        _ identifier: String,
+        streamingOutput: ((Data, Bool) throws -> Void)?
+    ) throws -> DockerCLIResult {
         var decoder = DockerMultiplexedStreamDecoder()
         var captured = Data()
         _ = try transport.send(
@@ -318,31 +335,52 @@ struct DockerBuildOptions: Equatable {
             contextURL: contextURL,
             dockerfileURL: dockerfileURL
         )
-        let input = Data(entries.joined(separator: "\0").utf8)
-        var arguments = [
-            "--no-xattrs", "--no-recursion", "-cf", "-", "-C", contextURL.path,
-            "--null", "-T", "-"
-        ]
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-build-\(UUID().uuidString).tar")
+        defer { try? FileManager.default.removeItem(at: archiveURL) }
+        try writeArchive(entries, from: contextURL, to: archiveURL)
         if !dockerfileURL.path.hasPrefix(contextURL.path + "/") {
-            arguments.append(contentsOf: [
-                "-C", dockerfileURL.deletingLastPathComponent().path, dockerfileURL.lastPathComponent
-            ])
+            try appendDockerfile(dockerfileURL, to: archiveURL)
         }
+        return try Data(contentsOf: archiveURL)
+    }
+
+    private func writeArchive(_ entries: [String], from root: URL, to archive: URL) throws {
         let result = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: arguments,
+            arguments: [
+                "--no-xattrs", "--no-recursion", "-cf", archive.path, "-C", root.path,
+                "--null", "-T", "-"
+            ],
             environment: [
                 "COPYFILE_DISABLE": "1",
                 "PATH": "/usr/bin:/bin"
             ],
-            input: input
+            input: Data(entries.joined(separator: "\0").utf8)
         )
         guard result.exitCode == 0 else {
             throw DockerCLIError.invalidArguments(
                 String(data: result.standardError, encoding: .utf8) ?? "could not archive build context"
             )
         }
-        return result.standardOutput
+    }
+
+    private func appendDockerfile(_ dockerfile: URL, to archive: URL) throws {
+        let result = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: [
+                "--no-xattrs", "-rf", archive.path, "-C",
+                dockerfile.deletingLastPathComponent().path,
+                dockerfile.lastPathComponent
+            ],
+            environment: ["COPYFILE_DISABLE": "1", "PATH": "/usr/bin:/bin"]
+        )
+        guard result.exitCode == 0 else {
+            throw DockerCLIError.invalidArguments(
+                String(data: result.standardError, encoding: .utf8)
+                    ?? "could not append Dockerfile to build context"
+            )
+        }
     }
 
     private func archiveEntries(
@@ -465,6 +503,9 @@ struct DockerRunOptions {
     var privileged = false
     var capabilities: [String] = []
     var securityOptions: [String] = []
+    var network: String?
+    var networkAliases: [String] = []
+    var autoRemove = false
 
     init(arguments: [String]) throws {
         var index = 0
@@ -495,6 +536,7 @@ struct DockerRunOptions {
         case "-d", "--detach": detach = true
         case "--init": initProcess = true
         case "--privileged": privileged = true
+        case "--rm": autoRemove = true
         default: return false
         }
         return true
@@ -529,6 +571,9 @@ struct DockerRunOptions {
         case "--entrypoint": entrypoint = try Self.value(arguments, &index, for: option)
         case "--cap-add": try capabilities.append(Self.value(arguments, &index, for: option))
         case "--security-opt": try securityOptions.append(Self.value(arguments, &index, for: option))
+        case "--network": network = try Self.value(arguments, &index, for: option)
+        case "--network-alias":
+            try networkAliases.append(Self.value(arguments, &index, for: option))
         default: return false
         }
         return true
@@ -541,6 +586,7 @@ struct DockerRunOptions {
             "Cmd": command,
             "Env": environment,
             "HostConfig": [
+                "AutoRemove": autoRemove,
                 "CapAdd": capabilities,
                 "Init": initProcess,
                 "Mounts": mounts,
@@ -558,6 +604,11 @@ struct DockerRunOptions {
         }
         if let entrypoint {
             request["Entrypoint"] = [entrypoint]
+        }
+        if let network {
+            request["NetworkingConfig"] = [
+                "EndpointsConfig": [network: ["Aliases": networkAliases]]
+            ]
         }
         return request
     }
