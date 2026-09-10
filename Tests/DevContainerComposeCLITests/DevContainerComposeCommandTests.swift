@@ -93,7 +93,7 @@ struct DevContainerComposeCommandTests {
         )
         #expect(try fixture.trapInvocations().isEmpty)
         #expect(try fixture.runtimeSelections() == [
-            "stock|/fixtures/apple-container|\(fixture.socket.path)"
+            "stock|/fixtures/devcontainer-docker|\(fixture.socket.path)"
         ])
         #expect(
             try fixture.invocations() == [
@@ -359,6 +359,7 @@ private final class ComposeCommandFixture {
             "DEVCONTAINER_CONTAINER_BIN": "/fixtures/apple-container"
         ]
         result["DEVCONTAINER_COMPOSE_BIN"] = executable.path
+        result["DEVCONTAINER_DOCKER_BIN"] = "/fixtures/devcontainer-docker"
         return result
     }
 
@@ -397,5 +398,15 @@ func `packaged compose is resolved beside the dispatcher archive`() {
             executablePath: "/opt/homebrew/Cellar/devcontainer/1.0.2/bin/devcontainer-compose"
         )
             == "/opt/homebrew/Cellar/devcontainer/1.0.2/libexec/devcontainer-compose/bin/compose"
+    )
+}
+
+@Test
+func `packaged Docker compatibility command is resolved beside the dispatcher`() {
+    #expect(
+        Paths.bundledDockerCompatibilityPath(
+            executablePath: "/opt/homebrew/Cellar/devcontainer/1.0.2/bin/devcontainer-compose"
+        )
+            == "/opt/homebrew/Cellar/devcontainer/1.0.2/bin/devcontainer-docker"
     )
 }

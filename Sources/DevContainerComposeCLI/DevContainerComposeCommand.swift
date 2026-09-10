@@ -67,7 +67,7 @@ enum DevContainerComposeCommand {
             environment: environment,
             socket: selection.socket,
             backend: selection.backend,
-            containerExecutable: selection.containerExecutable
+            compatibilityExecutable: paths.dockerCompatibility.path
         )
         let child = childCommand(arguments: arguments, execution: execution)
         let claim = try await claimIfNeeded(
@@ -286,7 +286,7 @@ enum DevContainerComposeCommand {
         var childEnvironment = safeChildEnvironment(execution.environment)
         childEnvironment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] =
             execution.backend == .stock ? "stock" : "enhanced"
-        childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.containerExecutable
+        childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.compatibilityExecutable
         childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = execution.socket
         var childArguments = arguments
         let executable: URL
@@ -392,7 +392,7 @@ private struct ComposeExecutionEnvironment {
     let environment: [String: String]
     let socket: String
     let backend: BackendProvider
-    let containerExecutable: String
+    let compatibilityExecutable: String
 }
 
 struct Paths {
@@ -400,6 +400,7 @@ struct Paths {
     var state: URL
     var socket: String
     let containerCompose: URL
+    let dockerCompatibility: URL
 
     init(
         environment: [String: String],
@@ -442,6 +443,10 @@ struct Paths {
                     "/usr/local/bin/container-compose"
                 ])
         )
+        dockerCompatibility = URL(
+            fileURLWithPath: environment["DEVCONTAINER_DOCKER_BIN"]
+                ?? Self.bundledDockerCompatibilityPath(executablePath: executablePath)
+        )
     }
 
     static func bundledComposePath(executablePath: String) -> String {
@@ -450,6 +455,14 @@ struct Paths {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("libexec/devcontainer-compose/bin/compose")
+            .path
+    }
+
+    static func bundledDockerCompatibilityPath(executablePath: String) -> String {
+        URL(fileURLWithPath: executablePath)
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .appendingPathComponent("devcontainer-docker")
             .path
     }
 

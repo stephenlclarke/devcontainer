@@ -626,6 +626,40 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `maps native Compose creation options onto the Engine request`() throws {
+        let transport = StubTransport([.json(["Id": "compose-container"], status: 201)])
+        let application = DockerCLIApplication(transport: transport)
+
+        _ = try application.run(arguments: [
+            "create", "--name", "compose-app", "--platform", "linux/arm64",
+            "--workdir", "/workspace", "--hostname", "app", "--domainname", "example.test",
+            "--interactive", "--tty", "--stop-signal", "SIGTERM", "--stop-timeout", "12",
+            "--health-cmd", "test -f /tmp/ready", "--health-interval", "1.5s",
+            "--health-timeout", "750ms", "--health-start-period", "2s",
+            "--health-retries", "20", "alpine:3.22"
+        ])
+
+        let request = try #require(transport.requests.first)
+        #expect(request.target == "/containers/create?name=compose-app&platform=linux%2Farm64")
+        let body = try #require(
+            JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+        )
+        #expect(body["WorkingDir"] as? String == "/workspace")
+        #expect(body["Hostname"] as? String == "app")
+        #expect(body["Domainname"] as? String == "example.test")
+        #expect(body["OpenStdin"] as? Bool == true)
+        #expect(body["Tty"] as? Bool == true)
+        #expect(body["StopSignal"] as? String == "SIGTERM")
+        #expect(body["StopTimeout"] as? Int == 12)
+        let health = try #require(body["Healthcheck"] as? [String: Any])
+        #expect(health["Test"] as? [String] == ["CMD-SHELL", "test -f /tmp/ready"])
+        #expect(health["Interval"] as? Int == 1_500_000_000)
+        #expect(health["Timeout"] as? Int == 750_000_000)
+        #expect(health["StartPeriod"] as? Int == 2_000_000_000)
+        #expect(health["Retries"] as? Int == 20)
+    }
+
+    @Test
     func `streams foreground run build and terminal exec output`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-stream-\(UUID().uuidString)")
@@ -692,6 +726,21 @@ struct DockerCLIApplicationTests {
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: []) }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--mount", "type=bind", "image"]) }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["-p", "1:2:3:4", "image"]) }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: ["--stop-timeout", "-1", "image"])
+        }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: ["--health-interval", "", "image"])
+        }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: ["--health-timeout", "one-second", "image"])
+        }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: ["--health-retries", "0", "image"])
+        }
+        #expect(throws: DockerCLIError.unsupported("run --health-start-interval")) {
+            try DockerRunOptions(arguments: ["--health-start-interval", "1s", "image"])
+        }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--unknown", "image"]) }
         #expect(throws: (any Error).self) { try DockerExecOptions(arguments: ["--unknown"]) }
         #expect(throws: (any Error).self) { try DockerExecOptions(arguments: ["box"]) }

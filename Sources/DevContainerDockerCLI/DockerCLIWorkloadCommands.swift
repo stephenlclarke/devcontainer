@@ -53,10 +53,14 @@ extension DockerCLIApplication {
     }
 
     private func createContainer(_ options: DockerRunOptions) throws -> String {
-        let createTarget =
-            options.name.map {
-                Self.target("/containers/create", query: [("name", $0)])
-            } ?? "/containers/create"
+        var query: [(String, String)] = []
+        if let name = options.name {
+            query.append(("name", name))
+        }
+        if let platform = options.platform {
+            query.append(("platform", platform))
+        }
+        let createTarget = Self.target("/containers/create", query: query)
         let create = try request(
             "POST",
             createTarget,
@@ -499,6 +503,13 @@ struct DockerRunOptions {
     var ports: [String: [[String: String]]] = [:]
     var user: String?
     var entrypoint: String?
+    var workingDirectory: String?
+    var hostname: String?
+    var domainname: String?
+    var platform: String?
+    var stopSignal: String?
+    var stopTimeout: Int?
+    var healthcheck: [String: Any]?
     var initProcess = false
     var privileged = false
     var capabilities: [String] = []
@@ -506,6 +517,8 @@ struct DockerRunOptions {
     var network: String?
     var networkAliases: [String] = []
     var autoRemove = false
+    var interactive = false
+    var terminal = false
 
     init(arguments: [String]) throws {
         var index = 0
@@ -537,6 +550,9 @@ struct DockerRunOptions {
         case "--init": initProcess = true
         case "--privileged": privileged = true
         case "--rm": autoRemove = true
+        case "-i", "--interactive": interactive = true
+        case "-t", "--tty": terminal = true
+        case "--no-healthcheck": healthcheck = ["Test": ["NONE"]]
         default: return false
         }
         return true
@@ -555,6 +571,10 @@ struct DockerRunOptions {
             let pair = try Self.pair(Self.value(arguments, &index, for: option), name: option)
             labels[pair.0] = pair.1
         case "-u", "--user": user = try Self.value(arguments, &index, for: option)
+        case "-w", "--workdir":
+            workingDirectory = try Self.value(arguments, &index, for: option)
+        case "--hostname": hostname = try Self.value(arguments, &index, for: option)
+        case "--domainname": domainname = try Self.value(arguments, &index, for: option)
         default: return false
         }
         return true
@@ -574,6 +594,54 @@ struct DockerRunOptions {
         case "--network": network = try Self.value(arguments, &index, for: option)
         case "--network-alias":
             try networkAliases.append(Self.value(arguments, &index, for: option))
+        default:
+            return try consumeContainerOption(option, arguments: arguments, index: &index)
+        }
+        return true
+    }
+
+    private mutating func consumeContainerOption(
+        _ option: String,
+        arguments: [String],
+        index: inout Int
+    ) throws -> Bool {
+        switch option {
+        case "--platform": platform = try Self.value(arguments, &index, for: option)
+        case "--stop-signal": stopSignal = try Self.value(arguments, &index, for: option)
+        case "--stop-timeout":
+            let value = try Self.value(arguments, &index, for: option)
+            guard let parsed = Int(value), parsed >= 0 else {
+                throw DockerCLIError.invalidArguments("--stop-timeout requires nonnegative seconds")
+            }
+            stopTimeout = parsed
+        default:
+            return try consumeHealthOption(option, arguments: arguments, index: &index)
+        }
+        return true
+    }
+
+    private mutating func consumeHealthOption(
+        _ option: String,
+        arguments: [String],
+        index: inout Int
+    ) throws -> Bool {
+        switch option {
+        case "--health-cmd":
+            try setHealthcheck("Test", ["CMD-SHELL", Self.value(arguments, &index, for: option)])
+        case "--health-interval":
+            try setHealthDuration("Interval", Self.value(arguments, &index, for: option))
+        case "--health-timeout":
+            try setHealthDuration("Timeout", Self.value(arguments, &index, for: option))
+        case "--health-start-period":
+            try setHealthDuration("StartPeriod", Self.value(arguments, &index, for: option))
+        case "--health-start-interval":
+            throw DockerCLIError.unsupported("run --health-start-interval")
+        case "--health-retries":
+            let value = try Self.value(arguments, &index, for: option)
+            guard let parsed = Int(value), parsed > 0 else {
+                throw DockerCLIError.invalidArguments("--health-retries requires a positive integer")
+            }
+            setHealthcheck("Retries", parsed)
         default: return false
         }
         return true
@@ -596,8 +664,8 @@ struct DockerRunOptions {
             ],
             "Image": image,
             "Labels": labels,
-            "OpenStdin": false,
-            "Tty": false
+            "OpenStdin": interactive,
+            "Tty": terminal
         ]
         if let user {
             request["User"] = user
@@ -605,12 +673,40 @@ struct DockerRunOptions {
         if let entrypoint {
             request["Entrypoint"] = [entrypoint]
         }
+        if let workingDirectory {
+            request["WorkingDir"] = workingDirectory
+        }
+        if let hostname {
+            request["Hostname"] = hostname
+        }
+        if let domainname {
+            request["Domainname"] = domainname
+        }
+        if let stopSignal {
+            request["StopSignal"] = stopSignal
+        }
+        if let stopTimeout {
+            request["StopTimeout"] = stopTimeout
+        }
+        if let healthcheck {
+            request["Healthcheck"] = healthcheck
+        }
         if let network {
             request["NetworkingConfig"] = [
                 "EndpointsConfig": [network: ["Aliases": networkAliases]]
             ]
         }
         return request
+    }
+
+    private mutating func setHealthDuration(_ field: String, _ value: String) throws {
+        try setHealthcheck(field, DockerDurationParser.nanoseconds(value))
+    }
+
+    private mutating func setHealthcheck(_ field: String, _ value: Any) {
+        var fields = healthcheck ?? [:]
+        fields[field] = value
+        healthcheck = fields
     }
 
     private mutating func addPort(_ value: String) throws {
@@ -667,6 +763,48 @@ struct DockerRunOptions {
             throw DockerCLIError.invalidArguments("\(name) requires NAME=VALUE")
         }
         return (parts[0], parts[1])
+    }
+}
+
+private enum DockerDurationParser {
+    private static let units: [(String, Double)] = [
+        ("ns", 1), ("us", 1000), ("µs", 1000), ("ms", 1_000_000),
+        ("s", 1_000_000_000), ("m", 60_000_000_000), ("h", 3_600_000_000_000)
+    ]
+
+    static func nanoseconds(_ value: String) throws -> Int64 {
+        guard !value.isEmpty else {
+            throw invalid(value)
+        }
+        if value == "0" {
+            return 0
+        }
+        var remainder = value[...]
+        var total = 0.0
+        while !remainder.isEmpty {
+            let numberEnd = remainder.firstIndex { !$0.isNumber && $0 != "." }
+                ?? remainder.endIndex
+            guard numberEnd != remainder.startIndex,
+                  let number = Double(remainder[..<numberEnd]),
+                  number >= 0
+            else {
+                throw invalid(value)
+            }
+            remainder = remainder[numberEnd...]
+            guard let unit = units.first(where: { remainder.hasPrefix($0.0) }) else {
+                throw invalid(value)
+            }
+            total += number * unit.1
+            remainder.removeFirst(unit.0.count)
+        }
+        guard total.isFinite, total <= Double(Int64.max) else {
+            throw invalid(value)
+        }
+        return Int64(total.rounded())
+    }
+
+    private static func invalid(_ value: String) -> DockerCLIError {
+        DockerCLIError.invalidArguments("invalid duration \(value)")
     }
 }
 
