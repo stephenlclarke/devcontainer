@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
-SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
+SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "compose-cli-smoke-fixture.sh"
 GITHUB_HOSTED_RUNNER_LABELS = frozenset(
     {
         "macos-26",

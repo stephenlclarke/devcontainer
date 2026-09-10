@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Provide a deterministic Docker CLI boundary for hosted CLI smoke tests.
+# Provide a deterministic native Compose command boundary for hosted CLI tests.
 
 set -euo pipefail
 

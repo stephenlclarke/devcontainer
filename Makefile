@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := workflow
 
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.0.2
 SWIFT ?= swift
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
@@ -238,6 +238,7 @@ test-tsan: tsan
 check: format-check lint test coverage-check docs parity-manifest
 
 lint:
+	$(PYTHON) Tools/ci/check-dockerless-product.py
 	$(PYTHON) -m unittest discover Tools/coverage
 	$(PYTHON) -m unittest discover Tools/parity
 	$(PYTHON) -m unittest discover Tools/release
