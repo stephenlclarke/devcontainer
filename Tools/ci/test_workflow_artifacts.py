@@ -716,12 +716,12 @@ jobs:
 
     def test_compose_cli_smoke_fixture_is_strict(self) -> None:
         success = subprocess.run(
-            [SMOKE_FIXTURE, "compose", "version"],
+            [SMOKE_FIXTURE, "version"],
             capture_output=True,
             text=True,
         )
         invalid = subprocess.run(
-            [SMOKE_FIXTURE, "version"],
+            [SMOKE_FIXTURE, "compose", "version"],
             capture_output=True,
             text=True,
         )
@@ -729,7 +729,7 @@ jobs:
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertEqual(success.stdout, '{"Version":"fixture"}\n')
         self.assertEqual(invalid.returncode, 64)
-        self.assertIn("expected: compose version", invalid.stderr)
+        self.assertIn("expected: version", invalid.stderr)
 
 
 if __name__ == "__main__":

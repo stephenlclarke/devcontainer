@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-if (( $# != 2 )) || [[ "$1" != "compose" || "$2" != "version" ]]; then
-  printf 'expected: compose version\n' >&2
+if (( $# != 1 )) || [[ "$1" != "version" ]]; then
+  printf 'expected: version\n' >&2
   exit 64
 fi
 
