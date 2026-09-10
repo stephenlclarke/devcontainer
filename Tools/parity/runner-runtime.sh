@@ -89,6 +89,16 @@ start_colima() {
   fail "Colima did not reach running state after 3 attempts"
 }
 
+# Stop the Docker oracle so later candidate timings run on a quiet host.
+stop_colima() {
+  [[ -x "$colima_bin" ]] || return 0
+  [[ -f "$timeout_runner" ]] || fail "timeout runner is missing: $timeout_runner"
+  if run_with_timeout "$colima_command_timeout_seconds" \
+    "$colima_bin" status >/dev/null 2>&1; then
+    run_with_timeout "$colima_command_timeout_seconds" "$colima_bin" stop
+  fi
+}
+
 selected_runtime() {
   local lane="$1"
 
@@ -111,12 +121,13 @@ start_runtime() {
   local attempt
   local status
 
-  stop_all_apple_runtimes
-  start_colima
   if [[ "$lane" == "docker" ]]; then
+    stop_all_apple_runtimes
+    start_colima
     return
   fi
 
+  stop_all_apple_runtimes
   executable="$(selected_runtime "$lane")"
   [[ -x "$executable" ]] || fail "runtime executable is not usable: $executable"
   if [[ "${DEVCONTAINER_RUNTIME_SKIP_SUDO:-0}" != "1" ]]; then
@@ -162,6 +173,7 @@ main() {
     stop)
       if [[ "$lane" == "docker" ]]; then
         stop_all_apple_runtimes
+        stop_colima
       else
         stop_runtime "$(selected_runtime "$lane")"
       fi

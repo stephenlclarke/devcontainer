@@ -52,9 +52,25 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
           git -C "${GITHUB_WORKSPACE}" clean -ffdx
           test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
-      - name: Build compatibility bridge
-        if: matrix.lane != 'docker'
-        run: swift build --disable-automatic-resolution
+      - name: Build the stock compatibility bridge
+        if: matrix.lane == 'apple-stock'
+        run: |
+          cp Package.stock.resolved Package.resolved
+          DEVCONTAINER_RUNTIME_PROFILE=stock \
+            swift build --disable-automatic-resolution
+      - name: Build the enhanced compatibility bridge
+        if: matrix.lane == 'container-compose'
+        run: >-
+          DEVCONTAINER_RUNTIME_PROFILE=enhanced
+          swift build --disable-automatic-resolution
+      - name: Build the pinned stock Compose provider
+        if: matrix.lane == 'apple-stock'
+        run: |
+          compose_root="${RUNNER_TEMP}/devcontainer-stock-compose"
+          GOTOOLCHAIN=go1.26.3 \
+            Tools/release/build-native-compose.sh "${compose_root}"
+          printf 'DEVCONTAINER_COMPOSE_BIN=%s\n' \
+            "${compose_root}/bin/compose" >>"${GITHUB_ENV}"
       - name: Prepare isolated runtime
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance

@@ -219,6 +219,12 @@ class WorkflowArtifactTests(unittest.TestCase):
             lane,
         )
         self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
+        self.assertIn("Tools/release/build-native-compose.sh", lane)
+        self.assertIn("GOTOOLCHAIN=go1.26.3", lane)
+        self.assertIn("DEVCONTAINER_COMPOSE_BIN=%s", lane)
+        self.assertIn("cp Package.stock.resolved Package.resolved", lane)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", lane)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=enhanced", lane)
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
         checked = 0

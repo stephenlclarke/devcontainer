@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import json
 import os
 import platform
@@ -43,25 +42,6 @@ FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
 
 
-def resolver_nameservers(configuration: str) -> list[str]:
-    """Return unique, valid nameservers from a resolver configuration."""
-
-    nameservers: list[str] = []
-    for line in configuration.splitlines():
-        fields = line.split()
-        if len(fields) < 2 or fields[0] != "nameserver":
-            continue
-        candidate = fields[1]
-        address = candidate.split("%", maxsplit=1)[0]
-        try:
-            ipaddress.ip_address(address)
-        except ValueError:
-            continue
-        if candidate not in nameservers:
-            nameservers.append(candidate)
-    return nameservers
-
-
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
@@ -75,15 +55,18 @@ class LaneRunner:
         )
         self.cli_reference = self.manifest["referencePins"]["devcontainersCli"]
         self.cli_version = self.cli_reference["version"]
-        self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
-            "docker"
-        )
+        if lane == "docker":
+            self.docker = os.environ.get(
+                "DEVCONTAINER_DOCKER_BIN"
+            ) or shutil.which("docker")
+        else:
+            self.docker = os.environ.get(
+                "DEVCONTAINER_CANDIDATE_DOCKER_BIN"
+            ) or str(repository / ".build" / "debug" / "devcontainer-docker")
         self.devcontainer_docker = self.docker
         self.node_package_runner = shutil.which("npx")
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
-        self.builder_name: str | None = None
-        self.builder_container_ids: set[str] = set()
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
@@ -113,8 +96,12 @@ class LaneRunner:
     def run(self) -> int:
         if self.lane not in LANES:
             raise ParityError(f"unknown lane {self.lane!r}")
-        if not self.docker:
-            raise ParityError("docker CLI is required")
+        if not self.docker or not os.access(self.docker, os.X_OK):
+            if self.lane == "docker":
+                raise ParityError("Docker oracle CLI is required")
+            raise ParityError(
+                "project-owned devcontainer-docker adapter is required"
+            )
         if not self.node_package_runner:
             raise ParityError("npx is required for the pinned @devcontainers/cli")
 
@@ -156,14 +143,13 @@ class LaneRunner:
         results: list[dict[str, Any]] = []
         try:
             self.configure_devcontainer_client()
-            if self.lane != "apple-stock":
+            if self.lane == "docker":
                 self.prepare_builder()
             atomic_json(self.output / "fingerprint.json", self.fingerprint())
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
         finally:
             try:
-                self.stop_builder()
                 self.check_runtime_state_cleanup()
             finally:
                 self.stop_engine()
@@ -276,43 +262,22 @@ class LaneRunner:
         """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
-        if self.lane == "container-compose":
-            if self.socket_root is None or not self.docker:
-                raise ParityError(
-                    "container-compose Docker client wrapper requires a live engine"
-                )
-            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
-            if not compose.is_file() or not os.access(compose, os.X_OK):
-                raise ParityError(
-                    f"container-compose wrapper is not executable at {compose}"
-                )
-            wrapper = self.socket_root / "docker-container-compose"
-            docker = self.docker
-            wrapper.write_text(
-                "#!/bin/sh\n"
-                "set -eu\n"
-                f"docker={shlex.quote(docker)}\n"
-                f"compose={shlex.quote(str(compose))}\n"
-                'if [ "${1-}" = "compose" ]; then\n'
-                "    shift\n"
-                '    exec "$compose" "$@"\n'
-                "fi\n"
-                'exec "$docker" "$@"\n',
-                encoding="utf-8",
-            )
-            wrapper.chmod(0o700)
-            self.devcontainer_docker = str(wrapper)
-            self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
-            return
-        if self.lane != "apple-stock":
+        if self.lane == "docker":
             return
         if self.socket_root is None or not self.docker:
-            raise ParityError("stock Docker client wrapper requires a live engine")
+            raise ParityError(
+                "candidate compatibility wrapper requires a live engine"
+            )
         self.environment["DOCKER_BUILDKIT"] = "0"
-        wrapper = self.socket_root / "docker-no-buildx"
+        wrapper = self.socket_root / "devcontainer-client"
         if self.docker == str(wrapper):
             return
         docker = self.docker
+        compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+        if not compose.is_file() or not os.access(compose, os.X_OK):
+            raise ParityError(
+                f"native Compose wrapper is not executable at {compose}"
+            )
         build_filter = (
             "import os\n"
             "import sys\n"
@@ -340,6 +305,11 @@ class LaneRunner:
             "#!/bin/sh\n"
             "set -eu\n"
             f"docker={shlex.quote(docker)}\n"
+            f"compose={shlex.quote(str(compose))}\n"
+            'if [ "${1-}" = "compose" ]; then\n'
+            "    shift\n"
+            '    exec "$compose" "$@"\n'
+            "fi\n"
             'if [ "${1-}" = "buildx" ]; then\n'
             '    printf "%s\\n" "docker: unknown command: docker buildx" >&2\n'
             "    exit 1\n"
@@ -357,78 +327,11 @@ class LaneRunner:
         self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
 
     def prepare_builder(self) -> None:
-        if self.lane == "docker":
-            self.environment["BUILDX_BUILDER"] = "default"
-            bootstrap = subprocess.run(
-                [self.docker, "buildx", "inspect", "--bootstrap", "default"],
-                cwd=self.repository,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=300,
-            )
-            (self.output / "buildx-bootstrap.log").write_text(
-                bootstrap.stdout + bootstrap.stderr,
-                encoding="utf-8",
-            )
-            if bootstrap.returncode != 0:
-                raise ParityError(
-                    "Docker daemon-integrated BuildKit did not become ready: "
-                    f"{bootstrap.stderr.strip()}"
-                )
-            return
-
-        before = self.docker_container_inventory()
-        self.builder_name = f"devcontainer-parity-{self.lane}-{os.getpid()}"
-        arguments = [
-            self.docker,
-            "buildx",
-            "create",
-            "--name",
-            self.builder_name,
-            "--driver",
-            "docker-container",
-            "--driver-opt",
-            "restart-policy=no",
-        ]
-        if self.lane == "container-compose":
-            try:
-                resolver_configuration = Path("/etc/resolv.conf").read_text(
-                    encoding="utf-8"
-                )
-            except OSError as error:
-                raise ParityError(
-                    "cannot read host resolver configuration for the provider builder"
-                ) from error
-            nameservers = resolver_nameservers(resolver_configuration)
-            if not nameservers:
-                raise ParityError(
-                    "host resolver configuration has no usable nameservers"
-                )
-            buildkitd_config = self.output / "buildkitd.toml"
-            encoded = ", ".join(json.dumps(value) for value in nameservers)
-            buildkitd_config.write_text(
-                f"[dns]\n  nameservers = [{encoded}]\n",
-                encoding="utf-8",
-            )
-            arguments += ["--buildkitd-config", str(buildkitd_config)]
-        result = subprocess.run(
-            arguments,
-            cwd=self.repository,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            raise ParityError(
-                f"cannot create isolated buildx builder: {result.stderr.strip()}"
-            )
-        self.environment["BUILDX_BUILDER"] = self.builder_name
+        if self.lane != "docker":
+            raise ParityError("Buildx is restricted to the Docker oracle lane")
+        self.environment["BUILDX_BUILDER"] = "default"
         bootstrap = subprocess.run(
-            [self.docker, "buildx", "inspect", "--bootstrap", self.builder_name],
+            [self.docker, "buildx", "inspect", "--bootstrap", "default"],
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
@@ -442,93 +345,9 @@ class LaneRunner:
         )
         if bootstrap.returncode != 0:
             raise ParityError(
-                f"isolated buildx builder did not become ready: {bootstrap.stderr.strip()}"
+                "Docker daemon-integrated BuildKit did not become ready: "
+                f"{bootstrap.stderr.strip()}"
             )
-        self.builder_container_ids = self.docker_container_inventory() - before
-        if not self.builder_container_ids:
-            raise ParityError(
-                "isolated buildx builder did not expose a dedicated container"
-            )
-
-    def stop_builder(self) -> None:
-        if self.builder_name is None or not self.docker:
-            return
-        builder_name = self.builder_name
-        result = subprocess.run(
-            [self.docker, "buildx", "rm", "--force", self.builder_name],
-            cwd=self.repository,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        (self.output / "buildx-remove.log").write_text(
-            result.stdout + result.stderr,
-            encoding="utf-8",
-        )
-        if result.returncode != 0:
-            self.cleanup_differences.append(
-                f"buildx rm for {builder_name} exited {result.returncode}: "
-                f"{result.stderr.strip()}"
-            )
-
-        remaining = set(self.builder_container_ids)
-        deadline = time.monotonic() + 15
-        while remaining and time.monotonic() < deadline:
-            try:
-                remaining &= self.docker_container_inventory()
-            except ParityError as error:
-                self.cleanup_differences.append(str(error))
-                break
-            if remaining:
-                time.sleep(0.2)
-        if remaining:
-            identifiers = sorted(remaining)
-            cleanup = subprocess.run(
-                [self.docker, "rm", "-f", *identifiers],
-                cwd=self.repository,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-            )
-            diagnostic = (
-                "isolated buildx builder leaked container(s): "
-                + ", ".join(identifiers)
-            )
-            if cleanup.returncode != 0:
-                diagnostic += (
-                    f"; exact cleanup exited {cleanup.returncode}: "
-                    f"{cleanup.stderr.strip()}"
-                )
-            self.cleanup_differences.append(diagnostic)
-        self.builder_name = None
-        self.builder_container_ids = set()
-
-    def docker_container_inventory(self) -> set[str]:
-        """Return the exact container IDs visible through the selected lane."""
-
-        result = subprocess.run(
-            [self.docker, "ps", "-aq"],
-            cwd=self.repository,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            raise ParityError(
-                "cannot inventory parity containers: "
-                f"{result.stderr.strip()}"
-            )
-        return {
-            value.strip()
-            for value in result.stdout.splitlines()
-            if value.strip()
-        }
 
     def check_runtime_state_cleanup(self) -> None:
         """Require Apple lanes to leave no durable project/container ownership."""
@@ -612,7 +431,6 @@ class LaneRunner:
 
     def fingerprint(self) -> dict[str, Any]:
         commands: dict[str, Sequence[str]] = {
-            "docker": [self.docker, "version", "--format", "{{json .}}"],
             "devcontainers": [
                 self.node_package_runner,
                 "--yes",
@@ -620,6 +438,22 @@ class LaneRunner:
                 "--version",
             ],
         }
+        if self.lane == "docker":
+            commands["docker"] = [
+                self.docker,
+                "version",
+                "--format",
+                "{{json .}}",
+            ]
+        else:
+            commands["compatibilityAdapter"] = [
+                self.docker,
+                "info",
+            ]
+            commands["compatibilityAdapterVersion"] = [
+                self.docker,
+                "--version",
+            ]
         if self.lane != "docker":
             container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or "container"
             commands["container"] = [
@@ -629,7 +463,7 @@ class LaneRunner:
                 "--format",
                 "json",
             ]
-        if self.lane == "container-compose":
+        if self.lane != "docker":
             commands["containerCompose"] = [
                 os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",

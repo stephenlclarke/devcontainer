@@ -20,12 +20,12 @@
       "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608"
     },
     "appleContainer": {
-      "stableVersion": "1.1.0",
-      "stableCommit": "5973b9cc626a3e7a499bb316a958237ebe14e2ed"
+      "stableVersion": "1.4.1",
+      "stableCommit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
     },
     "containerCompose": {
-      "stableVersion": "0.10.1",
-      "stableCommit": "77d2191a75f3a15092bbead1991b0d6a37fafa91"
+      "stableVersion": "0.14.3",
+      "stableCommit": "aa3dda83f1322ef70fe985fe11410e9f8201e4fa"
     },
     "vscode": {
       "version": "1.131.0",
@@ -71,7 +71,7 @@
     },
     "apple-stock": {
       "role": "candidate",
-      "description": "The compatibility service using only official apple/container runtime dependencies; Compose files run through Docker Compose over the bridge."
+      "description": "The compatibility service using only official apple/container runtime dependencies; Compose files run through the bundled native container-compose provider."
     },
     "container-compose": {
       "role": "candidate",

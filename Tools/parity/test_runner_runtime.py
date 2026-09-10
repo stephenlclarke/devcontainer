@@ -95,6 +95,9 @@ case "${1:-}" in
   status)
     [[ -f "$state" && "$(<"$state")" == "running" ]]
     ;;
+  stop)
+    printf 'unregistered\n' > "$state"
+    ;;
   *)
     exit 2
     ;;
@@ -161,14 +164,22 @@ esac
             "running",
         )
 
-    def test_every_lane_starts_colima_before_the_selected_runtime(self) -> None:
-        result = self.run_script("start", "apple-stock")
+    def test_candidate_lanes_never_probe_or_start_colima(self) -> None:
+        result = self.run_script(
+            "start",
+            "apple-stock",
+            {"DEVCONTAINER_RUNTIME_COLIMA_BIN": str(self.root / "missing")},
+        )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         operations = self.log.read_text(encoding="utf-8").splitlines()
-        self.assertLess(
-            operations.index("colima start"),
-            operations.index("stock system start --enable-kernel-install --timeout 120"),
+        self.assertFalse(
+            any(operation.startswith("colima ") for operation in operations),
+            operations,
+        )
+        self.assertIn(
+            "stock system start --enable-kernel-install --timeout 120",
+            operations,
         )
 
     def test_retries_an_interrupted_colima_start(self) -> None:
@@ -216,6 +227,20 @@ esac
         operations = self.log.read_text(encoding="utf-8")
         self.assertNotIn("colima start", operations)
         self.assertEqual(operations.count("colima status"), 1)
+
+    def test_stops_the_docker_oracle_after_its_lane(self) -> None:
+        (self.root / "colima.state").write_text("running\n", encoding="utf-8")
+
+        result = self.run_script("stop", "docker")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "colima.state").read_text(encoding="utf-8").strip(),
+            "unregistered",
+        )
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertIn("colima status", operations)
+        self.assertIn("colima stop", operations)
 
     def test_fails_closed_when_colima_cannot_start(self) -> None:
         result = self.run_script(

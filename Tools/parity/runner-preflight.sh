@@ -116,45 +116,34 @@ main() {
     need "$command_name"
   done
 
-  local docker_bin
-  local docker_compose_bin
-  local container_compose_bin
-  local container_bin
-  docker_bin="$(resolve_executable "${DEVCONTAINER_DOCKER_BIN:-}" docker)"
-  docker_compose_bin="$(
-    resolve_executable "${DEVCONTAINER_DOCKER_COMPOSE_BIN:-}" docker-compose \
-      2>/dev/null || true
-  )"
-  container_compose_bin="$(
-    resolve_executable "${DEVCONTAINER_COMPOSE_BIN:-}" container-compose \
-      2>/dev/null || true
-  )"
-  container_bin="$(resolve_executable "${DEVCONTAINER_CONTAINER_BIN:-}" container 2>/dev/null || true)"
-
-  local docker_cli_version
-  local docker_engine_version
-  local docker_engine_api
-  local docker_engine_commit
-  local expected
-  expected="$(jq -r '.referencePins.docker.cliSHA256' Tests/Parity/manifest.json)"
-  require_sha256 "$docker_bin" "$expected"
-  docker_cli_version="$("$docker_bin" version --format '{{.Client.Version}}')"
-  docker_engine_version="$("$docker_bin" version --format '{{.Server.Version}}')"
-  docker_engine_api="$("$docker_bin" version --format '{{.Server.APIVersion}}')"
-  docker_engine_commit="$("$docker_bin" version --format '{{.Server.GitCommit}}')"
-  require_equal "Docker CLI version" "$(
-    jq -r '.referencePins.docker.cliVersion' Tests/Parity/manifest.json
-  )" "$docker_cli_version"
-  require_equal "Docker Engine version" "$(
-    jq -r '.referencePins.docker.engineVersion' Tests/Parity/manifest.json
-  )" "$docker_engine_version"
-  require_equal "Docker Engine API version" "$(
-    jq -r '.referencePins.docker.engineApiVersion' Tests/Parity/manifest.json
-  )" "$docker_engine_api"
-  require_equal "Docker Engine commit" "$(
-    jq -r '.referencePins.docker.engineCommit' Tests/Parity/manifest.json
-  )" "$docker_engine_commit"
-  "$docker_bin" info >/dev/null
+  local docker_bin=""
+  local docker_compose_bin=""
+  local candidate_docker_bin=""
+  local container_compose_bin=""
+  local container_bin=""
+  if [[ "$lane" == "docker" || "$lane" == "all" ]]; then
+    docker_bin="$(resolve_executable "${DEVCONTAINER_DOCKER_BIN:-}" docker)"
+    docker_compose_bin="$(
+      resolve_executable "${DEVCONTAINER_DOCKER_COMPOSE_BIN:-}" docker-compose \
+        2>/dev/null || true
+    )"
+  fi
+  if [[ "$lane" != "docker" ]]; then
+    candidate_docker_bin="${DEVCONTAINER_CANDIDATE_DOCKER_BIN:-$REPOSITORY_ROOT/.build/debug/devcontainer-docker}"
+    [[ -x "$candidate_docker_bin" ]] || {
+      printf '%s: project-owned devcontainer-docker adapter is required for %s parity\n' \
+        "$SCRIPT_NAME" "$lane" >&2
+      return 1
+    }
+    container_compose_bin="$(
+      resolve_executable "${DEVCONTAINER_COMPOSE_BIN:-}" container-compose \
+        2>/dev/null || true
+    )"
+    container_bin="$(
+      resolve_executable "${DEVCONTAINER_CONTAINER_BIN:-}" container \
+        2>/dev/null || true
+    )"
+  fi
 
   local devcontainers_version
   local devcontainers_integrity
@@ -171,6 +160,30 @@ main() {
     | grep -Fx "$devcontainers_version"
 
   if [[ "$lane" == "docker" || "$lane" == "all" ]]; then
+    local docker_cli_version
+    local docker_engine_version
+    local docker_engine_api
+    local docker_engine_commit
+    local expected
+    expected="$(jq -r '.referencePins.docker.cliSHA256' Tests/Parity/manifest.json)"
+    require_sha256 "$docker_bin" "$expected"
+    docker_cli_version="$("$docker_bin" version --format '{{.Client.Version}}')"
+    docker_engine_version="$("$docker_bin" version --format '{{.Server.Version}}')"
+    docker_engine_api="$("$docker_bin" version --format '{{.Server.APIVersion}}')"
+    docker_engine_commit="$("$docker_bin" version --format '{{.Server.GitCommit}}')"
+    require_equal "Docker CLI version" "$(
+      jq -r '.referencePins.docker.cliVersion' Tests/Parity/manifest.json
+    )" "$docker_cli_version"
+    require_equal "Docker Engine version" "$(
+      jq -r '.referencePins.docker.engineVersion' Tests/Parity/manifest.json
+    )" "$docker_engine_version"
+    require_equal "Docker Engine API version" "$(
+      jq -r '.referencePins.docker.engineApiVersion' Tests/Parity/manifest.json
+    )" "$docker_engine_api"
+    require_equal "Docker Engine commit" "$(
+      jq -r '.referencePins.docker.engineCommit' Tests/Parity/manifest.json
+    )" "$docker_engine_commit"
+    "$docker_bin" info >/dev/null
     need colima
     colima status >/dev/null
     require_equal "Docker context" "colima" "$(docker context show)"
@@ -233,6 +246,8 @@ main() {
   )" "$actual_swift_version"
 
   if [[ "$lane" != "docker" ]]; then
+    "$candidate_docker_bin" --version | grep -F \
+      'devcontainer Apple compatibility'
     [[ -n "$container_bin" ]] || {
       printf '%s: Apple container is required for %s parity\n' \
         "$SCRIPT_NAME" "$lane" >&2
@@ -257,7 +272,7 @@ main() {
       )) | length == 1'
   fi
 
-  if [[ "$lane" == "container-compose" || "$lane" == "all" ]]; then
+  if [[ "$lane" != "docker" ]]; then
     [[ -n "$container_compose_bin" ]] || {
       printf '%s: container-compose is required for %s parity\n' \
         "$SCRIPT_NAME" "$lane" >&2
