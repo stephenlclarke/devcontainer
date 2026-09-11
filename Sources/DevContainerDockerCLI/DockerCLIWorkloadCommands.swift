@@ -403,7 +403,7 @@ struct DockerBuildOptions: Equatable {
         let enumerator = FileManager.default.enumerator(
             at: contextURL,
             includingPropertiesForKeys: nil,
-            options: [.skipsPackageDescendants]
+            options: []
         )
         var entries: [String] = []
         while let url = enumerator?.nextObject() as? URL {
@@ -716,7 +716,19 @@ struct DockerRunOptions {
         }
         let hostIP = parts.count == 3 ? parts[0] : "0.0.0.0"
         let hostPort = parts[parts.count - 2]
-        let containerPort = parts[parts.count - 1] + "/tcp"
+        let target = parts[parts.count - 1].split(
+            separator: "/",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        guard !target[0].isEmpty else {
+            throw DockerCLIError.invalidArguments("invalid published port \(value)")
+        }
+        let protocolName = target.count == 1 ? "tcp" : target[1].lowercased()
+        guard protocolName == "tcp" || protocolName == "udp" else {
+            throw DockerCLIError.invalidArguments("unsupported port protocol \(protocolName)")
+        }
+        let containerPort = target[0] + "/" + protocolName
         ports[containerPort, default: []].append(["HostIp": hostIP, "HostPort": hostPort])
     }
 

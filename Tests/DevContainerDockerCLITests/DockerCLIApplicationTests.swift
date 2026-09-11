@@ -21,6 +21,7 @@ import Foundation
 import Testing
 
 @Suite("Docker CLI compatibility application")
+// swiftlint:disable:next type_body_length
 struct DockerCLIApplicationTests {
     @Test
     func `build archive excludes macOS extended attributes`() throws {
@@ -164,6 +165,20 @@ struct DockerCLIApplicationTests {
                 atPath: extracted.appendingPathComponent("outside-link").path
             ) == outside.path
         )
+    }
+
+    @Test
+    func `build archive includes descendants of macOS package directories`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-package-\(UUID().uuidString)")
+        let bundle = root.appendingPathComponent("Fixture.bundle/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data("payload\n".utf8).write(to: bundle.appendingPathComponent("value.txt"))
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let entries = try archiveEntries(DockerBuildOptions(arguments: [root.path]).archive())
+        #expect(entries.contains("Fixture.bundle/Contents/value.txt"))
     }
 
     @Test
@@ -626,6 +641,18 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `preserves published UDP protocol and defaults to TCP`() throws {
+        let request = try DockerRunOptions(arguments: [
+            "--publish", "8080:53/udp", "--publish", "127.0.0.1:8443:443", "image"
+        ]).createRequest
+        let bindings = (request["HostConfig"] as? [String: Any])?["PortBindings"]
+            as? [String: [[String: String]]]
+
+        #expect(bindings?["53/udp"] == [["HostIp": "0.0.0.0", "HostPort": "8080"]])
+        #expect(bindings?["443/tcp"] == [["HostIp": "127.0.0.1", "HostPort": "8443"]])
+    }
+
+    @Test
     func `maps native Compose creation options onto the Engine request`() throws {
         let transport = StubTransport([.json(["Id": "compose-container"], status: 201)])
         let application = DockerCLIApplication(transport: transport)
@@ -694,6 +721,7 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    // swiftlint:disable:next function_body_length
     func `rejects incomplete and unsupported adapter options`() {
         let application = DockerCLIApplication(transport: StubTransport([]))
         let invalid: [[String]] = [
@@ -726,6 +754,9 @@ struct DockerCLIApplicationTests {
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: []) }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--mount", "type=bind", "image"]) }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["-p", "1:2:3:4", "image"]) }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: ["-p", "8080:53/sctp", "image"])
+        }
         #expect(throws: (any Error).self) {
             try DockerRunOptions(arguments: ["--stop-timeout", "-1", "image"])
         }
