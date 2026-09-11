@@ -79,12 +79,19 @@ FORBIDDEN = (
     ),
     re.compile(
         r"(?i)[\"']identity[\"']\s*:\s*[\"']"
-        r"(?:docker(?:d|-compose|-buildx)?|com\.docker\.cli|colima|podman|nerdctl)"
-        r"(?:[-_.][^\"']+)?[\"']"
+        r"(?:docker|com\.docker\.cli|containerd|colima|podman|nerdctl)[^\"']*[\"']"
     ),
     re.compile(
         r"(?i)https?://github\.com/(?:docker|moby|containerd|containers)/"
         r"(?:docker|moby|containerd|podman|nerdctl)(?:\.git)?\b"
+    ),
+    re.compile(
+        r"(?i)\.linked(?:Library|Framework)\s*\(\s*[\"']"
+        r"(?:docker|containerd|colima|podman|nerdctl)[^\"']*[\"']"
+    ),
+    re.compile(
+        r"(?i)[\"']-l(?:docker|containerd|colima|podman|nerdctl)"
+        r"[^\"']*[\"']"
     ),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
     re.compile(r"(?im)^\s*open\s+(?:--?application\s+|-a\s+)['\"]?Docker\b"),
