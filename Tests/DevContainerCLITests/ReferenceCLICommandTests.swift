@@ -16,6 +16,7 @@
 
 import ArgumentParser
 @testable import DevContainerCLI
+import DevContainerModel
 import Foundation
 import Testing
 
@@ -94,6 +95,33 @@ struct ReferenceCLICommandTests {
             try ReferenceCLIInvocation.configured(
                 command: "up",
                 arguments: ["--docker-path", "/usr/bin/docker"],
+                injectRuntimeAdapters: true,
+                environment: fixture.environment,
+                executable: fixture.devcontainer
+            )
+        }
+    }
+
+    @Test
+    func `packaged adapters cannot resolve to Docker executables`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let docker = fixture.root.appendingPathComponent("docker")
+        #expect(FileManager.default.createFile(atPath: docker.path, contents: Data()))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: docker.path
+        )
+        try FileManager.default.removeItem(at: fixture.docker)
+        try FileManager.default.createSymbolicLink(
+            at: fixture.docker,
+            withDestinationURL: docker
+        )
+
+        #expect(throws: DevContainerError.self) {
+            try ReferenceCLIInvocation.configured(
+                command: "up",
+                arguments: ["--workspace-folder", "/work"],
                 injectRuntimeAdapters: true,
                 environment: fixture.environment,
                 executable: fixture.devcontainer

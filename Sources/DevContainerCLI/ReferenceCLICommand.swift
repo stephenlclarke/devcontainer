@@ -147,22 +147,10 @@ struct ReferenceCLIInvocation: Equatable {
         try requireNodeExecutable(node)
         var upstreamArguments = [script.path, command]
         if injectRuntimeAdapters {
-            try rejectRuntimeOverrides(arguments)
-            let docker = directory.appendingPathComponent("devcontainer-docker")
-            let compose = directory.appendingPathComponent("devcontainer-compose")
-            guard
-                FileManager.default.isExecutableFile(atPath: docker.path),
-                FileManager.default.isExecutableFile(atPath: compose.path)
-            else {
-                throw DevContainerError(
-                    .runtimeUnavailable,
-                    message: "packaged Apple runtime adapters are missing"
-                )
-            }
-            upstreamArguments += [
-                "--docker-path", docker.path,
-                "--docker-compose-path", compose.path
-            ]
+            upstreamArguments += try runtimeAdapterArguments(
+                directory: directory,
+                userArguments: arguments
+            )
         }
         upstreamArguments += arguments
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
@@ -177,6 +165,36 @@ struct ReferenceCLIInvocation: Equatable {
             arguments: upstreamArguments,
             environment: childEnvironment
         )
+    }
+
+    private static func runtimeAdapterArguments(
+        directory: URL,
+        userArguments: [String]
+    ) throws -> [String] {
+        try rejectRuntimeOverrides(userArguments)
+        let docker = directory.appendingPathComponent("devcontainer-docker")
+        let compose = directory.appendingPathComponent("devcontainer-compose")
+        guard
+            FileManager.default.isExecutableFile(atPath: docker.path),
+            FileManager.default.isExecutableFile(atPath: compose.path)
+        else {
+            throw DevContainerError(
+                .runtimeUnavailable,
+                message: "packaged Apple runtime adapters are missing"
+            )
+        }
+        try DevContainerExecutablePolicy.requireDockerless(
+            docker.path,
+            name: "packaged Apple runtime adapter"
+        )
+        try DevContainerExecutablePolicy.requireDockerless(
+            compose.path,
+            name: "packaged native Compose adapter"
+        )
+        return [
+            "--docker-path", docker.path,
+            "--docker-compose-path", compose.path
+        ]
     }
 
     private static func configuredEnvironment(

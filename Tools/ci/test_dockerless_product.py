@@ -120,6 +120,10 @@ class DockerlessProductTests(unittest.TestCase):
             'childEnvironment["DEVCONTAINER_CONTAINER_BIN"] = selection.containerExecutable',
             reference,
         )
+        self.assertIn(
+            'name: "packaged Apple runtime adapter"',
+            reference,
+        )
         self.assertIn('!key.hasPrefix("DOCKER_")', reference)
         self.assertIn('key != "NODE_OPTIONS"', reference)
         self.assertIn('key != "NODE_PATH"', reference)
