@@ -324,12 +324,17 @@ public final class DockerCLIApplication: @unchecked Sendable {
             )
         }
         let header = "CONTAINER ID\tIMAGE\tCOMMAND\tCREATED\tSTATUS\tPORTS\tNAMES"
-        let rows = containers.map(Self.containerSummary)
+        let rows = containers.map { Self.containerSummary($0, noTrunc: options.noTrunc) }
         return .stdout(([header] + rows).joined(separator: "\n") + "\n")
     }
 
-    private static func containerSummary(_ container: [String: Any]) -> String {
-        let identifier = (container["Id"] as? String).map { String($0.prefix(12)) } ?? ""
+    private static func containerSummary(
+        _ container: [String: Any],
+        noTrunc: Bool
+    ) -> String {
+        let identifier = (container["Id"] as? String).map {
+            noTrunc ? $0 : String($0.prefix(12))
+        } ?? ""
         let image = container["Image"] as? String ?? ""
         let command = container["Command"] as? String ?? ""
         let created = (container["Created"] as? NSNumber)?.stringValue ?? ""
@@ -468,6 +473,8 @@ public final class DockerCLIApplication: @unchecked Sendable {
             return try createVolume(values)
         case "inspect":
             return try inspect(["--type", "volume"] + values)
+        case "ls", "list":
+            return try listVolumes(values)
         case "rm", "remove":
             return try removeVolumes(values)
         default:
@@ -638,7 +645,7 @@ public final class DockerCLIApplication: @unchecked Sendable {
         return object
     }
 
-    private static func array(_ data: Data) throws -> [Any] {
+    static func array(_ data: Data) throws -> [Any] {
         guard let array = try JSONSerialization.jsonObject(with: data) as? [Any] else {
             throw DockerCLIError.malformedResponse("expected JSON array")
         }
@@ -690,18 +697,18 @@ public final class DockerCLIApplication: @unchecked Sendable {
 private struct DockerContainerListOptions {
     var all = false
     var quiet = false
+    var noTrunc = false
     var labels: [String] = []
     var format: String?
 
     init(arguments: [String]) throws {
         var index = 0
         while index < arguments.count {
+            if applyBooleanOption(arguments[index]) {
+                index += 1
+                continue
+            }
             switch arguments[index] {
-            case "-a", "--all": all = true
-            case "-q", "--quiet": quiet = true
-            case "-aq", "-qa":
-                all = true
-                quiet = true
             case "--filter":
                 index += 1
                 guard index < arguments.count else {
@@ -726,6 +733,19 @@ private struct DockerContainerListOptions {
             }
             index += 1
         }
+    }
+
+    private mutating func applyBooleanOption(_ option: String) -> Bool {
+        switch option {
+        case "-a", "--all": all = true
+        case "-q", "--quiet": quiet = true
+        case "--no-trunc": noTrunc = true
+        case "-aq", "-qa":
+            all = true
+            quiet = true
+        default: return false
+        }
+        return true
     }
 }
 

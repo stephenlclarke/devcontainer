@@ -43,6 +43,8 @@ extension DockerCLIApplication {
             return try createNetwork(values)
         case "inspect":
             return try inspectNetworks(values)
+        case "ls", "list":
+            return try listNetworks(values)
         case "rm", "remove":
             return try removeNetworks(values)
         default:
@@ -124,6 +126,41 @@ extension DockerCLIApplication {
             )
         }
         return try DockerCLIResult(standardOutput: Self.json(objects) + Data("\n".utf8))
+    }
+
+    private func listNetworks(_ arguments: [String]) throws -> DockerCLIResult {
+        let options = try DockerResourceListOptions(arguments: arguments, resource: "network")
+        let networks = try Self.array(
+            request("GET", options.target(path: "/networks")).body
+        )
+        let identifiers = try networks.map { value in
+            guard let identifier = (value as? [String: Any])?["Id"] as? String else {
+                throw DockerCLIError.malformedResponse("network list entry has no Id")
+            }
+            return identifier
+        }
+        return .stdout(identifiers.isEmpty ? "" : identifiers.joined(separator: "\n") + "\n")
+    }
+
+    func listVolumes(_ arguments: [String]) throws -> DockerCLIResult {
+        let options = try DockerResourceListOptions(arguments: arguments, resource: "volume")
+        let response = try Self.object(request("GET", options.target(path: "/volumes")).body)
+        let rawVolumes = response["Volumes"]
+        let volumes: [Any]
+        if rawVolumes == nil || rawVolumes is NSNull {
+            volumes = []
+        } else if let values = rawVolumes as? [Any] {
+            volumes = values
+        } else {
+            throw DockerCLIError.malformedResponse("volume list response has invalid Volumes")
+        }
+        let names = try volumes.map { value in
+            guard let name = (value as? [String: Any])?["Name"] as? String else {
+                throw DockerCLIError.malformedResponse("volume list entry has no Name")
+            }
+            return name
+        }
+        return .stdout(names.isEmpty ? "" : names.joined(separator: "\n") + "\n")
     }
 
     private func removeNetworks(_ arguments: [String]) throws -> DockerCLIResult {
@@ -240,5 +277,54 @@ extension DockerCLIApplication {
             return value
         }
         return nil
+    }
+}
+
+private struct DockerResourceListOptions {
+    var labels: [String] = []
+
+    init(arguments: [String], resource: String) throws {
+        var index = 0
+        var quiet = false
+        while index < arguments.count {
+            switch arguments[index] {
+            case "-q", "--quiet":
+                quiet = true
+            case "--filter":
+                index += 1
+                guard index < arguments.count else {
+                    throw DockerCLIError.invalidArguments("--filter requires a value")
+                }
+                try addFilter(arguments[index], resource: resource)
+            case let option where option.hasPrefix("--filter="):
+                try addFilter(String(option.dropFirst("--filter=".count)), resource: resource)
+            default:
+                throw DockerCLIError.invalidArguments(
+                    "unsupported \(resource) ls option \(arguments[index])"
+                )
+            }
+            index += 1
+        }
+        guard quiet else {
+            throw DockerCLIError.invalidArguments("\(resource) ls requires --quiet")
+        }
+    }
+
+    func target(path: String) throws -> String {
+        guard !labels.isEmpty else { return path }
+        let data = try DockerCLIApplication.json(["label": labels])
+        guard let filters = String(data: data, encoding: .utf8) else {
+            throw DockerCLIError.malformedResponse("could not encode resource filters")
+        }
+        return DockerCLIApplication.target(path, query: [("filters", filters)])
+    }
+
+    private mutating func addFilter(_ value: String, resource: String) throws {
+        guard value.hasPrefix("label=") else {
+            throw DockerCLIError.invalidArguments(
+                "unsupported \(resource) ls filter \(value)"
+            )
+        }
+        labels.append(String(value.dropFirst("label=".count)))
     }
 }

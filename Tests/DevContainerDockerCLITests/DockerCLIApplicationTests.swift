@@ -332,6 +332,28 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `accepts no trunc for full identifier discovery`() throws {
+        let identifier = "1234567890abcdef"
+        let quietTransport = StubTransport([.json([["Id": identifier]])])
+        let tableTransport = StubTransport([
+            .json([[
+                "Id": identifier, "Image": "example:latest", "Command": "true",
+                "Created": 123, "Status": "Up", "Ports": [], "Names": ["/workspace"]
+            ]])
+        ])
+
+        let quiet = try DockerCLIApplication(transport: quietTransport).run(
+            arguments: ["ps", "-aq", "--no-trunc"]
+        )
+        let table = try DockerCLIApplication(transport: tableTransport).run(
+            arguments: ["ps", "--no-trunc"]
+        )
+
+        #expect(quiet.standardOutput == Data("\(identifier)\n".utf8))
+        #expect(table.standardOutput.contains(Data(identifier.utf8)))
+    }
+
+    @Test
     func `prints a Docker shaped container table when quiet is omitted`() throws {
         let transport = StubTransport([
             .json([
@@ -488,6 +510,28 @@ struct DockerCLIApplicationTests {
             "/volumes/cache",
             "/volumes/other?force=true"
         ])
+    }
+
+    @Test
+    func `lists filtered networks and volumes for VS Code cleanup proof`() throws {
+        let transport = StubTransport([
+            .json([["Id": "network-id", "Name": "parity-network"]]),
+            .json(["Volumes": [["Name": "parity-volume"]]])
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        let networks = try application.run(arguments: [
+            "network", "ls", "--quiet", "--filter", "label=devcontainer.parity=true"
+        ])
+        let volumes = try application.run(arguments: [
+            "volume", "list", "-q", "--filter=label=devcontainer.parity=true"
+        ])
+
+        #expect(networks.standardOutput == Data("network-id\n".utf8))
+        #expect(volumes.standardOutput == Data("parity-volume\n".utf8))
+        #expect(transport.requests[0].target.hasPrefix("/networks?filters="))
+        #expect(transport.requests[1].target.hasPrefix("/volumes?filters="))
+        #expect(transport.requests.allSatisfy { $0.target.contains("devcontainer.parity") })
     }
 
     @Test
