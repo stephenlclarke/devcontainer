@@ -95,6 +95,7 @@ struct DevContainerComposeCommandTests {
         #expect(try fixture.runtimeSelections() == [
             "stock|/fixtures/apple-container|/fixtures/devcontainer-docker|\(fixture.socket.path)"
                 + "|io.github.stephenlclarke.container.compose.network-aliases.v1"
+                + "|unix://\(fixture.socket.path)"
         ])
         #expect(
             try fixture.invocations() == [
@@ -320,12 +321,13 @@ private final class ComposeCommandFixture {
         #!/bin/sh
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
-        printf '%s|%s|%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s|%s\n' \
           "$CONTAINER_COMPOSE_RUNTIME_PROFILE" \
           "$CONTAINER_COMPOSE_CONTAINER" \
           "$CONTAINER_BIN" \
           "$CONTAINER_COMPOSE_ENGINE_SOCKET" \
-          "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" >> "$RUNTIME_SELECTION_LOG"
+          "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" \
+          "$DOCKER_HOST" >> "$RUNTIME_SELECTION_LOG"
         case " $* " in
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'
@@ -353,6 +355,7 @@ private final class ComposeCommandFixture {
             "DEVCONTAINER_BACKEND": backend.rawValue,
             "DEVCONTAINER_CONFIG": root.appendingPathComponent("config.toml").path,
             "DEVCONTAINER_SOCKET": socket.path,
+            "DOCKER_HOST": "unix:///tmp/ambient-docker.sock",
             "DEVCONTAINER_STATE": state.path,
             "INVOCATION_LOG": invocationLog.path,
             "RUNTIME_SELECTION_LOG": runtimeSelectionLog.path,

@@ -295,6 +295,8 @@ enum DevContainerComposeCommand {
         childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.containerExecutable
         childEnvironment["CONTAINER_BIN"] = execution.compatibilityExecutable
         childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = execution.socket
+        childEnvironment["DEVCONTAINER_SOCKET"] = execution.socket
+        childEnvironment["DOCKER_HOST"] = "unix://\(execution.socket)"
         var childArguments = arguments
         let executable: URL
         executable = execution.paths.containerCompose
@@ -433,16 +435,11 @@ struct Paths {
             ?? support
             .appendingPathComponent("devcontainer", isDirectory: true)
             .appendingPathComponent("state.sqlite")
-        if let configured = environment["DEVCONTAINER_SOCKET"], !configured.isEmpty {
-            socket = configured
-        } else if let host = environment["DOCKER_HOST"], host.hasPrefix("unix://") {
-            socket = String(host.dropFirst("unix://".count))
-        } else {
-            socket = FileManager.default.temporaryDirectory
-                .appendingPathComponent("devcontainer", isDirectory: true)
-                .appendingPathComponent("docker.sock")
-                .path
-        }
+        socket = environment["DEVCONTAINER_SOCKET"]
+            ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer", isDirectory: true)
+            .appendingPathComponent("docker.sock")
+            .path
         containerCompose = URL(
             fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]
                 ?? Self.firstExecutable([

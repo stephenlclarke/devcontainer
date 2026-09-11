@@ -64,7 +64,8 @@ struct ReferenceCLICommandTests {
             "--workspace-folder", "/work"
         ])
         #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.88.0")
-        #expect(invocation.environment["DOCKER_HOST"] == "unix:///tmp/fixture.sock")
+        #expect(invocation.environment["DOCKER_HOST"] == "unix://\(fixture.socket.path)")
+        #expect(invocation.environment["DEVCONTAINER_SOCKET"] == fixture.socket.path)
         #expect(invocation.environment["LOCAL_ENV_FIXTURE"] == "preserved")
         #expect(invocation.environment["SSH_AUTH_SOCK"] == "/tmp/agent.sock")
         #expect(invocation.environment["DYLD_INSERT_LIBRARIES"] == nil)
@@ -95,6 +96,7 @@ private struct InvocationFixture {
     let compose: URL
     let node: URL
     let script: URL
+    let socket: URL
 
     init() throws {
         root = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -111,6 +113,7 @@ private struct InvocationFixture {
         compose = bin.appendingPathComponent("devcontainer-compose")
         node = bin.appendingPathComponent("node")
         script = share.appendingPathComponent("devcontainer.js")
+        socket = root.appendingPathComponent("engine.sock")
         for executable in [devcontainer, docker, compose, node] {
             #expect(FileManager.default.createFile(atPath: executable.path, contents: Data()))
             try FileManager.default.setAttributes(
@@ -125,6 +128,7 @@ private struct InvocationFixture {
         [
             "DEVCONTAINER_NODE_BIN": node.path,
             "DEVCONTAINER_REFERENCE_CLI": script.path,
+            "DEVCONTAINER_SOCKET": socket.path,
             "DOCKER_HOST": "unix:///tmp/fixture.sock",
             "HOME": "/tmp",
             "PATH": "/usr/bin:/bin",

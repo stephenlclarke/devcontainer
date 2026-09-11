@@ -407,7 +407,7 @@ executable = "/usr/local/bin/container"
 database = "~/Library/Application Support/devcontainer/state.sqlite"
 
 [compose]
-provider = "docker"
+provider = "container-compose"
 
 [compatibility]
 strict = true
@@ -418,7 +418,9 @@ command option, documented environment variable, configuration file, then the
 user-scoped default. `DEVCONTAINER_CONFIG`, `DEVCONTAINER_BACKEND`,
 `DEVCONTAINER_COMPOSE_PROVIDER`, `DEVCONTAINER_CONTAINER_BIN`,
 `DEVCONTAINER_SOCKET`, and `DEVCONTAINER_STATE` are the supported overrides;
-`DOCKER_HOST` is accepted only when it names an absolute local Unix socket.
+ambient `DOCKER_HOST` is never an authority source. When the pinned reference
+CLI or native Compose provider needs that compatibility variable, devcontainer
+overwrites it with its selected project-owned Apple-backed socket.
 Unknown or duplicate configuration keys and relative runtime, state, or socket
 paths fail closed. Per-project provider choice and configuration digest live in
 the service database. Secrets are not accepted in configuration files.

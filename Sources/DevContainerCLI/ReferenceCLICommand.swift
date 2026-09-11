@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import DevContainerCore
 import DevContainerModel
 import DevContainerProcess
 import Foundation
@@ -165,6 +166,11 @@ struct ReferenceCLIInvocation: Equatable {
         }
         upstreamArguments += arguments
         var childEnvironment = safeEnvironment(environment)
+        let selection = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: childEnvironment
+        )
+        childEnvironment["DEVCONTAINER_SOCKET"] = selection.socket
+        childEnvironment["DOCKER_HOST"] = "unix://\(selection.socket)"
         childEnvironment["DEVCONTAINER_REFERENCE_CLI_VERSION"] = version
         return ReferenceCLIInvocation(
             node: node,

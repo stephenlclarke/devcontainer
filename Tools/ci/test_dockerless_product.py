@@ -35,6 +35,7 @@ class DockerlessProductTests(unittest.TestCase):
             "open /Applications/Docker.app\n",
             'let executable = URL(fileURLWithPath: "/usr/local/bin/docker")\n',
             'executable: "docker-compose"\n',
+            'subprocess.run(["docker", "version"])\n',
         )
         for contents in rejected:
             with self.subTest(contents=contents):
@@ -55,6 +56,18 @@ class DockerlessProductTests(unittest.TestCase):
                 self.assertFalse(
                     any(pattern.search(contents) for pattern in MODULE.FORBIDDEN)
                 )
+
+    def test_only_parity_workflow_is_excluded(self) -> None:
+        workflows = MODULE.ROOT / ".github" / "workflows"
+        audited = set(MODULE.source_files())
+        self.assertNotIn(workflows / "parity.yml", audited)
+        self.assertTrue(
+            {
+                path
+                for path in workflows.iterdir()
+                if path.is_file() and path != workflows / "parity.yml"
+            }.issubset(audited)
+        )
 
 
 if __name__ == "__main__":

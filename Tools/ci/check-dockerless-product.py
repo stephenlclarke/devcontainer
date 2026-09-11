@@ -14,22 +14,21 @@ SCANNED_PATHS = (
     ROOT / "Package.resolved",
     ROOT / "Package.stock.resolved",
     ROOT / "Makefile",
+    ROOT / "Examples",
+    ROOT / "Packaging",
+    ROOT / "Plugins",
     ROOT / "Sources",
     ROOT / "scripts",
+    ROOT / "Tools" / "version-generator",
     ROOT / "Tools" / "release",
     ROOT / "Tools" / "ci" / "bootstrap.sh",
-    ROOT / ".github" / "workflows" / "ci.yml",
-    ROOT / ".github" / "workflows" / "codeql.yml",
-    ROOT / ".github" / "workflows" / "dependency-review.yml",
-    ROOT / ".github" / "workflows" / "docs.yml",
-    ROOT / ".github" / "workflows" / "homebrew.yml",
-    ROOT / ".github" / "workflows" / "prebuilt-binaries.yml",
-    ROOT / ".github" / "workflows" / "quality.yml",
-    ROOT / ".github" / "workflows" / "scorecard.yml",
-    ROOT / ".github" / "workflows" / "sonar.yml",
-    ROOT / ".github" / "workflows" / "specification-drift.yml",
-    ROOT / ".github" / "workflows" / "stable-release-gate.yml",
+    ROOT / ".github" / "workflows",
 )
+IGNORED_PATHS = {
+    # This is the quarantined reference oracle, never a product or packaging
+    # dependency.
+    ROOT / ".github" / "workflows" / "parity.yml",
+}
 IGNORED_NAMES = {
     "check-dockerless-product.py",
     "test_dockerless_product.py",
@@ -61,6 +60,10 @@ FORBIDDEN = (
     re.compile(r"(?i)depends_on\s+[\"'](?:docker|docker-compose|colima)[\"']"),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
     re.compile(
+        r"(?i)\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(\s*"
+        r"(?:\[\s*)?[\"'](?:docker|docker-compose|docker-buildx|colima)[\"']"
+    ),
+    re.compile(
         r"(?i)(?:/opt/homebrew/bin|/usr/local/bin|/usr/bin|/bin)/"
         r"(?:docker|docker-compose|docker-buildx|colima)\b"
     ),
@@ -83,6 +86,7 @@ def source_files() -> list[Path]:
                 path
                 for path in candidate.rglob("*")
                 if path.is_file()
+                and path not in IGNORED_PATHS
                 and path.name not in IGNORED_NAMES
                 and not path.name.startswith("test_")
                 and path.suffix.lower() in TEXT_SUFFIXES

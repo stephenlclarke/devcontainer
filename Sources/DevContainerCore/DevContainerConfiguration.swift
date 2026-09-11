@@ -128,8 +128,8 @@ public enum DevContainerRuntimeSelectionResolver {
             environment: environment,
             stored: stored.composeProvider
         )
-        let selectedSocket = try nonempty(socket)
-            ?? socketFromEnvironment(environment)
+        let selectedSocket = nonempty(socket)
+            ?? nonempty(environment["DEVCONTAINER_SOCKET"])
             ?? stored.socket
         guard selectedSocket.hasPrefix("/") else {
             throw DevContainerError(
@@ -207,27 +207,6 @@ public enum DevContainerRuntimeSelectionResolver {
             )
         }
         return expanded
-    }
-
-    private static func socketFromEnvironment(
-        _ environment: [String: String]
-    ) throws -> String? {
-        if let socket = nonempty(environment["DEVCONTAINER_SOCKET"]) {
-            return socket
-        }
-        guard let endpoint = nonempty(environment["DOCKER_HOST"]) else {
-            return nil
-        }
-        guard
-            endpoint.hasPrefix("unix://"),
-            let socket = nonempty(String(endpoint.dropFirst("unix://".count)))
-        else {
-            throw DevContainerError(
-                .invalidRequest,
-                message: "DOCKER_HOST must select an absolute local Unix socket"
-            )
-        }
-        return socket
     }
 
     private static func defaultConfiguration(

@@ -199,7 +199,7 @@ struct CoreBehaviorTests {
             environment: ["DOCKER_HOST": "unix:///tmp/from-docker-host.sock"],
             configuration: path.path
         )
-        #expect(dockerHost.socket == "/tmp/from-docker-host.sock")
+        #expect(dockerHost.socket == DevContainerPathDefaults.socket)
 
         #expect(throws: DevContainerError.self) {
             try DevContainerRuntimeSelectionResolver.resolve(
@@ -207,12 +207,11 @@ struct CoreBehaviorTests {
                 configuration: path.path
             )
         }
-        #expect(throws: DevContainerError.self) {
-            try DevContainerRuntimeSelectionResolver.resolve(
-                environment: ["DOCKER_HOST": "tcp://127.0.0.1:2375"],
-                configuration: path.path
-            )
-        }
+        let remoteDockerHost = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: ["DOCKER_HOST": "tcp://127.0.0.1:2375"],
+            configuration: path.path
+        )
+        #expect(remoteDockerHost.socket == DevContainerPathDefaults.socket)
         #expect(throws: DevContainerError.self) {
             try DevContainerRuntimeSelectionResolver.resolve(
                 environment: [:],
