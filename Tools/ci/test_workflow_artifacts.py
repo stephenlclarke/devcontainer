@@ -738,6 +738,23 @@ jobs:
             contents,
         )
         self.assertIn(
+            'authority_archive="${{ steps.package.outputs.assets }}/${ASSET}"',
+            contents,
+        )
+        self.assertIn(
+            'authority_context="${authority_archive}.context.json"',
+            contents,
+        )
+        self.assertIn(
+            "published package context does not match the release authority",
+            contents,
+        )
+        self.assertIn('--archive "${authority_archive}"', contents)
+        self.assertNotIn(
+            '--archive "${{ steps.package.outputs.archive }}"',
+            contents,
+        )
+        self.assertIn(
             'test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"',
             contents,
         )

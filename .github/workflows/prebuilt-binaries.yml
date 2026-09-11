@@ -324,11 +324,6 @@ jobs:
               "${context_args[@]}" \
               --field releaseTag
           )"
-          formula_version="$(
-            python3 Tools/release/package-context.py \
-              "${context_args[@]}" \
-              --field formulaVersion
-          )"
           archive="${PWD}/dist/${asset}"
           test -s "${archive}"
           test -s "${archive}.sha256"
@@ -414,7 +409,6 @@ jobs:
             printf 'assets=%s\n' "${assets}"
             printf 'assets_manifest=%s\n' "${RUNNER_TEMP}/release-assets.txt"
             printf 'asset=%s\n' "${asset}"
-            printf 'formula_version=%s\n' "${formula_version}"
             printf 'notes=%s\n' "${notes}"
             printf 'release_tag=%s\n' "${release_tag}"
             printf 'version=%s\n' "${version}"
@@ -465,16 +459,40 @@ jobs:
       - name: Render and validate tap formula
         env:
           ASSET: ${{ steps.package.outputs.asset }}
-          FORMULA_VERSION: ${{ steps.package.outputs.formula_version }}
+          EXPECTED_PRODUCT_VERSION: ${{ steps.package.outputs.version }}
+          EXPECTED_RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           LANE: ${{ needs.resolve.outputs.lane }}
-          PRODUCT_VERSION: ${{ steps.package.outputs.version }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
+          authority_archive="${{ steps.package.outputs.assets }}/${ASSET}"
+          authority_context="${authority_archive}.context.json"
+          test -s "${authority_archive}"
+          test -s "${authority_context}"
+          if ! jq -e \
+            --arg asset "${ASSET}" \
+            --arg commit "${PUBLISH_SHA}" \
+            --arg lane "${LANE}" \
+            --arg product_version "${EXPECTED_PRODUCT_VERSION}" \
+            --arg release_tag "${EXPECTED_RELEASE_TAG}" \
+            '(
+              .asset == $asset and
+              .commit == $commit and
+              .lane == $lane and
+              .productVersion == $product_version and
+              .releaseTag == $release_tag and
+              (.formulaVersion | type == "string" and length > 0)
+            )' "${authority_context}" >/dev/null; then
+            printf 'published package context does not match the release authority\n' >&2
+            exit 1
+          fi
+          formula_version="$(jq -er '.formulaVersion' "${authority_context}")"
+          product_version="$(jq -er '.productVersion' "${authority_context}")"
+          tag="$(jq -er '.releaseTag' "${authority_context}")"
           class=Devcontainer
           conflict_args=()
           formula=devcontainer.rb
-          tag="${{ steps.package.outputs.release_tag }}"
           if [[ "${LANE}" == current ]]; then
             class=DevcontainerCurrent
             conflict_args=(--conflicts-with devcontainer)
@@ -482,12 +500,12 @@ jobs:
           fi
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${ASSET}"
           python3 devcontainer/Tools/release/render-homebrew-formula.py \
-            --product-version "${PRODUCT_VERSION}" \
-            --formula-version "${FORMULA_VERSION}" \
+            --product-version "${product_version}" \
+            --formula-version "${formula_version}" \
             --formula-class "${class}" \
             --url "${url}" \
             "${conflict_args[@]}" \
-            --archive "${{ steps.package.outputs.archive }}" \
+            --archive "${authority_archive}" \
             --template devcontainer/Tools/release/devcontainer.rb.in \
             --output "homebrew-tap/Formula/${formula}"
           python3 devcontainer/Tools/release/update-tap-readme.py \
