@@ -135,13 +135,12 @@ struct AppleRuntimeStreamTests {
             context: RuntimeRequestContext()
         )
         let consumer = Task { [stream] in
-            for try await _ in try #require(stream) {
-                try await Task.sleep(for: .seconds(30))
-            }
+            for try await _ in try #require(stream) {}
         }
-        for _ in 0 ..< 100 where try !(fixture.log()).contains("logs --follow fixture") {
+        for _ in 0 ..< 100 where try !(fixture.log()).contains("logs-follow-ready") {
             try await Task.sleep(for: .milliseconds(10))
         }
+        #expect(try fixture.log().contains("logs-follow-ready"))
 
         consumer.cancel()
         _ = try? await consumer.value

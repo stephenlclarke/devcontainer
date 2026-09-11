@@ -1093,6 +1093,7 @@ struct FakeAppleCLI {
             printf '%s\\n' 'log-error' >&2
             if [ "$mode" = follow-logs ]; then
               trap 'printf "%s\\n" logs-terminated >> "$LOG"; exit 0' TERM
+              printf '%s\\n' logs-follow-ready >> "$LOG"
               while :; do sleep 1; done
             fi
             ;;
