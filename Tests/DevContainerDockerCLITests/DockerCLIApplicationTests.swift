@@ -73,7 +73,7 @@ struct DockerCLIApplicationTests {
         #expect(entries.contains("Dockerfile"))
         #expect(entries.contains("public.pem"))
         #expect(!entries.contains("credentials.pem"))
-        #expect(!entries.contains(".dockerignore"))
+        #expect(entries.contains(".dockerignore"))
     }
 
     @Test
@@ -210,7 +210,8 @@ struct DockerCLIApplicationTests {
         #expect(entries.contains("Containerfile"))
         #expect(entries.contains("root.txt"))
         #expect(!entries.contains("specific.txt"))
-        #expect(!entries.contains("Containerfile.dockerignore"))
+        #expect(entries.contains(".dockerignore"))
+        #expect(entries.contains("Containerfile.dockerignore"))
     }
 
     @Test
@@ -259,6 +260,44 @@ struct DockerCLIApplicationTests {
                 arguments: ["--context=example", "exec", "box", "cat"]
             )
         )
+        #expect(
+            try DockerCLIApplication.requiresInteractiveInput(
+                arguments: ["run", "--interactive", "alpine:3.22", "cat"]
+            )
+        )
+        #expect(
+            try !DockerCLIApplication.requiresInteractiveInput(
+                arguments: ["run", "--detach", "--interactive", "alpine:3.22", "cat"]
+            )
+        )
+    }
+
+    @Test
+    func `interactive run starts through the attached stream`() throws {
+        let attachTarget = "/containers/interactive/attach"
+            + "?logs=true&stream=true&stdin=true&stdout=true&stderr=true&start=true"
+        let transport = StubTransport([
+            .json(["Id": "interactive"], status: 201),
+            .json(["StatusCode": 23], target: "/containers/interactive/wait"),
+            .init(
+                status: 101,
+                body: frame(channel: 1, text: "from-container"),
+                target: attachTarget
+            )
+        ])
+        let application = DockerCLIApplication(transport: transport)
+
+        let result = try application.run(
+            arguments: ["run", "--interactive", "image", "cat"],
+            standardInput: Data("from-stdin".utf8)
+        )
+
+        #expect(result.standardOutput == Data("from-container".utf8))
+        #expect(result.exitCode == 23)
+        #expect(transport.hijackInput == Data("from-stdin".utf8))
+        #expect(transport.requests.map(\.target) == [
+            "/containers/create", "/containers/interactive/wait", attachTarget
+        ])
     }
 
     @Test

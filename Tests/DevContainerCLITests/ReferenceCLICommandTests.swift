@@ -87,6 +87,27 @@ struct ReferenceCLICommandTests {
             )
         }
     }
+
+    @Test
+    func `exec payload may contain runtime-shaped arguments after separator`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+
+        let invocation = try ReferenceCLIInvocation.configured(
+            command: "exec",
+            arguments: [
+                "--workspace-folder", "/work", "--", "tool",
+                "--docker-path", "/payload/value"
+            ],
+            injectRuntimeAdapters: true,
+            environment: fixture.environment,
+            executable: fixture.devcontainer
+        )
+
+        #expect(invocation.arguments.suffix(3) == [
+            "tool", "--docker-path", "/payload/value"
+        ])
+    }
 }
 
 private struct InvocationFixture {

@@ -222,7 +222,8 @@ struct ReferenceCLIInvocation: Equatable {
     }
 
     private static func rejectRuntimeOverrides(_ arguments: [String]) throws {
-        guard !arguments.contains(where: {
+        let options = arguments.prefix { $0 != "--" }
+        guard !options.contains(where: {
             $0 == "--docker-path" || $0.hasPrefix("--docker-path=")
                 || $0 == "--docker-compose-path" || $0.hasPrefix("--docker-compose-path=")
         }) else {

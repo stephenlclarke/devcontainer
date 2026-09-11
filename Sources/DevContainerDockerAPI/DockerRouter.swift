@@ -889,13 +889,15 @@ extension DockerRouter {
             return try await containerAttachResponse(
                 id: id,
                 context: context,
-                webSocket: false
+                webSocket: false,
+                start: target.first("start").map(Self.boolValue) ?? false
             )
         case (.get, "attach") where segments.count == 4 && segments[3] == "ws":
             return try await containerAttachResponse(
                 id: id,
                 context: context,
-                webSocket: true
+                webSocket: true,
+                start: false
             )
         default:
             return nil
@@ -905,14 +907,23 @@ extension DockerRouter {
     private func containerAttachResponse(
         id: String,
         context: RuntimeRequestContext,
-        webSocket: Bool
+        webSocket: Bool,
+        start: Bool
     ) async throws -> DockerHTTPResponse {
         let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
-        let session = try await runtime.attachContainer(
-            id: id,
-            terminal: terminal,
-            context: context
-        )
+        let session = if start {
+            try await runtime.startAttachedContainer(
+                id: id,
+                terminal: terminal,
+                context: context
+            )
+        } else {
+            try await runtime.attachContainer(
+                id: id,
+                terminal: terminal,
+                context: context
+            )
+        }
         let adaptedSession = DockerRuntimeHijackSession(session)
         if webSocket {
             return DockerHTTPResponse(

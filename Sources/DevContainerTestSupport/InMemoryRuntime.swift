@@ -341,6 +341,17 @@ public actor InMemoryRuntime: DevContainerRuntime {
         )
     }
 
+    public func startAttachedContainer(
+        id: String,
+        terminal: Bool,
+        context: RuntimeRequestContext
+    ) throws -> any RuntimeProcessSession {
+        try startContainer(id: id, context: context)
+        let session = try attachContainer(id: id, terminal: terminal, context: context)
+        try stopContainer(id: id, timeout: nil, context: context)
+        return session
+    }
+
     public func createExec(
         containerID: String,
         spec: ExecSpec,

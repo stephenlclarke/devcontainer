@@ -104,12 +104,76 @@ public extension AppleContainerRuntime {
         }
     }
 
+    func startAttachedContainer(
+        id: String,
+        terminal: Bool,
+        context: RuntimeRequestContext
+    ) async throws -> any RuntimeProcessSession {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
+        let resolved = try await resolveContainerID(id, context: context)
+        mutationIdentifiers.insert(resolved)
+        includeContainerLifecycleMutation(id: resolved, registration: mutation)
+        guard automaticRemovalRegistrations[id] == nil,
+              automaticRemovalRegistrations[resolved] == nil
+        else {
+            throw DevContainerError(
+                .conflict,
+                message: "container automatic removal is in progress"
+            )
+        }
+        guard containerStartOperations[resolved] == nil else {
+            throw DevContainerError(.conflict, message: "container \(id) is already starting")
+        }
+        let arguments = ["start", "--attach", "--interactive", resolved]
+        let session: any RuntimeProcessSession = try terminal
+            ? terminalProcess(arguments)
+            : process(arguments)
+        do {
+            try await finishContainerStart(
+                requestedID: id,
+                runtimeID: resolved,
+                context: context,
+                processGeneration: nil
+            )
+        } catch {
+            await session.cancel()
+            throw error
+        }
+        return TrackedAppleProcessSession(session: session) { [weak self] exitCode in
+            await self?.handleContainerExit(
+                ContainerExit(code: exitCode, finishedAt: Date()),
+                id: resolved
+            )
+        }
+    }
+
     private func performStartContainer(
         requestedID: String,
         runtimeID resolved: String,
         context: RuntimeRequestContext
     ) async throws {
         let processGeneration = try await launchContainerProcess(id: resolved)
+        try await finishContainerStart(
+            requestedID: requestedID,
+            runtimeID: resolved,
+            context: context,
+            processGeneration: processGeneration
+        )
+    }
+
+    private func finishContainerStart(
+        requestedID: String,
+        runtimeID resolved: String,
+        context: RuntimeRequestContext,
+        processGeneration: UUID?
+    ) async throws {
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)

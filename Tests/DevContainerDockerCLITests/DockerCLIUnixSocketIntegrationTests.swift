@@ -85,6 +85,15 @@ struct DockerCLIUnixSocketIntegrationTests {
             }.value
             #expect(exec.exitCode == 0)
             #expect(exec.standardOutput == Data("cat\n".utf8))
+
+            let interactive = try await Task.detached {
+                try application.run(
+                    arguments: ["run", "--interactive", "alpine:3.22", "cat"],
+                    standardInput: Data("run-stdin\n".utf8)
+                )
+            }.value
+            #expect(interactive.exitCode == 0)
+            #expect(interactive.standardOutput == Data("attached\n".utf8))
             try await server.shutdown()
         } catch {
             try? await server.shutdown()

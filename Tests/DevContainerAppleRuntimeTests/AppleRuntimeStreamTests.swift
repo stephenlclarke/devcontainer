@@ -23,6 +23,28 @@ import Testing
 @Suite(.serialized)
 struct AppleRuntimeStreamTests {
     @Test
+    func `attached start carries stdin through the stock Apple CLI`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+
+        try await session.write(Data("attached-input".utf8))
+        try await session.closeStandardInput()
+        var output = Data()
+        for try await frame in session.frames where frame.channel == .standardOutput {
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        #expect(output == Data("attached-input".utf8))
+        #expect(try fixture.log().contains("start --attach --interactive fixture"))
+    }
+
+    @Test
     func `cancelling a followed log stream terminates its owned process`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setMode("follow-logs")

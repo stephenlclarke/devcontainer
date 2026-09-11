@@ -73,8 +73,19 @@ public final class DockerCLIApplication: @unchecked Sendable {
 
     public static func requiresInteractiveInput(arguments: [String]) throws -> Bool {
         let commandArguments = try stripGlobalOptions(arguments)
-        return commandArguments.first == "exec"
-            && commandArguments.contains(where: { $0 == "-i" || $0 == "--interactive" })
+        guard let command = commandArguments.first else {
+            return false
+        }
+        let arguments = Array(commandArguments.dropFirst())
+        switch command {
+        case "exec":
+            return try DockerExecOptions(arguments: arguments).interactive
+        case "run":
+            let options = try DockerRunOptions(arguments: arguments)
+            return options.interactive && !options.detach
+        default:
+            return false
+        }
     }
 
     public func run(
@@ -204,7 +215,12 @@ public final class DockerCLIApplication: @unchecked Sendable {
         case "build":
             return try build(arguments, streamingOutput: streamingOutput)
         case "run":
-            return try runContainer(arguments, streamingOutput: streamingOutput)
+            return try runContainer(
+                arguments,
+                standardInput: standardInput,
+                standardInputFileDescriptor: standardInputFileDescriptor,
+                streamingOutput: streamingOutput
+            )
         case "exec":
             return try exec(
                 arguments,

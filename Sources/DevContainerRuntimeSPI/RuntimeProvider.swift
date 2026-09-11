@@ -112,9 +112,25 @@ public protocol ContainerRuntime: Sendable {
         terminal: Bool,
         context: RuntimeRequestContext
     ) async throws -> any RuntimeProcessSession
+    func startAttachedContainer(
+        id: String,
+        terminal: Bool,
+        context: RuntimeRequestContext
+    ) async throws -> any RuntimeProcessSession
 }
 
 public extension ContainerRuntime {
+    func startAttachedContainer(
+        id: String,
+        terminal _: Bool,
+        context _: RuntimeRequestContext
+    ) async throws -> any RuntimeProcessSession {
+        throw DevContainerError(
+            .unsupportedCapability,
+            message: "runtime does not support attached container start for \(id)"
+        )
+    }
+
     /// Compatibility fallback for providers that have not yet adopted an
     /// authority-owned restart transaction.
     func restartContainer(

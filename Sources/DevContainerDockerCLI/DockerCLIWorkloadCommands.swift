@@ -41,14 +41,26 @@ extension DockerCLIApplication {
 
     func runContainer(
         _ arguments: [String],
+        standardInput: Data?,
+        standardInputFileDescriptor: Int32?,
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
         let options = try DockerRunOptions(arguments: arguments)
         let identifier = try createContainer(options)
-        _ = try request("POST", "/containers/\(Self.path(identifier))/start")
         if options.detach {
+            _ = try request("POST", "/containers/\(Self.path(identifier))/start")
             return .stdout("\(identifier)\n")
         }
+        if options.interactive {
+            return try runAttachedContainer(
+                identifier,
+                terminal: options.terminal,
+                standardInput: standardInput,
+                standardInputFileDescriptor: standardInputFileDescriptor,
+                streamingOutput: streamingOutput
+            )
+        }
+        _ = try request("POST", "/containers/\(Self.path(identifier))/start")
         return try followContainer(identifier, streamingOutput: streamingOutput)
     }
 
@@ -76,28 +88,7 @@ extension DockerCLIApplication {
         _ identifier: String,
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
-        let waitResult = DockerConcurrentResponse()
-        let waitStarted = DockerRequestStartSignal()
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            defer { waitStarted.signal() }
-            waitResult.store(
-                Result {
-                    let request = DockerHTTPRequest(
-                        method: "POST",
-                        target: "/containers/\(Self.path(identifier))/wait"
-                    )
-                    if let notifying = transport as? any DockerEngineRequestNotificationTransport {
-                        return try notifying.send(
-                            request,
-                            onRequestSent: waitStarted.signal
-                        )
-                    }
-                    waitStarted.signal()
-                    return try transport.send(request)
-                }
-            )
-        }
-        waitStarted.wait()
+        let waitResult = concurrentWait(for: identifier)
 
         var decoder = DockerMultiplexedStreamDecoder()
         var captured = Data()
@@ -126,6 +117,32 @@ extension DockerCLIApplication {
             standardOutput: captured,
             exitCode: statusCode
         )
+    }
+
+    func concurrentWait(for identifier: String) -> DockerConcurrentResponse {
+        let waitResult = DockerConcurrentResponse()
+        let waitStarted = DockerRequestStartSignal()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { waitStarted.signal() }
+            waitResult.store(
+                Result {
+                    let request = DockerHTTPRequest(
+                        method: "POST",
+                        target: "/containers/\(Self.path(identifier))/wait"
+                    )
+                    if let notifying = transport as? any DockerEngineRequestNotificationTransport {
+                        return try notifying.send(
+                            request,
+                            onRequestSent: waitStarted.signal
+                        )
+                    }
+                    waitStarted.signal()
+                    return try transport.send(request)
+                }
+            )
+        }
+        waitStarted.wait()
+        return waitResult
     }
 
     func exec(
@@ -422,7 +439,6 @@ struct DockerBuildOptions: Equatable {
             contents: (try? String(contentsOf: ignoreURL, encoding: .utf8)) ?? ""
         )
         let dockerfilePath = relativePath(dockerfileURL, within: contextURL)
-        let ignorePath = relativePath(ignoreURL, within: contextURL)
         let enumerator = FileManager.default.enumerator(
             at: contextURL,
             includingPropertiesForKeys: nil,
@@ -431,9 +447,6 @@ struct DockerBuildOptions: Equatable {
         var entries: [String] = []
         while let url = enumerator?.nextObject() as? URL {
             guard let path = relativePath(url, within: contextURL) else {
-                continue
-            }
-            if path == ".dockerignore" || path == ignorePath {
                 continue
             }
             if path == dockerfilePath || matcher.includes(path) {

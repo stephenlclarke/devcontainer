@@ -1095,6 +1095,9 @@ struct FakeAppleCLI {
               printf '%s' running > "$STATE"
             fi
             ;;
+          "start --attach")
+            cat
+            ;;
           "stop --time")
             if [ "$4" = fixture ]; then
               printf '%s' stopped > "$STATE"
