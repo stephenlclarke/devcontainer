@@ -446,7 +446,7 @@ struct Paths {
         socket = environment["DEVCONTAINER_SOCKET"]
             ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("docker.sock")
+            .appendingPathComponent("engine.sock")
             .path
         containerCompose = URL(
             fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]

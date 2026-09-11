@@ -664,7 +664,9 @@ extension DockerRouter {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        try ContainerSpec(
+        let mounts = try containerMounts(request)
+        try validateDockerlessMountSources(mounts)
+        return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
@@ -675,7 +677,7 @@ extension DockerRouter {
             workingDirectory: request.workingDir,
             user: request.user,
             hostname: request.hostname,
-            mounts: containerMounts(request),
+            mounts: mounts,
             ports: portBindings(
                 request.hostConfig?.portBindings ?? [:],
                 exposedPorts: Set(request.exposedPorts?.keys.map(\.self) ?? [])
@@ -700,6 +702,21 @@ extension DockerRouter {
                 )
             }
         )
+    }
+
+    private func validateDockerlessMountSources(_ mounts: [RuntimeMount]) throws {
+        for mount in mounts where mount.type == .bind {
+            let source = URL(fileURLWithPath: mount.source)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            let name = source.lastPathComponent.lowercased()
+            guard name != "docker.sock", name != "docker.raw.sock" else {
+                throw DevContainerError(
+                    .unsupportedCapability,
+                    message: "mounting a Docker runtime socket is disabled in the Docker-less product"
+                )
+            }
+        }
     }
 
     func containerMounts(

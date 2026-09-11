@@ -73,6 +73,26 @@ class DockerlessProductTests(unittest.TestCase):
             }.issubset(audited)
         )
 
+    def test_product_socket_is_named_for_the_project_engine(self) -> None:
+        for relative in (
+            "Sources/DevContainerCore/DevContainerConfiguration.swift",
+            "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift",
+        ):
+            contents = (MODULE.ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn('appendingPathComponent("engine.sock")', contents)
+            self.assertNotIn('appendingPathComponent("docker.sock")', contents)
+
+    def test_router_rejects_host_docker_runtime_sockets(self) -> None:
+        router = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerDockerAPI"
+            / "DockerRouterSupport.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn('name != "docker.sock"', router)
+        self.assertIn('name != "docker.raw.sock"', router)
+        self.assertIn("mounting a Docker runtime socket is disabled", router)
+
 
 if __name__ == "__main__":
     unittest.main()

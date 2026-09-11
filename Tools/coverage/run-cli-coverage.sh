@@ -125,9 +125,9 @@ run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format json
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format invalid
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" --format shell
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" --format shell
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" --format value
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" --format value
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
   --config "$CONFIGURATION" --format value
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" context --format invalid
@@ -138,7 +138,7 @@ run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --compose-provider container-compose \
   --container "$FAKE_CONTAINER" \
   --state "$STATE_DATABASE" \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" \
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" \
   --strict
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --config "$CONFIGURATION" --no-strict

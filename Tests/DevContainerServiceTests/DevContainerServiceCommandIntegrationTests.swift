@@ -45,7 +45,7 @@ struct ServiceCommandIntegrationTests {
             [.posixPermissions: 0o700],
             ofItemAtPath: container.path
         )
-        let socket = root.appendingPathComponent("docker.sock").path
+        let socket = root.appendingPathComponent("engine.sock").path
         let state = root.appendingPathComponent("state.sqlite").path
         let executable = try engineExecutable()
         let process = Process()

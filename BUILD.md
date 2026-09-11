@@ -210,7 +210,7 @@ Build first, then use an isolated configuration and state root:
 ```console
 export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.toml"
 export DEVCONTAINER_STATE="$PWD/.build/manual/state.sqlite"
-export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
+export DEVCONTAINER_SOCKET="$PWD/.build/manual/engine.sock"
 
 .build/debug/devcontainer configure \
   --backend stock \

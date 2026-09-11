@@ -18,7 +18,7 @@ The selected provider is immutable while a Dev Container project owns resources.
 
 ## Goals
 
-- Reach 100% behavioural parity with Docker-based Development Containers across the complete audited Development Containers surface.
+- Reach 100% behavioural parity across the complete audited, Docker-independent Development Containers surface.
 - Reach comparable or better user-visible performance than the matching Docker oracle, measured independently from functional parity.
 - Work with the stock VS Code Dev Containers extension and the official `@devcontainers/cli` without patching either.
 - Target official, tagged Apple `container` releases without requiring Stephen's forks.
@@ -32,7 +32,16 @@ The selected provider is immutable while a Dev Container project owns resources.
 - Keep local state reconstructable from runtime resources and labels.
 - Ship a local-only, least-privilege service with deterministic cleanup and diagnostics.
 
-These are north-star goals, not claims about version 1.0.1. Current releases remain bounded by the exact certified fixtures and known gaps in [`CONFORMANCE.md`](CONFORMANCE.md). [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines full-parity acceptance, the comparable-performance objective, the current baseline, and audited implementation issues. [`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md) defines the field-by-field implementation and certification design for every current unsupported capability.
+These are north-star goals, not a claim beyond the exact certified release.
+Configurations that require a host Docker daemon or its socket are permanently
+excluded by the Docker-less product boundary. Current releases remain bounded
+by the exact certified fixtures and known gaps in
+[`CONFORMANCE.md`](CONFORMANCE.md). [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md)
+defines full-parity acceptance, the comparable-performance objective, the
+current baseline, and audited implementation issues.
+[`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md) defines the
+field-by-field implementation and certification design for every current
+unsupported capability.
 
 ## Non-goals
 
@@ -380,13 +389,13 @@ The Docker layer maps these to the status, JSON message, stream error, and exit 
 
 ## Security architecture
 
-- The Docker socket is created under a user-owned runtime directory with mode `0600`; no TCP listener is enabled by default.
+- The project-owned compatibility socket is created under a user-owned runtime directory with mode `0600`; no TCP listener exists.
 - The XPC service validates the connecting audit token and rejects cross-user access.
-- Registry credentials remain in the existing Apple/Docker credential mechanisms and are never written to SQLite.
+- Registry credentials remain in Apple's existing credential mechanism and are never written to SQLite.
 - Secrets, build arguments marked secret, authentication headers, SSH agent paths, and environment values matching redaction rules are removed from logs and diagnostic bundles.
 - Host mount paths are canonicalized, checked for symlink escapes, and authorized before resource creation.
-- Arbitrary Docker socket mounting into development containers is disabled unless the user explicitly enables the documented proxy mode.
-- The wrapper does not modify the user's current Docker context automatically.
+- Bind mounts whose resolved source is a Docker or Docker Desktop runtime socket are rejected before container creation; the product has no daemon-socket proxy mode.
+- The wrappers ignore ambient `DOCKER_HOST` and runtime-path overrides, inject only the project-owned adapters and socket, and reject Docker or Colima executable selections before launch.
 - Every dependency is pinned through `Package.resolved`; release artifacts include Apache-compatible notices, an SPDX SBOM, checksums, and provenance attestations.
 - Public pull requests never execute on the physical Apple runtime runner.
 
@@ -398,7 +407,7 @@ User configuration lives in `~/.config/devcontainer/config.toml`:
 
 ```toml
 backend = "stock"
-socket = "~/.local/run/devcontainer/docker.sock"
+socket = "~/.local/run/devcontainer/engine.sock"
 
 [runtime]
 executable = "/usr/local/bin/container"
@@ -458,7 +467,7 @@ A stable tag is prohibited until:
 - Docker oracle, stock Apple 1.4.1, and `container-compose` 0.14.3 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
-- hosted CI, coverage, Sonar, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit; CodeQL remains excluded while it is explicitly disabled by project decision;
+- hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;
 - the Homebrew-installed artifact passes a physical-runner smoke test;
 - documentation and the compatibility ledger match the evidence.
 

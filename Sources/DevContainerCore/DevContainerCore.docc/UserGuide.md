@@ -3,7 +3,8 @@
 Use the official Dev Containers CLI and VS Code extension with stock Apple
 `container` through a local Docker-compatible API socket. This is a
 project-owned Unix socket backed by Apple Container, not a Docker daemon or
-proxy.
+proxy. Its default filename is `engine.sock`; the Docker-shaped names exposed
+to VS Code are compatibility vocabulary only.
 
 ## Install
 
@@ -80,6 +81,9 @@ environment, lifecycle, port, reuse, Compose, engine, fault, and real VS Code
 fixtures. It does not certify every standard property or arbitrary Docker
 argument. Read <doc:Conformance> before using GPU, privileged, security,
 device, resource, hostname, or advanced mount behavior.
+
+Bind sources resolving to `docker.sock` or `docker.raw.sock` are rejected
+before creation. The product has no host-daemon proxy mode.
 
 ## Diagnostics
 

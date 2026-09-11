@@ -34,7 +34,12 @@ Version 1.0.1 is conformant only for the bounded configurations exercised by its
 
 The official CLI provides standards parsing, metadata merging, variable expansion, Feature resolution, and lifecycle orchestration. This project provides a Docker-compatible transport and Apple runtime adapter for a tested subset. The distinction matters: accepting a JSON property in the official CLI does not prove that every Docker request produced by that property is enforced by stock Apple `container`.
 
-The project's north-star goal is to close every gap in this audit and reach 100% behavioural parity with Docker-based Development Containers. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) turns the gaps into a prioritised implementation and certification design. Until that evidence exists, the bounded conclusion above remains authoritative.
+The project's north-star goal is to close every gap in the audited,
+Docker-independent surface and reach 100% behavioural parity there. A host
+Docker daemon or daemon-socket mount is deliberately excluded. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md)
+turns the remaining gaps into a prioritised implementation and certification
+design. Until that evidence exists, the bounded conclusion above remains
+authoritative.
 
 ## Known 1.0.1 non-conformances
 
@@ -51,6 +56,7 @@ These are confirmed implementation differences, not merely missing tests.
 | NC-007 | Image-declared anonymous `VOLUME` entries have Docker anonymous-volume lifecycle and storage semantics | The adapter projects anonymous volumes in inspect data but leaves their content on Apple’s native writable root filesystem instead of allocating a separate managed volume. | Do not rely on Docker anonymous-volume persistence, sharing, or cleanup semantics for image-declared `VOLUME` paths. Declare a named volume explicitly when persistence matters. |
 | NC-008 | A Docker-compatible runtime can attach or detach a running container from a network when the client requires it | Stock Apple requires networks and aliases at create time. The bridge rejects `network connect` and `network disconnect` after creation. | The certified Dev Container and Compose paths supply networks at creation. Configurations or Compose flows that dynamically change attachments are unsupported. |
 | NC-009 | Resource, namespace, device, DNS, host mapping, restart, and similar Docker run options supplied through `runArgs` are applied | Memory/CPU/pids/shared-memory, devices, device rules, extra hosts, DNS, PID/IPC/UTS/user/cgroup namespaces, read-only root, sysctls, restart, stop, and related field families are decoded. Non-default values without exact support return `501` before side effects. | These options remain outside the claim. There is no pass-through or silent omission; add a typed translation and parity fixture before treating any field as supported. |
+| NC-010 | A bind mount may name any host path, including a Docker daemon socket | Bind sources resolving to `docker.sock` or `docker.raw.sock` return `501` before container creation. The product never proxies or exposes a host Docker daemon. | Docker-outside-of-Docker socket workflows are intentionally unsupported. Use the Apple-backed service and native Compose path instead. |
 
 Features contribute `privileged`, `capAdd`, `securityOpt`, mounts, lifecycle commands, and other metadata to the merged configuration. A Feature inherits every applicable non-conformance above; a successful installation of the two certified public Features is not a blanket claim for the Feature catalog.
 

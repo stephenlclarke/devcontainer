@@ -2,9 +2,18 @@
 
 ## Decision
 
-The project's north-star goal is 100% behavioural parity with Docker-based Development Containers on Apple silicon, with comparable or better user-visible performance.
+The project's north-star goal is 100% behavioural parity across the audited,
+Docker-independent Development Containers surface on Apple silicon, with
+comparable or better user-visible performance than the Docker oracle.
 
-This goal applies to the complete Development Containers surface, not to unrelated Docker Engine workloads. It includes the current Development Containers specification, the official CLI and VS Code extension, image and Dockerfile configurations, Features, lifecycle commands, users, mounts, ports, supported Compose configurations, failure behaviour, cancellation, cleanup, and the Docker API observations those clients consume.
+This goal applies to the complete Docker-independent Development Containers
+surface, not to unrelated Docker Engine workloads or configurations that
+require a host Docker daemon or mount its socket. It includes the current
+Development Containers specification, the official CLI and VS Code extension,
+image and Dockerfile configurations, Features, lifecycle commands, users,
+mounts, ports, supported Compose configurations, failure behaviour,
+cancellation, cleanup, and the compatibility-protocol observations those
+clients consume.
 
 Until that goal is proved, releases must continue to make bounded compatibility claims. A passing subset is useful evidence, but it is not 100% parity.
 
@@ -140,7 +149,7 @@ identifies the remaining proof or primitive rather than normalising it.
 | TEST-003 | Implemented for checked fixtures: images use digests and Feature tags are bound by a checked integrity lock | Live preflight must continue to verify each resolved payload |
 | TEST-004 | Partial: deterministic malformed-request and generated unknown-field corpora run in the Swift suite | Continuous hosted fuzzing and retained minimised crash reproducers remain |
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
-| GOV-001 | Explicit exception | CodeQL is disabled until the owner requests re-enablement; live `main` protection currently requires `Validate` only |
+| GOV-001 | Implemented | CodeQL runs on non-draft pull requests and exact stable candidates; branch protection and the stable gate require the complete named check set |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
 | DOC-001 | Implemented for the changed production paths, final local CLI and VS Code matrices, and current blockers | Retain the exact-head hosted artefacts with the merge and release evidence |
 

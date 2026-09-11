@@ -137,7 +137,7 @@ struct CoreBehaviorTests {
                 backend: .stock,
                 composeProvider: .containerCompose,
                 containerExecutable: "/config/container",
-                socket: "/config/docker.sock",
+                socket: "/config/engine.sock",
                 stateDatabase: "/config/state.sqlite",
                 strictCompatibility: false
             ),
@@ -148,7 +148,7 @@ struct CoreBehaviorTests {
             "DEVCONTAINER_BACKEND": "container-compose",
             "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
             "DEVCONTAINER_CONTAINER_BIN": "/environment/container",
-            "DEVCONTAINER_SOCKET": "/environment/docker.sock",
+            "DEVCONTAINER_SOCKET": "/environment/engine.sock",
             "DEVCONTAINER_STATE": "/environment/state.sqlite"
         ]
         let selected = try DevContainerRuntimeSelectionResolver.resolve(
@@ -157,14 +157,14 @@ struct CoreBehaviorTests {
             backend: "stock",
             composeProvider: "container-compose",
             containerExecutable: "/override/container",
-            socket: "/override/docker.sock",
+            socket: "/override/engine.sock",
             stateDatabase: "/override/state.sqlite"
         )
         #expect(selected.configuration == path)
         #expect(selected.backend == .stock)
         #expect(selected.composeProvider == .containerCompose)
         #expect(selected.containerExecutable == "/override/container")
-        #expect(selected.socket == "/override/docker.sock")
+        #expect(selected.socket == "/override/engine.sock")
         #expect(selected.stateDatabase == "/override/state.sqlite")
         #expect(!selected.strictCompatibility)
 
@@ -175,7 +175,7 @@ struct CoreBehaviorTests {
         #expect(fromEnvironment.backend == .containerCompose)
         #expect(fromEnvironment.composeProvider == .containerCompose)
         #expect(fromEnvironment.containerExecutable == "/environment/container")
-        #expect(fromEnvironment.socket == "/environment/docker.sock")
+        #expect(fromEnvironment.socket == "/environment/engine.sock")
         #expect(fromEnvironment.stateDatabase == "/environment/state.sqlite")
 
         let fromConfiguration = try DevContainerRuntimeSelectionResolver.resolve(
@@ -185,7 +185,7 @@ struct CoreBehaviorTests {
         #expect(fromConfiguration.backend == .stock)
         #expect(fromConfiguration.composeProvider == .containerCompose)
         #expect(fromConfiguration.containerExecutable == "/config/container")
-        #expect(fromConfiguration.socket == "/config/docker.sock")
+        #expect(fromConfiguration.socket == "/config/engine.sock")
         #expect(fromConfiguration.stateDatabase == "/config/state.sqlite")
     }
 

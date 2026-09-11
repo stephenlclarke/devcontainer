@@ -13,7 +13,12 @@
 > below; they do not retroactively change the 1.0.1 tag evidence. Repeated-run
 > statistics are in [PERFORMANCE.md](PERFORMANCE.md).
 
-The project's north-star goal is 100% behavioural parity with Docker-based Development Containers and comparable or better performance. This document remains the narrower current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the work and evidence required to reach the north star.
+The project's north-star goal is 100% behavioural parity across the audited,
+Docker-independent Development Containers surface and comparable or better
+performance than the Docker oracle. Host-daemon and daemon-socket-dependent
+configurations are intentionally excluded. This document remains the narrower
+current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md)
+defines the work and evidence required to reach the north star.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed

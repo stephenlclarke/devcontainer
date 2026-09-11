@@ -367,6 +367,12 @@ Example:
 
 Advanced Docker `--mount` fields such as bind propagation, consistency modes, volume `nocopy`, and tmpfs sizing/mode are not represented by 1.0.1. Image-declared anonymous `VOLUME` entries also use Apple’s writable root filesystem rather than a separate Docker anonymous-volume lifecycle. See [CONFORMANCE.md](CONFORMANCE.md).
 
+Host bind sources that resolve to `docker.sock` or `docker.raw.sock` are always
+rejected before container creation. This is a deliberate security boundary:
+the product cannot become dependent on, proxy, or expose a host Docker daemon.
+Use the Apple-backed Dev Containers service directly instead of mounting a
+Docker runtime socket into the development container.
+
 ## Provider claims
 
 The state database records which backend owns a project. This prevents stock and optional provider operations from silently mutating the same project.

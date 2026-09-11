@@ -6,7 +6,7 @@ use that Docker-shaped protocol surface. Requests are decoded into provider-neut
 models, executed through the runtime SPI, and returned with Docker-compatible
 JSON, streaming, archive, and connection-hijack behavior.
 
-The stock adapter launches an exact Apple `container` executable without a shell. The Compose dispatcher launches an exact native `container-compose` executable and never links its implementation into this package. No product path launches a Docker CLI, Docker Compose, Docker Desktop, or Docker daemon.
+The stock adapter launches an exact Apple `container` executable without a shell. The Compose dispatcher launches an exact native `container-compose` executable and never links its implementation into this package. No product path launches a Docker CLI, Docker Compose, Docker Desktop, or Docker daemon. Runtime overrides naming Docker or Colima and bind mounts resolving to a Docker daemon socket fail before launch or container creation.
 
 Project provider claims are durable and immutable while resources exist. This
 prevents stock and custom runtime operations from creating split-brain projects.

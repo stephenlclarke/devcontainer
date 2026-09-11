@@ -24,7 +24,14 @@
 
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
-The project's north-star goal is 100% behavioural parity with Docker-based Development Containers, with comparable or better user-visible performance. Current releases make narrower evidence-bound claims until the complete specification and performance objectives are proved. The audited findings and solution designs are in the [full parity and performance roadmap](PARITY-ROADMAP.md).
+The project's north-star goal is 100% behavioural parity for the
+Docker-independent Development Containers surface, with comparable or better
+user-visible performance than the Docker oracle. Configurations that require a
+host Docker daemon or mount its socket are deliberately outside the product
+boundary. Current releases make narrower evidence-bound claims until the
+remaining specification and performance objectives are proved. The audited
+findings and solution designs are in the [full parity and performance
+roadmap](PARITY-ROADMAP.md).
 
 > [!IMPORTANT]
 > Version 1.0.1 is the latest immutable stable baseline. Its exact tag
@@ -133,7 +140,6 @@ advanced mount options.
 | --- | --- |
 | [USER_GUIDE.md](USER_GUIDE.md) | Installation-to-operation user manual for the stock and optional provider paths |
 | [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
-| [Docker-free review and design](docs/docker-free-review-and-design.md) | September 2026 audit, current defects, stock/enhanced architecture, Compose reuse, and optimisation/test plan; proposed work |
 | [PARITY-ROADMAP.md](PARITY-ROADMAP.md) | North-star parity and performance criteria, audited defects, and designed solutions |
 | [UNSUPPORTED-CAPABILITIES.md](UNSUPPORTED-CAPABILITIES.md) | Field-by-field implementation and certification design for every current unsupported capability |
 | [CONFORMANCE.md](CONFORMANCE.md) | Complete audited Dev Containers property ledger and explicit 1.0.1 non-conformances |

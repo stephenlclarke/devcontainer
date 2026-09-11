@@ -292,7 +292,7 @@ The implemented user configuration uses explicit provider identities:
 devcontainer configure \
   --backend stock \
   --compose-provider container-compose \
-  --socket "$HOME/.local/state/devcontainer/docker.sock"
+  --socket "$HOME/.local/state/devcontainer/engine.sock"
 
 devcontainer configure \
   --backend container-compose \

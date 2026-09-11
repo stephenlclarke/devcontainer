@@ -62,7 +62,7 @@ public enum DevContainerPathDefaults {
     public static var socket: String {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("docker.sock")
+            .appendingPathComponent("engine.sock")
             .path
     }
 

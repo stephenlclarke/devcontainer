@@ -6,7 +6,14 @@
 
 This catalogue defines what must change before each capability that is currently rejected, semantically incomplete, or explicitly outside the stock-Apple compatibility claim can be called supported.
 
-The north-star scope is 100% behavioural parity with Docker-based Development Containers. It is not an unbounded promise to implement every Docker Engine or Swarm feature. A Docker field that the pinned official Dev Containers CLI or a supported Compose workflow can emit is in scope. A Swarm-only field remains conditional until the supported toolchain emits it, but its current rejection and implementation boundary are still recorded here.
+The north-star scope is 100% behavioural parity across Docker-independent
+Development Containers behavior. It is not an unbounded promise to implement
+every Docker Engine or Swarm feature, and it permanently excludes host Docker
+daemon and daemon-socket dependencies. A Docker-shaped field that the pinned
+official Dev Containers CLI or a supported Compose workflow can emit is in
+scope unless it crosses that boundary. A Swarm-only field remains conditional
+until the supported toolchain emits it, but its current rejection and
+implementation boundary are still recorded here.
 
 The source of truth for the current rejection paths is:
 
@@ -31,7 +38,7 @@ A capability is complete only when all of the following are true:
 
 ## Existing tagged Apple primitives
 
-Several current `501` responses do not require a new virtualisation primitive. The pinned [`apple/container` 1.1.0 `ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) already carries:
+Several current `501` responses do not require a new virtualisation primitive. The pinned [`apple/container` 1.4.1 `ContainerConfiguration`](https://github.com/apple/container/blob/1.4.1/Sources/ContainerResource/Container/ContainerConfiguration.swift) already carries:
 
 - integer CPU and VM memory allocation;
 - `/dev/shm` size and stop signal;
@@ -40,11 +47,11 @@ Several current `501` responses do not require a new virtualisation primitive. T
 - capability additions and drops;
 - create-time networks and native IPv4/IPv6 subnet configuration.
 
-Its [`ProcessConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ProcessConfiguration.swift) also carries supplemental groups and resource limits. The pinned [`NetworkConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Network/NetworkConfiguration.swift) carries IPv4 and IPv6 subnets, plugin selection, labels, and plugin options, while attachment configuration carries a MAC address and MTU.
+Its [`ProcessConfiguration`](https://github.com/apple/container/blob/1.4.1/Sources/ContainerResource/Container/ProcessConfiguration.swift) also carries supplemental groups and resource limits. The pinned [`NetworkConfiguration`](https://github.com/apple/container/blob/1.4.1/Sources/ContainerResource/Network/NetworkConfiguration.swift) carries IPv4 and IPv6 subnets, plugin selection, labels, and plugin options, while attachment configuration carries a MAC address and MTU.
 
 Those surfaces make a bridge implementation possible for the exact overlapping subset. They do not provide Docker's fractional CPU controls, cgroup limits, device requests, namespace sharing, restart policy, dynamic network attachment, or full security policy.
 
-`apple/containerization` 0.35.0 has lower-level OCI structures for `noNewPrivileges`, seccomp, namespaces, masked paths, and read-only paths, but stock `apple/container` 1.1.0 does not expose a supported container-management contract for all of them. Those capabilities require an upstream `apple/container` surface and a tagged release before they enter the stock lane.
+`apple/containerization` 0.45.0 has lower-level OCI structures for `noNewPrivileges`, seccomp, namespaces, masked paths, and read-only paths, but stock `apple/container` 1.4.1 does not expose a supported container-management contract for all of them. Those capabilities require an upstream `apple/container` surface and a tagged release before they enter the stock lane.
 
 ## Docker API coverage
 
@@ -104,6 +111,7 @@ Those surfaces make a bridge implementation possible for the exact overlapping s
 | UC-MNT-003 | Tmpfs `SizeBytes` and `Mode` | Carry size and mode in `RuntimeMount` and translate them to the tagged Apple tmpfs filesystem options. Preserve omission/defaults and validate Docker's range and octal mode rules before create. | Default and custom size/mode, full filesystem, permissions, inspect, restart, and cleanup match Docker. |
 | UC-MNT-004 | Image-declared anonymous `VOLUME` lifecycle, NC-007 | Allocate a separately owned anonymous volume for every declared target, seed it with image content using Docker copy-up rules, and mount it before start. Persist container-to-volume ownership and implement remove, `rm -v`, auto-remove, commit/recreate, and crash recovery. Keeping the path on the writable root filesystem is not equivalent. | Multiple targets, pre-existing content, persistence, isolation, inspect, commit, rebuild, `rm -v`, auto-remove, failed create, service crash, and zero-leak cleanup match Docker. |
 | UC-MNT-005 | Mount types other than `bind`, `volume`, and `tmpfs` | Classify every mount type emitted by supported client versions. An image mount needs a read-only image snapshot with Docker subpath rules; a cluster mount needs the cluster volume control plane described below; named-pipe mounts have no Linux-on-macOS equivalent and remain rejected unless a typed proxy is designed. Never treat an unknown type as a bind. | Each claimed type has create, filesystem, inspect, permission, failure, restart, and cleanup parity. Corpus evidence proves unused Docker-only types remain outside the Dev Containers gate. |
+| UC-MNT-006 | Host bind sources resolving to `docker.sock` or `docker.raw.sock`, NC-010 | This is a permanent Docker-less product boundary, not an implementation backlog. Keep the path check before native creation and do not add a host-daemon proxy mode or a Docker runtime fallback. | Both short and structured bind forms fail with `501`, create no resources, and remain in the Docker-less product audit. |
 | UC-VOL-001 | Non-`local` volume driver and `DriverOpts` | Add a versioned volume-provider SPI with explicit create, mount, unmount, inspect, list, and remove operations. Bind driver configuration to a provider fingerprint, validate option schemas, and make provider loss or upgrade recoverable. The runtime-neutral core must not import `ComposeCore`. | Provider lifecycle, options, credentials, concurrent mounts, restart, missing provider, inspect, filters, forced removal, and cleanup match Docker. |
 | UC-VOL-002 | `ClusterVolumeSpec` | This is a Swarm/CSI-style cluster volume contract, not a current Dev Containers requirement. Implementing it requires topology, capacity, access modes, availability, secrets, snapshots, publish/unpublish, node identity, and a durable control plane. Keep it rejected unless supported-client evidence brings it into scope. | If brought into scope, multi-node provisioning, attachment, failover, access-mode enforcement, secret handling, inspect, recovery, and deletion match Docker. Otherwise corpus validation proves it is never emitted. |
 

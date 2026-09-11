@@ -309,7 +309,7 @@ private final class ComposeCommandFixture {
                 isDirectory: true
             )
         state = root.appendingPathComponent("state.sqlite")
-        socket = root.appendingPathComponent("docker.sock")
+        socket = root.appendingPathComponent("engine.sock")
         executable = root.appendingPathComponent("container-compose")
         invocationLog = root.appendingPathComponent("invocations.log")
         trapLog = root.appendingPathComponent("forbidden-executables.log")
