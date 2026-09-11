@@ -96,7 +96,9 @@ case "${1:-}" in
     [[ -f "$state" && "$(<"$state")" == "running" ]]
     ;;
   stop)
-    printf 'unregistered\n' > "$state"
+    if [[ "${MOCK_COLIMA_STOP_STAYS_RUNNING:-0}" != "1" ]]; then
+      printf 'unregistered\n' > "$state"
+    fi
     ;;
   *)
     exit 2
@@ -164,7 +166,7 @@ esac
             "running",
         )
 
-    def test_candidate_lanes_never_probe_or_start_colima(self) -> None:
+    def test_candidate_lanes_do_not_require_colima(self) -> None:
         result = self.run_script(
             "start",
             "apple-stock",
@@ -181,6 +183,36 @@ esac
             "stock system start --enable-kernel-install --timeout 120",
             operations,
         )
+
+    def test_candidate_lanes_stop_a_running_docker_oracle_before_start(self) -> None:
+        (self.root / "colima.state").write_text("running\n", encoding="utf-8")
+
+        result = self.run_script("start", "apple-stock")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.log.read_text(encoding="utf-8").splitlines()
+        self.assertLess(
+            operations.index("colima stop"),
+            operations.index("stock system start --enable-kernel-install --timeout 120"),
+        )
+        self.assertEqual(
+            (self.root / "colima.state").read_text(encoding="utf-8").strip(),
+            "unregistered",
+        )
+
+    def test_candidate_lane_fails_if_docker_oracle_cannot_stop(self) -> None:
+        (self.root / "colima.state").write_text("running\n", encoding="utf-8")
+
+        result = self.run_script(
+            "start",
+            "apple-stock",
+            {"MOCK_COLIMA_STOP_STAYS_RUNNING": "1"},
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Colima remained running after stop", result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertNotIn("stock system start", operations)
 
     def test_retries_an_interrupted_colima_start(self) -> None:
         result = self.run_script(

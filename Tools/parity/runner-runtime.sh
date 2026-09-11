@@ -96,6 +96,10 @@ stop_colima() {
   if run_with_timeout "$colima_command_timeout_seconds" \
     "$colima_bin" status >/dev/null 2>&1; then
     run_with_timeout "$colima_command_timeout_seconds" "$colima_bin" stop
+    if run_with_timeout "$colima_command_timeout_seconds" \
+      "$colima_bin" status >/dev/null 2>&1; then
+      fail "Colima remained running after stop"
+    fi
   fi
 }
 
@@ -127,6 +131,9 @@ start_runtime() {
     return
   fi
 
+  # Candidate lanes establish their own quiet, Docker-free host state instead
+  # of relying on a preceding oracle lane to have cleaned up successfully.
+  stop_colima
   stop_all_apple_runtimes
   executable="$(selected_runtime "$lane")"
   [[ -x "$executable" ]] || fail "runtime executable is not usable: $executable"
