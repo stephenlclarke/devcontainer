@@ -60,7 +60,16 @@ install -m 0755 "$source_root/.build/release/compose" "$stage/bin/compose"
   cd "$source_root/Tools/compose-normalizer"
   CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
     -o "$stage/resources/compose-normalizer" .
+  mkdir -p "$stage/resources/volume-initializer"
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '-s -w' \
+    -o "$stage/resources/volume-initializer/compose-volume-initializer-linux-arm64" \
+    ./cmd/volume-initializer
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' \
+    -o "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64" \
+    ./cmd/volume-initializer
 )
+test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-arm64"
+test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64"
 install -m 0644 "$source_root/LICENSE" "$stage/LICENSE"
 install -m 0644 "$source_root/config.toml" "$stage/config.toml"
 

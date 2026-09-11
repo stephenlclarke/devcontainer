@@ -537,6 +537,14 @@ class ReleaseToolTests(unittest.TestCase):
             'libexec/"devcontainer-compose/resources/compose-normalizer"',
             template,
         )
+        self.assertIn(
+            'libexec/"devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64"',
+            template,
+        )
+        self.assertIn(
+            'libexec/"devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64"',
+            template,
+        )
         self.assertIn('pkgshare.install Dir["share/devcontainer/*"]', template)
         self.assertIn('"dev.containers.dockerPath"', template)
         self.assertIn('"dev.containers.dockerComposePath"', template)

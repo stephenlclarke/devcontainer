@@ -362,6 +362,8 @@ def verify_archive(
         f"{root}/libexec/container/plugins/devcontainer/bin/devcontainer",
         f"{root}/libexec/devcontainer-compose/bin/compose",
         f"{root}/libexec/devcontainer-compose/resources/compose-normalizer",
+        f"{root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64",
+        f"{root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
         f"{root}/share/devcontainer/reference-cli/devcontainer.js",
     }
     with tarfile.open(archive_path, "r:gz") as archive:

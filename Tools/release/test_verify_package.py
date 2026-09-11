@@ -177,6 +177,8 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/libexec/container/plugins/devcontainer/bin/devcontainer",
                 f"{package_root}/libexec/devcontainer-compose/bin/compose",
                 f"{package_root}/libexec/devcontainer-compose/resources/compose-normalizer",
+                f"{package_root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64",
+                f"{package_root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
                 f"{package_root}/share/devcontainer/reference-cli/devcontainer.js",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
