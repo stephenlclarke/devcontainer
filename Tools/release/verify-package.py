@@ -28,6 +28,12 @@ IMMUTABLE_SOURCE_PATTERN = re.compile(
     r"/(?P<revision>[0-9a-f]{40})/"
 )
 NATIVE_COMPOSE_METADATA = Path(__file__).with_name("native-compose.json")
+FORBIDDEN_RUNTIME_EXECUTABLE_NAMES = {
+    "colima",
+    "docker",
+    "docker-buildx",
+    "docker-compose",
+}
 
 
 @dataclass(frozen=True)
@@ -372,6 +378,16 @@ def verify_archive(
             raise ValueError("package archive is empty")
         for member in members:
             require_safe_member(member, root)
+            if (
+                member.isfile()
+                and member.mode & 0o111
+                and PurePosixPath(member.name).name.lower()
+                in FORBIDDEN_RUNTIME_EXECUTABLE_NAMES
+            ):
+                raise ValueError(
+                    "package contains a forbidden Docker/Colima runtime executable: "
+                    f"{member.name}"
+                )
         source_date_epochs = {member.mtime for member in members}
         if len(source_date_epochs) != 1:
             raise ValueError("archive timestamps are not normalized")
