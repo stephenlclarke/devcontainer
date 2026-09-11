@@ -77,6 +77,15 @@ FORBIDDEN = (
         r"(?i)depends_on\s+[\"']"
         r"(?:docker|dockerd|docker-compose|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
+    re.compile(
+        r"(?i)[\"']identity[\"']\s*:\s*[\"']"
+        r"(?:docker(?:d|-compose|-buildx)?|com\.docker\.cli|colima|podman|nerdctl)"
+        r"(?:[-_.][^\"']+)?[\"']"
+    ),
+    re.compile(
+        r"(?i)https?://github\.com/(?:docker|moby|containerd|containers)/"
+        r"(?:docker|moby|containerd|podman|nerdctl)(?:\.git)?\b"
+    ),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
     re.compile(r"(?im)^\s*open\s+(?:--?application\s+|-a\s+)['\"]?Docker\b"),
     re.compile(r"(?i)https?://(?:get|download|desktop)\.docker\.com\b"),
