@@ -52,6 +52,7 @@ class PackageVerificationTests(unittest.TestCase):
         valid_notice_metadata: bool = True,
         valid_compose_checksum: bool = True,
         forbidden_runtime: bool = False,
+        unexpected_executable: bool = False,
         readme: bytes = b"README\n",
     ) -> tuple[Path, Path]:
         archive_path = root / "devcontainer-release-arm64.tar.gz"
@@ -188,6 +189,13 @@ class PackageVerificationTests(unittest.TestCase):
                     archive,
                     f"{package_root}/bin/docker",
                     b"forbidden runtime",
+                    mode=0o755,
+                )
+            if unexpected_executable:
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/libexec/renamed-runtime",
+                    b"unexpected runtime",
                     mode=0o755,
                 )
             for name in ("LICENSE.txt", "ThirdPartyNotices.txt"):
@@ -360,6 +368,16 @@ class PackageVerificationTests(unittest.TestCase):
             result = self.run_verifier(archive, checksum)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("forbidden Docker/Colima runtime executable", result.stderr)
+
+    def test_unexpected_renamed_runtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                unexpected_executable=True,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("package executable inventory is not exact", result.stderr)
 
     def test_provenance_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

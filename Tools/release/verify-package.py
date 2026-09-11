@@ -388,6 +388,18 @@ def verify_archive(
                     "package contains a forbidden Docker/Colima runtime executable: "
                     f"{member.name}"
                 )
+        executable_members = {
+            member.name
+            for member in members
+            if member.isfile() and member.mode & 0o111
+        }
+        if executable_members != required_executables:
+            unexpected = sorted(executable_members - required_executables)
+            missing = sorted(required_executables - executable_members)
+            raise ValueError(
+                "package executable inventory is not exact: "
+                f"unexpected={unexpected}, missing={missing}"
+            )
         source_date_epochs = {member.mtime for member in members}
         if len(source_date_epochs) != 1:
             raise ValueError("archive timestamps are not normalized")
