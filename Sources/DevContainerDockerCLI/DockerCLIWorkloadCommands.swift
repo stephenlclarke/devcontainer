@@ -514,8 +514,8 @@ struct DockerRunOptions {
     var privileged = false
     var capabilities: [String] = []
     var securityOptions: [String] = []
-    var network: String?
-    var networkAliases: [String] = []
+    var networks: [String: [String]] = [:]
+    var currentNetwork: String?
     var autoRemove = false
     var interactive = false
     var terminal = false
@@ -588,12 +588,17 @@ struct DockerRunOptions {
         switch option {
         case "-p", "--publish": try addPort(Self.value(arguments, &index, for: option))
         case "--mount": try mounts.append(Self.mount(Self.value(arguments, &index, for: option)))
+        case "-v", "--volume": try mounts.append(Self.volume(Self.value(arguments, &index, for: option)))
         case "--entrypoint": entrypoint = try Self.value(arguments, &index, for: option)
         case "--cap-add": try capabilities.append(Self.value(arguments, &index, for: option))
         case "--security-opt": try securityOptions.append(Self.value(arguments, &index, for: option))
-        case "--network": network = try Self.value(arguments, &index, for: option)
+        case "--network": try addNetwork(Self.value(arguments, &index, for: option))
         case "--network-alias":
-            try networkAliases.append(Self.value(arguments, &index, for: option))
+            let alias = try Self.value(arguments, &index, for: option)
+            guard let currentNetwork else {
+                throw DockerCLIError.invalidArguments("--network-alias requires --network")
+            }
+            networks[currentNetwork, default: []].append(alias)
         default:
             return try consumeContainerOption(option, arguments: arguments, index: &index)
         }
@@ -691,12 +696,42 @@ struct DockerRunOptions {
         if let healthcheck {
             request["Healthcheck"] = healthcheck
         }
-        if let network {
+        if !networks.isEmpty {
+            let endpoints = networks.mapValues { aliases in
+                ["Aliases": Array(Set(aliases)).sorted()]
+            }
             request["NetworkingConfig"] = [
-                "EndpointsConfig": [network: ["Aliases": networkAliases]]
+                "EndpointsConfig": endpoints
             ]
         }
         return request
+    }
+
+    private mutating func addNetwork(_ value: String) throws {
+        let components = value.split(
+            separator: ",",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        guard let name = components.first, !name.isEmpty else {
+            throw DockerCLIError.invalidArguments("--network requires a network name")
+        }
+        var aliases = networks[name, default: []]
+        for option in components.dropFirst() {
+            let pair = option.split(
+                separator: "=",
+                maxSplits: 1,
+                omittingEmptySubsequences: false
+            ).map(String.init)
+            guard pair.count == 2, !pair[1].isEmpty else {
+                throw DockerCLIError.invalidArguments("invalid --network option \(option)")
+            }
+            guard pair[0] == "alias" else {
+                throw DockerCLIError.unsupported("run --network \(option)")
+            }
+            aliases.append(pair[1])
+        }
+        networks[name] = aliases
+        currentNetwork = name
     }
 
     private mutating func setHealthDuration(_ field: String, _ value: String) throws {
@@ -753,6 +788,33 @@ struct DockerRunOptions {
         }
         if let consistency = pairs["consistency"] {
             result["Consistency"] = consistency
+        }
+        return result
+    }
+
+    private static func volume(_ value: String) throws -> [String: Any] {
+        let fields = value.split(
+            separator: ":",
+            maxSplits: 2,
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        guard fields.count == 2 || fields.count == 3,
+              !fields[0].isEmpty,
+              !fields[1].isEmpty
+        else {
+            throw DockerCLIError.invalidArguments("invalid volume \(value)")
+        }
+        if fields.count == 3, fields[2] != "ro", fields[2] != "rw" {
+            throw DockerCLIError.invalidArguments("unsupported volume mode \(fields[2])")
+        }
+        let source = fields[0]
+        var result: [String: Any] = [
+            "Source": source,
+            "Target": fields[1],
+            "Type": source.hasPrefix("/") || source.hasPrefix(".") ? "bind" : "volume"
+        ]
+        if fields.count == 3, fields[2] == "ro" {
+            result["ReadOnly"] = true
         }
         return result
     }

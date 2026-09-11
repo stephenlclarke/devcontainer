@@ -25,6 +25,9 @@ import Foundation
 
 @main
 enum DevContainerComposeCommand {
+    private static let networkAliasCapability =
+        "io.github.stephenlclarke.container.compose.network-aliases.v1"
+
     private struct ChildCommandFailure: Error {
         let status: Int32
     }
@@ -67,6 +70,7 @@ enum DevContainerComposeCommand {
             environment: environment,
             socket: selection.socket,
             backend: selection.backend,
+            containerExecutable: selection.containerExecutable,
             compatibilityExecutable: paths.dockerCompatibility.path
         )
         let child = childCommand(arguments: arguments, execution: execution)
@@ -286,7 +290,10 @@ enum DevContainerComposeCommand {
         var childEnvironment = safeChildEnvironment(execution.environment)
         childEnvironment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] =
             execution.backend == .stock ? "stock" : "enhanced"
-        childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.compatibilityExecutable
+        childEnvironment["CONTAINER_COMPOSE_RUNTIME_CAPABILITIES"] =
+            execution.backend == .stock ? networkAliasCapability : nil
+        childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = execution.containerExecutable
+        childEnvironment["CONTAINER_BIN"] = execution.compatibilityExecutable
         childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = execution.socket
         var childArguments = arguments
         let executable: URL
@@ -392,6 +399,7 @@ private struct ComposeExecutionEnvironment {
     let environment: [String: String]
     let socket: String
     let backend: BackendProvider
+    let containerExecutable: String
     let compatibilityExecutable: String
 }
 

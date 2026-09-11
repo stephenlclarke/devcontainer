@@ -629,15 +629,39 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
+    func `maps short volume syntax`() throws {
+        let request = try DockerRunOptions(arguments: [
+            "--volume", "cache:/cache:ro", "-v", "/host/workspace:/workspace", "image"
+        ]).createRequest
+        let mounts = try #require(
+            (request["HostConfig"] as? [String: Any])?["Mounts"] as? [[String: Any]]
+        )
+
+        #expect(mounts.count == 2)
+        #expect(mounts[0]["Type"] as? String == "volume")
+        #expect(mounts[0]["ReadOnly"] as? Bool == true)
+        #expect(mounts[1]["Type"] as? String == "bind")
+        #expect(mounts[1]["Target"] as? String == "/workspace")
+    }
+
+    @Test
     func `maps network aliases and automatic removal`() throws {
         let request = try DockerRunOptions(arguments: [
-            "--rm", "--network", "parity", "--network-alias", "app", "image"
+            "--rm", "--network", "parity,alias=app,alias=app.internal",
+            "--network", "metrics", "--network-alias", "telemetry", "image"
         ]).createRequest
 
         #expect((request["HostConfig"] as? [String: Any])?["AutoRemove"] as? Bool == true)
         let endpoints = (request["NetworkingConfig"] as? [String: Any])?["EndpointsConfig"]
             as? [String: [String: [String]]]
-        #expect(endpoints?["parity"]?["Aliases"] == ["app"])
+        #expect(endpoints?["parity"]?["Aliases"] == ["app", "app.internal"])
+        #expect(endpoints?["metrics"]?["Aliases"] == ["telemetry"])
+
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerRunOptions(arguments: [
+                "--network", "parity,ip=192.0.2.2", "image"
+            ])
+        }
     }
 
     @Test

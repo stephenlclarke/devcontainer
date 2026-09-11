@@ -93,7 +93,8 @@ struct DevContainerComposeCommandTests {
         )
         #expect(try fixture.trapInvocations().isEmpty)
         #expect(try fixture.runtimeSelections() == [
-            "stock|/fixtures/devcontainer-docker|\(fixture.socket.path)"
+            "stock|/fixtures/apple-container|/fixtures/devcontainer-docker|\(fixture.socket.path)"
+                + "|io.github.stephenlclarke.container.compose.network-aliases.v1"
         ])
         #expect(
             try fixture.invocations() == [
@@ -319,10 +320,12 @@ private final class ComposeCommandFixture {
         #!/bin/sh
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
-        printf '%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s\n' \
           "$CONTAINER_COMPOSE_RUNTIME_PROFILE" \
           "$CONTAINER_COMPOSE_CONTAINER" \
-          "$CONTAINER_COMPOSE_ENGINE_SOCKET" >> "$RUNTIME_SELECTION_LOG"
+          "$CONTAINER_BIN" \
+          "$CONTAINER_COMPOSE_ENGINE_SOCKET" \
+          "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" >> "$RUNTIME_SELECTION_LOG"
         case " $* " in
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'

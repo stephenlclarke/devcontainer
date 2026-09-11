@@ -20,6 +20,11 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+// Event polling, Docker-compatible events, and managed network-host recovery
+// share actor-isolated state; the runtime is split across focused extension
+// files, while this cohesive event boundary exceeds the default line limit.
+// swiftlint:disable file_length
+
 actor AppleEventPoller {
     typealias SnapshotProvider = @Sendable (RuntimeRequestContext) async throws
         -> [String: ContainerSnapshot]
@@ -590,7 +595,7 @@ extension AppleContainerRuntime {
 
     // Direct and CLI fallback copies intentionally retain identical
     // state-race handling.
-    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    // swiftlint:disable:next function_body_length
     func synchronizeNetworkHosts(
         target: ContainerSnapshot,
         containers: [ContainerSnapshot],
@@ -609,23 +614,12 @@ extension AppleContainerRuntime {
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
         if useDirectContainerAPI {
-            do {
-                try context.checkActive()
-                try await fileClient.copyOut(
-                    id: targetID,
-                    source: "/etc/hosts",
-                    destination: localHosts.path
-                )
-                try context.checkActive()
-            } catch {
-                let observedState = await (try? inspectContainer(
-                    id: targetID,
-                    context: context
-                ).state)
-                guard observedState == .running else {
-                    return
-                }
-                throw directAPIError(error, operation: "container hosts download")
+            guard try await copyHostsAfterBootstrap(
+                id: targetID,
+                destination: localHosts.path,
+                context: context
+            ) else {
+                return
             }
         } else {
             let download = try await command([
@@ -651,23 +645,12 @@ extension AppleContainerRuntime {
         if current != updated {
             try Data(updated.utf8).write(to: localHosts, options: .atomic)
             if useDirectContainerAPI {
-                do {
-                    try context.checkActive()
-                    try await fileClient.copyIn(
-                        id: targetID,
-                        source: localHosts.path,
-                        destination: "/etc/hosts"
-                    )
-                    try context.checkActive()
-                } catch {
-                    let observedState = await (try? inspectContainer(
-                        id: targetID,
-                        context: context
-                    ).state)
-                    guard observedState == .running else {
-                        return
-                    }
-                    throw directAPIError(error, operation: "container hosts upload")
+                guard try await copyHostsIntoContainer(
+                    id: targetID,
+                    source: localHosts,
+                    context: context
+                ) else {
+                    return
                 }
             } else {
                 let upload = try await command([
@@ -690,6 +673,207 @@ extension AppleContainerRuntime {
             }
         }
         managedHostsState[targetID] = nextState
+    }
+
+    /// Apple's copy API cannot read the guest-generated `/etc/hosts` on the
+    /// stock runtime. Prefer the API and use a native exec only for this
+    /// runtime-owned file, retaining state-race handling in both paths.
+    private func copyHostsAfterBootstrap(
+        id: String,
+        destination: String,
+        context: RuntimeRequestContext
+    ) async throws -> Bool {
+        // Stock Apple Container exposes inventory through the public client,
+        // but its generated hosts file is not a copyable filesystem resource.
+        // Avoid entering that indefinitely blocking API path when the version
+        // probe has identified the stock distribution.
+        if directContainerInventorySupported != true {
+            do {
+                try context.checkActive()
+                try await fileClient.copyOut(
+                    id: id,
+                    source: "/etc/hosts",
+                    destination: destination
+                )
+                try context.checkActive()
+                return true
+            } catch let error as DevContainerError
+                where error.code == .cancelled || error.code == .deadlineExceeded
+            {
+                throw error
+            } catch {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                guard observedState == .running else {
+                    return false
+                }
+            }
+        }
+        let download = try await downloadHostsWithExec(id: id)
+        if download.exitCode != 0 {
+            let observedState = await (try? inspectContainer(
+                id: id,
+                context: context
+            ).state)
+            guard observedState == .running else {
+                return false
+            }
+            try requireSuccess(download, operation: "container hosts download")
+        }
+        try download.standardOutput.write(to: URL(fileURLWithPath: destination))
+        return true
+    }
+
+    private func copyHostsIntoContainer(
+        id: String,
+        source: URL,
+        context: RuntimeRequestContext
+    ) async throws -> Bool {
+        if directContainerInventorySupported != true {
+            do {
+                try context.checkActive()
+                try await fileClient.copyIn(
+                    id: id,
+                    source: source.path,
+                    destination: "/etc/hosts"
+                )
+                try context.checkActive()
+                return true
+            } catch let error as DevContainerError
+                where error.code == .cancelled || error.code == .deadlineExceeded
+            {
+                throw error
+            } catch {
+                let observedState = await (try? inspectContainer(
+                    id: id,
+                    context: context
+                ).state)
+                guard observedState == .running else {
+                    return false
+                }
+            }
+        }
+        let upload = try await uploadHostsWithExec(
+            id: id,
+            contents: Data(contentsOf: source)
+        )
+        if upload.exitCode != 0 {
+            let observedState = await (try? inspectContainer(
+                id: id,
+                context: context
+            ).state)
+            guard observedState == .running else {
+                return false
+            }
+            try requireSuccess(upload, operation: "container hosts upload")
+        }
+        return true
+    }
+
+    private func downloadHostsWithExec(id: String) async throws -> AppleCommandResult {
+        guard useDirectProcessAPI else {
+            return try await executeHostsCommand(
+                id: id,
+                command: ["cat", "/etc/hosts"]
+            )
+        }
+        let startMarker = "__DEVCONTAINER_HOSTS_BEGIN__"
+        let endMarker = "__DEVCONTAINER_HOSTS_END__"
+        let script =
+            "printf '\(startMarker)'; "
+                + "base64 /etc/hosts | tr -d '\\n'; status=$?; "
+                + "printf '\(endMarker)'; exit $status"
+        let result = try await terminalCommand([
+            "exec", id, "/bin/sh", "-c", script
+        ])
+        guard result.exitCode == 0 else {
+            return result
+        }
+        guard let encoded = Self.framedPayload(
+            in: result.standardOutput,
+            startMarker: startMarker,
+            endMarker: endMarker
+        ),
+            let decoded = Data(base64Encoded: encoded)
+        else {
+            return AppleCommandResult(
+                standardOutput: Data(),
+                standardError: Data("Apple container returned an invalid hosts payload".utf8),
+                exitCode: 255
+            )
+        }
+        return AppleCommandResult(
+            standardOutput: decoded,
+            standardError: result.standardError,
+            exitCode: result.exitCode
+        )
+    }
+
+    private func uploadHostsWithExec(
+        id: String,
+        contents: Data
+    ) async throws -> AppleCommandResult {
+        guard useDirectProcessAPI else {
+            return try await executeHostsCommand(
+                id: id,
+                command: ["/bin/sh", "-c", "cat > /etc/hosts"],
+                input: contents
+            )
+        }
+        let encoded = contents.base64EncodedString()
+        return try await terminalCommand([
+            "exec",
+            id,
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$1\" | base64 -d > /etc/hosts",
+            "devcontainer-hosts",
+            encoded
+        ])
+    }
+
+    private func executeHostsCommand(
+        id: String,
+        command arguments: [String],
+        input: Data? = nil
+    ) async throws -> AppleCommandResult {
+        var commandArguments = ["exec"]
+        if input != nil {
+            commandArguments.append("--interactive")
+        }
+        commandArguments.append(id)
+        commandArguments += arguments
+        return try await command(commandArguments, input: input)
+    }
+
+    private func terminalCommand(_ arguments: [String]) async throws -> AppleCommandResult {
+        // Apple's `container exec` requires a controlling terminal for this
+        // runtime-owned file on the stock distribution. macOS ships `script`,
+        // which supplies that PTY while presenting finite pipes to our command
+        // runner; framed payloads above discard its terminal control bytes.
+        try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/script"),
+            arguments: ["-q", "/dev/null", executable.path] + arguments,
+            environment: environment
+        )
+    }
+
+    static func framedPayload(
+        in data: Data,
+        startMarker: String,
+        endMarker: String
+    ) -> Data? {
+        guard let start = data.range(of: Data(startMarker.utf8)),
+              let end = data.range(
+                  of: Data(endMarker.utf8),
+                  in: start.upperBound ..< data.endIndex
+              )
+        else {
+            return nil
+        }
+        return data[start.upperBound ..< end.lowerBound]
     }
 
     static func isTransientContainerCopyFailure(
