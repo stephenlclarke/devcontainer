@@ -16,6 +16,12 @@
 
 import Foundation
 
+/// Identifies the project-owned, Apple-container-backed local engine.
+public enum DevContainerEngineIdentity {
+    public static let header = "Devcontainer-Engine"
+    public static let value = "apple-container"
+}
+
 /// Prevents runtime selection from escaping the Docker-less product boundary.
 public enum DevContainerExecutablePolicy {
     private static let forbiddenRuntimeNames: Set<String> = [

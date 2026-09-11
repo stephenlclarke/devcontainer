@@ -27,6 +27,13 @@ class CoveragePipelineTests(unittest.TestCase):
         self.assertIn("--lcov-output coverage.lcov", makefile)
         self.assertIn('--changed-since "$(SWIFT_COVERAGE_BASE)"', makefile)
 
+    def test_compose_fixture_has_immutable_release_provenance(self) -> None:
+        fixture = (REPOSITORY_ROOT / "Tools" / "coverage" / "run-cli-coverage.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"source":"stephenlclarke/container-compose"', fixture)
+        self.assertIn('"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"', fixture)
+
     def test_sonar_excludes_only_non_executable_registration_files(self) -> None:
         properties = (
             REPOSITORY_ROOT / "sonar-project.properties"

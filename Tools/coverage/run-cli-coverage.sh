@@ -91,7 +91,7 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'if [[ "${1-}" == "version" ]]; then' \
-  '  printf "%s\n" '\''{"version":"0.1.0","source":"stephenlclarke/container-compose"}'\''' \
+  '  printf "%s\n" '\''{"version":"0.1.0","source":"stephenlclarke/container-compose","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'\''' \
   'else' \
   '  printf "%s\n" "compose-fixture"' \
   'fi' >"$FAKE_COMPOSE"
