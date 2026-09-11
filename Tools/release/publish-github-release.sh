@@ -118,6 +118,63 @@ require_staged_release() {
   fi
 }
 
+# Reconcile an interrupted stable prerelease without replacing already staged
+# bytes or retaining foreign assets. Mutable Current publication deliberately
+# uses a separate clobber-capable path below.
+reconcile_stable_assets() {
+  local temporary remote_names expected_names asset name downloaded count
+  remote_names="$(
+    "$GH" release view "$TAG" \
+      --repo "$REPOSITORY" --json assets --jq '.assets[].name'
+  )"
+  expected_names=""
+  for asset in "${ASSETS[@]}"; do
+    name="$(basename "$asset")"
+    if grep -Fqx -- "$name" <<<"$expected_names"; then
+      printf 'stable candidate contains a duplicate asset name: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+    expected_names+="$name"$'\n'
+  done
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if ! grep -Fqx -- "$name" <<<"$expected_names"; then
+      printf 'stable prerelease contains an unexpected asset: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+    count="$(grep -Fxc -- "$name" <<<"$remote_names" || true)"
+    if (( count != 1 )); then
+      printf 'stable prerelease contains a duplicate asset name: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+  done <<<"$remote_names"
+
+  temporary="$(
+    mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-stable-assets.XXXXXX"
+  )"
+  trap 'find "$temporary" -depth -delete >/dev/null 2>&1 || true' RETURN
+  for asset in "${ASSETS[@]}"; do
+    name="$(basename "$asset")"
+    if grep -Fqx -- "$name" <<<"$remote_names"; then
+      "$GH" release download "$TAG" \
+        --repo "$REPOSITORY" --pattern "$name" --dir "$temporary"
+      downloaded="$temporary/$name"
+      if [[ ! -f "$downloaded" ]] || \
+        [[ "$(shasum -a 256 "$downloaded" | awk '{print $1}')" != \
+          "$(shasum -a 256 "$asset" | awk '{print $1}')" ]]; then
+        printf 'stable prerelease asset conflicts with candidate: %s\n' \
+          "$name" >&2
+        return 1
+      fi
+    else
+      "$GH" release upload "$TAG" "$asset" --repo "$REPOSITORY"
+    fi
+  done
+}
+
 # Move the deliberately mutable Current source pointer.
 move_current_tag() {
   "$GIT" tag --no-sign --force current "$PUBLISH_SHA"
@@ -172,9 +229,13 @@ case "$MODE" in
     fi
     if release_exists; then
       require_staged_release
-      "$GH" release upload "$TAG" "${ASSETS[@]}" \
+      reconcile_stable_assets
+      "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
-        --clobber
+        --title "$TITLE" \
+        --notes-file "$NOTES_FILE" \
+        --prerelease \
+        --latest=false
     else
       "$GH" release create "$TAG" "${ASSETS[@]}" \
         --repo "$REPOSITORY" \
@@ -195,6 +256,7 @@ case "$MODE" in
       exit 1
     fi
     require_staged_release
+    reconcile_stable_assets
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
       --title "$TITLE" \

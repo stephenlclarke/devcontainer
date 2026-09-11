@@ -29,6 +29,8 @@ class GitHubReleasePublisherTests(unittest.TestCase):
         *,
         release_exists: bool,
         prerelease: bool = True,
+        remote_assets: str = "",
+        download_content: str = "archive",
     ) -> tuple[dict[str, str], Path, Path]:
         fake_bin = root / "bin"
         fake_bin.mkdir()
@@ -50,6 +52,23 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "  fi\n"
                 "  printf 'HTTP 404: Not Found\\n' >&2\n"
                 "  exit 1\n"
+                "fi\n"
+                'if [[ "${1:-}" == release && "${2:-}" == view ]]; then\n'
+                '  printf "%s" "$REMOTE_ASSETS"\n'
+                "  exit 0\n"
+                "fi\n"
+                'if [[ "${1:-}" == release && "${2:-}" == download ]]; then\n'
+                "  pattern=''\n"
+                "  directory=''\n"
+                "  while (( $# > 0 )); do\n"
+                '    case "$1" in\n'
+                '      --pattern) pattern="$2"; shift 2 ;;\n'
+                '      --dir) directory="$2"; shift 2 ;;\n'
+                "      *) shift ;;\n"
+                "    esac\n"
+                "  done\n"
+                '  printf "%s" "$DOWNLOAD_CONTENT" > "$directory/$pattern"\n'
+                "  exit 0\n"
                 "fi\n"
             ),
         )
@@ -77,6 +96,8 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "RELEASE_NOTES_FILE": str(notes),
                 "RELEASE_REPOSITORY": "stephenlclarke/devcontainer",
                 "RELEASE_TITLE": "Release",
+                "REMOTE_ASSETS": remote_assets,
+                "DOWNLOAD_CONTENT": download_content,
             }
         )
         return environment, gh_trace, git_trace
@@ -166,7 +187,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn("--latest=false", trace)
             self.assertFalse(git_trace.exists())
 
-    def test_existing_stable_stage_replaces_only_staged_assets(self) -> None:
+    def test_existing_stable_stage_uploads_only_missing_assets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment, gh_trace, git_trace = self.fixture(
                 Path(temporary_directory),
@@ -180,8 +201,47 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             trace = gh_trace.read_text(encoding="utf-8")
             self.assertIn("release upload 1.2.3", trace)
-            self.assertIn("--clobber", trace)
+            self.assertNotIn("--clobber", trace)
+            self.assertIn("--title Release", trace)
+            self.assertIn("--notes-file", trace)
             self.assertFalse(git_trace.exists())
+
+    def test_stable_stage_reuses_only_byte_identical_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary_directory),
+                release_exists=True,
+                remote_assets="package.tar.gz\n",
+            )
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = gh_trace.read_text(encoding="utf-8")
+            self.assertIn("release download 1.2.3", trace)
+            self.assertNotIn("release upload 1.2.3 package.tar.gz ", trace)
+            self.assertNotIn("--clobber", trace)
+
+    def test_stable_stage_rejects_unexpected_or_conflicting_assets(self) -> None:
+        cases = (
+            ("foreign.tar.gz\n", "archive", "unexpected asset"),
+            ("package.tar.gz\n", "different", "conflicts with candidate"),
+        )
+        for remote_assets, content, message in cases:
+            with self.subTest(message=message):
+                with tempfile.TemporaryDirectory() as temporary:
+                    environment, gh_trace, _ = self.fixture(
+                        Path(temporary),
+                        release_exists=True,
+                        remote_assets=remote_assets,
+                        download_content=content,
+                    )
+                    result = self.run_publisher(
+                        environment, "stable-stage", "1.2.3"
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(message, result.stderr)
+                    trace = gh_trace.read_text(encoding="utf-8")
+                    self.assertNotIn("release edit", trace)
+                    self.assertNotIn("--clobber", trace)
 
     def test_stable_finalize_promotes_staged_prerelease(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
