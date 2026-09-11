@@ -18,6 +18,7 @@ import ContainerEngineProviderSession
 import ContainerEngineRuntimeSPI
 import ContainerEngineWire
 import Darwin
+import DevContainerModel
 @testable import DevContainerService
 import Foundation
 import Security
@@ -25,6 +26,20 @@ import Testing
 
 @Suite(.serialized)
 struct ServiceCommandIntegrationTests {
+    @Test
+    func `engine rejects a runtime from the wrong provider lane`() throws {
+        #expect(throws: DevContainerError.self) {
+            try DevContainerServiceCommand.requireMatchingProvider(
+                selected: .stock,
+                observed: .containerCompose
+            )
+        }
+        try DevContainerServiceCommand.requireMatchingProvider(
+            selected: .stock,
+            observed: .stock
+        )
+    }
+
     @Test
     func `engine executable starts serves and terminates cleanly`() async throws {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -60,7 +75,9 @@ struct ServiceCommandIntegrationTests {
             "--state",
             state,
             "--container",
-            container.path
+            container.path,
+            "--provider",
+            "container-compose"
         ]
         process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output
@@ -110,7 +127,9 @@ struct ServiceCommandIntegrationTests {
             "--state",
             state,
             "--container",
-            container.path
+            container.path,
+            "--provider",
+            "container-compose"
         ]
         process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output

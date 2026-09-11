@@ -51,7 +51,7 @@ class PackageVerificationTests(unittest.TestCase):
         legal_files: bool = True,
         valid_notice_metadata: bool = True,
         valid_compose_checksum: bool = True,
-        forbidden_runtime: bool = False,
+        forbidden_runtime: str | None = None,
         unexpected_executable: bool = False,
         readme: bytes = b"README\n",
     ) -> tuple[Path, Path]:
@@ -127,9 +127,9 @@ class PackageVerificationTests(unittest.TestCase):
         for name, version, revision, location, license_name in (
             (
                 "devcontainers-cli",
-                "0.88.0",
-                "f683c29f64a20109b4453e5149807e390ff65133",
-                "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.88.0.tgz",
+                "0.89.0",
+                "5dc7533314b5ba7ec3875c30143dfe1aec644870",
+                "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.89.0.tgz",
                 "MIT",
             ),
             (
@@ -187,7 +187,7 @@ class PackageVerificationTests(unittest.TestCase):
             if forbidden_runtime:
                 self.add_bytes(
                     archive,
-                    f"{package_root}/bin/docker",
+                    f"{package_root}/bin/{forbidden_runtime}",
                     b"forbidden runtime",
                     mode=0o755,
                 )
@@ -359,15 +359,19 @@ class PackageVerificationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe path", result.stderr)
 
-    def test_docker_runtime_executable_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            archive, checksum = self.write_fixture(
-                Path(temporary_directory),
-                forbidden_runtime=True,
-            )
-            result = self.run_verifier(archive, checksum)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("forbidden Docker/Colima runtime executable", result.stderr)
+    def test_non_apple_runtime_executables_are_rejected(self) -> None:
+        for runtime in ("docker", "docker-compose", "colima", "podman", "nerdctl"):
+            with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temporary_directory:
+                archive, checksum = self.write_fixture(
+                    Path(temporary_directory),
+                    forbidden_runtime=runtime,
+                )
+                result = self.run_verifier(archive, checksum)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "forbidden non-Apple runtime executable",
+                    result.stderr,
+                )
 
     def test_unexpected_renamed_runtime_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -222,12 +222,51 @@ struct CoreBehaviorTests {
     }
 
     @Test
-    func `runtime selection rejects Docker and Colima executable paths`() throws {
+    func `runtime selection rejects Docker runtime socket paths`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("missing.toml")
+
+        for socket in [
+            "/var/run/docker.sock",
+            "/Users/example/.docker/run/docker.raw.sock"
+        ] {
+            #expect(throws: DevContainerError.self) {
+                try DevContainerRuntimeSelectionResolver.resolve(
+                    environment: ["DEVCONTAINER_SOCKET": socket],
+                    configuration: path.path
+                )
+            }
+        }
+
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        let dockerSocket = directory.appendingPathComponent("docker.sock")
+        let projectSocket = directory.appendingPathComponent("engine.sock")
+        try Data().write(to: dockerSocket)
+        try FileManager.default.createSymbolicLink(
+            at: projectSocket,
+            withDestinationURL: dockerSocket
+        )
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: ["DEVCONTAINER_SOCKET": projectSocket.path],
+                configuration: path.path
+            )
+        }
+    }
+
+    @Test
+    func `runtime selection rejects non Apple executable paths`() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let configuration = directory.appendingPathComponent("missing.toml")
 
-        for executable in ["docker", "docker-compose", "docker-buildx", "colima"] {
+        for executable in [
+            "docker", "docker-compose", "docker-buildx", "colima", "podman", "nerdctl"
+        ] {
             #expect(throws: DevContainerError.self) {
                 try DevContainerRuntimeSelectionResolver.resolve(
                     environment: [:],
@@ -250,6 +289,14 @@ struct CoreBehaviorTests {
                 environment: [:],
                 configuration: configuration.path,
                 containerExecutable: alias.path
+            )
+        }
+
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: [:],
+                configuration: configuration.path,
+                containerExecutable: "/opt/homebrew/bin/podman"
             )
         }
     }

@@ -137,6 +137,10 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         metadataStore: (any RuntimeMetadataStore)? = nil,
         volumeRoot: URL? = nil
     ) throws {
+        try DevContainerExecutablePolicy.requireAppleContainer(
+            executable.path,
+            name: "Apple container CLI"
+        )
         let apiClient = ContainerClient()
         try self.init(
             executable: executable,
@@ -164,7 +168,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         clients: DirectClients
     ) throws {
         let resolved = executable.standardizedFileURL
-        try DevContainerExecutablePolicy.requireDockerless(
+        try DevContainerExecutablePolicy.requireAppleContainer(
             resolved.path,
             name: "Apple container CLI"
         )

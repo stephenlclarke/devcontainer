@@ -20,7 +20,7 @@ import DevContainerCore
 struct ContextCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "context",
-        abstract: "Print explicit Docker endpoint configuration"
+        abstract: "Print explicit compatibility endpoint configuration"
     )
 
     @Option(name: .long, help: "Engine Unix socket.")

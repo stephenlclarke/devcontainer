@@ -152,7 +152,7 @@ struct PluginRegistration {
 
 enum ContainerInstallRootResolver {
     static func resolve(container: URL) throws -> URL {
-        try DevContainerExecutablePolicy.requireDockerless(
+        try DevContainerExecutablePolicy.requireAppleContainer(
             container.path,
             name: "plug-in runtime executable"
         )

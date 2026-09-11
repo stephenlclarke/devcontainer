@@ -117,7 +117,7 @@ private func commandConfiguration(_ name: String) -> CommandConfiguration {
 }
 
 struct ReferenceCLIInvocation: Equatable {
-    static let version = "0.88.0"
+    static let version = "0.89.0"
 
     var node: URL
     var arguments: [String]
@@ -133,7 +133,6 @@ struct ReferenceCLIInvocation: Equatable {
         let executable = try absoluteExecutable(executable)
         let directory = executable.deletingLastPathComponent()
         let script = try referenceScript(
-            environment: environment,
             executableDirectory: directory
         )
         let node = try executablePath(
@@ -145,6 +144,7 @@ struct ReferenceCLIInvocation: Equatable {
             ],
             name: "Node.js"
         )
+        try requireNodeExecutable(node)
         var upstreamArguments = [script.path, command]
         if injectRuntimeAdapters {
             try rejectRuntimeOverrides(arguments)
@@ -189,18 +189,25 @@ struct ReferenceCLIInvocation: Equatable {
         return executable.resolvingSymlinksInPath()
     }
 
-    private static func referenceScript(
-        environment: [String: String],
-        executableDirectory: URL
-    ) throws -> URL {
+    private static func referenceScript(executableDirectory: URL) throws -> URL {
         let packaged = executableDirectory
             .deletingLastPathComponent()
             .appendingPathComponent("share/devcontainer/reference-cli/devcontainer.js")
         return try executablePath(
-            environment["DEVCONTAINER_REFERENCE_CLI"],
+            nil,
             candidates: [packaged.path],
             name: "pinned @devcontainers/cli (version)"
         )
+    }
+
+    private static func requireNodeExecutable(_ node: URL) throws {
+        let resolved = node.resolvingSymlinksInPath()
+        guard node.lastPathComponent == "node", resolved.lastPathComponent == "node" else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "Node.js path and resolved target must be named node"
+            )
+        }
     }
 
     private static func executablePath(
@@ -244,6 +251,8 @@ struct ReferenceCLIInvocation: Equatable {
                 && !key.hasPrefix("LD_")
                 && key != "BASH_ENV"
                 && key != "ENV"
+                && key != "DEVCONTAINER_NODE_BIN"
+                && key != "DEVCONTAINER_REFERENCE_CLI"
         }
     }
 }

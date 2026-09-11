@@ -515,8 +515,14 @@ private final class HandoffRuntimeFixture {
             at: root,
             withIntermediateDirectories: true
         )
+        let executable = root.appendingPathComponent("container")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: executable.path
+        )
         runtime = try AppleContainerRuntime(
-            executable: URL(fileURLWithPath: "/usr/bin/true"),
+            executable: executable,
             environment: [:],
             useDirectProcessAPI: false,
             useDirectContainerAPI: false,

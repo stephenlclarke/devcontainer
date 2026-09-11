@@ -260,7 +260,7 @@ func `provider probes and invokes a compatible executable`() async throws {
     let descriptor = try await provider.descriptor(context: context)
     #expect(descriptor.provider == .containerCompose)
     #expect(descriptor.providerVersion == "0.10.0")
-    #expect(descriptor.providerCommit == "fixture-commit")
+    #expect(descriptor.providerCommit == String(repeating: "a", count: 40))
     #expect(descriptor.capabilities[.build] == .native)
     #expect(descriptor.capabilities[.events] == .emulated)
     #expect(descriptor.capabilities[.registryAuthentication] == .unsupported)
@@ -308,7 +308,13 @@ func `provider rejects unsafe overrides and incompatible version probes`() async
         )
     }
 
-    for mode in [FakeComposeExecutable.Mode.wrongSource, .invalidJSON, .failure] {
+    for mode in [
+        FakeComposeExecutable.Mode.wrongSource,
+        .invalidCommit,
+        .invalidVersion,
+        .invalidJSON,
+        .failure
+    ] {
         let fixture = try FakeComposeExecutable(mode: mode)
         let incompatible = try ExecutableComposeProvider(executable: fixture.executable)
         await #expect(throws: DevContainerError.self) {
@@ -321,6 +327,8 @@ private struct FakeComposeExecutable {
     enum Mode: String {
         case valid
         case wrongSource
+        case invalidCommit
+        case invalidVersion
         case invalidJSON
         case failure
     }
@@ -339,7 +347,20 @@ private struct FakeComposeExecutable {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        let script = """
+        try Data(Self.script(mode: mode, environmentURL: environmentURL).utf8)
+            .write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: executable.path
+        )
+    }
+
+    func environmentLog() throws -> String {
+        try String(contentsOf: environmentURL, encoding: .utf8)
+    }
+
+    private static func script(mode: Mode, environmentURL: URL) -> String {
+        """
         #!/bin/sh
         set -eu
         env | sort > '\(environmentURL.path)'
@@ -349,12 +370,26 @@ private struct FakeComposeExecutable {
               printf '%s\\n' '{
                 "version":"0.10.0",
                 "source":"stephenlclarke/container-compose",
-                "commit":"fixture-commit",
+                "commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "containerDistribution":"custom"
               }'
               ;;
             wrongSource)
               printf '%s\\n' '{"version":"1","source":"someone/else"}'
+              ;;
+            invalidCommit)
+              printf '%s\\n' '{
+                "version":"0.10.0",
+                "source":"stephenlclarke/container-compose",
+                "commit":"branch-head"
+              }'
+              ;;
+            invalidVersion)
+              printf '%s\\n' '{
+                "version":"current",
+                "source":"stephenlclarke/container-compose",
+                "commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }'
               ;;
             invalidJSON)
               printf '%s\\n' 'not-json'
@@ -369,14 +404,5 @@ private struct FakeComposeExecutable {
           printf '%s' 'compose-warning' >&2
         fi
         """
-        try Data(script.utf8).write(to: executable)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: executable.path
-        )
-    }
-
-    func environmentLog() throws -> String {
-        try String(contentsOf: environmentURL, encoding: .utf8)
     }
 }

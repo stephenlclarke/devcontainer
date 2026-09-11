@@ -137,6 +137,7 @@ public enum DevContainerRuntimeSelectionResolver {
                 message: "engine socket must be an absolute local path"
             )
         }
+        let safeSocket = try dockerlessSocketPath(selectedSocket)
         let selectedContainer = try absoluteExecutablePath(
             nonempty(containerExecutable)
                 ?? nonempty(environment["DEVCONTAINER_CONTAINER_BIN"])
@@ -154,7 +155,7 @@ public enum DevContainerRuntimeSelectionResolver {
             backend: selectedBackend,
             composeProvider: selectedCompose,
             containerExecutable: selectedContainer,
-            socket: expandHome(selectedSocket),
+            socket: safeSocket,
             stateDatabase: selectedState,
             strictCompatibility: stored.strictCompatibility
         )
@@ -211,8 +212,21 @@ public enum DevContainerRuntimeSelectionResolver {
 
     private static func absoluteExecutablePath(_ value: String, name: String) throws -> String {
         let path = try absolutePath(value, name: name)
-        try DevContainerExecutablePolicy.requireDockerless(path, name: name)
+        try DevContainerExecutablePolicy.requireAppleContainer(path, name: name)
         return path
+    }
+
+    private static func dockerlessSocketPath(_ value: String) throws -> String {
+        let socket = URL(fileURLWithPath: expandHome(value)).standardizedFileURL
+        let names = [socket, socket.resolvingSymlinksInPath()]
+            .map { $0.lastPathComponent.lowercased() }
+        guard names.allSatisfy({ $0 != "docker.sock" && $0 != "docker.raw.sock" }) else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "engine socket cannot select a Docker runtime socket"
+            )
+        }
+        return socket.path
     }
 
     private static func defaultConfiguration(

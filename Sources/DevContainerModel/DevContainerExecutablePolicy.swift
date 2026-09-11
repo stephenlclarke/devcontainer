@@ -22,10 +22,12 @@ public enum DevContainerExecutablePolicy {
         "colima",
         "docker",
         "docker-buildx",
-        "docker-compose"
+        "docker-compose",
+        "nerdctl",
+        "podman"
     ]
 
-    /// Rejects a Docker or Colima executable before any product process launch.
+    /// Rejects a non-Apple container runtime before any product process launch.
     public static func requireDockerless(_ path: String, name: String) throws {
         let executable = URL(fileURLWithPath: path).standardizedFileURL
         let resolved = executable.resolvingSymlinksInPath()
@@ -34,7 +36,38 @@ public enum DevContainerExecutablePolicy {
         guard names.allSatisfy({ !forbiddenRuntimeNames.contains($0) }) else {
             throw DevContainerError(
                 .invalidRequest,
-                message: "\(name) cannot select Docker or Colima in the Docker-less product"
+                message: "\(name) cannot select a non-Apple runtime in the Docker-less product"
+            )
+        }
+    }
+
+    /// Requires the selected runtime CLI to be an Apple Container distribution.
+    public static func requireAppleContainer(_ path: String, name: String) throws {
+        try requireDockerless(path, name: name)
+        let executable = URL(fileURLWithPath: path).standardizedFileURL
+        let resolved = executable.resolvingSymlinksInPath()
+        guard executable.lastPathComponent == "container",
+              resolved.lastPathComponent == "container"
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "\(name) must select an Apple Container distribution executable"
+            )
+        }
+    }
+
+    /// Requires the selected multi-service CLI to be native container-compose.
+    public static func requireNativeCompose(_ path: String, name: String) throws {
+        try requireDockerless(path, name: name)
+        let executable = URL(fileURLWithPath: path).standardizedFileURL
+        let resolved = executable.resolvingSymlinksInPath()
+        let allowed = Set(["compose", "container-compose"])
+        guard allowed.contains(executable.lastPathComponent),
+              allowed.contains(resolved.lastPathComponent)
+        else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "\(name) must select a native container-compose executable"
             )
         }
     }

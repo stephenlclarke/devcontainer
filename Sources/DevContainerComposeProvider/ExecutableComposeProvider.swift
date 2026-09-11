@@ -29,7 +29,7 @@ public struct ExecutableComposeProvider: ComposeProvider {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws {
         let resolved = executable.standardizedFileURL
-        try DevContainerExecutablePolicy.requireDockerless(
+        try DevContainerExecutablePolicy.requireNativeCompose(
             resolved.path,
             name: "container-compose provider"
         )
@@ -64,16 +64,11 @@ public struct ExecutableComposeProvider: ComposeProvider {
                 message: "container-compose returned invalid version JSON: \(error)"
             )
         }
-        guard probe.source == "stephenlclarke/container-compose" else {
-            throw DevContainerError(
-                .providerProtocolMismatch,
-                message: "unexpected container-compose source \(probe.source)"
-            )
-        }
+        let commit = try Self.requireReleaseProvenance(probe)
         return ProtocolDescriptor(
             provider: .containerCompose,
             providerVersion: probe.version,
-            providerCommit: probe.commit ?? "unspecified",
+            providerCommit: commit,
             distribution: probe.containerDistribution ?? "custom",
             capabilities: Dictionary(
                 uniqueKeysWithValues: RuntimeCapability.allCases.map { capability in
@@ -157,6 +152,36 @@ public struct ExecutableComposeProvider: ComposeProvider {
         let text = String(bytes: data.prefix(4096), encoding: .utf8)
             ?? "non-UTF-8 diagnostic output"
         return text.isEmpty ? "no diagnostic output" : text
+    }
+
+    private static func isSemanticVersion(_ value: String) -> Bool {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 3 && parts.allSatisfy { UInt($0) != nil }
+    }
+
+    private static func isCommit(_ value: String) -> Bool {
+        value.utf8.count == 40 && value.utf8.allSatisfy {
+            (48 ... 57).contains($0) || (97 ... 102).contains($0)
+        }
+    }
+
+    private static func requireReleaseProvenance(_ probe: VersionProbe) throws -> String {
+        guard probe.source == "stephenlclarke/container-compose" else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "unexpected container-compose source \(probe.source)"
+            )
+        }
+        guard isSemanticVersion(probe.version),
+              let commit = probe.commit,
+              isCommit(commit)
+        else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container-compose returned incomplete release provenance"
+            )
+        }
+        return commit
     }
 }
 

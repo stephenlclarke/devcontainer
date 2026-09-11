@@ -49,7 +49,7 @@ struct DoctorCommand: AsyncParsableCommand {
             socket: socket
         )
         if let compose {
-            try DevContainerExecutablePolicy.requireDockerless(
+            try DevContainerExecutablePolicy.requireNativeCompose(
                 compose,
                 name: "doctor Compose provider"
             )

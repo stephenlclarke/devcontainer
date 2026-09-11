@@ -32,14 +32,19 @@ class DockerlessProductTests(unittest.TestCase):
             "docker version\n",
             "  docker-compose up\n",
             "colima start\n",
+            "podman run alpine\n",
+            "nerdctl ps\n",
             "command -v docker\n",
+            "command -v podman\n",
             'shutil.which("docker-compose")\n',
             "brew install docker colima\n",
             'depends_on "docker"\n',
+            'depends_on "podman"\n',
             "open /Applications/Docker.app\n",
             'let executable = URL(fileURLWithPath: "/usr/local/bin/docker")\n',
             'executable: "docker-compose"\n',
             'subprocess.run(["docker", "version"])\n',
+            'subprocess.run(["nerdctl", "version"])\n',
         )
         for contents in rejected:
             with self.subTest(contents=contents):
@@ -81,6 +86,37 @@ class DockerlessProductTests(unittest.TestCase):
             contents = (MODULE.ROOT / relative).read_text(encoding="utf-8")
             self.assertIn('appendingPathComponent("engine.sock")', contents)
             self.assertNotIn('appendingPathComponent("docker.sock")', contents)
+
+        resolver = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerCore"
+            / "DevContainerConfiguration.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn('message: "engine socket cannot select a Docker runtime socket"', resolver)
+        self.assertIn('$0 != "docker.sock" && $0 != "docker.raw.sock"', resolver)
+        self.assertIn("requireAppleContainer(path, name: name)", resolver)
+
+        compose = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerComposeCLI"
+            / "DevContainerComposeCommand.swift"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(
+            'environment["DEVCONTAINER_DOCKER_BIN"]\n                ??',
+            compose,
+        )
+        self.assertIn('key != "DEVCONTAINER_DOCKER_BIN"', compose)
+
+        reference = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerCLI"
+            / "ReferenceCLICommand.swift"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('environment["DEVCONTAINER_REFERENCE_CLI"]', reference)
+        self.assertIn('key != "DEVCONTAINER_REFERENCE_CLI"', reference)
 
     def test_router_rejects_host_docker_runtime_sockets(self) -> None:
         router = (

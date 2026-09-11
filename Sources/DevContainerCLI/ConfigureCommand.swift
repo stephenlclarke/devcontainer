@@ -68,7 +68,7 @@ struct ConfigureCommand: ParsableCommand {
             value.socket = socket
         }
         if let container {
-            try DevContainerExecutablePolicy.requireDockerless(
+            try DevContainerExecutablePolicy.requireAppleContainer(
                 container,
                 name: "runtime executable"
             )

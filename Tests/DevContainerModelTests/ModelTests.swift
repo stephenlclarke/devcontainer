@@ -19,7 +19,7 @@ import Foundation
 import Testing
 
 @Test
-func `executable policy permits adapters and rejects Docker runtimes`() throws {
+func `executable policy permits adapters and rejects non Apple runtimes`() throws {
     try DevContainerExecutablePolicy.requireDockerless(
         "/opt/homebrew/bin/devcontainer-docker",
         name: "compatibility adapter"
@@ -28,8 +28,18 @@ func `executable policy permits adapters and rejects Docker runtimes`() throws {
         "/opt/homebrew/bin/container-compose",
         name: "Compose provider"
     )
+    try DevContainerExecutablePolicy.requireAppleContainer(
+        "/usr/local/bin/container",
+        name: "runtime"
+    )
+    try DevContainerExecutablePolicy.requireNativeCompose(
+        "/opt/homebrew/bin/container-compose",
+        name: "Compose provider"
+    )
 
-    for executable in ["docker", "docker-compose", "docker-buildx", "colima"] {
+    for executable in [
+        "docker", "docker-compose", "docker-buildx", "colima", "podman", "nerdctl"
+    ] {
         do {
             try DevContainerExecutablePolicy.requireDockerless(
                 "/usr/local/bin/\(executable)",
@@ -40,6 +50,19 @@ func `executable policy permits adapters and rejects Docker runtimes`() throws {
             #expect(error.code == .invalidRequest)
             #expect(error.message.contains("Docker-less product"))
         }
+    }
+
+    #expect(throws: DevContainerError.self) {
+        try DevContainerExecutablePolicy.requireAppleContainer(
+            "/opt/homebrew/bin/podman",
+            name: "runtime"
+        )
+    }
+    #expect(throws: DevContainerError.self) {
+        try DevContainerExecutablePolicy.requireNativeCompose(
+            "/opt/homebrew/bin/renamed-compose-provider",
+            name: "Compose provider"
+        )
     }
 }
 

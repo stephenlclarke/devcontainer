@@ -109,6 +109,10 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 deadline: Date().addingTimeInterval(5 * 60)
             )
         )
+        try Self.requireMatchingProvider(
+            selected: selectedProvider,
+            observed: runtimeDescriptor.provider
+        )
         let routeCapabilities = try Self.stockRouteIdentifiers.map { identifier in
             try ContainerEngineProviderCapability(
                 identifier: "engine.route.\(identifier)",
@@ -290,6 +294,18 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             return nil
         }
         return try store.load()
+    }
+
+    static func requireMatchingProvider(
+        selected: BackendProvider,
+        observed: BackendProvider
+    ) throws {
+        guard selected == observed else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "selected backend \(selected.rawValue) does not match runtime provider \(observed.rawValue)"
+            )
+        }
     }
 
     private static func terminationSignals() -> AsyncStream<Int32> {

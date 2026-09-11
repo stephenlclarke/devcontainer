@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when a product or release path acquires a Docker/Colima dependency."""
+"""Fail when a product or release path acquires a non-Apple container runtime."""
 
 from __future__ import annotations
 
@@ -51,26 +51,36 @@ TEXT_SUFFIXES = {
 # `devcontainer-docker`, `DockerHTTPRequest`, DOCKER_HOST, or dockerPath.
 FORBIDDEN = (
     re.compile(
-        r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?docker(?:-compose)?"
+        r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?(?:docker(?:-compose)?|podman|nerdctl)"
         r"\s+(?:--?[a-z]|[a-z])"
     ),
     re.compile(r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?colima\s+(?:--?[a-z]|[a-z])"),
-    re.compile(r"(?i)\b(?:command\s+-v|which|shutil\.which\()\s*[\"']?(?:docker|docker-compose|colima)\b"),
-    re.compile(r"(?i)\bbrew\s+(?:install|upgrade)\b[^\n]*(?:docker|docker-compose|colima)\b"),
-    re.compile(r"(?i)depends_on\s+[\"'](?:docker|docker-compose|colima)[\"']"),
+    re.compile(
+        r"(?i)\b(?:command\s+-v|which|shutil\.which\()\s*[\"']?"
+        r"(?:docker|docker-compose|colima|podman|nerdctl)\b"
+    ),
+    re.compile(
+        r"(?i)\bbrew\s+(?:install|upgrade)\b[^\n]*"
+        r"(?:docker|docker-compose|colima|podman|nerdctl)\b"
+    ),
+    re.compile(
+        r"(?i)depends_on\s+[\"']"
+        r"(?:docker|docker-compose|colima|podman|nerdctl)[\"']"
+    ),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
     re.compile(
         r"(?i)\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(\s*"
-        r"(?:\[\s*)?[\"'](?:docker|docker-compose|docker-buildx|colima)[\"']"
+        r"(?:\[\s*)?[\"']"
+        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)[\"']"
     ),
     re.compile(
         r"(?i)(?:/opt/homebrew/bin|/usr/local/bin|/usr/bin|/bin)/"
-        r"(?:docker|docker-compose|docker-buildx|colima)\b"
+        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)\b"
     ),
     re.compile(
         r"(?is)(?:executable|executableURL|fileURLWithPath)\s*:\s*"
         r"(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?[\"']"
-        r"(?:docker|docker-compose|docker-buildx|colima)[\"']"
+        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)[\"']"
     ),
 )
 
@@ -106,7 +116,10 @@ def violations(root: Path = ROOT) -> list[str]:
                 line = contents.count("\n", 0, match.start()) + 1
                 relative = path.relative_to(root)
                 excerpt = match.group(0).strip().replace("\n", " ")
-                findings.append(f"{relative}:{line}: forbidden Docker/Colima product dependency: {excerpt}")
+                findings.append(
+                    f"{relative}:{line}: forbidden non-Apple runtime dependency: "
+                    f"{excerpt}"
+                )
     return sorted(set(findings))
 
 

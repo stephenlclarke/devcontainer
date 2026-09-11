@@ -92,8 +92,10 @@ struct DevContainerComposeCommandTests {
             ) == 0
         )
         #expect(try fixture.trapInvocations().isEmpty)
+        let packagedAdapter = Paths(environment: fixture.environment)
+            .dockerCompatibility.path
         #expect(try fixture.runtimeSelections() == [
-            "stock|/fixtures/apple-container|/fixtures/devcontainer-docker|\(fixture.socket.path)"
+            "stock|/fixtures/container|\(packagedAdapter)|\(fixture.socket.path)"
                 + "|io.github.stephenlclarke.container.compose.network-aliases.v1"
                 + "|unix://\(fixture.socket.path)"
         ])
@@ -108,14 +110,10 @@ struct DevContainerComposeCommandTests {
     func `native compose rejects explicit Docker and Colima executables`() async throws {
         let fixture = try ComposeCommandFixture(projectName: "dockerless-project")
 
-        for (key, executable) in [
-            ("DEVCONTAINER_COMPOSE_BIN", "docker-compose"),
-            ("DEVCONTAINER_COMPOSE_BIN", "colima"),
-            ("DEVCONTAINER_DOCKER_BIN", "docker"),
-            ("DEVCONTAINER_DOCKER_BIN", "docker-buildx")
-        ] {
+        for executable in ["docker-compose", "colima"] {
             var environment = fixture.environment
-            environment[key] = fixture.forbiddenExecutable(named: executable).path
+            environment["DEVCONTAINER_COMPOSE_BIN"] = fixture
+                .forbiddenExecutable(named: executable).path
             await #expect(throws: DevContainerError.self) {
                 _ = try await DevContainerComposeCommand.run(
                     arguments: ["--project-name", "dockerless-project", "up"],
@@ -124,6 +122,39 @@ struct DevContainerComposeCommandTests {
             }
         }
         #expect(try fixture.trapInvocations().isEmpty)
+        #expect(try fixture.invocations().isEmpty)
+    }
+
+    @Test
+    func `compatibility adapter environment override is ignored`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "dockerless-project")
+        var environment = fixture.environment
+        let forbidden = fixture.forbiddenExecutable(named: "docker")
+        environment["DEVCONTAINER_DOCKER_BIN"] = forbidden.path
+
+        #expect(
+            try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "dockerless-project", "up"],
+                environment: environment
+            ) == 0
+        )
+        #expect(try fixture.trapInvocations().isEmpty)
+        #expect(try fixture.runtimeSelections().allSatisfy { !$0.contains(forbidden.path) })
+    }
+
+    @Test
+    func `external compose must identify the native provider source`() async throws {
+        let fixture = try ComposeCommandFixture(
+            projectName: "dockerless-project",
+            composeSource: "example/foreign-compose"
+        )
+
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "dockerless-project", "up"],
+                environment: fixture.environment
+            )
+        }
         #expect(try fixture.invocations().isEmpty)
     }
 
@@ -297,7 +328,8 @@ private final class ComposeCommandFixture {
         backend: BackendProvider = .stock,
         exitStatus: Int32 = 0,
         liveVolumes: [String] = [],
-        volumeProbeStatus: Int32 = 0
+        volumeProbeStatus: Int32 = 0,
+        composeSource: String = "stephenlclarke/container-compose"
     ) throws {
         self.backend = backend
         self.exitStatus = exitStatus
@@ -321,7 +353,8 @@ private final class ComposeCommandFixture {
         )
         try Data(Self.composeScript(
             projectName: projectName,
-            exitStatus: exitStatus
+            exitStatus: exitStatus,
+            composeSource: composeSource
         ).utf8).write(to: executable, options: .atomic)
         #expect(chmod(executable.path, S_IRWXU) == 0)
         for forbidden in ["docker", "docker-compose", "colima"] {
@@ -338,11 +371,16 @@ private final class ComposeCommandFixture {
 
     private static func composeScript(
         projectName: String,
-        exitStatus: Int32
+        exitStatus: Int32,
+        composeSource: String
     ) -> String {
         """
         #!/bin/sh
         set -eu
+        if [ "$*" = "version --format json" ]; then
+          printf '%s\n' '{"version":"0.15.0","source":"\(composeSource)","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","containerDistribution":"apple"}'
+          exit 0
+        fi
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
         printf '%s|%s|%s|%s|%s|%s\n' \
           "$CONTAINER_COMPOSE_RUNTIME_PROFILE" \
@@ -385,10 +423,10 @@ private final class ComposeCommandFixture {
             "LIVE_VOLUMES": liveVolumes.joined(separator: "\n"),
             "VOLUME_PROBE_STATUS": String(volumeProbeStatus),
             "PATH": "\(root.path):/usr/bin:/bin",
-            "DEVCONTAINER_CONTAINER_BIN": "/fixtures/apple-container"
+            "DEVCONTAINER_CONTAINER_BIN": "/fixtures/container"
         ]
         result["DEVCONTAINER_COMPOSE_BIN"] = executable.path
-        result["DEVCONTAINER_DOCKER_BIN"] = "/fixtures/devcontainer-docker"
+        result["DEVCONTAINER_DOCKER_BIN"] = "/fixtures/ignored-devcontainer-docker"
         return result
     }
 

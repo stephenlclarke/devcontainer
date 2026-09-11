@@ -61,7 +61,7 @@ struct DiagnosticsCommand: AsyncParsableCommand {
             stateDatabase: state
         )
         if let compose {
-            try DevContainerExecutablePolicy.requireDockerless(
+            try DevContainerExecutablePolicy.requireNativeCompose(
                 compose,
                 name: "diagnostics Compose provider"
             )

@@ -57,7 +57,7 @@ enum DevContainerComposeCommand {
         environment: [String: String]
     ) async throws -> Int32 {
         var paths = Paths(environment: environment)
-        try DevContainerExecutablePolicy.requireDockerless(
+        try DevContainerExecutablePolicy.requireNativeCompose(
             paths.containerCompose.path,
             name: "Compose provider"
         )
@@ -69,6 +69,15 @@ enum DevContainerComposeCommand {
             environment: environment,
             configuration: paths.configuration.path
         )
+        if !paths.containerComposeIsBundled {
+            let composeProvider = try ExecutableComposeProvider(
+                executable: paths.containerCompose,
+                environment: environment
+            )
+            _ = try await composeProvider.descriptor(
+                context: RuntimeRequestContext(deadline: Date().addingTimeInterval(30))
+            )
+        }
         paths.socket = selection.socket
         paths.state = URL(fileURLWithPath: selection.stateDatabase)
         let provider = selection.composeProvider
@@ -381,6 +390,8 @@ enum DevContainerComposeCommand {
                 && !key.hasPrefix("LD_")
                 && key != "BASH_ENV"
                 && key != "ENV"
+                && key != "DEVCONTAINER_COMPOSE_BIN"
+                && key != "DEVCONTAINER_DOCKER_BIN"
         }
     }
 }
@@ -418,6 +429,7 @@ struct Paths {
     var state: URL
     var socket: String
     let containerCompose: URL
+    let containerComposeIsBundled: Bool
     let dockerCompatibility: URL
 
     init(
@@ -448,17 +460,19 @@ struct Paths {
             .appendingPathComponent("devcontainer", isDirectory: true)
             .appendingPathComponent("engine.sock")
             .path
-        containerCompose = URL(
-            fileURLWithPath: environment["DEVCONTAINER_COMPOSE_BIN"]
-                ?? Self.firstExecutable([
-                    Self.bundledComposePath(executablePath: executablePath),
-                    "/opt/homebrew/bin/container-compose",
-                    "/usr/local/bin/container-compose"
-                ])
-        )
+        let bundledCompose = Self.bundledComposePath(executablePath: executablePath)
+        let selectedCompose = environment["DEVCONTAINER_COMPOSE_BIN"]
+            ?? Self.firstExecutable([
+                bundledCompose,
+                "/opt/homebrew/bin/container-compose",
+                "/usr/local/bin/container-compose"
+            ])
+        containerCompose = URL(fileURLWithPath: selectedCompose)
+        containerComposeIsBundled = selectedCompose == bundledCompose
         dockerCompatibility = URL(
-            fileURLWithPath: environment["DEVCONTAINER_DOCKER_BIN"]
-                ?? Self.bundledDockerCompatibilityPath(executablePath: executablePath)
+            fileURLWithPath: Self.bundledDockerCompatibilityPath(
+                executablePath: executablePath
+            )
         )
     }
 

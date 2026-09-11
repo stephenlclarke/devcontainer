@@ -63,13 +63,15 @@ struct ReferenceCLICommandTests {
             "--docker-compose-path", fixture.compose.path,
             "--workspace-folder", "/work"
         ])
-        #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.88.0")
+        #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.89.0")
         #expect(invocation.environment["DOCKER_HOST"] == "unix://\(fixture.socket.path)")
         #expect(invocation.environment["DEVCONTAINER_SOCKET"] == fixture.socket.path)
         #expect(invocation.environment["LOCAL_ENV_FIXTURE"] == "preserved")
         #expect(invocation.environment["SSH_AUTH_SOCK"] == "/tmp/agent.sock")
         #expect(invocation.environment["DYLD_INSERT_LIBRARIES"] == nil)
         #expect(invocation.environment["BASH_ENV"] == nil)
+        #expect(invocation.environment["DEVCONTAINER_NODE_BIN"] == nil)
+        #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI"] == nil)
     }
 
     @Test
@@ -100,6 +102,49 @@ struct ReferenceCLICommandTests {
         )
         var environment = fixture.environment
         environment["DEVCONTAINER_NODE_BIN"] = docker.path
+
+        #expect(throws: Error.self) {
+            try ReferenceCLIInvocation.configured(
+                command: "up",
+                arguments: [],
+                injectRuntimeAdapters: true,
+                environment: environment,
+                executable: fixture.devcontainer
+            )
+        }
+    }
+
+    @Test
+    func `packaged CLI cannot be replaced by an environment override`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        var environment = fixture.environment
+        environment["DEVCONTAINER_REFERENCE_CLI"] = "/usr/local/bin/docker"
+
+        let invocation = try ReferenceCLIInvocation.configured(
+            command: "up",
+            arguments: [],
+            injectRuntimeAdapters: true,
+            environment: environment,
+            executable: fixture.devcontainer
+        )
+
+        #expect(invocation.arguments.first == fixture.script.path)
+        #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI"] == nil)
+    }
+
+    @Test
+    func `node override must resolve to an executable named node`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let runtime = fixture.root.appendingPathComponent("runtime")
+        #expect(FileManager.default.createFile(atPath: runtime.path, contents: Data()))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: runtime.path
+        )
+        var environment = fixture.environment
+        environment["DEVCONTAINER_NODE_BIN"] = runtime.path
 
         #expect(throws: Error.self) {
             try ReferenceCLIInvocation.configured(

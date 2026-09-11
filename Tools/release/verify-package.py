@@ -33,6 +33,8 @@ FORBIDDEN_RUNTIME_EXECUTABLE_NAMES = {
     "docker",
     "docker-buildx",
     "docker-compose",
+    "nerdctl",
+    "podman",
 }
 
 
@@ -385,7 +387,7 @@ def verify_archive(
                 in FORBIDDEN_RUNTIME_EXECUTABLE_NAMES
             ):
                 raise ValueError(
-                    "package contains a forbidden Docker/Colima runtime executable: "
+                    "package contains a forbidden non-Apple runtime executable: "
                     f"{member.name}"
                 )
         executable_members = {
