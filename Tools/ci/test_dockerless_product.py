@@ -147,6 +147,16 @@ class DockerlessProductTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('$0 != "docker.sock" && $0 != "docker.raw.sock"', transport)
         self.assertIn("Docker runtime socket names are disabled", transport)
+        self.assertIn("DevContainerEngineTransport", transport)
+        self.assertIn("endpoint is not the devcontainer Apple runtime engine", transport)
+
+        application = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerDockerCLI"
+            / "DockerCLIApplication.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn("DevContainerEngineTransport(transport: socketTransport)", application)
 
 
 if __name__ == "__main__":

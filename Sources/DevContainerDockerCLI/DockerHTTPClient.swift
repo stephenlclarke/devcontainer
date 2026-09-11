@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import Darwin
+import DevContainerModel
 import Foundation
 
 public struct DockerHTTPRequest: Equatable, Sendable {
@@ -143,6 +144,92 @@ public extension DockerEngineRequestNotificationTransport {
             headers: response.headers,
             body: body
         )
+    }
+}
+
+/// Refuses to send compatibility requests to anything except this project's
+/// Apple-container-backed engine. The identity probe is side-effect free and is
+/// cached for the lifetime of the short-lived adapter process.
+final class DevContainerEngineTransport:
+    DockerEngineHijackTransport,
+    DockerEngineRequestNotificationTransport,
+    @unchecked Sendable
+{
+    private let transport: any DockerEngineHijackTransport
+        & DockerEngineRequestNotificationTransport
+    private let verificationLock = NSLock()
+    private var verified = false
+
+    init(
+        transport: any DockerEngineHijackTransport
+            & DockerEngineRequestNotificationTransport
+    ) {
+        self.transport = transport
+    }
+
+    func send(
+        _ request: DockerHTTPRequest,
+        maximumBodyBytes: Int?,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        try verifyEngine()
+        return try transport.send(
+            request,
+            maximumBodyBytes: maximumBodyBytes,
+            onBody: onBody
+        )
+    }
+
+    func send(
+        _ request: DockerHTTPRequest,
+        maximumBodyBytes: Int?,
+        onRequestSent: @escaping @Sendable () -> Void,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        try verifyEngine()
+        return try transport.send(
+            request,
+            maximumBodyBytes: maximumBodyBytes,
+            onRequestSent: onRequestSent,
+            onBody: onBody
+        )
+    }
+
+    func hijack(
+        _ request: DockerHTTPRequest,
+        input: Data?,
+        inputFileDescriptor: Int32?,
+        maximumBodyBytes: Int?,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        try verifyEngine()
+        return try transport.hijack(
+            request,
+            input: input,
+            inputFileDescriptor: inputFileDescriptor,
+            maximumBodyBytes: maximumBodyBytes,
+            onBody: onBody
+        )
+    }
+
+    private func verifyEngine() throws {
+        verificationLock.lock()
+        defer { verificationLock.unlock() }
+        guard !verified else { return }
+        let response = try transport.send(
+            DockerHTTPRequest(method: "HEAD", target: "/_ping"),
+            maximumBodyBytes: 0,
+            onBody: { _ in }
+        )
+        let identity = response.headers.first {
+            $0.key.caseInsensitiveCompare(DevContainerEngineIdentity.header) == .orderedSame
+        }?.value
+        guard response.status == 200, identity == DevContainerEngineIdentity.value else {
+            throw DockerHTTPClientError.unsafeSocket(
+                "endpoint is not the devcontainer Apple runtime engine"
+            )
+        }
+        verified = true
     }
 }
 

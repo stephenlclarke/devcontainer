@@ -640,6 +640,7 @@ extension DockerRouter {
         if method == .get || method == .head, path == "/_ping" {
             var response = DockerHTTPResponse.text("OK")
             response.headers["API-Version"] = "1.53"
+            response.headers[DevContainerEngineIdentity.header] = DevContainerEngineIdentity.value
             response.headers["Docker-Experimental"] = "false"
             response.headers["OSType"] = "linux"
             if method == .head {

@@ -29,6 +29,10 @@ func `negotiation works with versioned and unversioned paths`() async throws {
     #expect(ping.status == 200)
     #expect(try bytes(ping) == Data("OK".utf8))
     #expect(ping.headers["API-Version"] == "1.53")
+    #expect(
+        ping.headers[DevContainerEngineIdentity.header]
+            == DevContainerEngineIdentity.value
+    )
 
     let version = await router.respond(
         to: DockerHTTPRequest(method: .get, target: "/v1.53/version")

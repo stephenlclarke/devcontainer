@@ -77,7 +77,9 @@ struct DockerCLIUnixSocketIntegrationTests {
         try await server.start()
         do {
             let application = try DockerCLIApplication(
-                transport: UnixSocketDockerTransport(socketPath: socket)
+                transport: DevContainerEngineTransport(
+                    transport: UnixSocketDockerTransport(socketPath: socket)
+                )
             )
             let version = try await Task.detached {
                 try application.run(arguments: ["version", "--format", "{{.Server.Version}}"])

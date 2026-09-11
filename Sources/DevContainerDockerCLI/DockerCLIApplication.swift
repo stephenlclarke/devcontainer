@@ -66,8 +66,9 @@ public final class DockerCLIApplication: @unchecked Sendable {
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
             environment: environment
         )
-        return try DockerCLIApplication(
-            transport: UnixSocketDockerTransport(socketPath: selection.socket)
+        let socketTransport = try UnixSocketDockerTransport(socketPath: selection.socket)
+        return DockerCLIApplication(
+            transport: DevContainerEngineTransport(transport: socketTransport)
         )
     }
 
