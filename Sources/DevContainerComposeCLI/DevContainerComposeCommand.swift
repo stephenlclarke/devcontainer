@@ -57,6 +57,14 @@ enum DevContainerComposeCommand {
         environment: [String: String]
     ) async throws -> Int32 {
         var paths = Paths(environment: environment)
+        try DevContainerExecutablePolicy.requireDockerless(
+            paths.containerCompose.path,
+            name: "Compose provider"
+        )
+        try DevContainerExecutablePolicy.requireDockerless(
+            paths.dockerCompatibility.path,
+            name: "compatibility adapter"
+        )
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
             environment: environment,
             configuration: paths.configuration.path

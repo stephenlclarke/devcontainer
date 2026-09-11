@@ -105,6 +105,29 @@ struct DevContainerComposeCommandTests {
     }
 
     @Test
+    func `native compose rejects explicit Docker and Colima executables`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "dockerless-project")
+
+        for (key, executable) in [
+            ("DEVCONTAINER_COMPOSE_BIN", "docker-compose"),
+            ("DEVCONTAINER_COMPOSE_BIN", "colima"),
+            ("DEVCONTAINER_DOCKER_BIN", "docker"),
+            ("DEVCONTAINER_DOCKER_BIN", "docker-buildx")
+        ] {
+            var environment = fixture.environment
+            environment[key] = fixture.forbiddenExecutable(named: executable).path
+            await #expect(throws: DevContainerError.self) {
+                _ = try await DevContainerComposeCommand.run(
+                    arguments: ["--project-name", "dockerless-project", "up"],
+                    environment: environment
+                )
+            }
+        }
+        #expect(try fixture.trapInvocations().isEmpty)
+        #expect(try fixture.invocations().isEmpty)
+    }
+
+    @Test
     func `explicit project mutations claim without a configuration probe`() async throws {
         let fixture = try ComposeCommandFixture(projectName: "ignored")
 
@@ -385,6 +408,10 @@ private final class ComposeCommandFixture {
         return try String(contentsOf: trapLog, encoding: .utf8)
             .split(separator: "\n")
             .map(String.init)
+    }
+
+    func forbiddenExecutable(named name: String) -> URL {
+        root.appendingPathComponent(name)
     }
 
     func runtimeSelections() throws -> [String] {

@@ -99,6 +99,28 @@ public struct DevContainerRuntimeSelection: Equatable, Sendable {
     public var strictCompatibility: Bool
 }
 
+public enum DevContainerExecutablePolicy {
+    private static let forbiddenRuntimeNames: Set<String> = [
+        "colima",
+        "docker",
+        "docker-buildx",
+        "docker-compose"
+    ]
+
+    public static func requireDockerless(_ path: String, name: String) throws {
+        let executable = URL(fileURLWithPath: path).standardizedFileURL
+        let resolved = executable.resolvingSymlinksInPath()
+        let names = [executable.lastPathComponent, resolved.lastPathComponent]
+            .map { $0.lowercased() }
+        guard names.allSatisfy({ !forbiddenRuntimeNames.contains($0) }) else {
+            throw DevContainerError(
+                .invalidRequest,
+                message: "\(name) cannot select Docker or Colima in the Docker-less product"
+            )
+        }
+    }
+}
+
 public enum DevContainerRuntimeSelectionResolver {
     public static func resolve(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -137,7 +159,7 @@ public enum DevContainerRuntimeSelectionResolver {
                 message: "engine socket must be an absolute local path"
             )
         }
-        let selectedContainer = try absolutePath(
+        let selectedContainer = try absoluteExecutablePath(
             nonempty(containerExecutable)
                 ?? nonempty(environment["DEVCONTAINER_CONTAINER_BIN"])
                 ?? stored.containerExecutable,
@@ -207,6 +229,12 @@ public enum DevContainerRuntimeSelectionResolver {
             )
         }
         return expanded
+    }
+
+    private static func absoluteExecutablePath(_ value: String, name: String) throws -> String {
+        let path = try absolutePath(value, name: name)
+        try DevContainerExecutablePolicy.requireDockerless(path, name: name)
+        return path
     }
 
     private static func defaultConfiguration(

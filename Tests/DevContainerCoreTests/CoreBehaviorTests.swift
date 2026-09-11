@@ -222,6 +222,39 @@ struct CoreBehaviorTests {
     }
 
     @Test
+    func `runtime selection rejects Docker and Colima executable paths`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = directory.appendingPathComponent("missing.toml")
+
+        for executable in ["docker", "docker-compose", "docker-buildx", "colima"] {
+            #expect(throws: DevContainerError.self) {
+                try DevContainerRuntimeSelectionResolver.resolve(
+                    environment: [:],
+                    configuration: configuration.path,
+                    containerExecutable: "/usr/local/bin/\(executable)"
+                )
+            }
+        }
+
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        let target = directory.appendingPathComponent("docker")
+        let alias = directory.appendingPathComponent("container")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: [:],
+                configuration: configuration.path,
+                containerExecutable: alias.path
+            )
+        }
+    }
+
+    @Test
     func `labels project and translate without overwriting conflicts`() throws {
         let native = "com.apple.container.compose.project"
         let docker = "com.docker.compose.project"
