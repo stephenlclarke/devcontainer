@@ -106,6 +106,11 @@ for binary in "${BINARIES[@]}"; do
   codesign --verify --strict --verbose=2 "$binary"
 done
 
+python3 "$REPOSITORY_ROOT/Tools/release/update-sbom-file-checksum.py" \
+  --sbom "$STAGE_DIRECTORY/share/devcontainer/devcontainer.spdx.json" \
+  --package container-compose \
+  --file "$STAGE_DIRECTORY/libexec/devcontainer-compose/bin/compose"
+
 ditto -c -k --sequesterRsrc --keepParent "$STAGE_DIRECTORY" "$NOTARY_ARCHIVE"
 xcrun notarytool submit "$NOTARY_ARCHIVE" \
   --keychain-profile "$NOTARY_PROFILE" \

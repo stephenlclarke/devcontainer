@@ -182,6 +182,44 @@ class ReleaseToolTests(unittest.TestCase):
                 )
             )
 
+    def test_sbom_file_checksum_is_bound_to_exact_staged_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            sbom = root / "sbom.json"
+            binary = root / "compose"
+            binary.write_bytes(b"signed-compose")
+            sbom.write_text(
+                json.dumps(
+                    {
+                        "packages": [
+                            {
+                                "name": "container-compose",
+                                "checksums": [
+                                    {"algorithm": "SHA256", "checksumValue": "0" * 64}
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.run_tool(
+                "update-sbom-file-checksum.py",
+                "--sbom",
+                str(sbom),
+                "--package",
+                "container-compose",
+                "--file",
+                str(binary),
+            )
+
+            value = json.loads(sbom.read_text(encoding="utf-8"))
+            self.assertEqual(
+                value["packages"][0]["checksums"][0]["checksumValue"],
+                hashlib.sha256(b"signed-compose").hexdigest(),
+            )
+
     def test_third_party_notices_include_exact_reviewed_legal_texts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

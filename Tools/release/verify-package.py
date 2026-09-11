@@ -160,6 +160,7 @@ def require_sbom(
     commit: str,
     source_date_epoch: int,
     dependencies: list[Dependency],
+    bundled_file_checksums: dict[str, str],
 ) -> None:
     """Require SPDX metadata for the root and every exact resolved dependency."""
 
@@ -243,6 +244,12 @@ def require_sbom(
             or len(str(checksums[0].get("checksumValue", ""))) != 64
         ):
             raise ValueError(f"package SBOM metadata is invalid for {name}")
+        expected_checksum = bundled_file_checksums.get(name)
+        if (
+            expected_checksum is not None
+            and checksums[0]["checksumValue"] != expected_checksum
+        ):
+            raise ValueError(f"package SBOM checksum does not match bundled {name}")
     relationships = value.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError("package SBOM is missing dependency relationships")
@@ -423,7 +430,19 @@ def verify_archive(
         build_info = read_json_member(archive, f"{metadata_root}/build-info.json")
         require_build_info(build_info, version, lane, commit)
         sbom = read_json_member(archive, f"{metadata_root}/devcontainer.spdx.json")
-        require_sbom(sbom, version, commit, source_date_epoch, dependencies)
+        compose_member = archive.extractfile(
+            f"{root}/libexec/devcontainer-compose/bin/compose"
+        )
+        if compose_member is None:
+            raise ValueError("bundled container-compose executable cannot be read")
+        require_sbom(
+            sbom,
+            version,
+            commit,
+            source_date_epoch,
+            dependencies,
+            {"container-compose": hashlib.sha256(compose_member.read()).hexdigest()},
+        )
         notices = read_text_member(
             archive,
             f"{metadata_root}/THIRD-PARTY-NOTICES.txt",

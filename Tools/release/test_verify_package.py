@@ -50,6 +50,7 @@ class PackageVerificationTests(unittest.TestCase):
         notarized: bool = True,
         legal_files: bool = True,
         valid_notice_metadata: bool = True,
+        valid_compose_checksum: bool = True,
         readme: bytes = b"README\n",
     ) -> tuple[Path, Path]:
         archive_path = root / "devcontainer-release-arm64.tar.gz"
@@ -147,7 +148,16 @@ class PackageVerificationTests(unittest.TestCase):
                     "licenseDeclared": license_name,
                     "licenseConcluded": license_name,
                     "filesAnalyzed": False,
-                    "checksums": [{"algorithm": "SHA256", "checksumValue": "a" * 64}],
+                    "checksums": [
+                        {
+                            "algorithm": "SHA256",
+                            "checksumValue": (
+                                hashlib.sha256(b"binary").hexdigest()
+                                if name == "container-compose" and valid_compose_checksum
+                                else "a" * 64
+                            ),
+                        }
+                    ],
                     "sourceInfo": f"Exact Git revision {revision}",
                 }
             )
@@ -387,6 +397,16 @@ class PackageVerificationTests(unittest.TestCase):
             result = self.run_verifier(archive, checksum)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("third-party notice metadata", result.stderr)
+
+    def test_bundled_compose_checksum_cannot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                valid_compose_checksum=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("checksum does not match bundled container-compose", result.stderr)
 
     def test_package_readme_relative_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -54,6 +54,24 @@ class SigningToolTests(unittest.TestCase):
         for binary in binaries:
             binary.parent.mkdir(parents=True, exist_ok=True)
             self.write_executable(binary, "exit 0\n")
+        metadata = stage / "share" / "devcontainer"
+        metadata.mkdir(parents=True)
+        (metadata / "devcontainer.spdx.json").write_text(
+            json.dumps(
+                {
+                    "spdxVersion": "SPDX-2.3",
+                    "packages": [
+                        {
+                            "name": "container-compose",
+                            "checksums": [
+                                {"algorithm": "SHA256", "checksumValue": "0" * 64}
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         return stage
 
     def make_fake_tools(self, root: Path) -> tuple[Path, Path]:
@@ -128,6 +146,13 @@ class SigningToolTests(unittest.TestCase):
             self.assertRegex(value["archiveSHA256"], r"^[0-9a-f]{64}$")
             self.assertNotIn("private", value)
             self.assertNotIn("fixture-profile", evidence.read_text(encoding="utf-8"))
+            sbom = json.loads(
+                (stage / "share" / "devcontainer" / "devcontainer.spdx.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            checksum = sbom["packages"][0]["checksums"][0]["checksumValue"]
+            self.assertNotEqual(checksum, "0" * 64)
 
     def test_missing_release_credentials_fail_before_signing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
