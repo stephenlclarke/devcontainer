@@ -72,6 +72,8 @@ struct ReferenceCLICommandTests {
         #expect(invocation.environment["BASH_ENV"] == nil)
         #expect(invocation.environment["DEVCONTAINER_NODE_BIN"] == nil)
         #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI"] == nil)
+        #expect(invocation.environment["DOCKER_CONTEXT"] == nil)
+        #expect(invocation.environment["DOCKER_CONFIG"] == nil)
     }
 
     @Test
@@ -220,6 +222,8 @@ private struct InvocationFixture {
             "DEVCONTAINER_REFERENCE_CLI": script.path,
             "DEVCONTAINER_SOCKET": socket.path,
             "DOCKER_HOST": "unix:///tmp/fixture.sock",
+            "DOCKER_CONTEXT": "desktop-linux",
+            "DOCKER_CONFIG": "/tmp/docker-config",
             "HOME": "/tmp",
             "PATH": "/usr/bin:/bin",
             "LOCAL_ENV_FIXTURE": "preserved",

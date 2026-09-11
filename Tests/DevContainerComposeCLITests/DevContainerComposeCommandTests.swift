@@ -378,6 +378,8 @@ private final class ComposeCommandFixture {
         #!/bin/sh
         set -eu
         if [ "$*" = "version --format json" ]; then
+          test -z "${DOCKER_CONTEXT-}"
+          test -z "${DOCKER_CONFIG-}"
           printf '%s\n' '{"version":"0.15.0","source":"\(composeSource)","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","containerDistribution":"apple"}'
           exit 0
         fi
@@ -417,6 +419,8 @@ private final class ComposeCommandFixture {
             "DEVCONTAINER_CONFIG": root.appendingPathComponent("config.toml").path,
             "DEVCONTAINER_SOCKET": socket.path,
             "DOCKER_HOST": "unix:///tmp/ambient-docker.sock",
+            "DOCKER_CONTEXT": "desktop-linux",
+            "DOCKER_CONFIG": "/tmp/docker-config",
             "DEVCONTAINER_STATE": state.path,
             "INVOCATION_LOG": invocationLog.path,
             "RUNTIME_SELECTION_LOG": runtimeSelectionLog.path,

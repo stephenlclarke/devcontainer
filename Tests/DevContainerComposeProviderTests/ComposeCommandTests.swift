@@ -252,6 +252,8 @@ func `provider probes and invokes a compatible executable`() async throws {
         environment: [
             "PATH": "/usr/bin:/bin",
             "SAFE_BASE": "yes",
+            "DOCKER_CONTEXT": "desktop-linux",
+            "DOCKER_CONFIG": "/tmp/docker-config",
             "DYLD_INSERT_LIBRARIES": "blocked",
             "BASH_ENV": "blocked"
         ]
@@ -289,6 +291,8 @@ func `provider probes and invokes a compatible executable`() async throws {
     #expect(environment.contains("COMPOSE_PROJECT_NAME=fixture"))
     #expect(!environment.contains("DYLD_INSERT_LIBRARIES"))
     #expect(!environment.contains("BASH_ENV"))
+    #expect(!environment.contains("DOCKER_CONTEXT"))
+    #expect(!environment.contains("DOCKER_CONFIG"))
 }
 
 @Test
@@ -300,6 +304,18 @@ func `provider rejects unsafe overrides and incompatible version probes`() async
             ComposeInvocation(
                 arguments: ["version"],
                 environment: ["LD_PRELOAD": "blocked"],
+                workingDirectory: valid.root,
+                project: nil,
+                mutating: false
+            ),
+            context: RuntimeRequestContext()
+        )
+    }
+    await #expect(throws: DevContainerError.self) {
+        _ = try await provider.invoke(
+            ComposeInvocation(
+                arguments: ["version"],
+                environment: ["DOCKER_CONTEXT": "desktop-linux"],
                 workingDirectory: valid.root,
                 project: nil,
                 mutating: false

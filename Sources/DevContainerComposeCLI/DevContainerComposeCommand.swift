@@ -389,6 +389,11 @@ enum DevContainerComposeCommand {
             !key.hasPrefix("DYLD_")
                 && !key.hasPrefix("LD_")
                 && key != "BASH_ENV"
+                && key != "DOCKER_CERT_PATH"
+                && key != "DOCKER_CONFIG"
+                && key != "DOCKER_CONTEXT"
+                && key != "DOCKER_HOST"
+                && key != "DOCKER_TLS_VERIFY"
                 && key != "ENV"
                 && key != "DEVCONTAINER_COMPOSE_BIN"
                 && key != "DEVCONTAINER_DOCKER_BIN"
