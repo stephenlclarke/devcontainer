@@ -21,6 +21,9 @@ REPOSITORY_ROOT = TOOLS.parents[1]
 VERIFIER = TOOLS / "verify-package.py"
 VERSION = "1.2.3"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+NATIVE_COMPOSE = json.loads(
+    (TOOLS / "native-compose.json").read_text(encoding="utf-8")
+)
 
 
 class PackageVerificationTests(unittest.TestCase):
@@ -134,9 +137,9 @@ class PackageVerificationTests(unittest.TestCase):
             ),
             (
                 "container-compose",
-                "0.14.3",
-                "aa3dda83f1322ef70fe985fe11410e9f8201e4fa",
-                "https://github.com/stephenlclarke/container-compose",
+                NATIVE_COMPOSE["version"],
+                NATIVE_COMPOSE["commit"],
+                NATIVE_COMPOSE["repository"],
                 "Apache-2.0",
             ),
         ):
@@ -214,16 +217,18 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/libexec/devcontainer-compose/resources/build-info.json",
                 json.dumps(
                     {
-                        "version": "0.14.3",
+                        "version": NATIVE_COMPOSE["version"],
                         "source": "stephenlclarke/container-compose",
                         "branch": "detached",
                         "lane": "bundled-stock",
-                        "commit": "aa3dda83f1322ef70fe985fe11410e9f8201e4fa",
+                        "commit": NATIVE_COMPOSE["commit"],
                         "buildType": "release",
                         "containerSource": "apple/container",
-                        "containerRef": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
+                        "containerRef": NATIVE_COMPOSE["appleContainerRevision"],
                         "containerizationSource": "apple/containerization",
-                        "containerizationRef": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
+                        "containerizationRef": NATIVE_COMPOSE[
+                            "appleContainerizationRevision"
+                        ],
                         "composeGoVersion": "v2.12.1",
                         "runtimeCapabilitySchemaVersion": 1,
                         "runtimeCapabilities": [],
