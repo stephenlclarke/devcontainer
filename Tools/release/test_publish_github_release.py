@@ -1,4 +1,4 @@
-"""Tests for immutable stable and staged Current GitHub publication."""
+"""Tests for immutable stable and commit-addressed Current publication."""
 
 from __future__ import annotations
 
@@ -85,7 +85,10 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 path = candidates.get(name)
                 if path is None:
                     return "sha256:" + "f" * 64
-                content = path.read_bytes()
+                if state.startswith("published") and os.environ["DOWNLOAD_CONTENT"]:
+                    content = os.environ["DOWNLOAD_CONTENT"].encode()
+                else:
+                    content = path.read_bytes()
                 if os.environ["SERVER_DIGEST_MISMATCH"] == name:
                     content += b"different"
                 return "sha256:" + hashlib.sha256(content).hexdigest()
@@ -114,10 +117,12 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                         raise SystemExit(1)
                     document = {
                         "tag_name": tag,
-                        "draft": state == "draft",
-                        "prerelease": state == "current",
+                        "draft": state in {"draft", "current-draft"},
+                        "prerelease": state in {
+                            "current-draft", "published-current"
+                        },
                         "immutable": (
-                            state == "published"
+                            state.startswith("published")
                             and os.environ["PUBLISHED_IMMUTABLE"] == "true"
                         ),
                     }
@@ -127,9 +132,11 @@ class GitHubReleasePublisherTests(unittest.TestCase):
 
             if args[:2] == ["release", "create"]:
                 if "--draft" in args:
-                    state_path.write_text("draft", encoding="utf-8")
+                    created = "current-draft" if "--prerelease" in args else "draft"
+                    state_path.write_text(created, encoding="utf-8")
                 else:
-                    state_path.write_text("current", encoding="utf-8")
+                    created = "published-current" if "--prerelease" in args else "published"
+                    state_path.write_text(created, encoding="utf-8")
                 Path(os.environ["GH_UPLOAD_MARKER"]).touch()
                 raise SystemExit(0)
 
@@ -139,7 +146,12 @@ class GitHubReleasePublisherTests(unittest.TestCase):
 
             if args[:2] == ["release", "edit"]:
                 if "--draft=false" in args:
-                    state_path.write_text("published", encoding="utf-8")
+                    published = (
+                        "published-current"
+                        if "--prerelease" in args
+                        else "published"
+                    )
+                    state_path.write_text(published, encoding="utf-8")
                 raise SystemExit(0)
 
             if args[:2] == ["release", "download"]:
@@ -164,7 +176,16 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     print("\n".join(names()))
                     raise SystemExit(0)
                 if requested == "isDraft,assets":
-                    print(json.dumps({"isDraft": state == "draft", "assets": assets()}))
+                    print(json.dumps({
+                        "isDraft": state in {"draft", "current-draft"},
+                        "assets": assets(),
+                    }))
+                    raise SystemExit(0)
+                if requested == "isImmutable" and "--jq" in args:
+                    print(str(
+                        state.startswith("published")
+                        and os.environ["PUBLISHED_IMMUTABLE"] == "true"
+                    ).lower())
                     raise SystemExit(0)
                 notes = Path(os.environ["RELEASE_NOTES_FILE"]).read_text(
                     encoding="utf-8"
@@ -172,9 +193,13 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 print(json.dumps({
                     "isDraft": False,
                     "isImmutable": os.environ["PUBLISHED_IMMUTABLE"] == "true",
-                    "isPrerelease": False,
+                    "isPrerelease": state == "published-current",
                     "tagName": tag,
-                    "targetCommitish": os.environ["PUBLISH_SHA"],
+                    # GitHub documents target_commitish as the source used only
+                    # when it creates a missing tag. Existing signed stable tags
+                    # commonly report the default branch here, so the publisher
+                    # authenticates the actual remote tag target independently.
+                    "targetCommitish": "main",
                     "name": os.environ["PUBLISHED_TITLE"],
                     "body": notes,
                     "assets": assets(),
@@ -224,6 +249,8 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "REMOTE_TAG": remote_tag,
                 "SERVER_DIGEST_MISMATCH": "",
                 "LATEST_TAG": "1.2.3",
+                "RELEASE_IMMUTABILITY_ATTEMPTS": "1",
+                "RELEASE_IMMUTABILITY_DELAY_SECONDS": "0",
             }
         )
         return environment, gh_trace, git_trace
@@ -242,17 +269,34 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             text=True,
         )
 
-    def test_current_stage_and_finalize_preserve_mutable_channel(self) -> None:
+    def test_current_stage_and_finalize_publish_commit_addressed_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             environment, gh_trace, git_trace = self.fixture(Path(temporary))
-            result = self.run_publisher(environment, "current-stage", "current")
+            tag = f"current-{COMMIT}"
+            result = self.run_publisher(environment, "current-stage", tag)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("release create current", gh_trace.read_text())
-            self.assertIn(f"tag --no-sign --force current {COMMIT}", git_trace.read_text())
+            trace = gh_trace.read_text()
+            self.assertIn(f"release create {tag}", trace)
+            self.assertIn("--draft", trace)
+            self.assertIn("--prerelease", trace)
+            self.assertFalse(git_trace.exists())
 
-            result = self.run_publisher(environment, "current-finalize", "current")
+            result = self.run_publisher(environment, "current-finalize", tag)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("release edit current", gh_trace.read_text())
+            trace = gh_trace.read_text()
+            self.assertIn(f"release edit {tag}", trace)
+            self.assertIn("--draft=false", trace)
+            self.assertIn("--prerelease", trace)
+            self.assertIn("isDraft,isImmutable", trace)
+
+    def test_current_rejects_moving_or_mismatched_tags(self) -> None:
+        for tag in ("current", f"current-{'f' * 40}"):
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as temporary:
+                environment, gh_trace, _ = self.fixture(Path(temporary))
+                result = self.run_publisher(environment, "current-stage", tag)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("commit-addressed tag", result.stderr)
+                self.assertFalse(gh_trace.exists())
 
     def test_new_stable_stage_creates_private_draft(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -349,7 +393,47 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             result = self.run_publisher(environment, "stable-stage", "1.2.3")
             self.assertEqual(result.returncode, 0, result.stderr)
             trace = gh_trace.read_text()
+            self.assertIn("release download 1.2.3", trace)
             self.assertIn("isDraft,isImmutable", trace)
+            self.assertNotIn("release create", trace)
+            self.assertNotIn("release edit", trace)
+
+    def test_published_recovery_replaces_new_notarized_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary),
+                state="published",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                download_content="published-bytes",
+            )
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                Path(environment["ARCHIVE"]).read_text(encoding="utf-8"),
+                "published-bytes",
+            )
+            self.assertEqual(
+                Path(environment["CHECKSUM"]).read_text(encoding="utf-8"),
+                "published-bytes",
+            )
+            self.assertEqual(
+                gh_trace.read_text().count("release download 1.2.3"),
+                2,
+            )
+
+    def test_published_current_is_recovered_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary),
+                state="published-current",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                download_content="published-current-bytes",
+            )
+            tag = f"current-{COMMIT}"
+            result = self.run_publisher(environment, "current-stage", tag)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = gh_trace.read_text()
+            self.assertIn(f"release download {tag}", trace)
             self.assertNotIn("release create", trace)
             self.assertNotIn("release edit", trace)
 
@@ -371,7 +455,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             )
             result = self.run_publisher(environment, "stable-stage", "1.2.3")
             self.assertEqual(result.returncode, 1)
-            self.assertIn("stable tag target mismatch", result.stderr)
+            self.assertIn("release tag target mismatch", result.stderr)
             self.assertNotIn("release create", gh_trace.read_text())
 
     def test_stable_recovery_rejects_mutable_published_release(self) -> None:
@@ -384,12 +468,12 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             )
             result = self.run_publisher(environment, "stable-finalize", "1.2.3")
             self.assertEqual(result.returncode, 1)
-            self.assertIn("immutability", result.stderr)
+            self.assertIn("immutable", result.stderr)
 
     def test_stable_recovery_rejects_changed_metadata_assets_or_latest(self) -> None:
         cases = (
             ("PUBLISHED_TITLE", "Different", "title"),
-            ("SERVER_DIGEST_MISMATCH", "package.tar.gz", "final digest"),
+            ("SERVER_DIGEST_MISMATCH", "package.tar.gz", "digest mismatch"),
             ("LATEST_TAG", "1.2.2", "not latest"),
         )
         for variable, value, message in cases:

@@ -68,7 +68,7 @@ def package_context(
             formulaVersion=current_formula_version(run_number, normalized_commit),
             lane=lane,
             productVersion=version,
-            releaseTag="current",
+            releaseTag=f"current-{normalized_commit}",
         )
     raise ValueError(f"package lane must be development, current, or stable: {lane}")
 

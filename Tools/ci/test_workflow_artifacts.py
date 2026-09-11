@@ -694,28 +694,35 @@ jobs:
             encoding="utf-8"
         )
         stage = contents.index("- name: Stage GitHub release assets")
-        publish = contents.index("- name: Publish immutable stable release")
+        attest = contents.index(
+            "- name: Attest exact staged or recovered release assets"
+        )
+        upload = contents.index("- name: Upload exact signed package evidence")
+        publish = contents.index("- name: Publish and verify immutable release")
         render = contents.index("- name: Render and validate tap formula")
         commit = contents.index("- name: Commit candidate tap state locally")
         install = contents.index("- name: Install and test tap formula")
         push = contents.index("- name: Push tested tap state")
-        finalize = contents.index(
-            "- name: Finalize mutable Current release after tap promotion"
-        )
 
-        self.assertLess(stage, publish)
+        self.assertLess(stage, attest)
+        self.assertLess(attest, upload)
+        self.assertLess(upload, publish)
         self.assertLess(publish, render)
         self.assertLess(render, commit)
         self.assertLess(commit, install)
         self.assertLess(install, push)
-        self.assertLess(push, finalize)
         self.assertIn("mode=stable-stage", contents)
-        self.assertIn(
-            "Tools/release/publish-github-release.sh stable-finalize",
-            contents,
+        self.assertIn("mode=stable-finalize", contents)
+        self.assertEqual(
+            contents.count(
+                "RELEASE_TITLE: ${{ needs.resolve.outputs.lane == "
+                "'current' && 'Current build' || "
+                "steps.package.outputs.release_tag }}"
+            ),
+            2,
         )
         self.assertIn(
-            "Tools/release/publish-github-release.sh current-finalize",
+            'Tools/release/publish-github-release.sh "${mode}"',
             contents,
         )
         self.assertIn(

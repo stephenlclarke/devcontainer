@@ -25,9 +25,9 @@ DOCS_HOSTING_BASE_PATH ?= devcontainer
 SWIFT_RESOLVED_FLAGS ?= --disable-automatic-resolution
 DIST_DIR ?= dist
 PARITY_EVIDENCE_DIR ?= .build/parity
-DEVCONTAINER_CLI_VERSION ?= 0.88.0
-DEVCONTAINER_CLI_REVISION ?= f683c29f64a20109b4453e5149807e390ff65133
-DEVCONTAINER_CLI_SHA256 ?= 5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b
+DEVCONTAINER_CLI_VERSION ?= 0.89.0
+DEVCONTAINER_CLI_REVISION ?= 5dc7533314b5ba7ec3875c30143dfe1aec644870
+DEVCONTAINER_CLI_SHA256 ?= 49c7d71d40058f89e1fd8b019a193ed4215b7fc773c0f6273f7032a46cd33f4b
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 DEVCONTAINER_SIGNING_REQUIRED ?= 0
@@ -358,11 +358,19 @@ homebrew-formula-current: package
 			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
 			--field asset \
 	)"; \
+	release_tag="$$( \
+		$(PYTHON) Tools/release/package-context.py \
+			--product-version "$(DEVCONTAINER_VERSION)" \
+			--lane current \
+			--commit "$$(git rev-parse --verify HEAD)" \
+			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+			--field releaseTag \
+	)"; \
 	$(PYTHON) Tools/release/render-homebrew-formula.py \
 		--product-version "$(DEVCONTAINER_VERSION)" \
 		--formula-version "$$formula_version" \
 		--formula-class DevcontainerCurrent \
-		--url "https://github.com/stephenlclarke/devcontainer/releases/download/current/$$asset" \
+		--url "https://github.com/stephenlclarke/devcontainer/releases/download/$$release_tag/$$asset" \
 		--conflicts-with devcontainer \
 		--archive "$(DIST_DIR)/$$asset" \
 		--template Tools/release/devcontainer.rb.in \

@@ -99,8 +99,8 @@ install -m 0644 Packaging/devcontainer-plugin-config.toml \
   "$stage/libexec/container/plugins/devcontainer/config.toml"
 install -m 0644 LICENSE NOTICE.md "$stage/share/devcontainer/"
 Tools/release/fetch-reference-cli.sh \
-  "${DEVCONTAINER_CLI_VERSION:-0.88.0}" \
-  "${DEVCONTAINER_CLI_SHA256:-5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b}" \
+  "${DEVCONTAINER_CLI_VERSION:-0.89.0}" \
+  "${DEVCONTAINER_CLI_SHA256:-49c7d71d40058f89e1fd8b019a193ed4215b7fc773c0f6273f7032a46cd33f4b}" \
   "$stage/share/devcontainer/reference-cli"
 python3 Tools/release/render-package-readme.py \
   --source README.md \
@@ -129,7 +129,7 @@ python3 Tools/release/write-sbom.py \
   --commit "$commit" \
   --source-date-epoch "$source_date_epoch" \
   --license-manifest Tools/release/dependency-licenses.stock.json \
-  --bundled-dependency "devcontainers-cli|${DEVCONTAINER_CLI_VERSION:-0.88.0}|${DEVCONTAINER_CLI_REVISION:-f683c29f64a20109b4453e5149807e390ff65133}|https://registry.npmjs.org/@devcontainers/cli/-/cli-${DEVCONTAINER_CLI_VERSION:-0.88.0}.tgz|${DEVCONTAINER_CLI_SHA256:-5cac67ef43a7150734e952b6b8ceb70949a492a090e79a0c8ed9e848f0aae72b}|MIT" \
+  --bundled-dependency "devcontainers-cli|${DEVCONTAINER_CLI_VERSION:-0.89.0}|${DEVCONTAINER_CLI_REVISION:-5dc7533314b5ba7ec3875c30143dfe1aec644870}|https://registry.npmjs.org/@devcontainers/cli/-/cli-${DEVCONTAINER_CLI_VERSION:-0.89.0}.tgz|${DEVCONTAINER_CLI_SHA256:-49c7d71d40058f89e1fd8b019a193ed4215b7fc773c0f6273f7032a46cd33f4b}|MIT" \
   --bundled-dependency "container-compose|${compose_version}|${compose_commit}|https://github.com/stephenlclarke/container-compose|${compose_checksum}|Apache-2.0" \
   --output "$stage/share/devcontainer/devcontainer.spdx.json"
 python3 Tools/release/write-third-party-notices.py \

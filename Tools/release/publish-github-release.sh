@@ -2,7 +2,7 @@
 # USAGE:
 #   publish-github-release.sh current-stage|current-finalize|stable-stage|stable-finalize
 #
-# Stage/finalize immutable stable assets or the mutable Current channel.
+# Stage and publish immutable stable or commit-addressed Current assets.
 
 #===----------------------------------------------------------------------===#
 # Copyright 2026 devcontainer project authors.
@@ -27,6 +27,8 @@ SCRIPT_NAME="$(basename "$SELF_PATH")"
 readonly SCRIPT_NAME
 readonly GH="${GH:-gh}"
 readonly GIT="${GIT:-git}"
+readonly IMMUTABILITY_ATTEMPTS="${RELEASE_IMMUTABILITY_ATTEMPTS:-60}"
+readonly IMMUTABILITY_DELAY_SECONDS="${RELEASE_IMMUTABILITY_DELAY_SECONDS:-10}"
 
 # Print the command-line interface.
 usage() {
@@ -104,27 +106,25 @@ release_exists() {
   exit "$status"
 }
 
-# Require an existing public prerelease for the mutable Current channel.
-require_current_staged_release() {
+# Require a private draft whose release metadata is still mutable.
+require_release_draft() {
+  local channel="$1"
   if ! jq -e \
     --arg tag "$TAG" \
-    '
-      .tag_name == $tag and
-      .draft == false and
-      .prerelease == true
-    ' <<<"$RELEASE_DOCUMENT" >/dev/null; then
-    printf 'Current release %s exists but is not a staged prerelease\n' \
-      "$TAG" >&2
+    '.tag_name == $tag and .draft == true' \
+    <<<"$RELEASE_DOCUMENT" >/dev/null; then
+    printf '%s release %s exists but is not a private draft\n' \
+      "$channel" "$TAG" >&2
     exit 1
   fi
 }
 
-# Require repository-level immutability before staging stable release bytes.
+# Require repository-level immutability before staging release bytes.
 require_release_immutability() {
   local settings
   settings="$("$GH" api "repos/$REPOSITORY/immutable-releases")"
   if ! jq -e '.enabled == true' <<<"$settings" >/dev/null; then
-    printf 'stable publication requires GitHub immutable releases to be enabled\n' >&2
+    printf 'publication requires GitHub immutable releases to be enabled\n' >&2
     exit 1
   fi
 }
@@ -138,36 +138,25 @@ verify_remote_tag_target() {
       awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled ? peeled : direct }'
   )"
   if [[ "$remote_target" != "$PUBLISH_SHA" ]]; then
-    printf 'stable tag target mismatch: expected %s, got %s\n' \
+    printf 'release tag target mismatch: expected %s, got %s\n' \
       "$PUBLISH_SHA" "${remote_target:-missing}" >&2
     exit 1
   fi
 }
 
-# Require a private draft while stable assets remain mutable.
-require_stable_draft() {
-  if ! jq -e \
-    --arg tag "$TAG" \
-    '.tag_name == $tag and .draft == true' \
-    <<<"$RELEASE_DOCUMENT" >/dev/null; then
-    printf 'release %s exists but is not a stable draft\n' "$TAG" >&2
-    exit 1
-  fi
-}
-
 # Validate that an asset inventory has no foreign or duplicate names.
-validate_stable_asset_names() {
+validate_release_asset_names() {
   local remote_names="$1" expected_names="$2" require_complete="$3"
   local name count
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     if ! grep -Fqx -- "$name" <<<"$expected_names"; then
-      printf 'stable draft contains an unexpected asset: %s\n' "$name" >&2
+      printf 'release draft contains an unexpected asset: %s\n' "$name" >&2
       return 1
     fi
     count="$(grep -Fxc -- "$name" <<<"$remote_names" || true)"
     if (( count != 1 )); then
-      printf 'stable draft contains a duplicate asset name: %s\n' "$name" >&2
+      printf 'release draft contains a duplicate asset name: %s\n' "$name" >&2
       return 1
     fi
   done <<<"$remote_names"
@@ -175,41 +164,41 @@ validate_stable_asset_names() {
     while IFS= read -r name; do
       [[ -n "$name" ]] || continue
       if ! grep -Fqx -- "$name" <<<"$remote_names"; then
-        printf 'stable draft is missing expected asset: %s\n' "$name" >&2
+        printf 'release draft is missing expected asset: %s\n' "$name" >&2
         return 1
       fi
     done <<<"$expected_names"
   fi
 }
 
-# Validate GitHub's server-computed SHA-256 digest for every stable asset.
-validate_stable_asset_digests() {
+# Validate GitHub's server-computed SHA-256 digest for every release asset.
+validate_release_asset_digests() {
   local remote_assets="$1" asset name count expected actual
   for asset in "${ASSETS[@]}"; do
     name="$(basename "$asset")"
     count="$(awk -F '\t' -v name="$name" \
       '$1 == name { count += 1 } END { print count + 0 }' <<<"$remote_assets")"
     if (( count != 1 )); then
-      printf 'stable draft final inventory changed for asset: %s\n' "$name" >&2
+      printf 'release draft final inventory changed for asset: %s\n' "$name" >&2
       return 1
     fi
     expected="sha256:$(shasum -a 256 "$asset" | awk '{print $1}')"
     actual="$(awk -F '\t' -v name="$name" '$1 == name { print $2 }' \
       <<<"$remote_assets")"
     if [[ "$actual" != "$expected" ]]; then
-      printf 'stable draft final digest changed for asset: %s\n' "$name" >&2
+      printf 'release draft final digest changed for asset: %s\n' "$name" >&2
       return 1
     fi
   done
 }
 
-# Return the unique expected stable asset names.
-expected_stable_asset_names() {
+# Return the unique expected release asset names.
+expected_release_asset_names() {
   local names="" asset name
   for asset in "${ASSETS[@]}"; do
     name="$(basename "$asset")"
     if grep -Fqx -- "$name" <<<"$names"; then
-      printf 'stable candidate contains a duplicate asset name: %s\n' \
+      printf 'release candidate contains a duplicate asset name: %s\n' \
         "$name" >&2
       return 1
     fi
@@ -218,17 +207,17 @@ expected_stable_asset_names() {
   printf '%s' "$names"
 }
 
-# Reconcile an interrupted stable draft without replacing staged bytes.
-reconcile_stable_assets() {
+# Reconcile an interrupted release draft without replacing staged bytes.
+reconcile_draft_assets() {
   local temporary initial remote_names expected_names asset name
   local downloaded final_snapshot remote_assets
   local -a missing_assets=()
-  expected_names="$(expected_stable_asset_names)"
+  expected_names="$(expected_release_asset_names)"
   remote_names="$(
     "$GH" release view "$TAG" \
       --repo "$REPOSITORY" --json assets --jq '.assets[].name'
   )"
-  validate_stable_asset_names "$remote_names" "$expected_names" false
+  validate_release_asset_names "$remote_names" "$expected_names" false
 
   temporary="$(
     mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-stable-assets.XXXXXX"
@@ -245,7 +234,7 @@ reconcile_stable_assets() {
       if [[ ! -f "$downloaded" ]] || \
         [[ "$(shasum -a 256 "$downloaded" | awk '{print $1}')" != \
           "$(shasum -a 256 "$asset" | awk '{print $1}')" ]]; then
-        printf 'stable draft asset conflicts with candidate: %s\n' \
+        printf 'release draft asset conflicts with candidate: %s\n' \
           "$name" >&2
         return 1
       fi
@@ -262,7 +251,7 @@ reconcile_stable_assets() {
       --json isDraft,assets
   )"
   if [[ "$(jq -r '.isDraft' <<<"$final_snapshot")" != true ]]; then
-    printf 'stable release is no longer a draft before publication: %s\n' \
+    printf 'release is no longer a draft before publication: %s\n' \
       "$TAG" >&2
     return 1
   fi
@@ -271,94 +260,197 @@ reconcile_stable_assets() {
       <<<"$final_snapshot"
   )"
   remote_names="$(cut -f 1 <<<"$remote_assets")"
-  validate_stable_asset_names "$remote_names" "$expected_names" true
-  validate_stable_asset_digests "$remote_assets"
+  validate_release_asset_names "$remote_names" "$expected_names" true
+  validate_release_asset_digests "$remote_assets"
 }
 
-# Verify the exact immutable server state after stable publication or recovery.
-verify_published_stable_release() {
+# Download and authenticate the exact bytes retained by an immutable release.
+restore_published_assets() {
+  local expected_names snapshot remote_assets remote_names temporary
+  local asset name expected actual downloaded
+  expected_names="$(expected_release_asset_names)"
+  snapshot="$(
+    "$GH" release view "$TAG" --repo "$REPOSITORY" --json assets
+  )"
+  remote_assets="$(
+    jq -r '.assets[] | [.name, (.digest // "")] | @tsv' <<<"$snapshot"
+  )"
+  remote_names="$(cut -f 1 <<<"$remote_assets")"
+  validate_release_asset_names "$remote_names" "$expected_names" true
+
+  temporary="$(
+    mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-published-assets.XXXXXX"
+  )"
+  trap 'find "$temporary" -depth -delete >/dev/null 2>&1 || true' RETURN
+  for asset in "${ASSETS[@]}"; do
+    name="$(basename "$asset")"
+    expected="$(
+      awk -F '\t' -v name="$name" '$1 == name { print $2 }' \
+        <<<"$remote_assets"
+    )"
+    if [[ ! "$expected" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      printf 'published asset has no valid server digest: %s\n' "$name" >&2
+      return 1
+    fi
+    "$GH" release download "$TAG" \
+      --repo "$REPOSITORY" --pattern "$name" --dir "$temporary"
+    downloaded="$temporary/$name"
+    if [[ ! -f "$downloaded" ]]; then
+      printf 'published asset download is missing: %s\n' "$name" >&2
+      return 1
+    fi
+    actual="sha256:$(shasum -a 256 "$downloaded" | awk '{print $1}')"
+    if [[ "$actual" != "$expected" ]]; then
+      printf 'published asset digest mismatch: %s\n' "$name" >&2
+      return 1
+    fi
+  done
+  for asset in "${ASSETS[@]}"; do
+    name="$(basename "$asset")"
+    mv "$temporary/$name" "$asset"
+  done
+  validate_release_asset_digests "$remote_assets"
+}
+
+# Wait for GitHub's bounded post-publication immutability transition.
+wait_for_release_immutability() {
+  local attempt immutable
+  if [[ ! "$IMMUTABILITY_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || \
+    [[ ! "$IMMUTABILITY_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
+    printf 'invalid release immutability wait configuration\n' >&2
+    return 1
+  fi
+  for ((attempt = 1; attempt <= IMMUTABILITY_ATTEMPTS; attempt += 1)); do
+    immutable="$(
+      "$GH" release view "$TAG" --repo "$REPOSITORY" \
+        --json isImmutable --jq '.isImmutable'
+    )"
+    if [[ "$immutable" == true ]]; then
+      return 0
+    fi
+    if (( attempt < IMMUTABILITY_ATTEMPTS )); then
+      sleep "$IMMUTABILITY_DELAY_SECONDS"
+    fi
+  done
+  printf 'published release did not become immutable: %s\n' "$TAG" >&2
+  return 1
+}
+
+# Verify the exact immutable server state after publication or recovery.
+verify_published_release() {
+  local channel="$1"
   local expected_names snapshot remote_assets remote_names latest_tag field
-  local actual expected
-  expected_names="$(expected_stable_asset_names)"
+  local actual expected expected_prerelease
+  expected_prerelease=false
+  if [[ "$channel" == current ]]; then
+    expected_prerelease=true
+  fi
+  wait_for_release_immutability
+  expected_names="$(expected_release_asset_names)"
   snapshot="$(
     "$GH" release view "$TAG" --repo "$REPOSITORY" \
-      --json isDraft,isImmutable,isPrerelease,tagName,targetCommitish,name,body,assets
+      --json isDraft,isImmutable,isPrerelease,tagName,name,body,assets
   )"
   while IFS=$'\t' read -r field actual expected; do
     if [[ "$actual" != "$expected" ]]; then
-      printf 'published stable release %s mismatch: expected %s, got %s\n' \
+      printf 'published %s release %s mismatch: expected %s, got %s\n' \
+        "$channel" \
         "$field" "$expected" "$actual" >&2
       return 1
     fi
   done < <(
-    jq -r --arg tag "$TAG" --arg target "$PUBLISH_SHA" \
+    jq -r --arg tag "$TAG" \
       --arg title "$TITLE" --rawfile body "$NOTES_FILE" \
-      '["draft state", .isDraft, false], ["immutability", .isImmutable, true], ["prerelease state", .isPrerelease, false], ["tag", .tagName, $tag], ["target", .targetCommitish, $target], ["title", .name, $title], ["notes", .body, $body] | @tsv' \
+      --argjson prerelease "$expected_prerelease" \
+      '["draft state", .isDraft, false], ["immutability", .isImmutable, true], ["prerelease state", .isPrerelease, $prerelease], ["tag", .tagName, $tag], ["title", .name, $title], ["notes", .body, $body] | @tsv' \
       <<<"$snapshot"
   )
   remote_assets="$(
     jq -r '.assets[] | [.name, (.digest // "")] | @tsv' <<<"$snapshot"
   )"
   remote_names="$(cut -f 1 <<<"$remote_assets")"
-  validate_stable_asset_names "$remote_names" "$expected_names" true
-  validate_stable_asset_digests "$remote_assets"
-  latest_tag="$(
-    "$GH" api "repos/$REPOSITORY/releases/latest" --jq '.tag_name'
-  )"
-  if [[ "$latest_tag" != "$TAG" ]]; then
-    printf 'published stable release is not latest: expected %s, got %s\n' \
-      "$TAG" "${latest_tag:-missing}" >&2
-    return 1
+  validate_release_asset_names "$remote_names" "$expected_names" true
+  validate_release_asset_digests "$remote_assets"
+  if [[ "$channel" == stable ]]; then
+    latest_tag="$(
+      "$GH" api "repos/$REPOSITORY/releases/latest" --jq '.tag_name'
+    )"
+    if [[ "$latest_tag" != "$TAG" ]]; then
+      printf 'published stable release is not latest: expected %s, got %s\n' \
+        "$TAG" "${latest_tag:-missing}" >&2
+      return 1
+    fi
   fi
   verify_remote_tag_target
 }
 
-# Move the deliberately mutable Current source pointer.
-move_current_tag() {
-  "$GIT" tag --no-sign --force current "$PUBLISH_SHA"
-  "$GIT" push --force origin refs/tags/current
-}
-
 case "$MODE" in
   current-stage)
-    if [[ "$TAG" != "current" ]]; then
-      printf 'Current publication must use the current tag\n' >&2
+    if [[ ! "$TAG" =~ ^current-[0-9a-f]{40}$ ]] || \
+      [[ "$TAG" != "current-$PUBLISH_SHA" ]]; then
+      printf 'Current publication must use its exact commit-addressed tag\n' >&2
       exit 2
     fi
+    require_release_immutability
     if release_exists; then
-      require_current_staged_release
-      "$GH" release upload "$TAG" "${ASSETS[@]}" \
-        --repo "$REPOSITORY" \
-        --clobber
-    else
-      move_current_tag
-      "$GH" release create "$TAG" "${ASSETS[@]}" \
+      if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" != true ]]; then
+        restore_published_assets
+        verify_published_release current
+        exit 0
+      fi
+      require_release_draft current
+      reconcile_draft_assets
+      "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
         --target "$PUBLISH_SHA" \
         --title "$TITLE" \
         --notes-file "$NOTES_FILE" \
         --prerelease \
         --latest=false
+    else
+      "$GH" release create "$TAG" "${ASSETS[@]}" \
+        --repo "$REPOSITORY" \
+        --target "$PUBLISH_SHA" \
+        --title "$TITLE" \
+        --notes-file "$NOTES_FILE" \
+        --draft \
+        --prerelease \
+        --latest=false
+      if ! release_exists; then
+        printf 'Current draft was not visible after creation: %s\n' "$TAG" >&2
+        exit 1
+      fi
+      require_release_draft current
+      reconcile_draft_assets
     fi
     ;;
   current-finalize)
-    if [[ "$TAG" != "current" ]]; then
-      printf 'Current publication must use the current tag\n' >&2
+    if [[ ! "$TAG" =~ ^current-[0-9a-f]{40}$ ]] || \
+      [[ "$TAG" != "current-$PUBLISH_SHA" ]]; then
+      printf 'Current publication must use its exact commit-addressed tag\n' >&2
       exit 2
     fi
+    require_release_immutability
     if ! release_exists; then
       printf 'Current release must be staged before finalization\n' >&2
       exit 1
     fi
-    require_current_staged_release
-    move_current_tag
+    if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" != true ]]; then
+      restore_published_assets
+      verify_published_release current
+      exit 0
+    fi
+    require_release_draft current
+    reconcile_draft_assets
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
       --target "$PUBLISH_SHA" \
       --title "$TITLE" \
       --notes-file "$NOTES_FILE" \
+      --draft=false \
       --prerelease \
       --latest=false
+    verify_published_release current
     ;;
   stable-stage)
     if [[ ! "$TAG" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
@@ -369,11 +461,12 @@ case "$MODE" in
     verify_remote_tag_target
     if release_exists; then
       if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" != true ]]; then
-        verify_published_stable_release
+        restore_published_assets
+        verify_published_release stable
         exit 0
       fi
-      require_stable_draft
-      reconcile_stable_assets
+      require_release_draft stable
+      reconcile_draft_assets
       "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
         --target "$PUBLISH_SHA" \
@@ -393,8 +486,8 @@ case "$MODE" in
         printf 'stable draft was not visible after creation: %s\n' "$TAG" >&2
         exit 1
       fi
-      require_stable_draft
-      reconcile_stable_assets
+      require_release_draft stable
+      reconcile_draft_assets
     fi
     ;;
   stable-finalize)
@@ -409,11 +502,12 @@ case "$MODE" in
       exit 1
     fi
     if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" != true ]]; then
-      verify_published_stable_release
+      restore_published_assets
+      verify_published_release stable
       exit 0
     fi
-    require_stable_draft
-    reconcile_stable_assets
+    require_release_draft stable
+    reconcile_draft_assets
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
       --target "$PUBLISH_SHA" \
@@ -422,7 +516,7 @@ case "$MODE" in
       --draft=false \
       --prerelease=false \
       --latest
-    verify_published_stable_release
+    verify_published_release stable
     ;;
   *)
     printf 'unsupported publication mode: %s\n' "$MODE" >&2

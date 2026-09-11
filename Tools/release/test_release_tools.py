@@ -446,7 +446,8 @@ class ReleaseToolTests(unittest.TestCase):
                 "--url",
                 (
                     "https://github.com/stephenlclarke/devcontainer/releases/"
-                    "download/current/"
+                    "download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     "devcontainer-current-0123456789ab-arm64.tar.gz"
                 ),
                 "--conflicts-with",
@@ -464,7 +465,8 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertIn(
                 (
                     'url "https://github.com/stephenlclarke/devcontainer/'
-                    "releases/download/current/"
+                    "releases/download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     'devcontainer-current-0123456789ab-arm64.tar.gz"'
                 ),
                 rendered,
@@ -595,7 +597,8 @@ class ReleaseToolTests(unittest.TestCase):
                 "--url",
                 (
                     "https://github.com/stephenlclarke/devcontainer/"
-                    "releases/download/current/"
+                    "releases/download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     "devcontainer-current-0123456789ab-arm64.tar.gz"
                 ),
                 "--conflicts-with",
