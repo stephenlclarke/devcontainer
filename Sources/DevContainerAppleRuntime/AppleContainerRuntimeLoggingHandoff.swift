@@ -330,7 +330,9 @@ import Foundation
     protocol AppleContainerLoggingRecordClient: Sendable {}
 
     struct LiveAppleContainerLoggingRecordClient: AppleContainerLoggingRecordClient {
-        init(client _: ContainerClient) {}
+        init(client _: ContainerClient) {
+            // Stock Apple builds deliberately expose no portable logging-handoff API.
+        }
     }
 
     protocol AppleContainerLoggingHandoffClient: Sendable {}
