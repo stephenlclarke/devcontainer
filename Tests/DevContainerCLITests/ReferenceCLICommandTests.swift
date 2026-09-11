@@ -74,6 +74,9 @@ struct ReferenceCLICommandTests {
         #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI"] == nil)
         #expect(invocation.environment["DOCKER_CONTEXT"] == nil)
         #expect(invocation.environment["DOCKER_CONFIG"] == nil)
+        #expect(invocation.environment["DOCKER_API_VERSION"] == nil)
+        #expect(invocation.environment["NODE_OPTIONS"] == nil)
+        #expect(invocation.environment["NODE_PATH"] == nil)
     }
 
     @Test
@@ -224,6 +227,9 @@ private struct InvocationFixture {
             "DOCKER_HOST": "unix:///tmp/fixture.sock",
             "DOCKER_CONTEXT": "desktop-linux",
             "DOCKER_CONFIG": "/tmp/docker-config",
+            "DOCKER_API_VERSION": "1.24",
+            "NODE_OPTIONS": "--require=/tmp/injected-node.js",
+            "NODE_PATH": "/tmp/injected-node-modules",
             "HOME": "/tmp",
             "PATH": "/usr/bin:/bin",
             "LOCAL_ENV_FIXTURE": "preserved",

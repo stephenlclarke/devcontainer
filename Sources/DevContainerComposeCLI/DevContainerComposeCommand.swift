@@ -389,14 +389,18 @@ enum DevContainerComposeCommand {
             !key.hasPrefix("DYLD_")
                 && !key.hasPrefix("LD_")
                 && key != "BASH_ENV"
-                && key != "DOCKER_CERT_PATH"
-                && key != "DOCKER_CONFIG"
-                && key != "DOCKER_CONTEXT"
-                && key != "DOCKER_HOST"
-                && key != "DOCKER_TLS_VERIFY"
+                && !key.hasPrefix("DOCKER_")
                 && key != "ENV"
+                && key != "CONTAINER_BIN"
+                && !key.hasPrefix("CONTAINER_COMPOSE_")
+                && key != "DEVCONTAINER_BACKEND"
                 && key != "DEVCONTAINER_COMPOSE_BIN"
+                && key != "DEVCONTAINER_COMPOSE_PROVIDER"
+                && key != "DEVCONTAINER_CONFIG"
+                && key != "DEVCONTAINER_CONTAINER_BIN"
                 && key != "DEVCONTAINER_DOCKER_BIN"
+                && key != "DEVCONTAINER_SOCKET"
+                && key != "DEVCONTAINER_STATE"
         }
     }
 }

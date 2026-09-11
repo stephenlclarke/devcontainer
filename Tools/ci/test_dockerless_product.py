@@ -117,8 +117,9 @@ class DockerlessProductTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn('environment["DEVCONTAINER_REFERENCE_CLI"]', reference)
         self.assertIn('key != "DEVCONTAINER_REFERENCE_CLI"', reference)
-        self.assertIn('key != "DOCKER_CONTEXT"', reference)
-        self.assertIn('key != "DOCKER_CONFIG"', reference)
+        self.assertIn('!key.hasPrefix("DOCKER_")', reference)
+        self.assertIn('key != "NODE_OPTIONS"', reference)
+        self.assertIn('key != "NODE_PATH"', reference)
 
     def test_router_rejects_host_docker_runtime_sockets(self) -> None:
         router = (

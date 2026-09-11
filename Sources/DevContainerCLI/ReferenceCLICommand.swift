@@ -250,16 +250,14 @@ struct ReferenceCLIInvocation: Equatable {
             !key.hasPrefix("DYLD_")
                 && !key.hasPrefix("LD_")
                 && key != "BASH_ENV"
-                && key != "DOCKER_CERT_PATH"
-                && key != "DOCKER_CONFIG"
-                && key != "DOCKER_CONTEXT"
-                && key != "DOCKER_HOST"
-                && key != "DOCKER_TLS_VERIFY"
+                && !key.hasPrefix("DOCKER_")
                 && key != "ENV"
                 && key != "DEVCONTAINER_COMPOSE_BIN"
                 && key != "DEVCONTAINER_DOCKER_BIN"
                 && key != "DEVCONTAINER_NODE_BIN"
                 && key != "DEVCONTAINER_REFERENCE_CLI"
+                && key != "NODE_OPTIONS"
+                && key != "NODE_PATH"
         }
     }
 }

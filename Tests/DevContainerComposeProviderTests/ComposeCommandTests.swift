@@ -245,6 +245,8 @@ func `provider rejects missing executable`() {
 }
 
 @Test
+// One end-to-end scenario intentionally covers both the probe and the invocation environment.
+// swiftlint:disable:next function_body_length
 func `provider probes and invokes a compatible executable`() async throws {
     let fixture = try FakeComposeExecutable(mode: .valid)
     let provider = try ExecutableComposeProvider(
@@ -254,6 +256,9 @@ func `provider probes and invokes a compatible executable`() async throws {
             "SAFE_BASE": "yes",
             "DOCKER_CONTEXT": "desktop-linux",
             "DOCKER_CONFIG": "/tmp/docker-config",
+            "DOCKER_API_VERSION": "1.24",
+            "CONTAINER_BIN": "/tmp/foreign-runtime",
+            "CONTAINER_COMPOSE_RUNTIME_PROFILE": "foreign",
             "DYLD_INSERT_LIBRARIES": "blocked",
             "BASH_ENV": "blocked"
         ]
@@ -293,6 +298,9 @@ func `provider probes and invokes a compatible executable`() async throws {
     #expect(!environment.contains("BASH_ENV"))
     #expect(!environment.contains("DOCKER_CONTEXT"))
     #expect(!environment.contains("DOCKER_CONFIG"))
+    #expect(!environment.contains("DOCKER_API_VERSION"))
+    #expect(!environment.contains("CONTAINER_BIN"))
+    #expect(!environment.contains("CONTAINER_COMPOSE_RUNTIME_PROFILE"))
 }
 
 @Test
