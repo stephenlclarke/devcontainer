@@ -923,6 +923,16 @@ struct DockerCLIApplicationTests {
         }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: []) }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["--mount", "type=bind", "image"]) }
+        #expect(throws: DockerCLIError.unsupported("run --mount bind-propagation")) {
+            try DockerRunOptions(arguments: [
+                "--mount", "type=bind,source=/host,target=/work,bind-propagation=rshared", "image"
+            ])
+        }
+        #expect(throws: (any Error).self) {
+            try DockerRunOptions(arguments: [
+                "--mount", "type=bind,source=/one,src=/two,target=/work", "image"
+            ])
+        }
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["-p", "1:2:3:4", "image"]) }
         #expect(throws: (any Error).self) {
             try DockerRunOptions(arguments: ["-p", "8080:53/sctp", "image"])

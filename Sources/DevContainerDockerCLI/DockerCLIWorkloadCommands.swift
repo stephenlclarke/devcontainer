@@ -803,31 +803,6 @@ struct DockerRunOptions {
         ports[containerPort, default: []].append(["HostIp": hostIP, "HostPort": hostPort])
     }
 
-    private static func mount(_ value: String) throws -> [String: Any] {
-        let pairs = Dictionary(
-            uniqueKeysWithValues: value.split(separator: ",").map { component -> (String, String) in
-                let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-                return (String(pair[0]), pair.count == 2 ? String(pair[1]) : "true")
-            }
-        )
-        guard let type = pairs["type"],
-              let target = pairs["target"] ?? pairs["dst"] ?? pairs["destination"]
-        else {
-            throw DockerCLIError.invalidArguments("mount requires type and target")
-        }
-        var result: [String: Any] = ["Type": type, "Target": target]
-        if let source = pairs["source"] ?? pairs["src"] {
-            result["Source"] = source
-        }
-        if pairs["readonly"] == "true" || pairs["ro"] == "true" {
-            result["ReadOnly"] = true
-        }
-        if let consistency = pairs["consistency"] {
-            result["Consistency"] = consistency
-        }
-        return result
-    }
-
     private static func volume(_ value: String) throws -> [String: Any] {
         let fields = value.split(
             separator: ":",
