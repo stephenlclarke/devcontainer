@@ -778,6 +778,7 @@ class VSCodeLane:
             user_data.parent,
         )
         if self.lane == "container-compose":
+            environment["DEVCONTAINER_BACKEND"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",

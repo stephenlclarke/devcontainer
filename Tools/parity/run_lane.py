@@ -1117,6 +1117,7 @@ class LaneRunner:
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
         if self.lane == "container-compose":
+            environment["DEVCONTAINER_BACKEND"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1188,6 +1189,7 @@ class LaneRunner:
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(self.environment)
         if self.lane == "container-compose":
+            environment["DEVCONTAINER_BACKEND"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",

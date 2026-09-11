@@ -110,6 +110,36 @@ class RuntimePathTests(unittest.TestCase):
             "/repository/.build/debug/devcontainer-docker",
         )
 
+    def test_enhanced_devcontainer_invocation_selects_enhanced_backend(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.node_package_runner = "/usr/bin/npx"
+        runner.cli_version = "0.88.0"
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.dict("run_lane.os.environ", {}, clear=True),
+            mock.patch(
+                "run_lane.shutil.which",
+                return_value="/project/bin/container-compose",
+            ),
+            mock.patch(
+                "run_lane.subprocess.run",
+                return_value=completed,
+            ) as run,
+        ):
+            result = runner.devcontainer(["up"], timeout=120)
+
+        self.assertIs(result, completed)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["DEVCONTAINER_BACKEND"], "container-compose")
+        self.assertEqual(
+            environment["DEVCONTAINER_COMPOSE_PROVIDER"],
+            "container-compose",
+        )
+
 
 class CancellationHandlerTests(unittest.TestCase):
     def test_workflow_termination_becomes_a_catchable_cleanup_error(self) -> None:
