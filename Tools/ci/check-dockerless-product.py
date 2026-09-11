@@ -60,6 +60,15 @@ FORBIDDEN = (
     re.compile(r"(?i)\bbrew\s+(?:install|upgrade)\b[^\n]*(?:docker|docker-compose|colima)\b"),
     re.compile(r"(?i)depends_on\s+[\"'](?:docker|docker-compose|colima)[\"']"),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
+    re.compile(
+        r"(?i)(?:/opt/homebrew/bin|/usr/local/bin|/usr/bin|/bin)/"
+        r"(?:docker|docker-compose|docker-buildx|colima)\b"
+    ),
+    re.compile(
+        r"(?is)(?:executable|executableURL|fileURLWithPath)\s*:\s*"
+        r"(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?[\"']"
+        r"(?:docker|docker-compose|docker-buildx|colima)[\"']"
+    ),
 )
 
 

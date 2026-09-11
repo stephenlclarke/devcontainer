@@ -38,7 +38,7 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 <!-- dockerless-contract -->
 
 > [!NOTE]
-> The install and every candidate runtime path are Docker-less: they do not
+> The install and every candidate runtime path are **100% Docker-less**: they do not
 > install, discover, invoke, or depend on Docker or Colima. The executable named
 > `devcontainer-docker` is this project's Apple-backed protocol adapter, retained
 > because VS Code calls its compatibility setting `dockerPath`. A pinned real
@@ -47,6 +47,8 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > Dockerfile/Compose input syntax and open-source compatibility protocol/model
 > libraries may retain their upstream names; none can discover or launch Docker
 > software in a candidate lane.
+> The local Unix socket is owned by this project and translates the protocol
+> directly to Apple Container APIs. It never proxies or mounts a Docker socket.
 
 Current main additionally has a clean compile gate against unmodified Apple
 `container` 1.4.1 and `containerization` 0.45.0. That build result is not a

@@ -33,6 +33,8 @@ class DockerlessProductTests(unittest.TestCase):
             "brew install docker colima\n",
             'depends_on "docker"\n',
             "open /Applications/Docker.app\n",
+            'let executable = URL(fileURLWithPath: "/usr/local/bin/docker")\n',
+            'executable: "docker-compose"\n',
         )
         for contents in rejected:
             with self.subTest(contents=contents):
