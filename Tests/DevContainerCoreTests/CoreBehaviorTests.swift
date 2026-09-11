@@ -107,7 +107,7 @@ struct CoreBehaviorTests {
     }
 
     @Test
-    func `docker compose provider configuration is rejected`() throws {
+    func `legacy compose provider configuration migrates to native compose`() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("config.toml")
@@ -117,12 +117,17 @@ struct CoreBehaviorTests {
         )
         try Data("[compose]\nprovider = \"docker\"\n".utf8).write(to: path)
 
-        #expect(throws: DevContainerError.self) {
-            try DevContainerConfigurationStore.load(
-                from: path,
-                defaultSocket: "unused"
+        let configuration = try DevContainerConfigurationStore.load(
+            from: path,
+            defaultSocket: "unused"
+        )
+        #expect(configuration.composeProvider == .containerCompose)
+        try DevContainerConfigurationStore.save(configuration, to: path)
+        #expect(
+            try String(contentsOf: path, encoding: .utf8).contains(
+                "provider = \"container-compose\""
             )
-        }
+        )
     }
 
     @Test

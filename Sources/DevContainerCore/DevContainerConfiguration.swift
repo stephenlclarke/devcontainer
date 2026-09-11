@@ -326,7 +326,14 @@ public enum DevContainerConfigurationStore {
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
-        let composeText = values["compose.provider"] ?? ComposeProviderKind.containerCompose.rawValue
+        let storedCompose = values["compose.provider"]
+            ?? ComposeProviderKind.containerCompose.rawValue
+        // Versions before 1.0.2 used this legacy spelling for the native
+        // provider. Preserve upgrade access while always saving the canonical
+        // Docker-free provider identity.
+        let composeText = storedCompose == "docker"
+            ? ComposeProviderKind.containerCompose.rawValue
+            : storedCompose
         guard let compose = ComposeProviderKind(rawValue: composeText) else {
             throw DevContainerError(
                 .invalidRequest,
