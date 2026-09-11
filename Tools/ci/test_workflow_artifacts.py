@@ -409,9 +409,10 @@ jobs:
     def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
         for name in ("ci.yml", "quality.yml", "sonar.yml"):
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            expected_count = 2 if name == "ci.yml" else 1
             self.assertEqual(
                 contents.count('SWIFT_TEST_ATTEMPTS: "1"'),
-                1,
+                expected_count,
                 name,
             )
             self.assertEqual(
@@ -419,6 +420,10 @@ jobs:
                 1,
                 name,
             )
+        self.assertIn(
+            'SWIFT_TEST_TIMEOUT_SECONDS: "900"',
+            (WORKFLOWS / "ci.yml").read_text(encoding="utf-8"),
+        )
 
     def test_hosted_swift_tests_reuse_the_resolved_default_scratch(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -478,10 +483,11 @@ jobs:
         self.assertIn("  stock-test:\n", ci)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", ci)
         self.assertIn("cp Package.stock.resolved Package.resolved", ci)
-        self.assertIn(
-            "swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors",
-            ci,
-        )
+        self.assertIn("timeout-minutes: 90", ci)
+        self.assertIn('SWIFT_TEST_ATTEMPTS: "1"', ci)
+        self.assertIn('SWIFT_TEST_TIMEOUT_SECONDS: "900"', ci)
+        self.assertIn("run: make swift-test", ci)
+        self.assertNotIn("run: swift test", ci)
         self.assertIn("needs: [test, stock-test]", ci)
 
         resolved = json.loads(
