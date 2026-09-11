@@ -89,6 +89,30 @@ struct ReferenceCLICommandTests {
     }
 
     @Test
+    func `node override cannot launch Docker tooling`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let docker = fixture.root.appendingPathComponent("docker")
+        #expect(FileManager.default.createFile(atPath: docker.path, contents: Data()))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: docker.path
+        )
+        var environment = fixture.environment
+        environment["DEVCONTAINER_NODE_BIN"] = docker.path
+
+        #expect(throws: Error.self) {
+            try ReferenceCLIInvocation.configured(
+                command: "up",
+                arguments: [],
+                injectRuntimeAdapters: true,
+                environment: environment,
+                executable: fixture.devcontainer
+            )
+        }
+    }
+
+    @Test
     func `exec payload may contain runtime-shaped arguments after separator`() throws {
         let fixture = try InvocationFixture()
         defer { fixture.remove() }

@@ -212,6 +212,10 @@ struct ReferenceCLIInvocation: Equatable {
         for value in values {
             let url = URL(fileURLWithPath: value).standardizedFileURL
             if value.hasPrefix("/"), FileManager.default.fileExists(atPath: url.path) {
+                try DevContainerExecutablePolicy.requireDockerless(
+                    url.path,
+                    name: name
+                )
                 return url
             }
         }
