@@ -48,6 +48,12 @@ struct DoctorCommand: AsyncParsableCommand {
             containerExecutable: container,
             socket: socket
         )
+        if let compose {
+            try DevContainerExecutablePolicy.requireDockerless(
+                compose,
+                name: "doctor Compose provider"
+            )
+        }
         let checks = await checks(
             container: selection.containerExecutable,
             socket: selection.socket

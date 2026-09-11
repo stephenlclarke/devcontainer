@@ -60,6 +60,12 @@ struct DiagnosticsCommand: AsyncParsableCommand {
             socket: socket,
             stateDatabase: state
         )
+        if let compose {
+            try DevContainerExecutablePolicy.requireDockerless(
+                compose,
+                name: "diagnostics Compose provider"
+            )
+        }
         let outputURL = try DiagnosticsPaths.outputURL(output)
         let requestedLogs = log.isEmpty
             ? DiagnosticsPaths.defaultLogs().filter {
