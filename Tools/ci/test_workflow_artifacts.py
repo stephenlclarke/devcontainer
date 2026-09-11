@@ -650,6 +650,23 @@ jobs:
         self.assertIn("Apple-backed Engine API adapter", contents)
         self.assertNotIn("Docker-compatible engine adapter", contents)
 
+    def test_cli_smoke_uses_a_policy_valid_native_compose_fixture(self) -> None:
+        contents = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'install -m 0755 Tools/ci/compose-cli-smoke-fixture.sh \\\n'
+            '            "${RUNNER_TEMP}/container-compose"',
+            contents,
+        )
+        self.assertIn(
+            'DEVCONTAINER_COMPOSE_BIN="${RUNNER_TEMP}/container-compose"',
+            contents,
+        )
+        self.assertNotIn(
+            'DEVCONTAINER_COMPOSE_BIN="$PWD/Tools/ci/compose-cli-smoke-fixture.sh"',
+            contents,
+        )
+
     def test_parity_comparison_survives_failed_lanes(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
         compare = contents[contents.index("  compare:\n"):]

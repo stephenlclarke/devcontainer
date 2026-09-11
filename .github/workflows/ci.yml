@@ -47,7 +47,9 @@ jobs:
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer context --format value | grep '^unix://'
-          DEVCONTAINER_COMPOSE_BIN="$PWD/Tools/ci/compose-cli-smoke-fixture.sh" \
+          install -m 0755 Tools/ci/compose-cli-smoke-fixture.sh \
+            "${RUNNER_TEMP}/container-compose"
+          DEVCONTAINER_COMPOSE_BIN="${RUNNER_TEMP}/container-compose" \
             DEVCONTAINER_STATE="${RUNNER_TEMP}/devcontainer-smoke-state.sqlite" \
             .build/debug/devcontainer-compose version \
             | jq -e '.Version == "fixture"'
