@@ -22,6 +22,18 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+private struct RequestedImagePlatform: Decodable {
+    let operatingSystem: String
+    let architecture: String
+    let variant: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case operatingSystem = "os"
+        case architecture
+        case variant
+    }
+}
+
 extension AppleContainerRuntime {
     func containerRecord(
         _ value: ContainerResource.ContainerSnapshot
@@ -370,31 +382,61 @@ extension AppleContainerRuntime {
         requestedPlatform: String?
     ) -> [String: Any]? {
         if let requestedPlatform, !requestedPlatform.isEmpty {
-            let components = requestedPlatform.split(
-                separator: "/",
-                maxSplits: 2,
-                omittingEmptySubsequences: false
-            )
-            guard (2 ... 3).contains(components.count),
-                  !components[0].isEmpty,
-                  !components[1].isEmpty
-            else {
+            guard let requested = parseRequestedImagePlatform(requestedPlatform) else {
                 return nil
             }
             return variants.first { variant in
                 guard let platform = variant["platform"] as? [String: Any],
-                      platform["os"] as? String == String(components[0]),
-                      platform["architecture"] as? String == String(components[1])
+                      platform["os"] as? String == requested.operatingSystem,
+                      platform["architecture"] as? String == requested.architecture
                 else {
                     return false
                 }
-                return components.count < 3
-                    || platform["variant"] as? String == String(components[2])
+                return requested.variant == nil
+                    || platform["variant"] as? String == requested.variant
             }
         }
         return variants.first(where: {
             (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
         }) ?? variants.first
+    }
+
+    private static func parseRequestedImagePlatform(
+        _ value: String
+    ) -> RequestedImagePlatform? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.first == "{" {
+            guard let data = trimmed.data(using: .utf8),
+                  let platform = try? JSONDecoder().decode(
+                      RequestedImagePlatform.self,
+                      from: data
+                  ),
+                  !platform.operatingSystem.isEmpty,
+                  !platform.architecture.isEmpty,
+                  platform.variant?.isEmpty != true
+            else {
+                return nil
+            }
+            return platform
+        }
+
+        let components = trimmed.split(
+            separator: "/",
+            maxSplits: 2,
+            omittingEmptySubsequences: false
+        )
+        guard (2 ... 3).contains(components.count),
+              !components[0].isEmpty,
+              !components[1].isEmpty,
+              components.count < 3 || !components[2].isEmpty
+        else {
+            return nil
+        }
+        return RequestedImagePlatform(
+            operatingSystem: String(components[0]),
+            architecture: String(components[1]),
+            variant: components.count == 3 ? String(components[2]) : nil
+        )
     }
 
     func networkSnapshot(_ value: [String: Any]) -> NetworkSnapshot? {

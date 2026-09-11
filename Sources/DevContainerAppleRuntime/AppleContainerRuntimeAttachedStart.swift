@@ -51,17 +51,13 @@ public extension AppleContainerRuntime {
             ? terminalProcess(arguments)
             : process(arguments)
         let exitRegistration = UUID()
-        do {
-            try await performAttachedContainerStart(
-                requestedID: id,
-                runtimeID: resolved,
-                context: context,
-                exitRegistration: exitRegistration
-            )
-        } catch {
-            await session.cancel()
-            throw error
-        }
+        try await performAttachedContainerStart(
+            requestedID: id,
+            runtimeID: resolved,
+            context: context,
+            exitRegistration: exitRegistration,
+            session: session
+        )
         return TrackedAppleProcessSession(session: session) { [weak self] exitCode in
             await self?.handleContainerExit(
                 ContainerExit(code: exitCode, finishedAt: Date()),
@@ -71,11 +67,12 @@ public extension AppleContainerRuntime {
         }
     }
 
-    private func performAttachedContainerStart(
+    func performAttachedContainerStart(
         requestedID: String,
         runtimeID: String,
         context: RuntimeRequestContext,
-        exitRegistration: UUID
+        exitRegistration: UUID,
+        session: any RuntimeProcessSession
     ) async throws {
         containerExitTasks[runtimeID]?.cancel()
         containerExitTasks.removeValue(forKey: runtimeID)
@@ -99,11 +96,12 @@ public extension AppleContainerRuntime {
             try await task.value
             finishStartOperation(id: runtimeID, registration: registration)
         } catch {
-            finishStartOperation(id: runtimeID, registration: registration)
+            await session.cancel()
             await cleanupAttachedContainerStartFailure(
                 runtimeID: runtimeID,
                 exitRegistration: exitRegistration
             )
+            finishStartOperation(id: runtimeID, registration: registration)
             throw error
         }
     }

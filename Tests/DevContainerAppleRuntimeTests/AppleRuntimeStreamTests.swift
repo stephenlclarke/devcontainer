@@ -17,6 +17,7 @@
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
@@ -93,6 +94,32 @@ struct AppleRuntimeStreamTests {
 
         #expect(await !(runtime.portForwarding.hasListeners(containerID: "fixture")))
         #expect(await runtime.testExitRegistration(id: "fixture") == nil)
+    }
+
+    @Test
+    func `failed attached startup keeps its operation fenced until session cancellation`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("missing")
+        let runtime = try fixture.runtime()
+        let session = BlockingCancellationSession()
+        let generation = UUID()
+        let startup = Task {
+            try await runtime.performAttachedContainerStart(
+                requestedID: "fixture",
+                runtimeID: "fixture",
+                context: RuntimeRequestContext(),
+                exitRegistration: generation,
+                session: session
+            )
+        }
+
+        await session.waitUntilCancellationStarts()
+        #expect(await runtime.hasTestStartOperation(id: "fixture"))
+        await session.finishCancellation()
+        await #expect(throws: DevContainerError.self) {
+            try await startup.value
+        }
+        #expect(await !runtime.hasTestStartOperation(id: "fixture"))
     }
 
     @Test
@@ -359,5 +386,55 @@ private extension AppleContainerRuntime {
 
     func testExit(id: String) -> ContainerExit? {
         containerExits[id]
+    }
+
+    func hasTestStartOperation(id: String) -> Bool {
+        containerStartOperations[id] != nil
+    }
+}
+
+private actor BlockingCancellationSession: RuntimeProcessSession {
+    nonisolated let frames = AsyncThrowingStream<RuntimeIOFrame, any Error> { continuation in
+        continuation.finish()
+    }
+
+    private var cancellationStarted = false
+    private var cancellationStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellationCompletion: CheckedContinuation<Void, Never>?
+
+    func write(_: Data) async throws {}
+
+    func closeStandardInput() async throws {}
+
+    func resize(width _: UInt16, height _: UInt16) async throws {}
+
+    func wait() async throws -> Int32 {
+        0
+    }
+
+    func cancel() async {
+        cancellationStarted = true
+        let waiters = cancellationStartWaiters
+        cancellationStartWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            cancellationCompletion = continuation
+        }
+    }
+
+    func waitUntilCancellationStarts() async {
+        if cancellationStarted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            cancellationStartWaiters.append(continuation)
+        }
+    }
+
+    func finishCancellation() {
+        cancellationCompletion?.resume()
+        cancellationCompletion = nil
     }
 }

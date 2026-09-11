@@ -34,10 +34,27 @@ struct AppleRuntimeImagePlatformTests {
         #expect(amd64.architecture == "amd64")
         #expect(amd64.variant == "v3")
         #expect(amd64.size == 1)
+
+        let dockerAPIPlatform = try await runtime.inspectImage(
+            reference: "fixture:latest",
+            platform: #"{"os":"linux","architecture":"amd64","variant":"v3"}"#,
+            context: context
+        )
+        #expect(dockerAPIPlatform.architecture == "amd64")
+        #expect(dockerAPIPlatform.variant == "v3")
+        #expect(dockerAPIPlatform.size == 1)
+
         await #expect(throws: DevContainerError.self) {
             _ = try await runtime.inspectImage(
                 reference: "fixture:latest",
                 platform: "linux/s390x",
+                context: context
+            )
+        }
+        await #expect(throws: DevContainerError.self) {
+            _ = try await runtime.inspectImage(
+                reference: "fixture:latest",
+                platform: #"{"os":"linux","architecture":"amd64","variant":""}"#,
                 context: context
             )
         }
