@@ -26,7 +26,8 @@ struct DockerlessEngineTransportTests {
             .init(
                 status: 200,
                 headers: [
-                    DevContainerEngineIdentity.header: DevContainerEngineIdentity.value
+                    DevContainerEngineIdentity.header.lowercased():
+                        DevContainerEngineIdentity.value
                 ],
                 target: "/_ping"
             ),
@@ -44,18 +45,54 @@ struct DockerlessEngineTransportTests {
     }
 
     @Test
-    func `rejects a foreign Docker-compatible engine before its workload request`() {
+    func `notification transport authenticates before forwarding the request`() throws {
         let transport = StubTransport([
-            .init(status: 200, target: "/_ping"),
-            .json(["Images": 0], target: "/info")
+            .init(
+                status: 200,
+                headers: [
+                    DevContainerEngineIdentity.header: DevContainerEngineIdentity.value
+                ],
+                target: "/_ping"
+            ),
+            .json(["Id": "fixture"], target: "/build")
         ])
-        let application = DockerCLIApplication(
-            transport: DevContainerEngineTransport(transport: transport)
+        let verified = DevContainerEngineTransport(transport: transport)
+
+        _ = try verified.send(
+            DockerHTTPRequest(method: "POST", target: "/build"),
+            maximumBodyBytes: 1024,
+            onRequestSent: {},
+            onBody: { _ in }
         )
 
-        #expect(throws: DockerHTTPClientError.self) {
-            try application.run(arguments: ["info"])
+        #expect(transport.requests.map(\.target) == ["/_ping", "/build"])
+    }
+
+    @Test
+    func `rejects a foreign Docker-compatible engine before its workload request`() {
+        let responses = [
+            StubTransport.StubResponse(status: 200),
+            StubTransport.StubResponse(
+                status: 503,
+                headers: [
+                    DevContainerEngineIdentity.header: DevContainerEngineIdentity.value
+                ]
+            )
+        ]
+        for var identityResponse in responses {
+            identityResponse.target = "/_ping"
+            let transport = StubTransport([
+                identityResponse,
+                .json(["Images": 0], target: "/info")
+            ])
+            let application = DockerCLIApplication(
+                transport: DevContainerEngineTransport(transport: transport)
+            )
+
+            #expect(throws: DockerHTTPClientError.self) {
+                try application.run(arguments: ["info"])
+            }
+            #expect(transport.requests.map(\.target) == ["/_ping"])
         }
-        #expect(transport.requests.map(\.target) == ["/_ping"])
     }
 }
