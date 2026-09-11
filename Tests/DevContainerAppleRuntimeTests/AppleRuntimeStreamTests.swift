@@ -45,6 +45,27 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `superseded attached exits cannot overwrite the replacement generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+        let attachedRegistration = try #require(await runtime.testExitRegistration(id: "fixture"))
+        let replacementRegistration = await runtime.replaceTestExitRegistration(id: "fixture")
+        #expect(attachedRegistration != replacementRegistration)
+
+        try await session.closeStandardInput()
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 0)
+
+        #expect(await runtime.testExitRegistration(id: "fixture") == replacementRegistration)
+        #expect(await runtime.testExit(id: "fixture") == nil)
+    }
+
+    @Test
     func `cancelling a followed log stream terminates its owned process`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setMode("follow-logs")
@@ -288,5 +309,21 @@ struct AppleRuntimeStreamTests {
     private static func processExists(_ identifier: pid_t) -> Bool {
         errno = 0
         return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
+    }
+}
+
+private extension AppleContainerRuntime {
+    func testExitRegistration(id: String) -> UUID? {
+        containerExitRegistrations[id]
+    }
+
+    func replaceTestExitRegistration(id: String) -> UUID {
+        let registration = UUID()
+        containerExitRegistrations[id] = registration
+        return registration
+    }
+
+    func testExit(id: String) -> ContainerExit? {
+        containerExits[id]
     }
 }

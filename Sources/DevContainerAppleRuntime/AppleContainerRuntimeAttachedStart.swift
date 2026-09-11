@@ -50,11 +50,13 @@ public extension AppleContainerRuntime {
         let session: any RuntimeProcessSession = try terminal
             ? terminalProcess(arguments)
             : process(arguments)
+        let exitRegistration = UUID()
         do {
             try await performAttachedContainerStart(
                 requestedID: id,
                 runtimeID: resolved,
-                context: context
+                context: context,
+                exitRegistration: exitRegistration
             )
         } catch {
             await session.cancel()
@@ -63,7 +65,8 @@ public extension AppleContainerRuntime {
         return TrackedAppleProcessSession(session: session) { [weak self] exitCode in
             await self?.handleContainerExit(
                 ContainerExit(code: exitCode, finishedAt: Date()),
-                id: resolved
+                id: resolved,
+                registration: exitRegistration
             )
         }
     }
@@ -71,15 +74,20 @@ public extension AppleContainerRuntime {
     private func performAttachedContainerStart(
         requestedID: String,
         runtimeID: String,
-        context: RuntimeRequestContext
+        context: RuntimeRequestContext,
+        exitRegistration: UUID
     ) async throws {
+        containerExitTasks[runtimeID]?.cancel()
+        containerExitTasks.removeValue(forKey: runtimeID)
+        containerExitRegistrations[runtimeID] = exitRegistration
+        containerExits.removeValue(forKey: runtimeID)
         let registration = UUID()
         let task = Task {
             try await self.finishContainerStart(
                 requestedID: requestedID,
                 runtimeID: runtimeID,
                 context: context,
-                processGeneration: nil
+                processGeneration: exitRegistration
             )
         }
         containerStartOperations[runtimeID] = ContainerStartOperation(
@@ -92,6 +100,9 @@ public extension AppleContainerRuntime {
             finishStartOperation(id: runtimeID, registration: registration)
         } catch {
             finishStartOperation(id: runtimeID, registration: registration)
+            if containerExitRegistrations[runtimeID] == exitRegistration {
+                containerExitRegistrations.removeValue(forKey: runtimeID)
+            }
             throw error
         }
     }
