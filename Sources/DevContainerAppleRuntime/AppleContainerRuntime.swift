@@ -198,10 +198,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 public extension AppleContainerRuntime {
     func descriptor(context: RuntimeRequestContext) async throws -> ProtocolDescriptor {
         let record = try await appleVersionRecord(context: context)
+        let provider = try Self.backendProvider(record)
         directContainerInventorySupported =
-            Self.supportsDirectContainerInventory(record)
+            provider == .stock
         return ProtocolDescriptor(
-            provider: Self.backendProvider(record),
+            provider: provider,
             providerVersion: record.version,
             providerCommit: record.commit ?? "unspecified",
             distribution: record.distribution ?? "apple",
@@ -237,18 +238,36 @@ public extension AppleContainerRuntime {
         return record
     }
 
-    private static func supportsDirectContainerInventory(
-        _ record: AppleVersionRecord
-    ) -> Bool {
-        (record.distribution ?? "apple") == "apple"
-    }
-
     private static func backendProvider(
         _ record: AppleVersionRecord
-    ) -> BackendProvider {
-        (record.distribution ?? "apple") == "apple"
-            ? .stock
-            : .containerCompose
+    ) throws -> BackendProvider {
+        let distribution = record.distribution ?? "apple"
+        switch distribution {
+        case "apple":
+            guard record.source == nil || record.source == "apple/container" else {
+                throw unsupportedDistribution(record)
+            }
+            return .stock
+        case "custom":
+            guard record.source == "stephenlclarke/container" else {
+                throw unsupportedDistribution(record)
+            }
+            return .containerCompose
+        default:
+            throw unsupportedDistribution(record)
+        }
+    }
+
+    private static func unsupportedDistribution(
+        _ record: AppleVersionRecord
+    ) -> DevContainerError {
+        let identity = [record.distribution, record.source]
+            .compactMap(\.self)
+            .joined(separator: "/")
+        return DevContainerError(
+            .providerProtocolMismatch,
+            message: "unsupported Container distribution \(identity.isEmpty ? "unspecified" : identity); expected stock apple/container or stephenlclarke/container"
+        )
     }
 
     private func canUseDirectContainerInventory(
@@ -261,7 +280,7 @@ public extension AppleContainerRuntime {
             return directContainerInventorySupported
         }
         let record = try await appleVersionRecord(context: context)
-        let supported = Self.supportsDirectContainerInventory(record)
+        let supported = try Self.backendProvider(record) == .stock
         directContainerInventorySupported = supported
         return supported
     }

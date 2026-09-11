@@ -156,7 +156,7 @@ struct AppleContainerRuntimeDirectTests {
 
     @Test
     func `custom distributions retain enhanced inventory through the CLI schema`() async throws {
-        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        let fixture = try FakeAppleCLI(distribution: "custom")
         try fixture.setState("stopped")
         let inventory = FakeContainerInventory(
             snapshots: [
@@ -178,7 +178,7 @@ struct AppleContainerRuntimeDirectTests {
             context: RuntimeRequestContext()
         )
         #expect(descriptor.provider == .containerCompose)
-        #expect(descriptor.distribution == "container-compose")
+        #expect(descriptor.distribution == "custom")
 
         let snapshots = try await runtime.listContainers(
             all: true,
@@ -205,7 +205,7 @@ struct AppleContainerRuntimeDirectTests {
     // The full restart sequence is kept together as one regression scenario.
     // swiftlint:disable:next function_body_length
     func `managed hosts cache is invalidated after container bootstrap`() async throws {
-        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        let fixture = try FakeAppleCLI(distribution: "custom")
         let inventory = FakeContainerInventory(
             snapshots: [
                 nativeSnapshot(
@@ -287,7 +287,7 @@ struct AppleContainerRuntimeDirectTests {
 
     @Test
     func `managed hosts falls back when Apple cannot copy its generated file`() async throws {
-        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        let fixture = try FakeAppleCLI(distribution: "custom")
         let inventory = FakeContainerInventory(
             snapshots: [
                 nativeSnapshot(

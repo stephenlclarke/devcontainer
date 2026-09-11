@@ -793,6 +793,24 @@ struct AppleContainerRuntimeTests {
     }
 }
 
+@Test
+func `descriptor rejects foreign Container distributions`() async throws {
+    for fixture in try [
+        FakeAppleCLI(distribution: "docker", source: "docker/docker"),
+        FakeAppleCLI(distribution: "custom", source: "example/container")
+    ] {
+        let runtime = try fixture.runtime()
+        do {
+            _ = try await runtime.descriptor(context: RuntimeRequestContext())
+            Issue.record("foreign Container distribution unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .providerProtocolMismatch)
+            #expect(error.message.contains("stock apple/container"))
+            #expect(error.message.contains("stephenlclarke/container"))
+        }
+    }
+}
+
 struct FakeAppleCLI {
     let root: URL
     let executable: URL
@@ -801,13 +819,18 @@ struct FakeAppleCLI {
     private let modeURL: URL
     private let enhancedCreateOptions: Bool
     private let distribution: String
+    private let source: String
 
     init(
         enhancedCreateOptions: Bool = true,
-        distribution: String = "apple"
+        distribution: String = "apple",
+        source: String? = nil
     ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
         self.distribution = distribution
+        self.source = source ?? (distribution == "apple"
+            ? "apple/container"
+            : "stephenlclarke/container")
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
@@ -884,7 +907,8 @@ struct FakeAppleCLI {
               "appName":"container",
               "version":"1.1.0",
               "commit":"fixture-commit",
-              "distribution":"\(distribution)"
+              "distribution":"\(distribution)",
+              "source":"\(source)"
             }]'
             ;;
           "create --help")

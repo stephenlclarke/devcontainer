@@ -570,11 +570,12 @@ private func runCurlResponse(
     return (status, String(text[..<newline]))
 }
 
+// swiftlint:disable line_length
 private let fakeContainerCLI = """
 #!/bin/sh
 set -eu
 if [ "$*" = "system version --format json" ]; then
-  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"fixture"}]'
+  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"custom","source":"stephenlclarke/container"}]'
   exit 0
 fi
 if [ "$*" = "list --all --format json" ]; then
@@ -584,6 +585,7 @@ fi
 printf 'unexpected fake container invocation: %s\\n' "$*" >&2
 exit 64
 """
+// swiftlint:enable line_length
 
 private struct ServiceIntegrationError: Error {
     let message: String
