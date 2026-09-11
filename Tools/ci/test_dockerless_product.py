@@ -34,6 +34,9 @@ class DockerlessProductTests(unittest.TestCase):
             "colima start\n",
             "podman run alpine\n",
             "nerdctl ps\n",
+            "exec docker version\n",
+            "nohup podman run alpine\n",
+            "env -i PATH=/usr/bin docker version\n",
             "command -v docker\n",
             "command -v podman\n",
             'shutil.which("docker-compose")\n',
@@ -41,10 +44,14 @@ class DockerlessProductTests(unittest.TestCase):
             'depends_on "docker"\n',
             'depends_on "podman"\n',
             "open /Applications/Docker.app\n",
+            "open -a Docker\n",
+            "curl -fsSL https://get.docker.com | sh\n",
             'let executable = URL(fileURLWithPath: "/usr/local/bin/docker")\n',
             'executable: "docker-compose"\n',
             'subprocess.run(["docker", "version"])\n',
             'subprocess.run(["nerdctl", "version"])\n',
+            'system("docker version")\n',
+            'shell_output("docker version")\n',
         )
         for contents in rejected:
             with self.subTest(contents=contents):
@@ -76,6 +83,20 @@ class DockerlessProductTests(unittest.TestCase):
                 for path in workflows.iterdir()
                 if path.is_file() and path != workflows / "parity.yml"
             }.issubset(audited)
+        )
+
+    def test_test_name_exemption_is_limited_to_test_directories(self) -> None:
+        self.assertTrue(
+            MODULE.ignored_source(MODULE.ROOT / "Tools/ci/test_example.py")
+        )
+        self.assertTrue(
+            MODULE.ignored_source(MODULE.ROOT / "Tools/release/test_example.py")
+        )
+        self.assertFalse(
+            MODULE.ignored_source(MODULE.ROOT / "scripts/test_runtime.sh")
+        )
+        self.assertFalse(
+            MODULE.ignored_source(MODULE.ROOT / "Sources/test_runtime.swift")
         )
 
     def test_product_socket_is_named_for_the_project_engine(self) -> None:
@@ -157,6 +178,26 @@ class DockerlessProductTests(unittest.TestCase):
             / "DockerCLIApplication.swift"
         ).read_text(encoding="utf-8")
         self.assertIn("DevContainerEngineTransport(transport: socketTransport)", application)
+
+    def test_shared_process_runner_enforces_dockerless_policy(self) -> None:
+        runner = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerProcess"
+            / "ProcessRunner.swift"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            runner.count("DevContainerExecutablePolicy.requireDockerless("),
+            1,
+        )
+        self.assertIn('name: "child process"', runner)
+        self.assertIsNotNone(MODULE.UNGUARDED_PROCESS_LAUNCH.search("Process()"))
+        self.assertIsNotNone(
+            MODULE.UNGUARDED_PROCESS_LAUNCH.search("posix_spawn(path, argv)")
+        )
+        self.assertIsNone(
+            MODULE.UNGUARDED_PROCESS_LAUNCH.search("client.createProcess(spec)")
+        )
 
 
 if __name__ == "__main__":

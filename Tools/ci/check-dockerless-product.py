@@ -33,6 +33,11 @@ IGNORED_NAMES = {
     "check-dockerless-product.py",
     "test_dockerless_product.py",
 }
+TEST_SOURCE_ROOTS = {
+    ROOT / "Tools" / "ci",
+    ROOT / "Tools" / "release",
+}
+PROCESS_RUNNER = ROOT / "Sources" / "DevContainerProcess" / "ProcessRunner.swift"
 TEXT_SUFFIXES = {
     "",
     ".in",
@@ -54,6 +59,11 @@ FORBIDDEN = (
         r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?(?:docker(?:d|-compose)?|com\.docker\.cli|podman|nerdctl)"
         r"\s+(?:--?[a-z]|[a-z])"
     ),
+    re.compile(
+        r"(?im)^\s*(?:exec|nohup|env)\b[^\n]*?\b"
+        r"(?:docker(?:d|-compose)?|com\.docker\.cli|colima|podman|nerdctl)"
+        r"\s+(?:--?[a-z]|[a-z])"
+    ),
     re.compile(r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?colima\s+(?:--?[a-z]|[a-z])"),
     re.compile(
         r"(?i)\b(?:command\s+-v|which|shutil\.which\()\s*[\"']?"
@@ -68,6 +78,8 @@ FORBIDDEN = (
         r"(?:docker|dockerd|docker-compose|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
+    re.compile(r"(?im)^\s*open\s+(?:--?application\s+|-a\s+)['\"]?Docker\b"),
+    re.compile(r"(?i)https?://(?:get|download|desktop)\.docker\.com\b"),
     re.compile(
         r"(?i)\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(\s*"
         r"(?:\[\s*)?[\"']"
@@ -82,7 +94,23 @@ FORBIDDEN = (
         r"(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?[\"']"
         r"(?:docker|dockerd|docker-compose|docker-buildx|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
+    re.compile(
+        r"(?is)\b(?:system|shell_output|IO\.popen)\s*\(?\s*[\"']"
+        r"(?:docker|dockerd|docker-compose|docker-buildx|com\.docker\.cli|colima|podman|nerdctl)\b"
+    ),
 )
+UNGUARDED_PROCESS_LAUNCH = re.compile(
+    r"\b(?:Process\s*\(|NSTask\b|posix_spawn(?:p)?\s*\(|execv(?:e|p)?\s*\()"
+)
+
+
+def ignored_source(path: Path) -> bool:
+    """Exclude only the oracle workflow and repository-owned test modules."""
+    if path in IGNORED_PATHS or path.name in IGNORED_NAMES:
+        return True
+    return path.name.startswith("test_") and any(
+        path.is_relative_to(root) for root in TEST_SOURCE_ROOTS
+    )
 
 
 def source_files() -> list[Path]:
@@ -96,9 +124,7 @@ def source_files() -> list[Path]:
                 path
                 for path in candidate.rglob("*")
                 if path.is_file()
-                and path not in IGNORED_PATHS
-                and path.name not in IGNORED_NAMES
-                and not path.name.startswith("test_")
+                and not ignored_source(path)
                 and path.suffix.lower() in TEXT_SUFFIXES
             )
         else:
@@ -119,6 +145,18 @@ def violations(root: Path = ROOT) -> list[str]:
                 findings.append(
                     f"{relative}:{line}: forbidden non-Apple runtime dependency: "
                     f"{excerpt}"
+                )
+        if (
+            path.suffix == ".swift"
+            and path.is_relative_to(ROOT / "Sources")
+            and path != PROCESS_RUNNER
+        ):
+            for match in UNGUARDED_PROCESS_LAUNCH.finditer(contents):
+                line = contents.count("\n", 0, match.start()) + 1
+                relative = path.relative_to(root)
+                findings.append(
+                    f"{relative}:{line}: child process bypasses the Docker-less "
+                    "ProcessRunner policy"
                 )
     return sorted(set(findings))
 

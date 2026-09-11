@@ -531,6 +531,11 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertNotIn('depends_on "docker"', template)
         self.assertNotIn('depends_on "docker-compose"', template)
+        self.assertIn(
+            'assert_match "devcontainer Apple compatibility"',
+            template,
+        )
+        self.assertNotIn('assert_match "Docker version"', template)
         self.assertIn('bin.install "bin/devcontainer-docker"', template)
         self.assertIn('libexec.install Dir["libexec/*"]', template)
         self.assertIn(

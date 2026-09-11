@@ -94,7 +94,7 @@ public enum ProcessRunner {
         let standardInput = input.map { _ in Pipe() }
         let standardOutput = Pipe()
         let standardError = Pipe()
-        var command = configuredCommand(
+        var command = try configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -179,7 +179,7 @@ public enum ProcessRunner {
     ) async throws -> Int32 {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
-        var command = configuredCommand(
+        var command = try configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -226,7 +226,11 @@ public enum ProcessRunner {
         arguments: [String],
         environment: [String: String],
         workingDirectory: URL?
-    ) -> Command {
+    ) throws -> Command {
+        try DevContainerExecutablePolicy.requireDockerless(
+            executable.path,
+            name: "child process"
+        )
         var command = Command(
             executable.path,
             arguments: arguments,

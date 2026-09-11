@@ -58,7 +58,7 @@ class @FORMULA_CLASS@ < Formula
 
   test do
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
-    assert_match "Docker version", shell_output("#{bin}/devcontainer-docker --version")
+    assert_match "devcontainer Apple compatibility", shell_output("#{bin}/devcontainer-docker --version")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
     compose_version = shell_output(
       "#{libexec}/devcontainer-compose/bin/compose version --format json",

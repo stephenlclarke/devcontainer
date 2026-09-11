@@ -78,6 +78,33 @@ struct ProcessRunnerTests {
         #expect(!identifiers.contains(where: Self.processExists))
     }
 
+    @Test
+    func `shared runner rejects Docker family executable aliases before launch`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-runner-policy-\(UUID().uuidString)")
+        let executable = root.appendingPathComponent("docker")
+        let marker = root.appendingPathComponent("launched")
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createSymbolicLink(
+            at: executable,
+            withDestinationURL: URL(fileURLWithPath: "/bin/sh")
+        )
+
+        await #expect(throws: Error.self) {
+            _ = try await ProcessRunner.captured(
+                executable: executable,
+                arguments: ["-c", "touch \(marker.path)"],
+                environment: [:]
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
     private static func processExists(_ identifier: pid_t) -> Bool {
         errno = 0
         return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
