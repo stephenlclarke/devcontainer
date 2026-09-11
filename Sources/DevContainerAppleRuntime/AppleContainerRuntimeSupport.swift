@@ -644,11 +644,16 @@ extension AppleContainerRuntime {
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME"
         ]
-        return Dictionary(
+        var environment = Dictionary(
             uniqueKeysWithValues: allowed.compactMap { key in
                 values[key].map { (key, $0) }
             }
         )
+        // Stock Apple's builder transports the context through a POSIX archive.
+        // Finder provenance is binary metadata and is not a valid UTF-8 PAX
+        // value, so it must never enter that portable archive.
+        environment["COPYFILE_DISABLE"] = "1"
+        return environment
     }
 
     static func dataStream(

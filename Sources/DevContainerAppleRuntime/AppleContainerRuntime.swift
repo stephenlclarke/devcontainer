@@ -1174,7 +1174,7 @@ public extension AppleContainerRuntime {
         let temporary = try TemporaryDirectory()
         let extractResult = try await AppleCommandRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-xf", "-", "-C", temporary.url.path],
+            arguments: ["--no-xattrs", "-xf", "-", "-C", temporary.url.path],
             environment: environment,
             input: extractionInput
         )
@@ -1296,7 +1296,7 @@ public extension AppleContainerRuntime {
         let archive = prepared.url.appendingPathComponent("context.tar")
         let archiveResult = try await AppleCommandRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-cf", archive.path, "-C", contextRoot.path, "."],
+            arguments: ["--no-xattrs", "-cf", archive.path, "-C", contextRoot.path, "."],
             environment: environment
         )
         try requireSuccess(

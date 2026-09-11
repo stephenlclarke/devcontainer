@@ -612,8 +612,14 @@ struct AppleContainerRuntimeDirectTests {
             ]) == [
                 "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
+                "COPYFILE_DISABLE": "1",
                 "HOME": "/fixture"
             ]
+        )
+        #expect(
+            AppleContainerRuntime.filteredEnvironment([
+                "COPYFILE_DISABLE": "0"
+            ])["COPYFILE_DISABLE"] == "1"
         )
         #expect(
             AppleContainerRuntime.containerState(
