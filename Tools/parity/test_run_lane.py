@@ -78,7 +78,7 @@ class RuntimePathTests(unittest.TestCase):
                 return_value={
                     "referencePins": {
                         "devcontainersCli": {
-                            "version": "0.88.0",
+                            "version": "0.89.0",
                         },
                     },
                 },
@@ -116,7 +116,7 @@ class RuntimePathTests(unittest.TestCase):
         runner.repository = Path("/repository")
         runner.environment = {"PATH": "/usr/bin:/bin"}
         runner.node_package_runner = "/usr/bin/npx"
-        runner.cli_version = "0.88.0"
+        runner.cli_version = "0.89.0"
         runner.devcontainer_docker = "/repository/.build/debug/devcontainer-docker"
         completed = mock.Mock(returncode=0, stdout="", stderr="")
 
@@ -200,7 +200,7 @@ class BoundedCommandTests(unittest.TestCase):
             root = create_socket_root()
 
         self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
-        self.assertLess(len(str(root / "docker.sock").encode()), 104)
+        self.assertLess(len(str(root / "engine.sock").encode()), 104)
         make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
 
 
@@ -210,9 +210,9 @@ class FingerprintTests(unittest.TestCase):
         runner.lane = "docker"
         runner.docker = "/usr/bin/docker"
         runner.node_package_runner = "/usr/bin/npx"
-        runner.cli_version = "0.88.0"
+        runner.cli_version = "0.89.0"
         runner.cli_reference = {
-            "version": "0.88.0",
+            "version": "0.89.0",
             "source": "https://github.com/devcontainers/cli",
             "commit": "a" * 40,
             "npmIntegrity": "sha512-" + "b" * 86 + "==",
@@ -221,7 +221,7 @@ class FingerprintTests(unittest.TestCase):
         runner.environment = {"PATH": "/usr/bin:/bin"}
         completed = [
             mock.Mock(returncode=0, stdout='{"Client":{}}', stderr=""),
-            mock.Mock(returncode=0, stdout="0.88.0\n", stderr=""),
+            mock.Mock(returncode=0, stdout="0.89.0\n", stderr=""),
         ]
 
         with (
@@ -243,7 +243,7 @@ class FingerprintTests(unittest.TestCase):
         )
         self.assertEqual(
             run.call_args_list[0].args[0],
-            ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.88.0", "--version"],
+            ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.89.0", "--version"],
         )
         self.assertEqual(
             run.call_args_list[1].args[0],
@@ -255,12 +255,12 @@ class FingerprintTests(unittest.TestCase):
         runner.lane = "apple-stock"
         runner.docker = "/repository/.build/debug/devcontainer-client"
         runner.node_package_runner = "/usr/bin/npx"
-        runner.cli_version = "0.88.0"
-        runner.cli_reference = {"version": "0.88.0"}
+        runner.cli_version = "0.89.0"
+        runner.cli_reference = {"version": "0.89.0"}
         runner.repository = Path("/repository")
         runner.environment = {"PATH": "/usr/bin:/bin"}
         completed = [
-            mock.Mock(returncode=0, stdout="0.88.0\n", stderr=""),
+            mock.Mock(returncode=0, stdout="0.89.0\n", stderr=""),
             mock.Mock(returncode=0, stdout='{"ServerVersion":"1.0"}', stderr=""),
             mock.Mock(returncode=0, stdout="devcontainer Apple compatibility\n", stderr=""),
             mock.Mock(

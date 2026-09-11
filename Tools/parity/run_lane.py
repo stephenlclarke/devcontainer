@@ -189,7 +189,7 @@ class LaneRunner:
             shutil.rmtree(self.runtime_root)
         self.runtime_root.mkdir(parents=True)
         self.socket_root = create_socket_root()
-        socket_path = self.socket_root / "docker.sock"
+        socket_path = self.socket_root / "engine.sock"
         state_path = self.runtime_root / "state.sqlite"
         container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
             "container"
@@ -1409,10 +1409,10 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
 
 
 def create_socket_root() -> Path:
-    """Create a private root whose Docker socket fits Darwin's path limit."""
+    """Create a private root whose candidate engine socket fits Darwin's limit."""
 
     root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
-    socket_path = root / "docker.sock"
+    socket_path = root / "engine.sock"
     if len(os.fsencode(socket_path)) >= 104:
         shutil.rmtree(root)
         raise ParityError(
