@@ -30,9 +30,11 @@ IMMUTABLE_SOURCE_PATTERN = re.compile(
 NATIVE_COMPOSE_METADATA = Path(__file__).with_name("native-compose.json")
 FORBIDDEN_RUNTIME_EXECUTABLE_NAMES = {
     "colima",
+    "com.docker.cli",
     "docker",
     "docker-buildx",
     "docker-compose",
+    "dockerd",
     "nerdctl",
     "podman",
 }

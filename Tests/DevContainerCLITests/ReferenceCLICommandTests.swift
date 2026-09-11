@@ -106,7 +106,7 @@ struct ReferenceCLICommandTests {
     func `packaged adapters cannot resolve to Docker executables`() throws {
         let fixture = try InvocationFixture()
         defer { fixture.remove() }
-        let docker = fixture.root.appendingPathComponent("docker")
+        let docker = fixture.root.appendingPathComponent("com.docker.cli")
         #expect(FileManager.default.createFile(atPath: docker.path, contents: Data()))
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],

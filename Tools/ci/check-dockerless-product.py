@@ -51,36 +51,36 @@ TEXT_SUFFIXES = {
 # `devcontainer-docker`, `DockerHTTPRequest`, DOCKER_HOST, or dockerPath.
 FORBIDDEN = (
     re.compile(
-        r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?(?:docker(?:-compose)?|podman|nerdctl)"
+        r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?(?:docker(?:d|-compose)?|com\.docker\.cli|podman|nerdctl)"
         r"\s+(?:--?[a-z]|[a-z])"
     ),
     re.compile(r"(?m)^\s*(?:sudo\s+)?(?:/\S+/)?colima\s+(?:--?[a-z]|[a-z])"),
     re.compile(
         r"(?i)\b(?:command\s+-v|which|shutil\.which\()\s*[\"']?"
-        r"(?:docker|docker-compose|colima|podman|nerdctl)\b"
+        r"(?:docker|dockerd|docker-compose|com\.docker\.cli|colima|podman|nerdctl)\b"
     ),
     re.compile(
         r"(?i)\bbrew\s+(?:install|upgrade)\b[^\n]*"
-        r"(?:docker|docker-compose|colima|podman|nerdctl)\b"
+        r"(?:docker|dockerd|docker-compose|com\.docker\.cli|colima|podman|nerdctl)\b"
     ),
     re.compile(
         r"(?i)depends_on\s+[\"']"
-        r"(?:docker|docker-compose|colima|podman|nerdctl)[\"']"
+        r"(?:docker|dockerd|docker-compose|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
     re.compile(r"(?i)/Applications/Docker\.app\b"),
     re.compile(
         r"(?i)\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(\s*"
         r"(?:\[\s*)?[\"']"
-        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)[\"']"
+        r"(?:docker|dockerd|docker-compose|docker-buildx|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
     re.compile(
         r"(?i)(?:/opt/homebrew/bin|/usr/local/bin|/usr/bin|/bin)/"
-        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)\b"
+        r"(?:docker|dockerd|docker-compose|docker-buildx|com\.docker\.cli|colima|podman|nerdctl)\b"
     ),
     re.compile(
         r"(?is)(?:executable|executableURL|fileURLWithPath)\s*:\s*"
         r"(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?[\"']"
-        r"(?:docker|docker-compose|docker-buildx|colima|podman|nerdctl)[\"']"
+        r"(?:docker|dockerd|docker-compose|docker-buildx|com\.docker\.cli|colima|podman|nerdctl)[\"']"
     ),
 )
 

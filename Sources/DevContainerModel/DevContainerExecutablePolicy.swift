@@ -20,9 +20,11 @@ import Foundation
 public enum DevContainerExecutablePolicy {
     private static let forbiddenRuntimeNames: Set<String> = [
         "colima",
+        "com.docker.cli",
         "docker",
         "docker-buildx",
         "docker-compose",
+        "dockerd",
         "nerdctl",
         "podman"
     ]

@@ -38,7 +38,8 @@ func `executable policy permits adapters and rejects non Apple runtimes`() throw
     )
 
     for executable in [
-        "docker", "docker-compose", "docker-buildx", "colima", "podman", "nerdctl"
+        "docker", "docker-compose", "docker-buildx", "dockerd", "com.docker.cli",
+        "colima", "podman", "nerdctl"
     ] {
         do {
             try DevContainerExecutablePolicy.requireDockerless(
