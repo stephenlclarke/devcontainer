@@ -117,6 +117,7 @@ class RuntimePathTests(unittest.TestCase):
         runner.environment = {"PATH": "/usr/bin:/bin"}
         runner.node_package_runner = "/usr/bin/npx"
         runner.cli_version = "0.88.0"
+        runner.devcontainer_docker = "/repository/.build/debug/devcontainer-docker"
         completed = mock.Mock(returncode=0, stdout="", stderr="")
 
         with (
@@ -130,7 +131,10 @@ class RuntimePathTests(unittest.TestCase):
                 return_value=completed,
             ) as run,
         ):
-            result = runner.devcontainer(["up"], timeout=120)
+            result = runner.devcontainer(
+                ["exec", "--workspace-folder", "/workspace", "--", "/bin/true"],
+                timeout=120,
+            )
 
         self.assertIs(result, completed)
         environment = run.call_args.kwargs["env"]
@@ -139,6 +143,18 @@ class RuntimePathTests(unittest.TestCase):
             environment["DEVCONTAINER_COMPOSE_PROVIDER"],
             "container-compose",
         )
+        command = run.call_args.args[0]
+        separator = command.index("--")
+        self.assertEqual(
+            command[separator - 4 : separator],
+            [
+                "--docker-path",
+                "/repository/.build/debug/devcontainer-docker",
+                "--docker-compose-path",
+                "/repository/.build/debug/devcontainer-compose",
+            ],
+        )
+        self.assertEqual(command[separator:], ["--", "/bin/true"])
 
 
 class CancellationHandlerTests(unittest.TestCase):

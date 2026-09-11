@@ -1200,7 +1200,18 @@ class LaneRunner:
             compose_wrapper = (
                 self.repository / ".build" / "debug" / "devcontainer-compose"
             )
-            command_arguments += ["--docker-compose-path", str(compose_wrapper)]
+            separator = (
+                command_arguments.index("--")
+                if "--" in command_arguments
+                else len(command_arguments)
+            )
+            cli_arguments = command_arguments[:separator]
+            payload_arguments = command_arguments[separator:]
+            if "--docker-path" not in cli_arguments:
+                cli_arguments += ["--docker-path", self.devcontainer_docker]
+            if "--docker-compose-path" not in cli_arguments:
+                cli_arguments += ["--docker-compose-path", str(compose_wrapper)]
+            command_arguments = cli_arguments + payload_arguments
         return subprocess.run(
             [
                 self.node_package_runner,
