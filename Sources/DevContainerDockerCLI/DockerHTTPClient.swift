@@ -89,6 +89,15 @@ public protocol DockerEngineHijackTransport: DockerEngineTransport {
     ) throws -> DockerHTTPResponse
 }
 
+public protocol DockerEngineRequestNotificationTransport: DockerEngineTransport {
+    func send(
+        _ request: DockerHTTPRequest,
+        maximumBodyBytes: Int?,
+        onRequestSent: @escaping @Sendable () -> Void,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse
+}
+
 public extension DockerEngineTransport {
     func send(
         _ request: DockerHTTPRequest,
@@ -112,7 +121,36 @@ public extension DockerEngineTransport {
     }
 }
 
-public final class UnixSocketDockerTransport: DockerEngineHijackTransport, @unchecked Sendable {
+public extension DockerEngineRequestNotificationTransport {
+    func send(
+        _ request: DockerHTTPRequest,
+        maximumBodyBytes: Int = 16 * 1024 * 1024,
+        onRequestSent: @escaping @Sendable () -> Void
+    ) throws -> DockerHTTPResponse {
+        var body = Data()
+        let response = try send(
+            request,
+            maximumBodyBytes: maximumBodyBytes,
+            onRequestSent: onRequestSent
+        ) { chunk in
+            guard body.count <= maximumBodyBytes - chunk.count else {
+                throw DockerHTTPClientError.responseTooLarge(maximumBodyBytes)
+            }
+            body.append(chunk)
+        }
+        return DockerHTTPResponse(
+            status: response.status,
+            headers: response.headers,
+            body: body
+        )
+    }
+}
+
+public final class UnixSocketDockerTransport:
+    DockerEngineHijackTransport,
+    DockerEngineRequestNotificationTransport,
+    @unchecked Sendable
+{
     fileprivate static let readSize = 64 * 1024
     private static let maximumHeaderBytes = 64 * 1024
 
@@ -135,9 +173,24 @@ public final class UnixSocketDockerTransport: DockerEngineHijackTransport, @unch
         maximumBodyBytes: Int?,
         onBody: @escaping (Data) throws -> Void
     ) throws -> DockerHTTPResponse {
+        try send(
+            request,
+            maximumBodyBytes: maximumBodyBytes,
+            onRequestSent: {},
+            onBody: onBody
+        )
+    }
+
+    public func send(
+        _ request: DockerHTTPRequest,
+        maximumBodyBytes: Int?,
+        onRequestSent: @escaping @Sendable () -> Void,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
         let descriptor = try connect()
         defer { Darwin.close(descriptor) }
         try write(Self.serialized(request), to: descriptor)
+        onRequestSent()
 
         var reader = SocketReader(descriptor: descriptor)
         let head = try reader.readHead(maximumBytes: Self.maximumHeaderBytes)

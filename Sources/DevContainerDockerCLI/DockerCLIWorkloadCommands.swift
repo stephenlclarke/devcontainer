@@ -76,6 +76,29 @@ extension DockerCLIApplication {
         _ identifier: String,
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
+        let waitResult = DockerConcurrentResponse()
+        let waitStarted = DockerRequestStartSignal()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { waitStarted.signal() }
+            waitResult.store(
+                Result {
+                    let request = DockerHTTPRequest(
+                        method: "POST",
+                        target: "/containers/\(Self.path(identifier))/wait"
+                    )
+                    if let notifying = transport as? any DockerEngineRequestNotificationTransport {
+                        return try notifying.send(
+                            request,
+                            onRequestSent: waitStarted.signal
+                        )
+                    }
+                    waitStarted.signal()
+                    return try transport.send(request)
+                }
+            )
+        }
+        waitStarted.wait()
+
         var decoder = DockerMultiplexedStreamDecoder()
         var captured = Data()
         _ = try transport.send(
@@ -97,10 +120,7 @@ extension DockerCLIApplication {
             }
         }
         try decoder.finish()
-        let wait = try request(
-            "POST",
-            "/containers/\(Self.path(identifier))/wait"
-        )
+        let wait = try waitResult.load().get()
         let statusCode = try (Self.object(wait.body)["StatusCode"] as? NSNumber)?.int32Value ?? 1
         return DockerCLIResult(
             standardOutput: captured,
@@ -947,45 +967,5 @@ struct DockerExecOptions {
             throw DockerCLIError.invalidArguments("\(option) requires a value")
         }
         return arguments[index]
-    }
-}
-
-struct DockerMultiplexedStreamDecoder {
-    private var buffer = Data()
-    private let terminal: Bool
-
-    init(terminal: Bool = false) {
-        self.terminal = terminal
-    }
-
-    mutating func append(
-        _ data: Data,
-        handler: (Data, Bool) throws -> Void
-    ) throws {
-        if terminal {
-            try handler(data, false)
-            return
-        }
-        buffer.append(data)
-        while buffer.count >= 8 {
-            let channel = buffer[buffer.startIndex]
-            let lengthBytes = buffer[
-                buffer.startIndex.advanced(by: 4) ..< buffer.startIndex.advanced(by: 8)
-            ]
-            let length = lengthBytes.reduce(0) { ($0 << 8) | Int($1) }
-            guard length <= 64 * 1024 * 1024 else {
-                throw DockerCLIError.malformedResponse("stream frame is too large")
-            }
-            guard buffer.count >= 8 + length else { return }
-            let start = buffer.startIndex.advanced(by: 8)
-            try handler(Data(buffer[start ..< start.advanced(by: length)]), channel == 2)
-            buffer.removeFirst(8 + length)
-        }
-    }
-
-    func finish() throws {
-        guard terminal || buffer.isEmpty else {
-            throw DockerCLIError.malformedResponse("truncated stream frame")
-        }
     }
 }

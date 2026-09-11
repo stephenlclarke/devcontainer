@@ -595,12 +595,21 @@ struct DockerCLIApplicationTests {
         try Data("archive-content\n".utf8).write(to: source.appendingPathComponent("value.txt"))
         let archive = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-cf", "-", "-C", source.path, "."],
+            arguments: ["-cf", "-", "-C", root.path, source.lastPathComponent],
             environment: ["PATH": "/usr/bin:/bin"]
         ).standardOutput
-        let transport = StubTransport([
+        let transport = try StubTransport([
             .init(status: 200),
-            .init(status: 200, body: archive)
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: source.lastPathComponent,
+                        mode: (1 << 31) | 0o755
+                    )
+                ],
+                body: archive
+            )
         ])
         let application = DockerCLIApplication(transport: transport)
 
@@ -615,6 +624,46 @@ struct DockerCLIApplicationTests {
         #expect(transport.requests[0].target == "/containers/box/archive?path=%2Farchive")
         #expect(!transport.requests[0].body.isEmpty)
         #expect(transport.requests[1].target == "/containers/box/archive?path=%2Farchive")
+    }
+
+    @Test
+    func `copy from container honors file destinations without Docker`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-file-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("renamed.txt")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("new value\n".utf8).write(to: source.appendingPathComponent("value.txt"))
+        try Data("old value\n".utf8).write(to: destination)
+        let archive = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", "-", "-C", source.path, "value.txt"],
+            environment: ["PATH": "/usr/bin:/bin"]
+        ).standardOutput
+        let response = try StubTransport.StubResponse(
+            status: 200,
+            headers: [
+                "x-docker-container-path-stat": archiveStatHeader(
+                    name: "value.txt",
+                    mode: 0o644
+                )
+            ],
+            body: archive
+        )
+        let transport = StubTransport([response, response])
+        let application = DockerCLIApplication(transport: transport)
+
+        #expect(try application.run(arguments: ["cp", "box:/tmp/value.txt", destination.path])
+            .exitCode == 0)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "new value\n")
+        try FileManager.default.removeItem(at: destination)
+        #expect(try application.run(arguments: ["cp", "box:/tmp/value.txt", destination.path])
+            .exitCode == 0)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "new value\n")
+        #expect(!FileManager.default.fileExists(
+            atPath: destination.appendingPathComponent("value.txt").path
+        ))
     }
 
     @Test
@@ -766,8 +815,15 @@ struct DockerCLIApplicationTests {
         let transport = StubTransport([
             .json(["Id": "foreground"], status: 201),
             .init(status: 204),
-            .init(status: 200, body: frame(channel: 1, text: "logs")),
-            .json(["StatusCode": 17]),
+            .json(
+                ["StatusCode": 17],
+                target: "/containers/foreground/wait"
+            ),
+            .init(
+                status: 200,
+                body: frame(channel: 1, text: "logs"),
+                target: "/containers/foreground/logs?follow=true&stdout=true&stderr=true"
+            ),
             .init(status: 200, body: Data("build-output".utf8)),
             .json(["Id": "terminal-exec"], status: 201),
             .init(status: 101, body: Data("terminal-output".utf8)),
@@ -777,6 +833,12 @@ struct DockerCLIApplicationTests {
         let foreground = try application.run(arguments: ["run", "image", "true"])
         #expect(foreground.standardOutput == Data("logs".utf8))
         #expect(foreground.exitCode == 17)
+        let foregroundTargets = transport.requests.map(\.target)
+        #expect(try #require(foregroundTargets.firstIndex(
+            of: "/containers/foreground/wait"
+        )) < #require(foregroundTargets.firstIndex(
+            of: "/containers/foreground/logs?follow=true&stdout=true&stderr=true"
+        )))
 
         var streamed = Data()
         let build = try application.run(arguments: ["build", root.path]) { data, _ in
@@ -875,85 +937,12 @@ struct DockerCLIApplicationTests {
         )
         return Set(output.split(whereSeparator: \.isNewline).map(String.init))
     }
-}
 
-private final class StubTransport: DockerEngineHijackTransport, @unchecked Sendable {
-    struct StubResponse {
-        var status: Int
-        var headers: [String: String]
-        var body: Data
-
-        init(status: Int, headers: [String: String] = [:], body: Data = Data()) {
-            self.status = status
-            self.headers = headers
-            self.body = body
-        }
-
-        static func json(_ object: Any, status: Int = 200) -> StubResponse {
-            guard
-                let body = try? JSONSerialization.data(
-                    withJSONObject: object,
-                    options: [.sortedKeys]
-                )
-            else {
-                fatalError("Stub JSON must be encodable")
-            }
-            return StubResponse(
-                status: status,
-                headers: ["content-type": "application/json"],
-                body: body
-            )
-        }
-    }
-
-    private let lock = NSLock()
-    private var responses: [StubResponse]
-    private var recordedRequests: [DockerHTTPRequest] = []
-    private var recordedHijackInput: Data?
-
-    init(_ responses: [StubResponse]) {
-        self.responses = responses
-    }
-
-    var requests: [DockerHTTPRequest] {
-        lock.withLock { recordedRequests }
-    }
-
-    var hijackInput: Data? {
-        lock.withLock { recordedHijackInput }
-    }
-
-    func send(
-        _ request: DockerHTTPRequest,
-        maximumBodyBytes _: Int?,
-        onBody: @escaping (Data) throws -> Void
-    ) throws -> DockerHTTPResponse {
-        try respond(to: request, onBody: onBody)
-    }
-
-    func hijack(
-        _ request: DockerHTTPRequest,
-        input: Data?,
-        inputFileDescriptor _: Int32?,
-        maximumBodyBytes _: Int?,
-        onBody: @escaping (Data) throws -> Void
-    ) throws -> DockerHTTPResponse {
-        lock.withLock { recordedHijackInput = input }
-        return try respond(to: request, onBody: onBody)
-    }
-
-    private func respond(
-        to request: DockerHTTPRequest,
-        onBody: (Data) throws -> Void
-    ) throws -> DockerHTTPResponse {
-        let response = try lock.withLock { () throws -> StubResponse in
-            recordedRequests.append(request)
-            guard !responses.isEmpty else {
-                throw DockerHTTPClientError.invalidResponse("no stub response")
-            }
-            return responses.removeFirst()
-        }
-        try onBody(response.body)
-        return DockerHTTPResponse(status: response.status, headers: response.headers, body: Data())
+    private func archiveStatHeader(name: String, mode: UInt32) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: ["name": name, "mode": mode],
+            options: [.sortedKeys]
+        )
+        return data.base64EncodedString()
     }
 }

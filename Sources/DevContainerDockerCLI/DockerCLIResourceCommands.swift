@@ -217,13 +217,56 @@ extension DockerCLIApplication {
                 query: [("path", remote.path)]
             )
         )
+        let stat = try Self.copyPathStat(response)
         let destination = URL(fileURLWithPath: local)
-        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let fileManager = FileManager.default
+        var destinationIsDirectory = ObjCBool(false)
+        let destinationExists = fileManager.fileExists(
+            atPath: destination.path,
+            isDirectory: &destinationIsDirectory
+        )
+        guard destinationExists || !local.hasSuffix("/") else {
+            throw DockerCLIError.invalidArguments(
+                "cp destination directory does not exist: \(local)"
+            )
+        }
+        guard !destinationExists || destinationIsDirectory.boolValue || !stat.isDirectory else {
+            throw DockerCLIError.invalidArguments(
+                "cannot copy a directory onto a file: \(local)"
+            )
+        }
+        if destinationExists, destinationIsDirectory.boolValue {
+            try Self.extractArchive(response.body, into: destination)
+            return
+        }
+
+        let parent = destination.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".devcontainer-cp-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: staging) }
+        try Self.extractArchive(response.body, into: staging)
+        let source = staging.appendingPathComponent(stat.name)
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw DockerCLIError.malformedResponse(
+                "container archive does not contain \(stat.name)"
+            )
+        }
+        if destinationExists {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: source, to: destination)
+    }
+
+    private static func extractArchive(_ archive: Data, into destination: URL) throws {
         let extracted = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
             arguments: ["-xf", "-", "-C", destination.path],
             environment: ["PATH": "/usr/bin:/bin"],
-            input: response.body
+            input: archive
         )
         guard extracted.exitCode == 0 else {
             throw DockerCLIError.invalidArguments(
@@ -231,6 +274,22 @@ extension DockerCLIApplication {
                     ?? "could not extract container archive"
             )
         }
+    }
+
+    private static func copyPathStat(_ response: DockerHTTPResponse) throws -> DockerCopyPathStat {
+        guard let encoded = response.headers.first(where: {
+            $0.key.caseInsensitiveCompare("X-Docker-Container-Path-Stat") == .orderedSame
+        })?.value,
+            let data = Data(base64Encoded: encoded),
+            let stat = try? JSONDecoder().decode(DockerCopyPathStat.self, from: data),
+            !stat.name.isEmpty,
+            stat.name == URL(fileURLWithPath: stat.name).lastPathComponent
+        else {
+            throw DockerCLIError.malformedResponse(
+                "container archive response has no valid path stat"
+            )
+        }
+        return stat
     }
 
     private static func containerPath(_ value: String) -> (container: String, path: String)? {
@@ -277,6 +336,15 @@ extension DockerCLIApplication {
             return value
         }
         return nil
+    }
+}
+
+private struct DockerCopyPathStat: Decodable {
+    let name: String
+    let mode: UInt32
+
+    var isDirectory: Bool {
+        mode & (1 << 31) != 0
     }
 }
 
