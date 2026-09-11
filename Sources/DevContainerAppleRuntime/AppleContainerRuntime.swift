@@ -164,6 +164,10 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         clients: DirectClients
     ) throws {
         let resolved = executable.standardizedFileURL
+        try DevContainerExecutablePolicy.requireDockerless(
+            resolved.path,
+            name: "Apple container CLI"
+        )
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
             throw DevContainerError(
                 .runtimeUnavailable,

@@ -99,30 +99,6 @@ public struct DevContainerRuntimeSelection: Equatable, Sendable {
     public var strictCompatibility: Bool
 }
 
-/// Prevents runtime selection from escaping the Docker-less product boundary.
-public enum DevContainerExecutablePolicy {
-    private static let forbiddenRuntimeNames: Set<String> = [
-        "colima",
-        "docker",
-        "docker-buildx",
-        "docker-compose"
-    ]
-
-    /// Rejects a Docker or Colima executable before any product process launch.
-    public static func requireDockerless(_ path: String, name: String) throws {
-        let executable = URL(fileURLWithPath: path).standardizedFileURL
-        let resolved = executable.resolvingSymlinksInPath()
-        let names = [executable.lastPathComponent, resolved.lastPathComponent]
-            .map { $0.lowercased() }
-        guard names.allSatisfy({ !forbiddenRuntimeNames.contains($0) }) else {
-            throw DevContainerError(
-                .invalidRequest,
-                message: "\(name) cannot select Docker or Colima in the Docker-less product"
-            )
-        }
-    }
-}
-
 public enum DevContainerRuntimeSelectionResolver {
     public static func resolve(
         environment: [String: String] = ProcessInfo.processInfo.environment,

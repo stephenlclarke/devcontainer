@@ -29,6 +29,10 @@ public struct ExecutableComposeProvider: ComposeProvider {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws {
         let resolved = executable.standardizedFileURL
+        try DevContainerExecutablePolicy.requireDockerless(
+            resolved.path,
+            name: "container-compose provider"
+        )
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
             throw DevContainerError(
                 .runtimeUnavailable,

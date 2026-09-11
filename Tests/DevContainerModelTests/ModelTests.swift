@@ -19,6 +19,31 @@ import Foundation
 import Testing
 
 @Test
+func `executable policy permits adapters and rejects Docker runtimes`() throws {
+    try DevContainerExecutablePolicy.requireDockerless(
+        "/opt/homebrew/bin/devcontainer-docker",
+        name: "compatibility adapter"
+    )
+    try DevContainerExecutablePolicy.requireDockerless(
+        "/opt/homebrew/bin/container-compose",
+        name: "Compose provider"
+    )
+
+    for executable in ["docker", "docker-compose", "docker-buildx", "colima"] {
+        do {
+            try DevContainerExecutablePolicy.requireDockerless(
+                "/usr/local/bin/\(executable)",
+                name: "runtime"
+            )
+            Issue.record("accepted forbidden executable \(executable)")
+        } catch let error as DevContainerError {
+            #expect(error.code == .invalidRequest)
+            #expect(error.message.contains("Docker-less product"))
+        }
+    }
+}
+
+@Test
 func `diagnostic redaction covers paths and credential shaped values`() {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let source = """
