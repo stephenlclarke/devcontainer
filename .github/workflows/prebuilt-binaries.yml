@@ -570,3 +570,17 @@ jobs:
           set -euo pipefail
           test -z "$(git -C homebrew-tap status --short)"
           git -C homebrew-tap push origin main
+      - name: Promote tested stable release as latest
+        if: needs.resolve.outputs.lane == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
+          RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ steps.package.outputs.release_tag }}
+        working-directory: devcontainer
+        run: |
+          set -euo pipefail
+          Tools/release/publish-github-release.sh stable-promote

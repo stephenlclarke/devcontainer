@@ -703,6 +703,9 @@ jobs:
         commit = contents.index("- name: Commit candidate tap state locally")
         install = contents.index("- name: Install and test tap formula")
         push = contents.index("- name: Push tested tap state")
+        promote = contents.index(
+            "- name: Promote tested stable release as latest"
+        )
 
         self.assertLess(stage, attest)
         self.assertLess(attest, upload)
@@ -711,8 +714,13 @@ jobs:
         self.assertLess(render, commit)
         self.assertLess(commit, install)
         self.assertLess(install, push)
+        self.assertLess(push, promote)
         self.assertIn("mode=stable-stage", contents)
         self.assertIn("mode=stable-finalize", contents)
+        self.assertIn(
+            "Tools/release/publish-github-release.sh stable-promote",
+            contents,
+        )
         self.assertEqual(
             contents.count(
                 "RELEASE_TITLE: ${{ needs.resolve.outputs.lane == "

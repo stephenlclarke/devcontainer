@@ -106,10 +106,15 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     }))
                     raise SystemExit(0)
                 if endpoint.endswith("/releases/latest"):
+                    latest = (
+                        tag
+                        if Path(os.environ["GH_LATEST_MARKER"]).exists()
+                        else os.environ["LATEST_TAG"]
+                    )
                     if "--jq" in args:
-                        print(os.environ["LATEST_TAG"])
+                        print(latest)
                     else:
-                        print(json.dumps({"tag_name": os.environ["LATEST_TAG"]}))
+                        print(json.dumps({"tag_name": latest}))
                     raise SystemExit(0)
                 if "/releases/tags/" in endpoint:
                     if state == "missing":
@@ -152,6 +157,8 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                         else "published"
                     )
                     state_path.write_text(published, encoding="utf-8")
+                if "--latest" in args:
+                    Path(os.environ["GH_LATEST_MARKER"]).touch()
                 raise SystemExit(0)
 
             if args[:2] == ["release", "download"]:
@@ -234,6 +241,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "GH_STATE": str(state_file),
                 "GH_TRACE": str(gh_trace),
                 "GH_UPLOAD_MARKER": str(root / "upload.marker"),
+                "GH_LATEST_MARKER": str(root / "latest.marker"),
                 "GIT": str(fake_bin / "git"),
                 "GIT_TRACE": str(git_trace),
                 "IMMUTABLE_SETTING": str(immutable_setting).lower(),
@@ -368,7 +376,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertNotIn("release edit", gh_trace.read_text())
 
-    def test_stable_finalize_publishes_and_verifies_immutable_release(self) -> None:
+    def test_stable_finalize_publishes_without_promoting_latest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             environment, gh_trace, _ = self.fixture(
                 Path(temporary),
@@ -380,7 +388,23 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             trace = gh_trace.read_text()
             self.assertIn("--draft=false", trace)
             self.assertIn("--prerelease=false", trace)
+            self.assertIn("--latest=false", trace)
             self.assertIn("isDraft,isImmutable", trace)
+            self.assertNotIn("releases/latest --jq .tag_name", trace)
+
+    def test_stable_promote_marks_verified_release_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary),
+                state="published",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+            )
+            environment["LATEST_TAG"] = "1.2.2"
+            result = self.run_publisher(environment, "stable-promote", "1.2.3")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = gh_trace.read_text()
+            self.assertIn("release edit 1.2.3", trace)
+            self.assertIn("--latest", trace)
             self.assertIn("releases/latest --jq .tag_name", trace)
 
     def test_published_immutable_release_is_idempotently_verified(self) -> None:
@@ -470,11 +494,10 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("immutable", result.stderr)
 
-    def test_stable_recovery_rejects_changed_metadata_assets_or_latest(self) -> None:
+    def test_stable_recovery_rejects_changed_metadata_or_assets(self) -> None:
         cases = (
             ("PUBLISHED_TITLE", "Different", "title"),
             ("SERVER_DIGEST_MISMATCH", "package.tar.gz", "digest mismatch"),
-            ("LATEST_TAG", "1.2.2", "not latest"),
         )
         for variable, value, message in cases:
             with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temporary:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # USAGE:
-#   publish-github-release.sh current-stage|current-finalize|stable-stage|stable-finalize
+#   publish-github-release.sh current-stage|current-finalize|stable-stage|stable-finalize|stable-promote
 #
 # Stage and publish immutable stable or commit-addressed Current assets.
 
@@ -339,6 +339,7 @@ wait_for_release_immutability() {
 # Verify the exact immutable server state after publication or recovery.
 verify_published_release() {
   local channel="$1"
+  local require_latest="${2:-false}"
   local expected_names snapshot remote_assets remote_names latest_tag field
   local actual expected expected_prerelease
   expected_prerelease=false
@@ -371,7 +372,7 @@ verify_published_release() {
   remote_names="$(cut -f 1 <<<"$remote_assets")"
   validate_release_asset_names "$remote_names" "$expected_names" true
   validate_release_asset_digests "$remote_assets"
-  if [[ "$channel" == stable ]]; then
+  if [[ "$require_latest" == true ]]; then
     latest_tag="$(
       "$GH" api "repos/$REPOSITORY/releases/latest" --jq '.tag_name'
     )"
@@ -515,8 +516,30 @@ case "$MODE" in
       --notes-file "$NOTES_FILE" \
       --draft=false \
       --prerelease=false \
-      --latest
+      --latest=false
     verify_published_release stable
+    ;;
+  stable-promote)
+    if [[ ! "$TAG" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+      printf 'stable release tag must be MAJOR.MINOR.PATCH\n' >&2
+      exit 2
+    fi
+    require_release_immutability
+    verify_remote_tag_target
+    if ! release_exists; then
+      printf 'stable release must be published before promotion\n' >&2
+      exit 1
+    fi
+    if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" == true ]]; then
+      printf 'stable release must be immutable before promotion\n' >&2
+      exit 1
+    fi
+    restore_published_assets
+    verify_published_release stable
+    "$GH" release edit "$TAG" \
+      --repo "$REPOSITORY" \
+      --latest
+    verify_published_release stable true
     ;;
   *)
     printf 'unsupported publication mode: %s\n' "$MODE" >&2
