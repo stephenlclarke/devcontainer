@@ -17,6 +17,23 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
 class GitHubReleasePublisherTests(unittest.TestCase):
+    def test_help_lists_every_supported_mode(self) -> None:
+        result = subprocess.run(
+            [str(PUBLISHER), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for mode in (
+            "current-stage",
+            "current-finalize",
+            "stable-stage",
+            "stable-finalize",
+            "stable-promote",
+        ):
+            with self.subTest(mode=mode):
+                self.assertIn(mode, result.stdout)
+
     def write_executable(self, path: Path, body: str) -> None:
         path.write_text(
             "#!/usr/bin/env bash\nset -euo pipefail\n" + body,
@@ -220,7 +237,15 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             fake_bin / "git",
             'printf "%s\\n" "$*" >> "$GIT_TRACE"\n'
             'if [[ "${1:-}" == ls-remote ]]; then\n'
-            '  printf "%s\\trefs/tags/%s^{}\\n" "$REMOTE_TAG" "$RELEASE_TAG"\n'
+            '  tag_target="$REMOTE_TAG"\n'
+            '  if [[ -e "$GIT_LOOKUP_MARKER" && '
+            '-n "$REMOTE_TAG_AFTER_FIRST_LOOKUP" ]]; then\n'
+            '    tag_target="$REMOTE_TAG_AFTER_FIRST_LOOKUP"\n'
+            "  fi\n"
+            '  : > "$GIT_LOOKUP_MARKER"\n'
+            '  if [[ -n "$tag_target" ]]; then\n'
+            '    printf "%s\\trefs/tags/%s^{}\\n" "$tag_target" "$RELEASE_TAG"\n'
+            "  fi\n"
             "fi\n",
         )
         asset = root / "package.tar.gz"
@@ -243,6 +268,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "GH_UPLOAD_MARKER": str(root / "upload.marker"),
                 "GH_LATEST_MARKER": str(root / "latest.marker"),
                 "GIT": str(fake_bin / "git"),
+                "GIT_LOOKUP_MARKER": str(root / "git-lookup.marker"),
                 "GIT_TRACE": str(git_trace),
                 "IMMUTABLE_SETTING": str(immutable_setting).lower(),
                 "PUBLISHED_IMMUTABLE": str(published_immutable).lower(),
@@ -255,6 +281,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "REMOTE_ASSETS": remote_assets,
                 "REMOTE_ASSETS_AFTER_UPLOAD": remote_assets_after_upload,
                 "REMOTE_TAG": remote_tag,
+                "REMOTE_TAG_AFTER_FIRST_LOOKUP": "",
                 "SERVER_DIGEST_MISMATCH": "",
                 "LATEST_TAG": "1.2.3",
                 "RELEASE_IMMUTABILITY_ATTEMPTS": "1",
@@ -287,7 +314,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn(f"release create {tag}", trace)
             self.assertIn("--draft", trace)
             self.assertIn("--prerelease", trace)
-            self.assertFalse(git_trace.exists())
+            self.assertIn("ls-remote --tags", git_trace.read_text())
 
             result = self.run_publisher(environment, "current-finalize", tag)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -305,6 +332,53 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("commit-addressed tag", result.stderr)
                 self.assertFalse(gh_trace.exists())
+
+    def test_current_rejects_preexisting_tag_with_different_target(self) -> None:
+        cases = (
+            ("current-stage", "missing"),
+            ("current-finalize", "current-draft"),
+        )
+        for mode, state in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                environment, gh_trace, _ = self.fixture(
+                    Path(temporary),
+                    state=state,
+                    remote_tag="f" * 40,
+                    remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                )
+                result = self.run_publisher(
+                    environment, mode, f"current-{COMMIT}"
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Current release tag target mismatch", result.stderr)
+                trace = gh_trace.read_text()
+                self.assertNotIn("release create", trace)
+                self.assertNotIn("release edit", trace)
+
+    def test_current_stage_allows_github_to_create_absent_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary), remote_tag=""
+            )
+            tag = f"current-{COMMIT}"
+            result = self.run_publisher(environment, "current-stage", tag)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"release create {tag}", gh_trace.read_text())
+
+    def test_current_finalize_rechecks_tag_immediately_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary),
+                state="current-draft",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+            )
+            environment["REMOTE_TAG_AFTER_FIRST_LOOKUP"] = "f" * 40
+            result = self.run_publisher(
+                environment, "current-finalize", f"current-{COMMIT}"
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Current release tag target mismatch", result.stderr)
+            self.assertNotIn("release edit", gh_trace.read_text())
 
     def test_new_stable_stage_creates_private_draft(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

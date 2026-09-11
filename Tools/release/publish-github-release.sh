@@ -33,7 +33,7 @@ readonly IMMUTABILITY_DELAY_SECONDS="${RELEASE_IMMUTABILITY_DELAY_SECONDS:-10}"
 # Print the command-line interface.
 usage() {
   printf \
-    'usage: %s current-stage|current-finalize|stable-stage|stable-finalize\n' \
+    'usage: %s current-stage|current-finalize|stable-stage|stable-finalize|stable-promote\n' \
     "$SCRIPT_NAME"
 }
 
@@ -129,17 +129,31 @@ require_release_immutability() {
   fi
 }
 
-# Resolve the remote release tag to the exact candidate commit.
+# Resolve the remote release tag, peeling an annotated tag when necessary.
+remote_tag_target() {
+  "$GIT" ls-remote --tags "https://github.com/$REPOSITORY.git" \
+    "refs/tags/$TAG" "refs/tags/$TAG^{}" |
+    awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled ? peeled : direct }'
+}
+
+# Require the remote release tag to identify the exact candidate commit.
 verify_remote_tag_target() {
   local remote_target
-  remote_target="$(
-    "$GIT" ls-remote --tags "https://github.com/$REPOSITORY.git" \
-      "refs/tags/$TAG" "refs/tags/$TAG^{}" |
-      awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled ? peeled : direct }'
-  )"
+  remote_target="$(remote_tag_target)"
   if [[ "$remote_target" != "$PUBLISH_SHA" ]]; then
     printf 'release tag target mismatch: expected %s, got %s\n' \
       "$PUBLISH_SHA" "${remote_target:-missing}" >&2
+    exit 1
+  fi
+}
+
+# Reject a pre-existing Current tag unless it already names the candidate.
+verify_current_tag_target_if_present() {
+  local remote_target
+  remote_target="$(remote_tag_target)"
+  if [[ -n "$remote_target" && "$remote_target" != "$PUBLISH_SHA" ]]; then
+    printf 'Current release tag target mismatch: expected %s, got %s\n' \
+      "$PUBLISH_SHA" "$remote_target" >&2
     exit 1
   fi
 }
@@ -393,6 +407,7 @@ case "$MODE" in
       exit 2
     fi
     require_release_immutability
+    verify_current_tag_target_if_present
     if release_exists; then
       if [[ "$(jq -r '.draft' <<<"$RELEASE_DOCUMENT")" != true ]]; then
         restore_published_assets
@@ -432,6 +447,7 @@ case "$MODE" in
       exit 2
     fi
     require_release_immutability
+    verify_current_tag_target_if_present
     if ! release_exists; then
       printf 'Current release must be staged before finalization\n' >&2
       exit 1
@@ -443,6 +459,7 @@ case "$MODE" in
     fi
     require_release_draft current
     reconcile_draft_assets
+    verify_current_tag_target_if_present
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
       --target "$PUBLISH_SHA" \
