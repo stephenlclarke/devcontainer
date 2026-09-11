@@ -123,6 +123,7 @@ require_staged_release() {
 # uses a separate clobber-capable path below.
 reconcile_stable_assets() {
   local temporary remote_names expected_names asset name downloaded count
+  local -a missing_assets=()
   remote_names="$(
     "$GH" release view "$TAG" \
       --repo "$REPOSITORY" --json assets --jq '.assets[].name'
@@ -170,9 +171,12 @@ reconcile_stable_assets() {
         return 1
       fi
     else
-      "$GH" release upload "$TAG" "$asset" --repo "$REPOSITORY"
+      missing_assets+=("$asset")
     fi
   done
+  if (( ${#missing_assets[@]} > 0 )); then
+    "$GH" release upload "$TAG" "${missing_assets[@]}" --repo "$REPOSITORY"
+  fi
 }
 
 # Move the deliberately mutable Current source pointer.

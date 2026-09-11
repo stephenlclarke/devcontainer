@@ -243,6 +243,21 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     self.assertNotIn("release edit", trace)
                     self.assertNotIn("--clobber", trace)
 
+    def test_stable_stage_validates_all_existing_assets_before_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary_directory),
+                release_exists=True,
+                remote_assets="package.tar.gz.sha256\n",
+                download_content="different",
+            )
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("conflicts with candidate", result.stderr)
+            trace = gh_trace.read_text(encoding="utf-8")
+            self.assertNotIn("release upload", trace)
+            self.assertNotIn("release edit", trace)
+
     def test_stable_finalize_promotes_staged_prerelease(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment, gh_trace, git_trace = self.fixture(
