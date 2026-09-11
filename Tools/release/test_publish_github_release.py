@@ -104,9 +104,9 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     raise SystemExit(0)
                 if endpoint.endswith("/releases/latest"):
                     if "--jq" in args:
-                        print(tag)
+                        print(os.environ["LATEST_TAG"])
                     else:
-                        print(json.dumps({"tag_name": tag}))
+                        print(json.dumps({"tag_name": os.environ["LATEST_TAG"]}))
                     raise SystemExit(0)
                 if "/releases/tags/" in endpoint:
                     if state == "missing":
@@ -175,7 +175,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     "isPrerelease": False,
                     "tagName": tag,
                     "targetCommitish": os.environ["PUBLISH_SHA"],
-                    "name": os.environ["RELEASE_TITLE"],
+                    "name": os.environ["PUBLISHED_TITLE"],
                     "body": notes,
                     "assets": assets(),
                 }))
@@ -213,6 +213,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "GIT_TRACE": str(git_trace),
                 "IMMUTABLE_SETTING": str(immutable_setting).lower(),
                 "PUBLISHED_IMMUTABLE": str(published_immutable).lower(),
+                "PUBLISHED_TITLE": "Release",
                 "PUBLISH_SHA": COMMIT,
                 "RELEASE_ASSETS_FILE": str(manifest),
                 "RELEASE_NOTES_FILE": str(notes),
@@ -222,6 +223,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "REMOTE_ASSETS_AFTER_UPLOAD": remote_assets_after_upload,
                 "REMOTE_TAG": remote_tag,
                 "SERVER_DIGEST_MISMATCH": "",
+                "LATEST_TAG": "1.2.3",
             }
         )
         return environment, gh_trace, git_trace
@@ -383,6 +385,26 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             result = self.run_publisher(environment, "stable-finalize", "1.2.3")
             self.assertEqual(result.returncode, 1)
             self.assertIn("immutability", result.stderr)
+
+    def test_stable_recovery_rejects_changed_metadata_assets_or_latest(self) -> None:
+        cases = (
+            ("PUBLISHED_TITLE", "Different", "title"),
+            ("SERVER_DIGEST_MISMATCH", "package.tar.gz", "final digest"),
+            ("LATEST_TAG", "1.2.2", "not latest"),
+        )
+        for variable, value, message in cases:
+            with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temporary:
+                environment, _, _ = self.fixture(
+                    Path(temporary),
+                    state="published",
+                    remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                )
+                environment[variable] = value
+                result = self.run_publisher(
+                    environment, "stable-finalize", "1.2.3"
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
 
 
 if __name__ == "__main__":
