@@ -66,6 +66,36 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `failed attached startup tears down its forwarding generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let generation = UUID()
+        await runtime.installTestExitRegistration(id: "fixture", registration: generation)
+        _ = try await runtime.portForwarding.start(
+            containerID: "fixture",
+            bindings: [
+                PortBinding(
+                    containerPort: 65000,
+                    hostPort: nil,
+                    protocolName: "tcp",
+                    hostAddress: "127.0.0.1"
+                )
+            ],
+            networkAddresses: ["bridge": "127.0.0.1/8"],
+            generation: generation
+        )
+        #expect(await runtime.portForwarding.hasListeners(containerID: "fixture"))
+
+        await runtime.cleanupAttachedContainerStartFailure(
+            runtimeID: "fixture",
+            exitRegistration: generation
+        )
+
+        #expect(await !(runtime.portForwarding.hasListeners(containerID: "fixture")))
+        #expect(await runtime.testExitRegistration(id: "fixture") == nil)
+    }
+
+    @Test
     func `cancelling a followed log stream terminates its owned process`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setMode("follow-logs")
@@ -313,6 +343,10 @@ struct AppleRuntimeStreamTests {
 }
 
 private extension AppleContainerRuntime {
+    func installTestExitRegistration(id: String, registration: UUID) {
+        containerExitRegistrations[id] = registration
+    }
+
     func testExitRegistration(id: String) -> UUID? {
         containerExitRegistrations[id]
     }

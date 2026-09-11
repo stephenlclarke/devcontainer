@@ -100,10 +100,24 @@ public extension AppleContainerRuntime {
             finishStartOperation(id: runtimeID, registration: registration)
         } catch {
             finishStartOperation(id: runtimeID, registration: registration)
-            if containerExitRegistrations[runtimeID] == exitRegistration {
-                containerExitRegistrations.removeValue(forKey: runtimeID)
-            }
+            await cleanupAttachedContainerStartFailure(
+                runtimeID: runtimeID,
+                exitRegistration: exitRegistration
+            )
             throw error
+        }
+    }
+
+    internal func cleanupAttachedContainerStartFailure(
+        runtimeID: String,
+        exitRegistration: UUID
+    ) async {
+        await portForwarding.stop(
+            containerID: runtimeID,
+            generation: exitRegistration
+        )
+        if containerExitRegistrations[runtimeID] == exitRegistration {
+            containerExitRegistrations.removeValue(forKey: runtimeID)
         }
     }
 }
