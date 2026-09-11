@@ -266,6 +266,9 @@ struct DockerBuildOptions: Equatable {
 
     private mutating func consumeFlag(_ option: String) -> Bool {
         switch option {
+        // Apple Container imports successful builds into its selected image
+        // store by default, so Buildx's explicit --load has the same result.
+        case "--load": break
         case "--no-cache": noCache = true
         case "--pull": pull = true
         default: return false

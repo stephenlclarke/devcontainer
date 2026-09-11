@@ -589,7 +589,8 @@ struct DockerCLIApplicationTests {
         let build = try DockerBuildOptions(arguments: [
             "--file", external.path, "--tag", "one:latest", "-t", "two:latest",
             "--target", "development", "--build-arg", "A=B", "--label", "x=y",
-            "--platform", "linux/arm64", "--progress", "plain", "--no-cache", "--pull",
+            "--platform", "linux/arm64", "--progress", "plain", "--load",
+            "--no-cache", "--pull",
             root.path
         ])
         #expect(build.tags == ["one:latest", "two:latest"])

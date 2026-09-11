@@ -709,7 +709,10 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertNotEqual(buildx.returncode, 0)
         self.assertIn("unknown command", buildx.stderr)
         self.assertEqual(legacy_build.returncode, 0)
-        self.assertEqual(legacy_build.stdout.strip(), "docker:build .")
+        self.assertEqual(
+            legacy_build.stdout.strip(),
+            "docker:build --progress=plain --load .",
+        )
         self.assertIn('exec "$compose" "$@"', wrapper_source)
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
         self.assertEqual(
@@ -773,7 +776,10 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(forwarded.returncode, 0)
         self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
         self.assertEqual(legacy_build.returncode, 0)
-        self.assertEqual(legacy_build.stdout.strip(), "forwarded:build .")
+        self.assertEqual(
+            legacy_build.stdout.strip(),
+            "forwarded:build --progress plain --load .",
+        )
         self.assertTrue(wrapper_source.startswith("#!/bin/sh\n"))
         self.assertTrue(wrapper_source.endswith('exec "$docker" "$@"\n'))
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")

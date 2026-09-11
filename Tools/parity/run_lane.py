@@ -278,29 +278,6 @@ class LaneRunner:
             raise ParityError(
                 f"native Compose wrapper is not executable at {compose}"
             )
-        build_filter = (
-            "import os\n"
-            "import sys\n"
-            "docker = sys.argv[1]\n"
-            "arguments = sys.argv[2:]\n"
-            "filtered = []\n"
-            "index = 0\n"
-            "while index < len(arguments):\n"
-            "    argument = arguments[index]\n"
-            '    if argument == "--load":\n'
-            "        index += 1\n"
-            "        continue\n"
-            '    if argument == "--progress":\n'
-            "        index += 2\n"
-            "        continue\n"
-            '    if argument.startswith("--progress="):\n'
-            "        index += 1\n"
-            "        continue\n"
-            "    filtered.append(argument)\n"
-            "    index += 1\n"
-            'os.environ["DOCKER_BUILDKIT"] = "0"\n'
-            "os.execv(docker, [docker, *filtered])\n"
-        )
         wrapper.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
@@ -313,10 +290,6 @@ class LaneRunner:
             'if [ "${1-}" = "buildx" ]; then\n'
             '    printf "%s\\n" "docker: unknown command: docker buildx" >&2\n'
             "    exit 1\n"
-            "fi\n"
-            'if [ "${1-}" = "build" ]; then\n'
-            "    exec /usr/bin/env python3 -c "
-            f"{shlex.quote(build_filter)} \"$docker\" \"$@\"\n"
             "fi\n"
             'exec "$docker" "$@"\n',
             encoding="utf-8",
