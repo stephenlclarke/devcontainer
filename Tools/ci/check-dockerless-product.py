@@ -21,7 +21,7 @@ SCANNED_PATHS = (
     ROOT / "scripts",
     ROOT / "Tools" / "version-generator",
     ROOT / "Tools" / "release",
-    ROOT / "Tools" / "ci" / "bootstrap.sh",
+    ROOT / "Tools" / "ci",
     ROOT / ".github" / "workflows",
 )
 IGNORED_PATHS = {

@@ -22,6 +22,10 @@ class DockerlessProductTests(unittest.TestCase):
             MODULE.ROOT / "Tools" / "release" / "devcontainer.rb.in",
             MODULE.source_files(),
         )
+        self.assertIn(
+            MODULE.ROOT / "Tools" / "ci" / "compose-cli-smoke-fixture.sh",
+            MODULE.source_files(),
+        )
 
     def test_forbidden_patterns_reject_runtime_acquisition_and_execution(self) -> None:
         rejected = (
