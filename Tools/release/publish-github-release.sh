@@ -122,7 +122,8 @@ require_staged_release() {
 # bytes or retaining foreign assets. Mutable Current publication deliberately
 # uses a separate clobber-capable path below.
 reconcile_stable_assets() {
-  local temporary remote_names expected_names asset name downloaded count
+  local temporary initial final remote_names expected_names asset name
+  local downloaded count
   local -a missing_assets=()
   remote_names="$(
     "$GH" release view "$TAG" \
@@ -157,12 +158,15 @@ reconcile_stable_assets() {
     mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-stable-assets.XXXXXX"
   )"
   trap 'find "$temporary" -depth -delete >/dev/null 2>&1 || true' RETURN
+  initial="$temporary/initial"
+  final="$temporary/final"
+  mkdir -p "$initial" "$final"
   for asset in "${ASSETS[@]}"; do
     name="$(basename "$asset")"
     if grep -Fqx -- "$name" <<<"$remote_names"; then
       "$GH" release download "$TAG" \
-        --repo "$REPOSITORY" --pattern "$name" --dir "$temporary"
-      downloaded="$temporary/$name"
+        --repo "$REPOSITORY" --pattern "$name" --dir "$initial"
+      downloaded="$initial/$name"
       if [[ ! -f "$downloaded" ]] || \
         [[ "$(shasum -a 256 "$downloaded" | awk '{print $1}')" != \
           "$(shasum -a 256 "$asset" | awk '{print $1}')" ]]; then
@@ -177,6 +181,46 @@ reconcile_stable_assets() {
   if (( ${#missing_assets[@]} > 0 )); then
     "$GH" release upload "$TAG" "${missing_assets[@]}" --repo "$REPOSITORY"
   fi
+
+  # Close the upload-to-publish race by discarding the first snapshot and
+  # authenticating the complete remote closure again immediately before edit.
+  remote_names="$(
+    "$GH" release view "$TAG" \
+      --repo "$REPOSITORY" --json assets --jq '.assets[].name'
+  )"
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if ! grep -Fqx -- "$name" <<<"$expected_names"; then
+      printf 'stable prerelease contains an unexpected asset: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+    count="$(grep -Fxc -- "$name" <<<"$remote_names" || true)"
+    if (( count != 1 )); then
+      printf 'stable prerelease contains a duplicate asset name: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+  done <<<"$remote_names"
+  for asset in "${ASSETS[@]}"; do
+    name="$(basename "$asset")"
+    count="$(grep -Fxc -- "$name" <<<"$remote_names" || true)"
+    if (( count != 1 )); then
+      printf 'stable prerelease is missing expected asset: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+    "$GH" release download "$TAG" \
+      --repo "$REPOSITORY" --pattern "$name" --dir "$final"
+    downloaded="$final/$name"
+    if [[ ! -f "$downloaded" ]] || \
+      [[ "$(shasum -a 256 "$downloaded" | awk '{print $1}')" != \
+        "$(shasum -a 256 "$asset" | awk '{print $1}')" ]]; then
+      printf 'stable prerelease asset conflicts with candidate: %s\n' \
+        "$name" >&2
+      return 1
+    fi
+  done
 }
 
 # Move the deliberately mutable Current source pointer.

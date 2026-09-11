@@ -30,7 +30,10 @@ class GitHubReleasePublisherTests(unittest.TestCase):
         release_exists: bool,
         prerelease: bool = True,
         remote_assets: str = "",
-        download_content: str = "archive",
+        download_content: str = "",
+        remote_assets_after_upload: str = (
+            "package.tar.gz\npackage.tar.gz.sha256\n"
+        ),
     ) -> tuple[dict[str, str], Path, Path]:
         fake_bin = root / "bin"
         fake_bin.mkdir()
@@ -54,7 +57,11 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "  exit 1\n"
                 "fi\n"
                 'if [[ "${1:-}" == release && "${2:-}" == view ]]; then\n'
-                '  printf "%s" "$REMOTE_ASSETS"\n'
+                '  if [[ -f "$GH_UPLOAD_MARKER" ]]; then\n'
+                '    printf "%s" "$REMOTE_ASSETS_AFTER_UPLOAD"\n'
+                "  else\n"
+                '    printf "%s" "$REMOTE_ASSETS"\n'
+                "  fi\n"
                 "  exit 0\n"
                 "fi\n"
                 'if [[ "${1:-}" == release && "${2:-}" == download ]]; then\n'
@@ -67,7 +74,18 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "      *) shift ;;\n"
                 "    esac\n"
                 "  done\n"
-                '  printf "%s" "$DOWNLOAD_CONTENT" > "$directory/$pattern"\n'
+                '  if [[ -n "$DOWNLOAD_CONTENT" ]]; then\n'
+                '    printf "%s" "$DOWNLOAD_CONTENT" > "$directory/$pattern"\n'
+                "  else\n"
+                '    case "$pattern" in\n'
+                '      package.tar.gz) printf "archive" > "$directory/$pattern" ;;\n'
+                '      package.tar.gz.sha256) printf "checksum\\n" > "$directory/$pattern" ;;\n'
+                "    esac\n"
+                "  fi\n"
+                "  exit 0\n"
+                "fi\n"
+                'if [[ "${1:-}" == release && "${2:-}" == upload ]]; then\n'
+                '  : > "$GH_UPLOAD_MARKER"\n'
                 "  exit 0\n"
                 "fi\n"
             ),
@@ -97,7 +115,9 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "RELEASE_REPOSITORY": "stephenlclarke/devcontainer",
                 "RELEASE_TITLE": "Release",
                 "REMOTE_ASSETS": remote_assets,
+                "REMOTE_ASSETS_AFTER_UPLOAD": remote_assets_after_upload,
                 "DOWNLOAD_CONTENT": download_content,
+                "GH_UPLOAD_MARKER": str(root / "upload.marker"),
             }
         )
         return environment, gh_trace, git_trace
@@ -256,6 +276,23 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn("conflicts with candidate", result.stderr)
             trace = gh_trace.read_text(encoding="utf-8")
             self.assertNotIn("release upload", trace)
+            self.assertNotIn("release edit", trace)
+
+    def test_stable_stage_revalidates_remote_assets_after_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary_directory),
+                release_exists=True,
+                remote_assets_after_upload=(
+                    "package.tar.gz\npackage.tar.gz.sha256\nforeign.tar.gz\n"
+                ),
+            )
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("unexpected asset", result.stderr)
+            trace = gh_trace.read_text(encoding="utf-8")
+            self.assertIn("release upload", trace)
+            self.assertEqual(trace.count("release view"), 2)
             self.assertNotIn("release edit", trace)
 
     def test_stable_finalize_promotes_staged_prerelease(self) -> None:
