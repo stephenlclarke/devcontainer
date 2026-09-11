@@ -542,6 +542,7 @@ extension DockerRouter {
         if let response = try await imageReadResponse(
             method: route.request.method,
             path: route.path,
+            target: route.target,
             context: route.context
         ) {
             return response
@@ -1169,6 +1170,7 @@ extension DockerRouter {
     private func imageReadResponse(
         method: DockerHTTPMethod,
         path: String,
+        target: ParsedTarget,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if method == .get, path == "/images/json" {
@@ -1180,7 +1182,13 @@ extension DockerRouter {
            let reference = identifier(in: path, prefix: "/images/", suffix: "/json")
         {
             return try await .json(
-                imageInspect(runtime.inspectImage(reference: reference, context: context))
+                imageInspect(
+                    runtime.inspectImage(
+                        reference: reference,
+                        platform: target.first("platform"),
+                        context: context
+                    )
+                )
             )
         }
         return nil

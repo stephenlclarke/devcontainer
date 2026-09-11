@@ -69,6 +69,11 @@ public protocol RuntimeMetadataStore: Sendable {
 public protocol ImageRuntime: Sendable {
     func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot]
     func inspectImage(reference: String, context: RuntimeRequestContext) async throws -> ImageSnapshot
+    func inspectImage(
+        reference: String,
+        platform: String?,
+        context: RuntimeRequestContext
+    ) async throws -> ImageSnapshot
     func pullImage(reference: String, context: RuntimeRequestContext) async throws
         -> AsyncThrowingStream<Data, any Error>
     func loadImage(
@@ -81,6 +86,44 @@ public protocol ImageRuntime: Sendable {
     ) async throws -> AsyncThrowingStream<Data, any Error>
     func tagImage(source: String, target: String, context: RuntimeRequestContext) async throws
     func removeImage(reference: String, force: Bool, context: RuntimeRequestContext) async throws
+}
+
+public extension ImageRuntime {
+    func inspectImage(
+        reference: String,
+        platform: String?,
+        context: RuntimeRequestContext
+    ) async throws -> ImageSnapshot {
+        let image = try await inspectImage(reference: reference, context: context)
+        guard let platform, !platform.isEmpty else {
+            return image
+        }
+        let components = platform.split(
+            separator: "/",
+            maxSplits: 2,
+            omittingEmptySubsequences: false
+        )
+        guard (2 ... 3).contains(components.count),
+              !components[0].isEmpty,
+              !components[1].isEmpty
+        else {
+            throw DevContainerError(.invalidRequest, message: "invalid platform \(platform)")
+        }
+        let operatingSystem = String(components[0])
+        let architecture = String(components[1])
+        let variantMatches = components.count < 3
+            || (!components[2].isEmpty && image.variant == String(components[2]))
+        guard image.operatingSystem == operatingSystem,
+              image.architecture == architecture,
+              variantMatches
+        else {
+            throw DevContainerError(
+                .notFound,
+                message: "image \(reference) has no \(platform) variant"
+            )
+        }
+        return image
+    }
 }
 
 public protocol ContainerRuntime: Sendable {

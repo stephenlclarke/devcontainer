@@ -431,6 +431,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
     public var createdAt: Date
     public var size: UInt64
     public var architecture: String
+    public var variant: String?
     public var operatingSystem: String
     public var user: String
     public var environment: [String]
@@ -444,6 +445,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         createdAt: Date,
         size: UInt64,
         architecture: String = "arm64",
+        variant: String? = nil,
         operatingSystem: String = "linux",
         user: String = "",
         environment: [String] = [],
@@ -456,6 +458,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.size = size
         self.architecture = architecture
+        self.variant = variant
         self.operatingSystem = operatingSystem
         self.user = user
         self.environment = environment

@@ -1181,7 +1181,7 @@ extension DockerRouter {
             size: image.size,
             virtualSize: image.size,
             architecture: image.architecture,
-            variant: image.architecture == "arm64" ? "v8" : "",
+            variant: image.variant ?? (image.architecture == "arm64" ? "v8" : ""),
             operatingSystem: image.operatingSystem,
             config: DockerImageConfig(
                 user: image.user,

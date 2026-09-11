@@ -329,7 +329,10 @@ extension AppleContainerRuntime {
         return snapshot
     }
 
-    func imageSnapshot(_ value: [String: Any]) -> ImageSnapshot? {
+    func imageSnapshot(
+        _ value: [String: Any],
+        requestedPlatform: String? = nil
+    ) -> ImageSnapshot? {
         guard
             let id = value["id"] as? String,
             let configuration = value["configuration"] as? [String: Any]
@@ -338,18 +341,21 @@ extension AppleContainerRuntime {
         }
         let name = configuration["name"] as? String
         let variants = value["variants"] as? [[String: Any]] ?? []
-        let arm =
-            variants.first(where: {
-                (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
-            }) ?? variants.first
-        let platform = arm?["platform"] as? [String: Any]
-        let imageConfiguration = (arm?["config"] as? [String: Any])?["config"] as? [String: Any] ?? [:]
+        guard let selected = Self.imageVariant(
+            variants,
+            requestedPlatform: requestedPlatform
+        ) else {
+            return nil
+        }
+        let platform = selected["platform"] as? [String: Any]
+        let imageConfiguration = (selected["config"] as? [String: Any])?["config"] as? [String: Any] ?? [:]
         return ImageSnapshot(
             id: "sha256:\(id)",
             references: name.map { [$0] } ?? [],
             createdAt: Self.date(configuration["creationDate"]) ?? Date(timeIntervalSince1970: 0),
-            size: Self.number(arm?["size"]).flatMap(UInt64.init(exactly:)) ?? 0,
+            size: Self.number(selected["size"]).flatMap(UInt64.init(exactly:)) ?? 0,
             architecture: platform?["architecture"] as? String ?? "arm64",
+            variant: platform?["variant"] as? String,
             operatingSystem: platform?["os"] as? String ?? "linux",
             user: imageConfiguration["User"] as? String ?? "",
             environment: imageConfiguration["Env"] as? [String] ?? [],
@@ -357,6 +363,38 @@ extension AppleContainerRuntime {
             command: imageConfiguration["Cmd"] as? [String] ?? [],
             labels: imageConfiguration["Labels"] as? [String: String] ?? [:]
         )
+    }
+
+    private static func imageVariant(
+        _ variants: [[String: Any]],
+        requestedPlatform: String?
+    ) -> [String: Any]? {
+        if let requestedPlatform, !requestedPlatform.isEmpty {
+            let components = requestedPlatform.split(
+                separator: "/",
+                maxSplits: 2,
+                omittingEmptySubsequences: false
+            )
+            guard (2 ... 3).contains(components.count),
+                  !components[0].isEmpty,
+                  !components[1].isEmpty
+            else {
+                return nil
+            }
+            return variants.first { variant in
+                guard let platform = variant["platform"] as? [String: Any],
+                      platform["os"] as? String == String(components[0]),
+                      platform["architecture"] as? String == String(components[1])
+                else {
+                    return false
+                }
+                return components.count < 3
+                    || platform["variant"] as? String == String(components[2])
+            }
+        }
+        return variants.first(where: {
+            (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
+        }) ?? variants.first
     }
 
     func networkSnapshot(_ value: [String: Any]) -> NetworkSnapshot? {

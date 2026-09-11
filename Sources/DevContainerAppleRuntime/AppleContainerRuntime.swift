@@ -1100,14 +1100,28 @@ public extension AppleContainerRuntime {
     func listImages(context _: RuntimeRequestContext) async throws -> [ImageSnapshot] {
         let result = try await command(["image", "list", "--format", "json"])
         try requireSuccess(result, operation: "image list")
-        return try parseJSONObjectArray(result.standardOutput).compactMap(imageSnapshot)
+        return try parseJSONObjectArray(result.standardOutput).compactMap {
+            imageSnapshot($0)
+        }
     }
 
     func inspectImage(
         reference: String,
         context: RuntimeRequestContext
     ) async throws -> ImageSnapshot {
-        let images = try await listImages(context: context)
+        try await inspectImage(reference: reference, platform: nil, context: context)
+    }
+
+    func inspectImage(
+        reference: String,
+        platform: String?,
+        context _: RuntimeRequestContext
+    ) async throws -> ImageSnapshot {
+        let result = try await command(["image", "list", "--format", "json"])
+        try requireSuccess(result, operation: "image list")
+        let images = try parseJSONObjectArray(result.standardOutput).compactMap {
+            imageSnapshot($0, requestedPlatform: platform)
+        }
         guard
             let image = images.first(where: {
                 $0.id == reference
@@ -1117,7 +1131,11 @@ public extension AppleContainerRuntime {
                     })
             })
         else {
-            throw DevContainerError(.notFound, message: "image \(reference) was not found")
+            let suffix = platform.map { " for platform \($0)" } ?? ""
+            throw DevContainerError(
+                .notFound,
+                message: "image \(reference) was not found\(suffix)"
+            )
         }
         return image
     }

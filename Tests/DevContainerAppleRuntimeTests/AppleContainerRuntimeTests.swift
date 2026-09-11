@@ -1017,11 +1017,11 @@ struct FakeAppleCLI {
               },
               "variants":[
                 {
-                  "platform":{"architecture":"amd64","os":"linux"},
+                  "platform":{"architecture":"amd64","os":"linux","variant":"v3"},
                   "size":1
                 },
                 {
-                  "platform":{"architecture":"arm64","os":"linux"},
+                  "platform":{"architecture":"arm64","os":"linux","variant":"v8"},
                   "size":12345,
                   "config":{"config":{
                     "User":"vscode",
