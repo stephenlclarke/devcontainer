@@ -383,7 +383,7 @@ jobs:
             printf 'devcontainer version --format json\n'
             printf '```\n\n'
             printf "The formula installs the standalone \`devcontainer\` service, "
-            printf 'Docker-compatible engine adapter, and Compose adapter. '
+            printf 'Apple-backed Engine API adapter, and Compose adapter. '
             printf "Stock Apple \`container\` is selected by default; "
             printf "A pinned stock-profile native \`container-compose\` build is bundled in the signed archive.\\n\\n"
             printf '## Certified compatibility\n\n'

@@ -34,7 +34,7 @@ import Logging
 struct DevContainerServiceCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "devcontainer-engine",
-        abstract: "Docker Engine compatibility service for Apple container"
+        abstract: "Dev Containers Engine API adapter for Apple container"
     )
 
     @Option(name: .long, help: "User-owned Unix socket path.")

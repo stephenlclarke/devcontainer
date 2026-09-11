@@ -642,6 +642,14 @@ jobs:
             dependabot,
         )
 
+    def test_release_copy_describes_an_apple_backed_engine(self) -> None:
+        contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Apple-backed Engine API adapter", contents)
+        self.assertNotIn("Docker-compatible engine adapter", contents)
+
     def test_parity_comparison_survives_failed_lanes(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
         compare = contents[contents.index("  compare:\n"):]

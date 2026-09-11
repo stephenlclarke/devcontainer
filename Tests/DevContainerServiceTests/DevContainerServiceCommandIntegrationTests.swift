@@ -27,6 +27,14 @@ import Testing
 @Suite(.serialized)
 struct ServiceCommandIntegrationTests {
     @Test
+    func `engine help identifies the Apple adapter without implying a Docker service`() {
+        #expect(
+            DevContainerServiceCommand.configuration.abstract
+                == "Dev Containers Engine API adapter for Apple container"
+        )
+    }
+
+    @Test
     func `engine rejects a runtime from the wrong provider lane`() throws {
         #expect(throws: DevContainerError.self) {
             try DevContainerServiceCommand.requireMatchingProvider(
