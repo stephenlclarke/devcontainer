@@ -445,6 +445,20 @@ jobs:
             mode=current-stage
           fi
           Tools/release/publish-github-release.sh "${mode}"
+      - name: Publish immutable stable release
+        if: needs.resolve.outputs.lane == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
+          RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ steps.package.outputs.release_tag }}
+        working-directory: devcontainer
+        run: |
+          set -euo pipefail
+          Tools/release/publish-github-release.sh stable-finalize
       - name: Render and validate tap formula
         env:
           ASSET: ${{ steps.package.outputs.asset }}
@@ -553,7 +567,8 @@ jobs:
           set -euo pipefail
           test -z "$(git -C homebrew-tap status --short)"
           git -C homebrew-tap push origin main
-      - name: Finalize release after tap promotion
+      - name: Finalize mutable Current release after tap promotion
+        if: needs.resolve.outputs.lane == 'current'
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
@@ -565,8 +580,4 @@ jobs:
         working-directory: devcontainer
         run: |
           set -euo pipefail
-          mode=stable-finalize
-          if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
-            mode=current-finalize
-          fi
-          Tools/release/publish-github-release.sh "${mode}"
+          Tools/release/publish-github-release.sh current-finalize

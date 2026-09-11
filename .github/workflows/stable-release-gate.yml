@@ -73,6 +73,14 @@ jobs:
             exit 1
           fi
 
+          immutability="$(
+            gh api "repos/${GITHUB_REPOSITORY}/immutable-releases"
+          )"
+          if ! jq -e '.enabled == true' <<<"${immutability}" >/dev/null; then
+            printf 'GitHub immutable releases must be enabled before validation\n' >&2
+            exit 1
+          fi
+
           release_output=""
           set +e
           release_output="$(
@@ -86,14 +94,20 @@ jobs:
               --arg tag "${RELEASE_TAG}" \
               '
                 .tag_name == $tag and
-                .draft == false and
-                .prerelease == true
+                (
+                  .draft == true or
+                  (
+                    .draft == false and
+                    .prerelease == false and
+                    .immutable == true
+                  )
+                )
               ' <<<"${release_output}" >/dev/null; then
-              printf 'final stable release %s already exists and is immutable\n' \
+              printf 'stable release %s is neither a draft nor immutable final release\n' \
                 "${RELEASE_TAG}" >&2
               exit 1
             fi
-            printf 'resuming staged stable prerelease %s\n' "${RELEASE_TAG}"
+            printf 'resuming valid stable release state for %s\n' "${RELEASE_TAG}"
           fi
           if (( release_status != 0 )) &&
              [[ "${release_output}" != *"HTTP 404"* ]]; then

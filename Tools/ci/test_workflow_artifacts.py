@@ -597,6 +597,8 @@ jobs:
             "candidateSha: $candidate_sha",
             "workflow: \"Stable Release Gate\"",
             "retention-days: 90",
+            'repos/${GITHUB_REPOSITORY}/immutable-releases',
+            ".immutable == true",
         ):
             self.assertIn(marker, stable)
         for marker in (
@@ -692,19 +694,30 @@ jobs:
             encoding="utf-8"
         )
         stage = contents.index("- name: Stage GitHub release assets")
+        publish = contents.index("- name: Publish immutable stable release")
         render = contents.index("- name: Render and validate tap formula")
         commit = contents.index("- name: Commit candidate tap state locally")
         install = contents.index("- name: Install and test tap formula")
         push = contents.index("- name: Push tested tap state")
-        finalize = contents.index("- name: Finalize release after tap promotion")
+        finalize = contents.index(
+            "- name: Finalize mutable Current release after tap promotion"
+        )
 
-        self.assertLess(stage, render)
+        self.assertLess(stage, publish)
+        self.assertLess(publish, render)
         self.assertLess(render, commit)
         self.assertLess(commit, install)
         self.assertLess(install, push)
         self.assertLess(push, finalize)
         self.assertIn("mode=stable-stage", contents)
-        self.assertIn("mode=stable-finalize", contents)
+        self.assertIn(
+            "Tools/release/publish-github-release.sh stable-finalize",
+            contents,
+        )
+        self.assertIn(
+            "Tools/release/publish-github-release.sh current-finalize",
+            contents,
+        )
         self.assertIn(
             'formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"',
             contents,
