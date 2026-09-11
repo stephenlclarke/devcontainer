@@ -579,7 +579,10 @@ struct AppleContainerRuntimeTests {
             ) == 23
         )
 
-        let deadline = ContinuousClock.now + .seconds(5)
+        // Sanitized suites run many fake Apple CLI processes concurrently.
+        // Preserve a bounded liveness assertion without treating ordinary
+        // instrumentation contention as an order-of-magnitude regression.
+        let deadline = ContinuousClock.now + .seconds(10)
         while await store.containerMetadata(id: "fixture") != nil,
               ContinuousClock.now < deadline
         {

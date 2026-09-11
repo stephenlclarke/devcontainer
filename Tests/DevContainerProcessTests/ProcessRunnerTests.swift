@@ -15,7 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import Darwin
-import DevContainerProcess
+@testable import DevContainerProcess
 import Foundation
 import Testing
 
@@ -76,6 +76,40 @@ struct ProcessRunnerTests {
         }
         #expect(identifiers.count == 2)
         #expect(!identifiers.contains(where: Self.processExists))
+    }
+
+    @Test
+    func `process escalation cannot outlive exit publication`() {
+        let killEntered = DispatchSemaphore(value: 0)
+        let allowKill = DispatchSemaphore(value: 0)
+        let exitEntered = DispatchSemaphore(value: 0)
+        let exitReturned = DispatchSemaphore(value: 0)
+        let termination = OwnedProcessTermination(
+            gracePeriod: .milliseconds(0),
+            signalProcessGroup: { _, signal in
+                guard signal == SIGKILL else {
+                    return
+                }
+                killEntered.signal()
+                allowKill.wait()
+            }
+        )
+        termination.didLaunch(processGroup: 4242)
+        termination.cancel()
+        #expect(killEntered.wait(timeout: .now() + 1) == .success)
+
+        DispatchQueue.global(qos: .utility).async {
+            exitEntered.signal()
+            termination.didExit()
+            exitReturned.signal()
+        }
+        #expect(exitEntered.wait(timeout: .now() + 1) == .success)
+        #expect(
+            exitReturned.wait(timeout: .now() + .milliseconds(50))
+                == .timedOut
+        )
+        allowKill.signal()
+        #expect(exitReturned.wait(timeout: .now() + 1) == .success)
     }
 
     @Test

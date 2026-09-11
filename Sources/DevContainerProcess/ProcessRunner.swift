@@ -340,13 +340,28 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     private static let gracePeriod = DispatchTimeInterval.milliseconds(500)
 
     private let lock = NSLock()
+    private let gracePeriod: DispatchTimeInterval
+    private let signalProcessGroup: @Sendable (pid_t, Int32) -> Void
     private var processGroup: pid_t?
     private var running = false
     private var cancellationRequested = false
     private var escalation: DispatchWorkItem?
 
-    public init() {
-        // Mutable termination state is initialized by the property defaults.
+    public convenience init() {
+        self.init(
+            gracePeriod: Self.gracePeriod,
+            signalProcessGroup: { processGroup, signal in
+                _ = Darwin.kill(-processGroup, signal)
+            }
+        )
+    }
+
+    init(
+        gracePeriod: DispatchTimeInterval,
+        signalProcessGroup: @escaping @Sendable (pid_t, Int32) -> Void
+    ) {
+        self.gracePeriod = gracePeriod
+        self.signalProcessGroup = signalProcessGroup
     }
 
     public var isRunning: Bool {
@@ -387,7 +402,7 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     }
 
     private func beginTermination(_ processGroup: pid_t) {
-        _ = Darwin.kill(-processGroup, SIGTERM)
+        signalProcessGroup(processGroup, SIGTERM)
         let work = DispatchWorkItem { [weak self] in
             self?.forceTerminate(processGroup)
         }
@@ -400,19 +415,21 @@ public final class OwnedProcessTermination: @unchecked Sendable {
         }
         if shouldSchedule {
             DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.gracePeriod,
+                deadline: .now() + gracePeriod,
                 execute: work
             )
         }
     }
 
     private func forceTerminate(_ processGroup: pid_t) {
-        let stillOwned = lock.withLock {
-            running && self.processGroup == processGroup
+        lock.withLock {
+            guard running, self.processGroup == processGroup else {
+                return
+            }
+            // Keep the ownership check and signal in one critical section.
+            // didExit cannot publish completion and allow a later command to
+            // reuse this process-group identifier before escalation finishes.
+            signalProcessGroup(processGroup, SIGKILL)
         }
-        guard stillOwned else {
-            return
-        }
-        _ = Darwin.kill(-processGroup, SIGKILL)
     }
 }
