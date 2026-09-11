@@ -131,6 +131,15 @@ class DockerlessProductTests(unittest.TestCase):
         self.assertIn('name != "docker.raw.sock"', router)
         self.assertIn("mounting a Docker runtime socket is disabled", router)
 
+        transport = (
+            MODULE.ROOT
+            / "Sources"
+            / "DevContainerDockerCLI"
+            / "DockerHTTPClient.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn('$0 != "docker.sock" && $0 != "docker.raw.sock"', transport)
+        self.assertIn("Docker runtime socket names are disabled", transport)
+
 
 if __name__ == "__main__":
     unittest.main()

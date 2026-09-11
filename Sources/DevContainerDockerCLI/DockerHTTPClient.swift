@@ -158,14 +158,22 @@ public final class UnixSocketDockerTransport:
 
     public init(socketPath: String) throws {
         let capacity = withUnsafeBytes(of: sockaddr_un().sun_path) { $0.count }
+        let socketURL = URL(fileURLWithPath: socketPath).standardizedFileURL
         guard
             socketPath.hasPrefix("/"),
             !socketPath.contains("\0"),
-            socketPath.utf8.count < capacity
+            socketURL.path.utf8.count < capacity
         else {
             throw DockerHTTPClientError.invalidSocketPath(socketPath)
         }
-        self.socketPath = socketPath
+        let names = [socketURL, socketURL.resolvingSymlinksInPath()]
+            .map { $0.lastPathComponent.lowercased() }
+        guard names.allSatisfy({ $0 != "docker.sock" && $0 != "docker.raw.sock" }) else {
+            throw DockerHTTPClientError.unsafeSocket(
+                "Docker runtime socket names are disabled in the Docker-less product"
+            )
+        }
+        self.socketPath = socketURL.path
     }
 
     public func send(

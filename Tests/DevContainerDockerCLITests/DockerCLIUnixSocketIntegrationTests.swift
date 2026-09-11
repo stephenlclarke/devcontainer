@@ -26,6 +26,36 @@ import Testing
 @Suite("Docker CLI Unix socket integration", .serialized)
 struct DockerCLIUnixSocketIntegrationTests {
     @Test
+    func `transport rejects Docker runtime socket names and aliases`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dccli-policy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for name in ["docker.sock", "docker.raw.sock"] {
+            #expect(throws: DockerHTTPClientError.self) {
+                try UnixSocketDockerTransport(
+                    socketPath: root.appendingPathComponent(name).path
+                )
+            }
+        }
+
+        let target = root.appendingPathComponent("docker.sock")
+        let alias = root.appendingPathComponent("engine.sock")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(
+            at: alias,
+            withDestinationURL: target
+        )
+        #expect(throws: DockerHTTPClientError.self) {
+            try UnixSocketDockerTransport(socketPath: alias.path)
+        }
+    }
+
+    @Test
     // swiftlint:disable:next function_body_length
     func `uses the real HTTP server for fixed and chunked responses`() async throws {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
