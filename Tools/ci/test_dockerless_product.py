@@ -115,8 +115,11 @@ class DockerlessProductTests(unittest.TestCase):
             / "DevContainerCLI"
             / "ReferenceCLICommand.swift"
         ).read_text(encoding="utf-8")
-        self.assertNotIn('environment["DEVCONTAINER_REFERENCE_CLI"]', reference)
-        self.assertIn('key != "DEVCONTAINER_REFERENCE_CLI"', reference)
+        self.assertIn('!key.hasPrefix("DEVCONTAINER_")', reference)
+        self.assertIn(
+            'childEnvironment["DEVCONTAINER_CONTAINER_BIN"] = selection.containerExecutable',
+            reference,
+        )
         self.assertIn('!key.hasPrefix("DOCKER_")', reference)
         self.assertIn('key != "NODE_OPTIONS"', reference)
         self.assertIn('key != "NODE_PATH"', reference)

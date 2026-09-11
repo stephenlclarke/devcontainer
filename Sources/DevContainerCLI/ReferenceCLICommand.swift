@@ -165,18 +165,34 @@ struct ReferenceCLIInvocation: Equatable {
             ]
         }
         upstreamArguments += arguments
-        var childEnvironment = safeEnvironment(environment)
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
-            environment: childEnvironment
+            environment: environment
         )
-        childEnvironment["DEVCONTAINER_SOCKET"] = selection.socket
-        childEnvironment["DOCKER_HOST"] = "unix://\(selection.socket)"
-        childEnvironment["DEVCONTAINER_REFERENCE_CLI_VERSION"] = version
+        let childEnvironment = configuredEnvironment(
+            inherited: environment,
+            selection: selection
+        )
         return ReferenceCLIInvocation(
             node: node,
             arguments: upstreamArguments,
             environment: childEnvironment
         )
+    }
+
+    private static func configuredEnvironment(
+        inherited: [String: String],
+        selection: DevContainerRuntimeSelection
+    ) -> [String: String] {
+        var childEnvironment = safeEnvironment(inherited)
+        childEnvironment["DEVCONTAINER_BACKEND"] = selection.backend.rawValue
+        childEnvironment["DEVCONTAINER_COMPOSE_PROVIDER"] = selection.composeProvider.rawValue
+        childEnvironment["DEVCONTAINER_CONFIG"] = selection.configuration.path
+        childEnvironment["DEVCONTAINER_CONTAINER_BIN"] = selection.containerExecutable
+        childEnvironment["DEVCONTAINER_SOCKET"] = selection.socket
+        childEnvironment["DEVCONTAINER_STATE"] = selection.stateDatabase
+        childEnvironment["DOCKER_HOST"] = "unix://\(selection.socket)"
+        childEnvironment["DEVCONTAINER_REFERENCE_CLI_VERSION"] = version
+        return childEnvironment
     }
 
     private static func absoluteExecutable(_ executable: URL?) throws -> URL {
@@ -252,10 +268,7 @@ struct ReferenceCLIInvocation: Equatable {
                 && key != "BASH_ENV"
                 && !key.hasPrefix("DOCKER_")
                 && key != "ENV"
-                && key != "DEVCONTAINER_COMPOSE_BIN"
-                && key != "DEVCONTAINER_DOCKER_BIN"
-                && key != "DEVCONTAINER_NODE_BIN"
-                && key != "DEVCONTAINER_REFERENCE_CLI"
+                && !key.hasPrefix("DEVCONTAINER_")
                 && key != "NODE_OPTIONS"
                 && key != "NODE_PATH"
         }

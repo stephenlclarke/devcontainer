@@ -65,7 +65,12 @@ struct ReferenceCLICommandTests {
         ])
         #expect(invocation.environment["DEVCONTAINER_REFERENCE_CLI_VERSION"] == "0.89.0")
         #expect(invocation.environment["DOCKER_HOST"] == "unix://\(fixture.socket.path)")
+        #expect(invocation.environment["DEVCONTAINER_BACKEND"] == "stock")
+        #expect(invocation.environment["DEVCONTAINER_COMPOSE_PROVIDER"] == "container-compose")
+        #expect(invocation.environment["DEVCONTAINER_CONFIG"] == fixture.configuration.path)
+        #expect(invocation.environment["DEVCONTAINER_CONTAINER_BIN"] == "/usr/local/bin/container")
         #expect(invocation.environment["DEVCONTAINER_SOCKET"] == fixture.socket.path)
+        #expect(invocation.environment["DEVCONTAINER_STATE"] == fixture.state.path)
         #expect(invocation.environment["LOCAL_ENV_FIXTURE"] == "preserved")
         #expect(invocation.environment["SSH_AUTH_SOCK"] == "/tmp/agent.sock")
         #expect(invocation.environment["DYLD_INSERT_LIBRARIES"] == nil)
@@ -77,6 +82,7 @@ struct ReferenceCLICommandTests {
         #expect(invocation.environment["DOCKER_API_VERSION"] == nil)
         #expect(invocation.environment["NODE_OPTIONS"] == nil)
         #expect(invocation.environment["NODE_PATH"] == nil)
+        #expect(invocation.environment["DEVCONTAINER_UNTRUSTED"] == nil)
     }
 
     @Test
@@ -192,6 +198,8 @@ private struct InvocationFixture {
     let node: URL
     let script: URL
     let socket: URL
+    let configuration: URL
+    let state: URL
 
     init() throws {
         root = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -209,6 +217,8 @@ private struct InvocationFixture {
         node = bin.appendingPathComponent("node")
         script = share.appendingPathComponent("devcontainer.js")
         socket = root.appendingPathComponent("engine.sock")
+        configuration = root.appendingPathComponent("config.toml")
+        state = root.appendingPathComponent("state.sqlite")
         for executable in [devcontainer, docker, compose, node] {
             #expect(FileManager.default.createFile(atPath: executable.path, contents: Data()))
             try FileManager.default.setAttributes(
@@ -223,7 +233,13 @@ private struct InvocationFixture {
         [
             "DEVCONTAINER_NODE_BIN": node.path,
             "DEVCONTAINER_REFERENCE_CLI": script.path,
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_CONFIG": configuration.path,
+            "DEVCONTAINER_CONTAINER_BIN": "/usr/local/bin/container",
             "DEVCONTAINER_SOCKET": socket.path,
+            "DEVCONTAINER_STATE": state.path,
+            "DEVCONTAINER_UNTRUSTED": "must-not-reach-child",
             "DOCKER_HOST": "unix:///tmp/fixture.sock",
             "DOCKER_CONTEXT": "desktop-linux",
             "DOCKER_CONFIG": "/tmp/docker-config",
