@@ -70,7 +70,7 @@ the live command immediately above it. Recreate it on a release host with
 ## Design promise
 
 The project keeps the official [Dev Containers](https://github.com/devcontainers)
-toolchain above a local Docker Engine compatibility service. VS Code and the
+toolchain above a local Docker-compatible API service. VS Code and the
 reference [`@devcontainers/cli`](https://github.com/devcontainers/cli) remain
 unmodified; the service translates their tested Docker API subset into
 Apple-native runtime operations.
@@ -79,7 +79,7 @@ Apple-native runtime operations.
 flowchart LR
     VS["VS Code Dev Containers"] --> DC["Official @devcontainers/cli"]
     DC --> Adapter["Bundled devcontainer-docker protocol adapter"]
-    Adapter --> API["Local Docker Engine compatibility socket"]
+    Adapter --> API["Local Docker-compatible API socket"]
     API --> Shared["container-engine generated API 1.44 through 1.53 gateway"]
     Shared --> Session["Private fingerprint-bound provider session"]
     Session --> Core["devcontainer stock adapter and provider-neutral runtime core"]

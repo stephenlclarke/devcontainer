@@ -1,7 +1,9 @@
 # User Guide
 
 Use the official Dev Containers CLI and VS Code extension with stock Apple
-`container` through a local Docker Engine compatibility socket.
+`container` through a local Docker-compatible API socket. This is a
+project-owned Unix socket backed by Apple Container, not a Docker daemon or
+proxy.
 
 ## Install
 
