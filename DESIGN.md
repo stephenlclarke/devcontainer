@@ -3,9 +3,10 @@
 ## Status and decision
 
 This document describes the implemented `devcontainer` architecture. The
-project provides unmodified VS Code Dev Containers compatibility by placing a
-Docker Engine API compatibility service in front of Apple-native runtime
-providers. A companion `container devcontainer` CLI manages configuration and
+project provides unmodified VS Code Dev Containers compatibility through a
+project-owned, Apple-backed Engine API adapter. It implements the required
+Docker-shaped protocol directly with Apple-native runtime providers and never
+proxies Docker software. A companion `container devcontainer` CLI manages configuration and
 diagnostics; it does not replace or fork the Dev Container specification
 engine.
 
@@ -15,6 +16,9 @@ The product has two first-class runtime modes:
 2. **Enhanced Container mode:** the same compatibility service and native Compose boundary run against Stephen Clarke's enhanced Container distribution. The runtime is selected explicitly and is never installed or substituted by this project.
 
 The selected provider is immutable while a Dev Container project owns resources. Changing providers requires an explicit down/recreate operation so container identifiers, labels, networks, and volumes never become split-brain state.
+Engine startup also requires the selected backend to match the runtime's
+reported distribution; stock and enhanced provider identities cannot be
+mislabelled or silently substituted.
 
 ## Goals
 
@@ -47,7 +51,7 @@ unsupported capability.
 
 - General Docker Engine compatibility outside the endpoint and semantic surface required by the maintained Dev Container fixtures.
 - A fork of VS Code, `@devcontainers/cli`, or the Dev Container specification.
-- Installing or launching Docker CLI, Docker Compose, Docker Desktop, Docker Engine, or Colima in a product path.
+- Installing or launching Docker CLI, Docker Compose, Docker Desktop, Docker Engine, Colima, Podman, or nerdctl in a product path.
 - Reimplementing Compose parsing, interpolation, profiles, dependency planning, or reconciliation inside the core.
 - Exposing a Docker-compatible TCP port by default.
 - Kubernetes orchestration, production container scheduling, or Linux host support.
@@ -115,9 +119,9 @@ service and Compose-dispatch executables:
 | Unit | Apple plug-in name | Responsibility |
 | --- | --- | --- |
 | `devcontainer` | `devcontainer` CLI plug-in | Packaged alias of the `devcontainer` command for `version`, `doctor`, privacy-redacted `diagnostics`, `configure`, `context`, explicit plug-in registration, and durable `backend` ownership |
-| `container-engine` | Normal executable from exact `container-engine-api` 0.3.0 | Owns the public Docker Engine Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, RFC 6455 framing, and fail-closed dispatch to one private provider session |
+| `container-engine` | Normal executable from exact `container-engine-api` revision `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Owns the public compatibility Unix listener, generated API 1.44 through 1.53 route ledger, persistent provider selection, RFC 6455 framing, and fail-closed dispatch to one private provider session |
 | `devcontainer-engine` | Normal executable | Stock-provider adapter, state reconciliation, and event handling; normal mode starts an internal private provider session behind the shared public gateway, while `--provider-socket` exposes only that private session for an external `container-engine` process |
-| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` 0.3.0 libraries | Shared Docker wire, generated route ledger, hardened bounded raw/WebSocket listener, provider-owned immutable state-root identity, private schema-2 session protocol, and gateway dispatch; no Apple or Compose dependency |
+| `ContainerEngineWire`, `ContainerEngineRouter`, `ContainerUnixHTTPServer`, `ContainerEngineRuntimeSPI`, `ContainerEngineProviderSession`, and `ContainerEngineGateway` | Exact `container-engine-api` revision `48e44d74d738ca3d24351ba02c4869be1a3e6998` libraries | Shared compatibility wire, generated route ledger, hardened bounded raw/WebSocket listener, provider-owned immutable state-root identity, private schema-2 session protocol, and gateway dispatch; no Apple or Compose dependency |
 | `devcontainer-compose` | Docker Compose plug-in-compatible executable | Adapts the invocation contract to an explicitly resolved native `container-compose`; it has no Docker executable fallback |
 | `DevContainerCore` | Swift library | Provider-neutral use cases, compatibility rules, identity, reconciliation, and errors |
 | `DevContainerRuntimeSPI` | Swift library | Narrow runtime, build, process, archive, network, volume, forwarding, and capability protocols |
@@ -395,7 +399,7 @@ The Docker layer maps these to the status, JSON message, stream error, and exit 
 - Secrets, build arguments marked secret, authentication headers, SSH agent paths, and environment values matching redaction rules are removed from logs and diagnostic bundles.
 - Host mount paths are canonicalized, checked for symlink escapes, and authorized before resource creation.
 - Bind mounts whose resolved source is a Docker or Docker Desktop runtime socket are rejected before container creation; the product has no daemon-socket proxy mode.
-- The wrappers ignore ambient `DOCKER_HOST` and runtime-path overrides, inject only the project-owned adapters and socket, and reject Docker or Colima executable selections before launch.
+- The wrappers ignore ambient `DOCKER_HOST` and compatibility-adapter overrides, inject only the project-owned adapters and socket, and require runtime selection to resolve to an executable named `container`. Its version record must identify stock `apple/container` or the explicit `stephenlclarke/container` distribution; every other custom distribution is rejected before project work. Docker, Colima, Podman, and nerdctl executable selections fail before launch, and `docker` is not an accepted backend or Compose-provider configuration value. Every product child-process launch passes through the shared `ProcessRunner`, which reapplies that Docker-less executable and resolved-symlink policy before execution; the source audit rejects direct process-launch APIs outside that runner. The official client wrapper always uses the checksum-pinned packaged script and constrains Node selection to an executable named `node`. A separately selected native Compose executable must use a native provider filename and return an exact semantic version, 40-character source commit, and `stephenlclarke/container-compose` source identity before it can receive a project command. Explicit socket selection also rejects `docker.sock` and `docker.raw.sock`, including symlink aliases, before any connection attempt. A cached, side-effect-free identity probe must then identify the listening process as `devcontainer-engine` before the adapter sends its first workload request, so a foreign Docker-compatible endpoint cannot be selected under another socket filename.
 - Every dependency is pinned through `Package.resolved`; release artifacts include Apache-compatible notices, an SPDX SBOM, checksums, and provenance attestations.
 - Public pull requests never execute on the physical Apple runtime runner.
 
@@ -438,7 +442,7 @@ fingerprint and capability report.
 
 ## Observability
 
-Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time. Comparable or better performance (`<=1.00x` Docker) is the objective, and any completed result above `2.50x` requires further investigation. Non-completion and missing or invalid timing evidence fail the gate; a completed timing ratio alone does not alter functional parity. The full target and current implementation gaps are defined in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). There is no outbound telemetry in the initial product.
+Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time. Comparable or better performance (`<=1.00x` Docker) is the objective, and any completed result above `2.50x` requires further investigation. A candidate at or above `10.00x` its matching Docker fixture, non-completion, or missing or invalid timing evidence fails the gate without changing the separately reported functional result. The full target and current implementation gaps are defined in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). There is no outbound telemetry in the initial product.
 
 `container devcontainer diagnostics` creates a reviewable archive containing versions, capability probes, redacted logs, runtime resource summaries, config hashes, and recent event state. The command prints the archive manifest before writing it.
 
@@ -455,16 +459,21 @@ Stephen's Homebrew runtime.
 
 Stable formulae use immutable semantic release assets. The generated
 `devcontainer-current` formula uses a monotonically increasing
-`current.RUN.SHA12` version and a commit-identified asset; publication remains
-fail-closed until the trusted release runner, signing, notarization, and tap
-promotion controls described in [RELEASE.md](RELEASE.md) are provisioned.
+`current.RUN.SHA12` version and an immutable `current-SHA40` prerelease with a
+commit-identified asset. The release is published and authenticated before the
+formula fetch test, and the tap is pushed only after that exact formula passes.
+A stable release remains non-latest until the tested tap commit is pushed;
+only then is its editable Latest marker promoted. A retry after publication
+recovers the published bytes rather than assuming a new notarized build is
+byte-identical. The complete fail-closed transaction is defined in
+[RELEASE.md](RELEASE.md).
 
 ## Release definition of done
 
 A stable tag is prohibited until:
 
 - every fixture in `Tests/Parity/manifest.json` is implemented;
-- Docker oracle, stock Apple 1.4.1, and `container-compose` 0.14.3 recordings pass;
+- Docker oracle, stock Apple 1.4.1, and `container-compose` 0.15.0 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
 - hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;

@@ -225,6 +225,15 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("cp Package.stock.resolved Package.resolved", lane)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", lane)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=enhanced", lane)
+        self.assertEqual(lane.count("Tools/parity/require-quiet-host.sh"), 2)
+        self.assertIn(
+            '.build/parity/host-quiet/${{ matrix.lane }}/cli',
+            lane,
+        )
+        self.assertIn(
+            '.build/parity/host-quiet/${{ matrix.lane }}/vscode',
+            lane,
+        )
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
         checked = 0
@@ -687,6 +696,11 @@ jobs:
             "validate_manifest.py --release || status=1",
             compare,
         )
+        self.assertIn(
+            'receipt=".build/parity/host-quiet/${lane}/${suite}/quiet-host.tsv"',
+            compare,
+        )
+        self.assertIn("grep -Fx $'result\\tquiet'", compare)
         self.assertIn('          exit "${status}"\n', compare)
 
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:

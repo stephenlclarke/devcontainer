@@ -14,8 +14,10 @@ evidence for all 18 CLI fixtures and the real VS Code fixture.
 Every run has zero semantic differences and complete timing evidence.
 Comparable or better performance (`<=1.00x` Docker) is the objective. A
 completed result above `2.50x` Docker requires further investigation but does
-not, by itself, change functional parity. A timeout, other non-completion, or
-missing or invalid timing evidence fails the gate.
+not, by itself, change functional parity. A candidate at or above `10.00x` its
+matching Docker fixture, a timeout, other non-completion, or missing or invalid
+timing evidence fails the gate without changing the separately reported
+functional result.
 
 ## Measured hotspots
 

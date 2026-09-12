@@ -2,10 +2,10 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.1 is the stable release. Its immutable GitHub archive is
-> Developer ID-signed, notarized, parity-certified, checksummed, and published
-> through the stable Homebrew formula. The Apple runtime remains a separate
-> installation.
+> Version 1.0.2 is the current release candidate. The latest published stable
+> release remains 1.0.1 until the 1.0.2 archive has passed signing,
+> notarization, parity, checksum, and Homebrew publication gates. The Apple
+> runtime remains a separate installation.
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock
 `container` runtime on Apple-silicon Macs running macOS Tahoe. It installs as a
@@ -24,9 +24,22 @@ The supported installation preserves these boundaries:
 
 - Apple's stock `container` runtime is installed separately from Apple.
 - `devcontainer` uses the `container` executable selected by explicit configuration or `PATH`.
+- The selected runtime path and its resolved symlink target must both be named
+  `container`; other runtime CLIs are rejected before launch.
+- The runtime version probe must identify stock `apple/container` or the
+  explicit `stephenlclarke/container` distribution. Other custom distributions
+  and Docker-named provider configuration are rejected before project work.
 - The packaged `devcontainer-docker` compatibility adapter is the only
   Docker-shaped client used by VS Code and the official Dev Containers CLI.
   It is project-owned software and is not the Docker CLI.
+- Compatibility fields named `DOCKER_HOST`, `dockerPath`, and
+  `dockerComposePath` resolve only to the package-owned `engine.sock` and
+  adapters. They never select, proxy, or mount a Docker daemon socket.
+- Explicit engine-socket configuration rejects `docker.sock` and
+  `docker.raw.sock`, including symlink aliases, before any connection attempt.
+- The packaged adapter performs a cached, side-effect-free identity probe before
+  its first workload request and rejects any endpoint that is not the
+  Apple-container-backed `devcontainer-engine`.
 - The release bundles an exact stock-profile build of the native
   `container-compose` executable as its process-isolated multi-service
   implementation.
@@ -41,6 +54,10 @@ The supported installation preserves these boundaries:
 - A missing or invalid bundled native Compose executable produces an actionable
   capability error, never a fallback to Docker software or an automatic
   runtime replacement.
+- Compatibility-adapter environment overrides are ignored. An explicitly
+  selected external Compose executable must report a semantic version, an
+  exact 40-character commit, and the source `stephenlclarke/container-compose`
+  before it receives a project command.
 
 ## Requirements
 
@@ -56,9 +73,9 @@ The prebuilt and Homebrew packages require:
   contained in the release archive.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
-Docker or Colima may be installed only on a parity-test host as an isolated
-reference oracle. Neither is a supported product backend or installation
-dependency.
+Real Docker may be installed only on a parity-test host as an isolated reference
+oracle. Docker, Colima, Podman, and nerdctl are not supported product backends or
+installation dependencies.
 
 The release notes and `devcontainer version --format json` identify the exact
 versions used for release validation.
@@ -93,7 +110,7 @@ The tap provides two explicit channels:
 | Formula | Channel | Version form | Intended use |
 | --- | --- | --- | --- |
 | `devcontainer` | Stable | `MAJOR.MINOR.PATCH` | Default immutable release |
-| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in release-candidate build, when published |
+| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in build from an immutable `current-SHA40` prerelease |
 
 Install the stable release:
 
@@ -129,7 +146,7 @@ brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
 Neither formula may declare a dependency on a custom `container` runtime, an
-external Compose formula, Docker, or Colima.
+external Compose formula, Docker, Colima, Podman, or nerdctl.
 
 ## Package Layout
 

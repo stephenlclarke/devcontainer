@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "referencePins": {
     "devcontainersCli": {
-      "version": "0.88.0",
+      "version": "0.89.0",
       "source": "https://github.com/devcontainers/cli",
-      "commit": "f683c29f64a20109b4453e5149807e390ff65133",
-      "npmIntegrity": "sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w=="
+      "commit": "5dc7533314b5ba7ec3875c30143dfe1aec644870",
+      "npmIntegrity": "sha512-LzaoOGKQ/Zql6PsiZ4hVIYVZagzWkD65aG/1ou5/Kly5Y1PtjLg1yn7qu+LZCzVoAl6DZZ/pbz8qOO4RLNlqMg=="
     },
     "docker": {
       "cliVersion": "29.8.0",
@@ -28,22 +28,22 @@
       "stableCommit": "aa3dda83f1322ef70fe985fe11410e9f8201e4fa"
     },
     "vscode": {
-      "version": "1.136.1",
-      "commit": "a44adf7f53e00964ab890f9f8758a334f1fc15bc",
+      "version": "1.137.0",
+      "commit": "645f29cc3176500b4b5762ba887cf2a7f0ffdf2c",
       "platform": "darwin-arm64",
       "source": "https://github.com/microsoft/vscode",
-      "archiveURL": "https://update.code.visualstudio.com/1.136.1/darwin-arm64/stable",
-      "archiveSHA256": "bd15a1b26cd10ba84900f7bd30f21d51eef268828e1e15a8ac1f97f99620bbe5",
+      "archiveURL": "https://update.code.visualstudio.com/1.137.0/darwin-arm64/stable",
+      "archiveSHA256": "16ee5cddb1ea19234e1f2516da07d57e07d7cab6ab45a5515dab077656cbc65e",
       "applicationIdentifier": "com.microsoft.VSCode",
       "signingTeamIdentifier": "UBF8T346G9",
       "devContainersExtension": {
-        "version": "0.467.0",
+        "version": "0.470.0",
         "source": "https://github.com/microsoft/vscode-remote-release",
-        "vsixURL": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-containers/0.467.0/vspackage",
-        "vsixSHA256": "b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012",
-        "embeddedCliVersion": "0.88.0",
-        "embeddedCliCommit": "f683c29f64a20109b4453e5149807e390ff65133",
-        "embeddedCliSHA256": "ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca"
+        "vsixURL": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-containers/0.470.0/vspackage",
+        "vsixSHA256": "66300dd37ec86e709df46acf4c294821db94248ee89cff7fb32888271b5069a1",
+        "embeddedCliVersion": "0.89.0",
+        "embeddedCliCommit": "5dc7533314b5ba7ec3875c30143dfe1aec644870",
+        "embeddedCliSHA256": "e2051ce3598a26b11d29048a6dd3252ae8d3b056b413c0d53ba1fd3a56ec1b74"
       }
     },
     "releaseHost": {

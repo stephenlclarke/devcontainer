@@ -2,14 +2,14 @@
 
 <!-- markdownlint-disable MD013 -->
 
-This manual explains how to install, configure, use, troubleshoot, and remove `devcontainer` 1.0.1. It is for developers who want to use the official Dev Containers CLI or the VS Code Dev Containers extension with Apple’s stock `container` runtime on an Apple-silicon Mac.
+This manual explains how to install, configure, use, troubleshoot, and remove `devcontainer` 1.0.2. It is for developers who want to use the official Dev Containers CLI or the VS Code Dev Containers extension with Apple’s stock `container` runtime on an Apple-silicon Mac.
 
 ## What this project does
 
 `devcontainer` is a Docker-less local compatibility bridge. It packages the
 official [`@devcontainers/cli`](https://github.com/devcontainers/cli) and two
 project-owned adapters for the Docker-shaped command contracts expected by the
-CLI and VS Code. Those adapters translate the release-certified request subset
+CLI and VS Code. Those adapters translate the candidate's audited request subset
 into Apple `container` and native `container-compose` operations. No Docker
 application, executable, daemon, or service is installed or launched.
 
@@ -22,23 +22,28 @@ It does not:
 - implement its own `devcontainer.json` parser;
 - claim every property in the Development Containers Specification.
 
-The exact certified scope is in [COMPATIBILITY.md](COMPATIBILITY.md). Known gaps and every audited property are in [CONFORMANCE.md](CONFORMANCE.md).
+The exact candidate scope and its release gates are in
+[COMPATIBILITY.md](COMPATIBILITY.md). Known gaps and every audited property are
+in [CONFORMANCE.md](CONFORMANCE.md).
 
-## Supported 1.0.1 environment
+## Target 1.0.2 environment
 
-The stable package supports:
+The 1.0.2 release candidate targets:
 
 - Apple silicon (`arm64`);
 - macOS Tahoe 26 or later;
 - stock Apple `container` 1.4.1 installed separately;
-- `devcontainer` 1.0.1 installed from the stable Homebrew formula or signed release archive;
-- official `@devcontainers/cli` 0.88.0;
-- VS Code 1.131.0 with Dev Containers extension 0.467.0;
+- `devcontainer` 1.0.2 installed from the stable Homebrew formula or signed
+  release archive after those artifacts are published;
+- official `@devcontainers/cli` 0.89.0;
+- VS Code 1.137.0 with Dev Containers extension 0.470.0;
 - packaged `devcontainer-docker` and `devcontainer-compose` adapters;
 - the exact stock-profile native `container-compose` executable bundled inside
   the Homebrew or archive installation.
 
-These are the exact release-certified versions, not minimum-version promises. See the fingerprint table in [COMPATIBILITY.md](COMPATIBILITY.md) before changing one component independently.
+These are exact candidate pins, not minimum-version promises or stable claims.
+See the fingerprint table in [COMPATIBILITY.md](COMPATIBILITY.md) before
+changing one component independently.
 
 ## Runtime choices
 
@@ -54,7 +59,13 @@ Apple does not make a Compose plug-in for `container`. The native
 This project privately bundles its stock-profile executable; Homebrew does not
 install a separate Compose formula or replace stock Apple `container`.
 Selecting an enhanced runtime or external enhanced Compose installation is
-always explicit.
+always explicit. Before any project command, an external Compose executable
+must report a semantic version, an exact 40-character commit, and the source
+`stephenlclarke/container-compose`; incomplete or foreign provenance is
+rejected. The selected runtime must likewise identify stock `apple/container`
+or the explicit `stephenlclarke/container` distribution. A foreign custom
+distribution or a Docker-named backend/Compose-provider configuration is
+rejected before project work.
 
 ## Install the stock path
 
@@ -174,7 +185,9 @@ Then run:
 devcontainer up --workspace-folder "$PWD"
 ```
 
-Use digest-pinned images when reproducibility matters. Public Linux `arm64` images are in the release-certified scope. Private-registry authentication and cross-architecture images are not certified by 1.0.1.
+Use digest-pinned images when reproducibility matters. Public Linux `arm64`
+images are in the candidate fixture scope. Private-registry authentication and
+cross-architecture images are not certified by 1.0.2.
 
 ## Use a Dockerfile configuration
 
@@ -256,7 +269,7 @@ Launch VS Code normally:
 code /path/to/project
 ```
 
-Use **Dev Containers: Reopen in Container**. The 1.0.1 real-VS-Code test covers extension activation, open, attach, VS Code server installation, an integrated command, a forwarded port, rebuild, reopen locally, and cleanup.
+Use **Dev Containers: Reopen in Container**. The 1.0.2 real-VS-Code test covers extension activation, open, attach, VS Code server installation, an integrated command, a forwarded port, rebuild, reopen locally, and cleanup.
 
 If VS Code was already running when settings changed, quit all VS Code windows
 before reopening the workspace.
@@ -296,7 +309,12 @@ Declare OCI Features normally:
 }
 ```
 
-The official CLI resolves, orders, and installs Features. Version 1.0.1 certifies the checked-in public Feature fixture, generated BuildKit context, lockfile, and frozen-lock rejection. A Feature that asks for GPU devices, full Docker privileged mode, unsupported security options, or unsupported mount options inherits the corresponding runtime non-conformance.
+The official CLI resolves, orders, and installs Features. The 1.0.2 release
+candidate exercises the checked-in public Feature fixture, generated BuildKit
+context, lockfile, and frozen-lock rejection; those results become a stable
+claim only after the release-bound parity gate passes. A Feature that asks for
+GPU devices, full Docker privileged mode, unsupported security options, or
+unsupported mount options inherits the corresponding runtime non-conformance.
 
 ## Users and environment
 
@@ -319,7 +337,7 @@ Example:
 }
 ```
 
-Automatic UID/GID rewriting with `updateRemoteUserUID: true` is not independently certified in 1.0.1.
+Automatic UID/GID rewriting with `updateRemoteUserUID: true` is not independently certified in 1.0.2.
 
 ## Ports
 
@@ -365,13 +383,16 @@ Example:
 }
 ```
 
-Advanced Docker `--mount` fields such as bind propagation, consistency modes, volume `nocopy`, and tmpfs sizing/mode are not represented by 1.0.1. Image-declared anonymous `VOLUME` entries also use Apple’s writable root filesystem rather than a separate Docker anonymous-volume lifecycle. See [CONFORMANCE.md](CONFORMANCE.md).
+Advanced Docker `--mount` fields such as bind propagation, consistency modes, volume `nocopy`, and tmpfs sizing/mode are not represented by 1.0.2. Image-declared anonymous `VOLUME` entries also use Apple’s writable root filesystem rather than a separate Docker anonymous-volume lifecycle. See [CONFORMANCE.md](CONFORMANCE.md).
 
 Host bind sources that resolve to `docker.sock` or `docker.raw.sock` are always
 rejected before container creation. This is a deliberate security boundary:
 the product cannot become dependent on, proxy, or expose a host Docker daemon.
-Use the Apple-backed Dev Containers service directly instead of mounting a
-Docker runtime socket into the development container.
+Selecting either socket name as the compatibility endpoint is also rejected,
+including through a symlink. The selected runtime path and its resolved target
+must both be named `container`. Use the Apple-backed Dev Containers service
+directly instead of mounting a Docker runtime socket into the development
+container.
 
 ## Provider claims
 
@@ -570,7 +591,7 @@ Quit VS Code completely and confirm both `dev.containers.dockerPath` and
 
 ### A configuration uses an unsupported property
 
-Check [CONFORMANCE.md](CONFORMANCE.md). Known unsupported decoded fields return a Docker-shaped error, but 1.0.1 does not yet reject every unknown Docker create/build member. Do not assume a successful create means an arbitrary `runArgs` option was enforced.
+Check [CONFORMANCE.md](CONFORMANCE.md). Known unsupported decoded fields return a Docker-shaped error, but 1.0.2 does not yet reject every unknown Docker create/build member. Do not assume a successful create means an arbitrary `runArgs` option was enforced.
 
 ### The selected provider conflicts with existing resources
 

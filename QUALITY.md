@@ -290,6 +290,11 @@ live validation:
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
 | `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and the separate `container-compose` provider |
+
+Each parity lane must additionally retain successful quiet-host receipts
+captured after runtime startup and immediately before both its CLI and VS Code
+timed suites. Missing, overloaded, or competing-process evidence fails the
+lane rather than producing benchmark numbers from a busy machine.
 | `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
@@ -297,11 +302,18 @@ live validation:
 The standard `lint` target also runs
 `Tools/ci/check-dockerless-product.py`. This fail-closed inventory scans the
 product sources, dependency locks, package/release scripts, formula template,
-and every non-parity workflow. It rejects Docker or Colima executable discovery,
-execution, installation, application launch, and Homebrew dependencies. The
+and every non-parity workflow. It rejects Docker-family dependency identities,
+source repositories, linked libraries, frameworks, linker flags, executable
+discovery, execution, installation, application launch, and Homebrew
+dependencies. The
 serialized real-Docker parity workflow is deliberately outside that inventory:
 it is a behavioral oracle and cannot become a candidate backend or release
-dependency.
+dependency. Runtime tests additionally require the packaged adapter to
+authenticate the project-owned Apple engine before its first workload request;
+the probe is cached per adapter process and foreign Docker-compatible endpoints
+fail before side effects. The same audit requires all maintained Swift child
+processes to use the shared runner, whose launch-time policy rejects
+Docker-family executable names and resolved symlink targets.
 
 Swift build and test jobs on hosted `macos-26` explicitly select Xcode 26.6,
 matching the development and live-parity host instead of inheriting a moving
@@ -322,7 +334,9 @@ Real runtime and VS Code tests use three provenance-specific labels:
 `devcontainer-container-compose`, in addition to `self-hosted`, `macOS`, and
 `ARM64`. A single isolated Mac may carry all three labels only when the workflow
 serializes the profiles, verifies the exact selected executable before every
-lane, and proves cleanup before switching runtime distributions.
+lane, and proves cleanup before switching runtime distributions. Stock and
+enhanced Apple lanes also stop any running Docker oracle before their runtime
+starts, so each candidate independently establishes a quiet Docker-free host.
 
 Untrusted fork pull requests never execute on the self-hosted runner. A dispatcher may enqueue only an exact commit from protected `main`, a scheduled protected ref, or a maintainer-approved manual input that already passed hosted checks. The live workflow checks the commit's repository and ancestry again before checkout. Test jobs do not receive release or tap credentials.
 
@@ -414,6 +428,8 @@ The repository now implements:
 - the `Tools/ci/run-swift-test.sh` retry/log harness;
 - coverage collection, profile merge, LCOV/generic XML export, and both 90% checks;
 - raw-socket contract and fake-runtime integration infrastructure;
+- live socket identity attestation with foreign-endpoint rejection;
+- shared child-process launch enforcement with direct-launch bypass detection;
 - hosted ASan, TSan, CodeQL, dependency review, Scorecard, documentation, and package validation workflows;
 - deterministic pin, manifest, normalizer, and evidence schemas;
 - signed/notarized package, SBOM, checksum, formula, and fail-closed publication
@@ -440,7 +456,7 @@ The current sibling repositories provide implementation precedents, not proof th
 
 Primary references:
 
-- [Swift Package Manager test and coverage](https://docs.swift.org/swiftpm/documentation/packagemanagerdocs/swifttest/)
+- [Swift Package Manager `swift test` options](https://github.com/swiftlang/swift-package-manager/blob/main/Sources/PackageManagerDocs/Documentation.docc/SwiftTest.md)
 - [SwiftLint](https://github.com/realm/SwiftLint)
 - [SwiftFormat](https://github.com/nicklockwood/SwiftFormat)
 - [CodeQL build modes for compiled languages](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages)

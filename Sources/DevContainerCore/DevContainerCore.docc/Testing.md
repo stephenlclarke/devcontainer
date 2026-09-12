@@ -12,14 +12,27 @@ evidence.
 
 Trusted physical Apple-silicon runners execute the real parity lanes. The
 Docker oracle captures normalized results first; stock Apple and the optional
-Compose provider must then match those results. A pinned VS Code and Dev
+Compose provider must then match those results. Before either Apple candidate
+starts, the harness independently stops any running Docker oracle and fails if
+it cannot establish a quiet Docker-free host. A pinned VS Code and Dev
 Containers extension perform open, attach, terminal, port, rebuild, reopen, and
 cleanup flows.
 
 Real Docker, stock Apple `container` 1.4.1, and the matched
-`container-compose` 0.14.3 provider must pass all 18 CLI fixtures and the real VS
+`container-compose` 0.15.0 provider must pass all 18 CLI fixtures and the real VS
 Code fixture without normalized semantic differences and with complete timing
-evidence.
+evidence. The published provider authority remains 0.14.3 until the 0.15.0
+release completes its independent gates. The client fixture pins VS Code 1.137.0, Dev Containers extension
+0.470.0, and its embedded Dev Containers CLI 0.89.0.
+
+Immediately before both its CLI and VS Code timed suites, every lane must
+produce a quiet-host receipt. The gate waits for the one-minute load to fall
+to at most the smaller of one quarter of the logical CPU count and `2.0`,
+rejects competing build and Container-family release processes, invalidates
+any old success receipt before checking, and retains thermal, load, process,
+and policy evidence. A host that does not become quiet within ten minutes
+cannot contribute release or optimization timings.
+
 In the exact 1.0.0 tag run, the largest CLI ratios are 2.876x for stock Apple
 and 4.509x for `container-compose`; the corresponding VS Code ratios are
 1.232x and 1.311x. Release evidence includes the normalized comparison, raw
@@ -31,8 +44,10 @@ JUnit. The comparison artifact retains raw durations and reports stock/Docker
 and provider/Docker ratios even when functional parity fails. Comparable or
 better performance (`<=1.00x` Docker) is the objective. A completed result
 above `2.50x` Docker requires further investigation but does not, by itself,
-change functional parity. A timeout, other non-completion, or missing or
-invalid timing evidence fails the parity gate. The full target is in
+change functional parity. A candidate at or above `10.00x` its matching Docker
+fixture, a timeout, other non-completion, or missing or invalid timing evidence
+fails the parity gate without changing the separately reported functional
+result. The full target is in
 [PARITY-ROADMAP.md](https://github.com/stephenlclarke/devcontainer/blob/main/PARITY-ROADMAP.md).
 
 See <doc:Performance> for the three-run matrix, variability, phase analysis,

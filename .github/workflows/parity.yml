@@ -75,8 +75,16 @@ jobs:
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance
         run: Tools/parity/runner-preflight.sh "${{ matrix.lane }}"
+      - name: Require a quiet CLI timing host
+        run: >-
+          Tools/parity/require-quiet-host.sh
+          ".build/parity/host-quiet/${{ matrix.lane }}/cli"
       - name: Run Dev Containers CLI parity
         run: make "parity-${{ matrix.lane }}"
+      - name: Require a quiet VS Code timing host
+        run: >-
+          Tools/parity/require-quiet-host.sh
+          ".build/parity/host-quiet/${{ matrix.lane }}/vscode"
       - name: Run real VS Code parity
         env:
           DEVCONTAINER_VSCODE_LIVE: "1"
@@ -97,6 +105,7 @@ jobs:
           path: |
             .build/parity/${{ matrix.lane }}
             .build/parity/vscode/${{ matrix.lane }}
+            .build/parity/host-quiet/${{ matrix.lane }}
 
   compare:
     if: ${{ always() }}
@@ -117,6 +126,13 @@ jobs:
       - name: Require exact CLI and VS Code equivalence
         run: |
           status=0
+          for lane in docker apple-stock container-compose; do
+            for suite in cli vscode; do
+              receipt=".build/parity/host-quiet/${lane}/${suite}/quiet-host.tsv"
+              test -s "${receipt}" && grep -Fx $'result\tquiet' "${receipt}" \
+                || status=1
+            done
+          done
           python3 Tools/parity/compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1
           python3 Tools/parity/compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1
           python3 Tools/parity/validate_manifest.py --release || status=1

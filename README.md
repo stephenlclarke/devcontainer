@@ -34,19 +34,22 @@ findings and solution designs are in the [full parity and performance
 roadmap](PARITY-ROADMAP.md).
 
 > [!IMPORTANT]
-> Version 1.0.1 is the latest immutable stable baseline. Its exact tag
-> certification ran all 18 CLI fixtures plus the real VS Code end-to-end
-> fixture against real Docker, unmodified Apple `container` 1.1.0, and the
-> separately maintained `container-compose` 0.10.1 provider stack with zero
-> normalized semantic differences. [COMPATIBILITY.md](COMPATIBILITY.md)
-> records the newer exact fingerprints required by the current source
-> candidate without rewriting that historical release evidence.
+> Version 1.0.2 is the current release candidate; it is not yet an immutable
+> stable baseline. The latest published stable release remains 1.0.1. Before
+> 1.0.2 can be published, its exact source must pass all 18 CLI fixtures plus
+> the real VS Code end-to-end fixture against real Docker, unmodified Apple
+> `container` 1.4.1, and the separately maintained `container-compose` 0.15.0
+> provider stack with zero normalized semantic differences.
+> The currently published provider baseline remains `container-compose`
+> 0.14.3 until that 0.15.0 release completes its own immutable publication.
+> [COMPATIBILITY.md](COMPATIBILITY.md) records the current pins, bounded claim,
+> and evidence requirements.
 
 <!-- dockerless-contract -->
 
 > [!NOTE]
 > The install and every candidate runtime path are **100% Docker-less**: they do not
-> install, discover, invoke, or depend on Docker or Colima. The executable named
+> install, discover, invoke, or depend on Docker, Colima, Podman, or nerdctl. The executable named
 > `devcontainer-docker` is this project's Apple-backed protocol adapter, retained
 > because VS Code calls its compatibility setting `dockerPath`. A pinned real
 > Docker environment exists only in the isolated parity workflow as the
@@ -56,6 +59,23 @@ roadmap](PARITY-ROADMAP.md).
 > software in a candidate lane.
 > The local Unix socket is owned by this project and translates the protocol
 > directly to Apple Container APIs. It never proxies or mounts a Docker socket.
+> `DOCKER_HOST` and VS Code's `dockerPath` setting are compatibility field names
+> required by the unmodified upstream clients; both point only at this project's
+> adapter and private `engine.sock`, never at Docker software.
+> Explicit runtime selection must resolve to an executable named `container`,
+> and explicit socket selection rejects Docker daemon socket names, including
+> symlink aliases, before launch or connection. Before its first workload
+> request, the adapter also verifies a project-specific identity response from
+> `devcontainer-engine`; a foreign Docker-compatible endpoint is rejected even
+> when it uses a harmless-looking socket filename.
+> Every product child-process launch passes through one shared policy that
+> rejects Docker-family executable names and symlink targets before execution.
+> Runtime provenance must identify either stock `apple/container` or the
+> explicitly selected `stephenlclarke/container` distribution. A foreign or
+> unidentified custom Container distribution is rejected before project work.
+> `docker` is not accepted as a backend or Compose-provider configuration value.
+> The official CLI entry point always runs the checksum-pinned packaged script;
+> an environment variable cannot replace it with an external implementation.
 
 Current main additionally has a clean compile gate against unmodified Apple
 `container` 1.4.1 and `containerization` 0.45.0. That build result is not a
@@ -77,16 +97,17 @@ the live command immediately above it. Recreate it on a release host with
 ## Design promise
 
 The project keeps the official [Dev Containers](https://github.com/devcontainers)
-toolchain above a local Docker-compatible API service. VS Code and the
-reference [`@devcontainers/cli`](https://github.com/devcontainers/cli) remain
-unmodified; the service translates their tested Docker API subset into
-Apple-native runtime operations.
+toolchain above a project-owned, Apple-backed Engine API adapter. VS Code and
+the reference [`@devcontainers/cli`](https://github.com/devcontainers/cli)
+remain unmodified; the adapter implements their tested Docker-shaped protocol
+subset directly with Apple-native runtime operations and never proxies Docker
+software.
 
 ```mermaid
 flowchart LR
     VS["VS Code Dev Containers"] --> DC["Official @devcontainers/cli"]
     DC --> Adapter["Bundled devcontainer-docker protocol adapter"]
-    Adapter --> API["Local Docker-compatible API socket"]
+    Adapter --> API["Local Apple-backed Engine API socket"]
     API --> Shared["container-engine generated API 1.44 through 1.53 gateway"]
     Shared --> Session["Private fingerprint-bound provider session"]
     Session --> Core["devcontainer stock adapter and provider-neutral runtime core"]
@@ -104,7 +125,7 @@ Users of the enhanced Container runtime may select it explicitly without
 changing the Dev Containers installation. The core does not import
 `ComposeCore`, and no product path may silently replace stock Apple `container`
 with the enhanced stack. No product path installs or launches the Docker CLI,
-Docker Compose, Docker Desktop, Docker Engine, or Colima.
+Docker Compose, Docker Desktop, Docker Engine, Colima, Podman, or nerdctl.
 
 The stock adapter can export a stopped container's canonical name, stable
 Docker identifier, immutable Apple bundle key, and lifecycle snapshot for a
@@ -142,7 +163,7 @@ advanced mount options.
 | [DESIGN.md](DESIGN.md) | Implemented architecture, data flow, runtime boundaries, security, and release definition |
 | [PARITY-ROADMAP.md](PARITY-ROADMAP.md) | North-star parity and performance criteria, audited defects, and designed solutions |
 | [UNSUPPORTED-CAPABILITIES.md](UNSUPPORTED-CAPABILITIES.md) | Field-by-field implementation and certification design for every current unsupported capability |
-| [CONFORMANCE.md](CONFORMANCE.md) | Complete audited Dev Containers property ledger and explicit 1.0.1 non-conformances |
+| [CONFORMANCE.md](CONFORMANCE.md) | Complete audited Dev Containers property ledger and explicit 1.0.2 non-conformances |
 | [PERFORMANCE.md](PERFORMANCE.md) | Full repeated-run parity timing analysis and optimization priorities |
 | [TESTING.md](TESTING.md) | Docker, stock Apple, and separate `container-compose` differential harness |
 | [QUALITY.md](QUALITY.md) | Software-quality analysis, measurable gates, and supply-chain controls |
@@ -153,7 +174,7 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `container-engine-api` 0.3.3 published baseline | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity. The logging-handoff source requires the coordinated unpublished Engine API/Container stack recorded in the Compose logging design; it is not representable by the published baseline yet. |
+| `container-engine-api` revision `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Shared executable, generated 107-operation compatibility API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity. |
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Stock-provider adapter; normal mode starts one internal private provider session behind the shared public gateway, while `--provider-socket` exposes only the private session for an external `container-engine` process |
@@ -167,7 +188,9 @@ Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,
 stock Apple `container`, real Docker, the pinned Dev Container CLI, and the
 selected Compose provider.
 
-All multi-service product paths use native `container-compose`. Docker and Colima are restricted to explicitly named reference-oracle parity jobs and are never product, build, package, or Homebrew dependencies.
+All multi-service product paths use native `container-compose`. Real Docker is
+restricted to explicitly named reference-oracle parity jobs. Docker, Colima,
+Podman, and nerdctl are never product, build, package, or Homebrew dependencies.
 
 ```console
 make check
@@ -235,7 +258,7 @@ Use the compatibility socket only in the shell that needs it:
 
 ```console
 eval "$(devcontainer context)"
-npx --yes @devcontainers/cli@0.88.0 up \
+npx --yes @devcontainers/cli@0.89.0 up \
   --workspace-folder /path/to/project
 ```
 

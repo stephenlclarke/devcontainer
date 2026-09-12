@@ -38,7 +38,13 @@ python3 Tools/ci/check-dockerless-product.py
 ```
 
 It is also mandatory within `make lint`; only the isolated parity oracle is
-permitted to discover or execute Docker or Colima.
+permitted to discover or execute real Docker. Colima, Podman, and nerdctl are
+never candidate, build, package, or installation dependencies. Package
+identities, source repositories, linked libraries, frameworks, and linker flags
+are checked by the same fail-closed audit. Candidate
+adapter processes also authenticate the local `devcontainer-engine` endpoint
+before their first workload request, so renaming a foreign runtime socket does
+not bypass the boundary.
 
 ## Package structure
 
@@ -231,7 +237,7 @@ To test dispatch without a real Compose installation, set
 `DEVCONTAINER_COMPOSE_BIN` to a deterministic fixture executable. The selected
 external command receives a hardened environment and an explicit compatibility
 socket. Product code never searches for or launches `docker`, `docker-compose`,
-Docker Desktop, or Colima.
+Docker Desktop, Colima, Podman, or nerdctl.
 
 ## Parity harness
 
@@ -264,8 +270,9 @@ monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
 stock and provider timings with Docker. Comparable or better performance
 (`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
 Docker is marked for further investigation but does not, by itself, change
-functional parity. A timeout, other non-completion, or missing or invalid
-timing evidence fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
+functional parity. A candidate at or above `10.00x` its matching Docker
+fixture, a timeout, other non-completion, or missing or invalid timing evidence
+fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.

@@ -4,8 +4,8 @@ Run unmodified VS Code Dev Containers tooling on Apple container.
 
 ## Overview
 
-The package supplies a Docker Engine API compatibility boundary backed by
-Apple's native container runtime. The runtime-neutral core owns project
+The package supplies a project-owned, Apple-backed Engine API adapter that
+implements the required Docker-shaped protocol without Docker software. The runtime-neutral core owns project
 identity, provider selection, labels, durable state, and capability checks.
 The required native `container-compose` provider remains process-isolated.
 

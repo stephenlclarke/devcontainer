@@ -1,10 +1,12 @@
 # User Guide
 
 Use the official Dev Containers CLI and VS Code extension with stock Apple
-`container` through a local Docker-compatible API socket. This is a
-project-owned Unix socket backed by Apple Container, not a Docker daemon or
-proxy. Its default filename is `engine.sock`; the Docker-shaped names exposed
-to VS Code are compatibility vocabulary only.
+`container` through a local Apple-backed Engine API socket. This is a
+project-owned Unix socket that implements the required Docker-shaped protocol,
+not a Docker daemon or proxy. Its default filename is `engine.sock`; the Docker-shaped names exposed
+to VS Code are compatibility vocabulary only. Before sending a workload
+request, the adapter verifies that the socket is served by the project-owned
+Apple runtime engine and rejects any foreign Docker-compatible endpoint.
 
 ## Install
 
@@ -75,15 +77,26 @@ pinned stock-profile `container-compose` executable bundled inside the signed
 devcontainer archive. The `devcontainer-compose` dispatcher never launches
 Docker Compose. The same Engine-socket boundary supports stock Apple
 `container` and Stephen Clarke's optional enhanced Container distribution.
+An explicitly selected external Compose executable must identify its source as
+`stephenlclarke/container-compose`, report a semantic version and exact source
+commit, and pass that probe before it receives a project command. The selected
+runtime must identify stock `apple/container` or the explicit
+`stephenlclarke/container` distribution. Foreign custom distributions and
+Docker-named backend or Compose-provider values fail before project work.
 
-Version 1.0.1 certifies the checked-in image, Dockerfile, Feature, user,
-environment, lifecycle, port, reuse, Compose, engine, fault, and real VS Code
-fixtures. It does not certify every standard property or arbitrary Docker
-argument. Read <doc:Conformance> before using GPU, privileged, security,
-device, resource, hostname, or advanced mount behavior.
+The 1.0.2 release candidate includes checked-in image, Dockerfile, Feature,
+user, environment, lifecycle, port, reuse, Compose, engine, fault, and real VS
+Code fixtures. Those fixtures become a stable certification claim only after
+the release-bound parity gate passes. They do not cover every standard
+property or arbitrary Docker argument. Read <doc:Conformance> before using
+GPU, privileged, security, device, resource, hostname, or advanced mount
+behavior.
 
 Bind sources resolving to `docker.sock` or `docker.raw.sock` are rejected
-before creation. The product has no host-daemon proxy mode.
+before creation. Selecting either name as the compatibility endpoint is also
+rejected, including through a symlink. The product has no host-daemon proxy
+mode, and its selected runtime path must resolve to an executable named
+`container`.
 
 ## Diagnostics
 

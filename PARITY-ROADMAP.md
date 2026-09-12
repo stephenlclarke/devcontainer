@@ -45,11 +45,11 @@ Performance certification should use paired runs on the same host, with at least
 | Candidate regression against the previous certified Apple result | No regression |
 | Peak resident memory and CPU time | At or below Docker |
 
-Any completed candidate result above `2.50x` Docker requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A timeout, other non-completion, or missing or invalid timing evidence remains a hard evidence failure.
+Any completed candidate result above `2.50x` Docker requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A candidate result at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence is a hard acceptance failure without changing the separately reported functional result.
 
 Cold-start and warm-reuse results must be reported separately. An optimisation is accepted only when its median improvement exceeds baseline variation, its p90 does not worsen materially, resource use remains bounded, and semantic observations remain identical.
 
-## Review basis
+## Historical review basis
 
 This review was completed on 30 July 2026 against `main` commit `b31e80b2b9c09ecc73bb3badf9cd5cf16550a538`.
 
@@ -57,7 +57,7 @@ The evidence included:
 
 - the complete source, tests, documentation, package, workflows, release tooling, and parity fixtures in this repository;
 - the pinned stock `apple/container` 1.1.0 and `apple/containerization` 0.35.0 sources;
-- the separately installed `container-compose` 0.10.1 boundary and its current open work;
+- the separately installed `container-compose` 0.15.0 boundary and its current open work;
 - `make check`, which passed 148 Swift tests, all Python harness tests, formatting, lint, documentation generation, parity-manifest validation, and above 91% first-party line coverage;
 - successful hosted CI, AddressSanitizer, ThreadSanitizer, CodeQL, SonarCloud, documentation, Homebrew, dependency-review, and live runtime workflows on the exact reviewed commit;
 - [live three-lane parity run 30522304399](https://github.com/stephenlclarke/devcontainer/actions/runs/30522304399), which recorded zero semantic differences across all 18 CLI fixtures and the real VS Code fixture;
@@ -66,13 +66,13 @@ The evidence included:
 
 SonarCloud reported 91.2% coverage, zero bugs, zero vulnerabilities, zero code smells, and 0.4% duplication. These automated results are valuable but do not disprove the behavioural and architectural findings below.
 
-## Current baseline
+## Baseline at the reviewed commit
 
 ### Functional
 
-The current release evidence is strong within its declared boundary: 18 CLI fixtures and one real VS Code fixture pass with zero recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) still records nine confirmed non-conformances and several partial or unverified Development Containers properties. The project therefore has bounded parity, not full parity.
+The current release evidence is strong within its declared boundary: 18 CLI fixtures and one real VS Code fixture pass with zero recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) still records ten confirmed non-conformances and several partial or unverified Development Containers properties. The project therefore has bounded parity, not full parity.
 
-### Current performance
+### Performance at the reviewed commit
 
 The exact reviewed `main` run produced:
 
@@ -121,11 +121,12 @@ duplex stress runs and the complete matrix passed after this change.
 
 ## Implementation status
 
-The implementation work below was applied to the current worktree on 30 July
-2026. “Implemented” means production wiring, focused regression tests, and the
-local three-lane CLI matrix exist. It does not replace exact-head hosted CLI
-and VS Code evidence or the repeated performance protocol. “Partial”
-identifies the remaining proof or primitive rather than normalising it.
+The implementation record was first produced on 30 July 2026 and was updated
+on 12 September 2026 for the current PR 75 candidate. “Implemented” means
+production wiring, focused regression tests, and the local three-lane CLI
+matrix exist. It does not replace exact-head hosted CLI and VS Code evidence
+or the repeated performance protocol. “Partial” identifies the remaining
+proof or primitive rather than normalising it.
 
 | Programme item | Current status | Remaining boundary |
 | --- | --- | --- |
@@ -163,6 +164,11 @@ identifies the remaining proof or primitive rather than normalising it.
 | P3 | Useful hardening or optimisation after the higher-priority contract is sound |
 
 ## P0 correctness and reliability findings
+
+The detailed evidence below records the original 30 July review baseline so
+that each finding remains auditable. The implementation-status table above is
+the authority for the current disposition; a closed or partial row must not be
+read as an assertion that the original source evidence still exists.
 
 ### PAR-001: Unknown Docker request members fail open
 
@@ -544,11 +550,11 @@ The runtime-neutral core must remain independent from `ComposeCore`. Cross-repos
 
 | Repository | Current finding | Project action |
 | --- | --- | --- |
-| `devcontainer` | Draft PR 10 contains the main current runtime-round-trip optimisation | Review and certify the exact final head; do not count it as `main` until merged and re-run |
-| `container-compose` | Open PR 173 fixes inherited OCI `VOLUME` metadata for Compose commit | Track as provider quality work; it is not a Dev Containers release blocker unless a certified workflow consumes Compose commit |
-| `container-compose` | Issue 156 documents a proven process-group cancellation design | Reuse the design in this repository through its own narrow process supervisor; do not import `ComposeCore` |
-| `apple/container` | Stock 1.1.0 lacks several primitives needed by NC-002 to NC-009, while later fork/main work contains related capabilities | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
-| `apple/containerization` | Guest/runtime primitives may be needed for archive, device, namespace, and process correctness | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |
+| `devcontainer` | PR 75 contains the Docker-less adapter, stock/enhanced runtime profiles, and the previously reviewed runtime-round-trip optimisation | Certify the exact final head through the release-bound Docker, stock Apple, enhanced provider, and real VS Code lanes before merge |
+| `container-compose` | The separately installed 0.15.0 provider candidate supplies the stock adapter package and enhanced orchestration boundary required by the release matrix | Consume only its immutable stable release fingerprint; keep `ComposeCore` out of the runtime-neutral Devcontainer core |
+| `stephenlclarke/container` | The enhanced distribution advertises additive hostname, security, privileged, inventory, health, and logging capabilities | Fingerprint every enhanced-only behavior, retain stock rejection paths, and land any further generic runtime correction through its own pull request |
+| `apple/container` | Stock 1.4.1 still lacks several primitives needed by NC-002 to NC-009 | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
+| `apple/containerization` | Stock 0.45.0 provides useful OCI/runtime primitives, but some require a supported `apple/container` management surface before this bridge can claim them | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |
 
 ## Delivery sequence
 
@@ -566,7 +572,9 @@ No phase may trade away functional parity for speed. A performance change that a
 
 - [ ] Every pinned Development Containers property and lifecycle rule is certified in the machine-readable coverage map.
 - [ ] Every Docker request member emitted by the official client is translated or explicitly rejected before side effects.
-- [ ] NC-001 to NC-009 are closed with real Docker and Apple evidence.
+- [ ] NC-001 to NC-009 are closed with real Docker and Apple evidence; NC-010
+  remains the explicit Docker-socket exclusion outside the Docker-independent
+  north-star scope.
 - [ ] All partial and unverified conformance rows are certified or remain explicit blockers to a full-parity release.
 - [ ] Multiple real VS Code journeys pass in all three lanes.
 - [ ] Crash, cancellation, restart, concurrent mutation, and cleanup tests prove no leaked work or resources.

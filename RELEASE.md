@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.1 uses the release process in this document. Its authoritative
+> Version 1.0.2 uses the release process in this document. Its authoritative
 > version, deterministic signed package, notarization evidence, checksums, SBOM,
 > GitHub attestation, hosted and physical parity gates, Homebrew promotion,
 > SonarQube analysis, and DocC publication are bound to one immutable release
@@ -19,16 +19,22 @@ multi-service provider tested in both Apple runtime lanes.
 - `main` is the releasable integration branch.
 - One checked-in value, `DEVCONTAINER_VERSION` in `Makefile`, is the authoritative product version.
 - Bare `MAJOR.MINOR.PATCH` tags are immutable stable release identities.
-- `current` is the only mutable tag and points to the newest release-eligible `main` commit.
+- Current builds use a new immutable `current-<sha40>` tag for each eligible
+  `main` commit; no release channel moves or reuses a published tag.
 - A package is authorized by an exact commit, never by a branch name alone.
 - Live Docker, stock Apple, and Compose-provider parity runs only on trusted bare-metal Apple silicon.
 - GitHub-hosted macOS validates source, tests, coverage, package structure, formula rendering, and documentation, but is not accepted as live Virtualization.framework evidence.
 - Releases never install, replace, or start a custom `container` runtime as a side effect.
 - Releases never install or select a custom Container runtime as a side effect.
-- Product and Homebrew verification fail if they invoke Docker or Colima
+- Product and Homebrew verification fail if they invoke Docker, Colima, Podman, or nerdctl
   software; only the isolated parity-oracle lane may do so.
+- Candidate workload adapters must authenticate the project-owned Apple engine;
+  a Docker-compatible response without the project identity is release-blocking.
 - Missing runtime or provider prerequisites fail the strict release gate; they are not reported as successful skips.
-- Stable assets, tags, notes, checksums, SBOMs, and formula versions are immutable.
+- Published assets, tags, checksums, SBOMs, and formula versions are immutable.
+  GitHub permits editorial release-title, notes, prerelease, and latest-marker
+  changes after publication; automation verifies those fields at transaction
+  completion and never treats them as artifact identity.
 - GitHub Actions are pinned to complete commit SHAs, with the readable release version retained in a comment.
 - Prebuilt macOS artifacts are Developer ID signed and submitted to Apple's notary service before publication.
 - Every package publishes build metadata, a checksum, an SBOM, and GitHub build provenance.
@@ -48,7 +54,7 @@ The `devcontainer` adaptation removes `container-compose`'s duplicated version
 literals. The only tracked product-version declaration is:
 
 ```makefile
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.0.2
 ```
 
 Source code does not contain a second editable copy. The
@@ -108,10 +114,10 @@ make prepare-release VERSION_SELECTOR=-+-
 
 ### Current Channel
 
-Every eligible successful CI run for the newest `main` commit may refresh:
+Every eligible successful CI run for the newest `main` commit may publish:
 
-- Mutable lightweight tag: `current`
-- Mutable prerelease title: `Current build`
+- Immutable commit-addressed tag: `current-<sha40>`
+- Prerelease title: `Current build`
 - Commit-identified asset: `devcontainer-current-<sha12>-arm64.tar.gz`
 - Formula: `devcontainer-current.rb`
 - Homebrew version: `current.<github_run_number>.<sha12>`
@@ -126,19 +132,22 @@ Automatic Current publication is gated by the repository variable `DEVCONTAINER_
 
 The full source identity remains the lowercase 40-character commit SHA. The 12-character prefix is only a display and asset-name convenience.
 
-Current publication must be staged safely:
+Current publication uses the same immutable draft transaction as a stable
+release. Each commit receives a new prerelease rather than mutating a tag or
+published asset:
 
 1. Build immutable commit-identified assets.
-2. Sign, notarize, validate, checksum, inventory, and attest those assets.
-3. Upload candidate assets to the existing Current prerelease without moving `current`.
-4. Render and commit `devcontainer-current.rb` using the commit-identified URL and checksum.
-5. Install and test that formula.
-6. Recheck that the candidate is still the remote `main` head.
-7. Move the unsigned lightweight `current` tag.
-8. Finalize the Current release object.
-9. Remove superseded Current assets only after the new channel is verified.
+2. Sign, notarize, validate, checksum, and inventory those assets.
+3. Create or reconcile a private `current-<sha40>` draft without replacing bytes.
+4. On retry after publication, download and authenticate the immutable release bytes instead of rebuilding the transaction around new notarization timestamps.
+5. Attest and retain the exact staged or recovered bytes.
+6. Publish and verify the immutable prerelease.
+7. Render and commit `devcontainer-current.rb` using the commit-addressed URL and checksum.
+8. Install and test that formula, then push the tap state.
 
-This ordering keeps the old Current formula valid if publication is interrupted.
+An interrupted run can safely resume at the same commit-addressed release. An older Current formula continues to use its own immutable tag and asset.
+Before creating a Current draft, the publisher rejects any existing tag whose peeled target is not the candidate commit. It repeats that check immediately before publication so a conflicting tag cannot be locked into a misleading immutable release.
+When publication already succeeded, the formula renderer reads the product, lane, release tag, and formula version from the restored published `.context.json` and hashes the restored published archive. A newly rebuilt or re-signed retry is never allowed to supply formula metadata or a checksum for different bytes.
 
 ### Stable Channel
 
@@ -173,11 +182,11 @@ An existing stable release is immutable. Recovery may recreate only a missing or
   "buildType": "release",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "containerDistribution": "apple",
-  "containerVersion": "1.1.0",
+  "containerVersion": "1.4.1",
   "lane": "stable",
   "provider": "none",
   "source": "stephenlclarke/devcontainer",
-  "version": "1.0.1"
+  "version": "1.0.2"
 }
 ```
 
@@ -222,8 +231,9 @@ flowchart TD
     HostedGate --> Authority["Stable Release Authority check on candidate SHA"]
     Authority --> StableBuild["Rebuild tagged source on trusted release runner"]
     StableBuild --> SupplyChain["Sign, notarize, SBOM, checksum, and attest"]
-    SupplyChain --> StableRelease["Publish immutable GitHub Release"]
+    SupplyChain --> StableRelease["Publish immutable non-latest GitHub Release"]
     StableRelease --> StableTap["Update, install, and verify stable Homebrew formula"]
+    StableTap --> Latest["Promote tested release as Latest"]
 ```
 
 ### Stable Aggregate Checks
@@ -324,7 +334,7 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
-- Per-fixture monotonic durations and candidate/Docker timing ratios. Comparable or better performance (`<=1.00x` Docker) is the objective; any completed result above `2.50x` requires further investigation. Non-completion or missing or invalid timing evidence fails the gate, while a completed timing ratio alone does not alter functional parity. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
+- Per-fixture monotonic durations and candidate/Docker timing ratios. Comparable or better performance (`<=1.00x` Docker) is the objective; any completed result above `2.50x` requires further investigation. A candidate at or above `10.00x` its matching Docker fixture, non-completion, or missing or invalid timing evidence fails the gate without changing the separately reported functional result. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.
@@ -369,6 +379,24 @@ Source identity and binary identity are separate requirements:
 
 The release runner should hold signing and notarization material in the macOS keychain. Private keys, certificates, API keys, and notary credentials must not be copied into pull-request workflows, logs, artifacts, repository files, or generic Actions secrets.
 
+Create the repository's expected local profile once, entering the Apple ID and
+app-specific password only in the local terminal:
+
+```sh
+xcrun notarytool store-credentials devcontainer-release \
+  --apple-id <APPLE_ID_EMAIL> \
+  --team-id 4MEB7MUTAV
+```
+
+Omitting `--password` makes `notarytool` request the app-specific password in a
+secure prompt before storing the credential in Keychain. The password must
+never be placed in shell history, chat, a repository file, or an Actions
+secret. Confirm that the profile is usable without exposing its contents:
+
+```sh
+xcrun notarytool history --keychain-profile devcontainer-release
+```
+
 Verification includes:
 
 ```sh
@@ -410,13 +438,19 @@ the published repository.
 
 Checksums are calculated only after signing and notarization, because those bytes are the distributed identity. Formula rendering downloads the published archive and checksum again, verifies both, checks required archive entries, and derives the Homebrew SHA from that verified archive.
 
-Publication is a retryable two-phase transaction. The workflow first uploads
-the candidate as a public prerelease, commits the candidate tap state locally,
-and installs and tests that exact local commit. It then pushes the tested tap
-commit and only afterward finalizes a stable release. Failed stable attempts
-may replace assets only while the release remains a prerelease; a finalized
-stable release is immutable. Current remains a prerelease and moves its
-deliberately mutable source tag only after the tap promotion succeeds.
+Publication is a retryable transaction. The workflow creates a private draft,
+uploads and verifies the complete asset inventory and GitHub-computed digests,
+attests those exact bytes, then publishes the draft as an immutable release
+before testing and promoting the matching tap formula. A stable release is
+published with `latest=false`; it becomes GitHub's Latest release only after
+the exact formula has passed audit, fetch, install, and test and its tap commit
+has been pushed. An interrupted run can reconcile only a draft whose existing
+bytes match the retained candidate. If publication already succeeded, the
+retry downloads and authenticates the immutable published bytes so new signing
+timestamps cannot change the transaction. Stable and Current releases are
+accepted only after their exact tag target, metadata, asset names, digests, and
+immutable state are verified. Current uses a new `current-<sha40>` prerelease
+for every candidate commit.
 
 ## Homebrew Design
 
@@ -428,7 +462,7 @@ Stable formula:
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.2/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
@@ -492,20 +526,21 @@ make release-gate-hosted
 make package-release
 ```
 
-For stable 1.0.1 publication:
+For stable 1.0.2 publication:
 
 1. Push the exact candidate to protected `main` and require every workflow in
    the stable gate to succeed for that commit.
 2. Run the serialized three-lane parity workflow and retain its raw, normalized,
    VS Code, and cleanup evidence.
-3. Create and push the annotated SSH-signed `1.0.1` tag.
-4. Dispatch `stable-release-gate.yml` with `ref=1.0.1`.
+3. Create and push the annotated SSH-signed `1.0.2` tag.
+4. Dispatch `stable-release-gate.yml` with `ref=1.0.2`.
 5. After its candidate-bound authority artifact is present, dispatch
-   `prebuilt-binaries.yml` with `ref=1.0.1`.
+   `prebuilt-binaries.yml` with `ref=1.0.2`.
 6. Verify the finalized GitHub release, attestations, tap commit, fresh
    `brew install stephenlclarke/tap/devcontainer`, formula test, build identity,
    and a stock-runtime smoke.
 
 The publication workflow performs Developer ID signing, notarization, staged
-release upload, formula rendering, strict audit/fetch/install/test, tested tap
-push, and final release promotion as one fail-closed transaction.
+release upload, immutable non-latest publication, formula rendering, strict
+audit/fetch/install/test, tested tap push, and final Latest-marker promotion as
+one fail-closed transaction.
