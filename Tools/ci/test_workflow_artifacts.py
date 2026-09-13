@@ -249,7 +249,7 @@ class WorkflowArtifactTests(unittest.TestCase):
             )
             self.assertNotIn("devcontainer-ultuk2m30000", labels)
 
-        self.assertEqual(checked, 2)
+        self.assertEqual(checked, 3)
 
     def test_runner_specification_parser_covers_yaml_forms(self) -> None:
         contents = """
@@ -660,6 +660,52 @@ jobs:
 
         self.assertIn("Apple-backed Engine API adapter", contents)
         self.assertNotIn("Docker-compatible engine adapter", contents)
+
+    def test_release_credentials_are_operation_scoped_and_unattended(self) -> None:
+        contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        package = contents[contents.index("  package:\n") :]
+
+        for secret in (
+            "DEVELOPER_ID_APPLICATION_P12_BASE64",
+            "DEVELOPER_ID_APPLICATION_P12_PASSWORD",
+            "DEVCONTAINER_NOTARY_APPLE_ID",
+            "DEVCONTAINER_NOTARY_TEAM_ID",
+            "DEVCONTAINER_NOTARY_PASSWORD",
+        ):
+            self.assertIn(f"secrets.{secret}", package)
+        self.assertIn("temporary-release-keychain.sh install", package)
+        self.assertIn("stable source tag does not name a commit", contents)
+        self.assertIn('"${helper}" cleanup', package)
+        cleanup = package[package.index("Remove operation-scoped release") :]
+        self.assertIn("if: always()", cleanup)
+        self.assertIn('! -e "${DEVELOPER_ID_KEYCHAIN}"', cleanup)
+        self.assertIn('if [[ ! -x "${helper}" ]]', cleanup)
+        self.assertIn("vars.DEVCONTAINER_NOTARY_PROFILE", package)
+        self.assertNotIn("vars.DEVCONTAINER_SIGNING_IDENTITY", package)
+        self.assertNotIn("read -p", package)
+        self.assertNotIn("read -s", package)
+
+    def test_stable_release_has_one_unattended_controller(self) -> None:
+        contents = (WORKFLOWS / "stable-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Exact checked-in MAJOR.MINOR.PATCH version", contents)
+        self.assertIn("Create or verify the signed stable tag", contents)
+        self.assertIn("dispatch_and_wait", contents)
+        self.assertIn("X-GitHub-Api-Version: 2026-03-10", contents)
+        self.assertIn(".workflow_run_id", contents)
+        self.assertIn("stable-release-gate.yml", contents)
+        self.assertIn("prebuilt-binaries.yml", contents)
+        self.assertIn(".immutable == true", contents)
+        self.assertIn("releases/latest", contents)
+        self.assertIn("Formula/devcontainer.rb?ref=main", contents)
+        self.assertIn('GH_PROMPT_DISABLED: "1"', contents)
+        self.assertIn('GIT_TERMINAL_PROMPT: "0"', contents)
+        self.assertIn("test \"$(jq -r '.object.type'", contents)
+        self.assertNotIn("gh run list", contents)
+        self.assertNotIn("read -p", contents)
+        self.assertNotIn("read -s", contents)
 
     def test_cli_smoke_uses_a_policy_valid_native_compose_fixture(self) -> None:
         contents = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")

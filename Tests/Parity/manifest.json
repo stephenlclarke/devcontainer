@@ -24,8 +24,8 @@
       "stableCommit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
     },
     "containerCompose": {
-      "stableVersion": "0.14.3",
-      "stableCommit": "aa3dda83f1322ef70fe985fe11410e9f8201e4fa"
+      "stableVersion": "0.15.1",
+      "stableCommit": "81a2263adf30127a3cf774ffdaf56bd23e2f81c1"
     },
     "vscode": {
       "version": "1.137.0",

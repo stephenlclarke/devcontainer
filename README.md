@@ -38,10 +38,10 @@ roadmap](PARITY-ROADMAP.md).
 > stable baseline. The latest published stable release remains 1.0.1. Before
 > 1.0.2 can be published, its exact source must pass all 18 CLI fixtures plus
 > the real VS Code end-to-end fixture against real Docker, unmodified Apple
-> `container` 1.4.1, and the separately maintained `container-compose` 0.15.0
+> `container` 1.4.1, and the separately maintained `container-compose` 0.15.1
 > provider stack with zero normalized semantic differences.
-> The currently published provider baseline remains `container-compose`
-> 0.14.3 until that 0.15.0 release completes its own immutable publication.
+> The provider pin is the verified `container-compose` 0.15.1 tag at commit
+> `81a2263adf30127a3cf774ffdaf56bd23e2f81c1`.
 > [COMPATIBILITY.md](COMPATIBILITY.md) records the current pins, bounded claim,
 > and evidence requirements.
 

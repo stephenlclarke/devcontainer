@@ -89,6 +89,10 @@ jobs:
               printf 'stable source tag is not GitHub-verified\n' >&2
               exit 1
             fi
+            if [[ "$(jq -r '.object.type' <<<"${tag_document}")" != "commit" ]]; then
+              printf 'stable source tag does not name a commit\n' >&2
+              exit 1
+            fi
             sha="$(jq -r '.object.sha' <<<"${tag_document}")"
             authority=""
             authority_name="stable-authority-${ref_name}-${sha}"
@@ -258,20 +262,32 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.3"
-      - name: Require isolated ARM64 release identity
+      - name: Require exact isolated ARM64 release source
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
-          SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
           test -n "${HOMEBREW_TAP_TOKEN}"
-          test -n "${SIGNING_IDENTITY}"
-          test -n "${NOTARY_PROFILE}"
           test "$(git -C devcontainer rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           test -z "$(git -C devcontainer status --short)"
+      - name: Provision unattended signing and notarization authority
+        env:
+          DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          DEVELOPER_ID_EXPECTED_IDENTITY: ${{ vars.DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY }}
+          DEVELOPER_ID_TEMPORARY_ROOT: ${{ runner.temp }}
+          DEVELOPER_ID_KEYCHAIN: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychain-db
+          DEVELOPER_ID_ORIGINAL_KEYCHAINS: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychains
+          DEVELOPER_ID_ENVIRONMENT_FILE: ${{ github.env }}
+          DEVCONTAINER_NOTARY_APPLE_ID: ${{ secrets.DEVCONTAINER_NOTARY_APPLE_ID }}
+          DEVCONTAINER_NOTARY_TEAM_ID: ${{ secrets.DEVCONTAINER_NOTARY_TEAM_ID }}
+          DEVCONTAINER_NOTARY_PASSWORD: ${{ secrets.DEVCONTAINER_NOTARY_PASSWORD }}
+          DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
+        working-directory: devcontainer
+        shell: bash
+        run: Tools/release/temporary-release-keychain.sh install
       - name: Check out Homebrew tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -286,8 +302,6 @@ jobs:
       - name: Build signed and notarized package
         id: package
         env:
-          DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
-          DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
           LANE: ${{ needs.resolve.outputs.lane }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
         working-directory: devcontainer
@@ -602,3 +616,23 @@ jobs:
         run: |
           set -euo pipefail
           Tools/release/publish-github-release.sh stable-promote
+      - name: Remove operation-scoped release keychain
+        if: always()
+        env:
+          DEVELOPER_ID_TEMPORARY_ROOT: ${{ runner.temp }}
+          DEVELOPER_ID_KEYCHAIN: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychain-db
+          DEVELOPER_ID_ORIGINAL_KEYCHAINS: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychains
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper=devcontainer/Tools/release/temporary-release-keychain.sh
+          if [[ ! -e "${DEVELOPER_ID_KEYCHAIN}" &&
+            ! -e "${DEVELOPER_ID_ORIGINAL_KEYCHAINS}" ]]; then
+            exit 0
+          fi
+          if [[ ! -x "${helper}" ]]; then
+            printf 'cannot safely restore the release keychain search list: %s is unavailable\n' \
+              "${helper}" >&2
+            exit 1
+          fi
+          "${helper}" cleanup

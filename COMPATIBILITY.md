@@ -6,7 +6,7 @@
 > Version 1.0.2 is the current source candidate, not an immutable stable
 > compatibility baseline. The latest published stable release remains 1.0.1.
 > The candidate must pass its release-bound real Docker, stock Apple
-> `container` 1.4.1, separate `container-compose` 0.15.0, and real VS Code
+> `container` 1.4.1, separate `container-compose` 0.15.1, and real VS Code
 > gates before this section may state a 1.0.2 release result. Historical
 > measurements and the required new-run protocol are in
 > [PERFORMANCE.md](PERFORMANCE.md).
@@ -76,9 +76,9 @@ immutable matrix is also embedded in that tag's parity evidence.
 | `apple/container` stable | `1.4.1` | Source commit `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Required unmodified stock runtime lane |
 | `apple/containerization` for `container` 1.4.1 | `0.45.0` | Source commit `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited from the Apple `container` resolution |
 | `stephenlclarke/container-engine-api` | Exact revision | Source commit `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Shared executable, generated 107-operation API 1.44 through 1.53 ledger, bounded raw/WebSocket Unix listener, schema-2 private provider session, gateway, terminal-resize contract, and provider-owned state-root identity |
-| `container-compose` stable | `0.14.3` | Annotated tag object `4fa64772670ad4a02fd1bf0dfce191091d0140c3`; source commit `aa3dda83f1322ef70fe985fe11410e9f8201e4fa` | Optional provider; the 0.15.0 release candidate is not a stable pin until publication completes |
-| Stable provider's `stephenlclarke/container` | Revision | `ccf99d73b75626ed49a0d638c640bd3b9851e2de` | Exact fork dependency declared by `container-compose` 0.14.3 |
-| Stable provider's `stephenlclarke/containerization` | Revision | `bd8130fea851f6ee264f00fc684e2543a7d2faa3` | Exact fork dependency declared by `container-compose` 0.14.3 |
+| `container-compose` stable | `0.15.1` | Verified annotated tag object `4aca8f6ab4174522af294051a02b22c9dd86b3d9`; source commit `81a2263adf30127a3cf774ffdaf56bd23e2f81c1` | Optional native provider; bundled in the Docker-less package using its stock Apple profile |
+| Stable provider's `stephenlclarke/container` | Revision | `780a86b995ac4cb0985db97f38875fdc6e33d16b` | Exact enhanced-runtime dependency declared by `container-compose` 0.15.1 |
+| Stable provider's `stephenlclarke/containerization` | Revision | `7e066a3101bc84fa0f7231daf6a03aa9ef62a567` | Exact enhanced-runtime dependency declared by `container-compose` 0.15.1 |
 | VS Code | `1.137.0`, arm64 stable | Commit `645f29cc3176500b4b5762ba887cf2a7f0ffdf2c`; official archive SHA-256 `16ee5cddb1ea19234e1f2516da07d57e07d7cab6ab45a5515dab077656cbc65e`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.470.0` | Official Marketplace VSIX SHA-256 `66300dd37ec86e709df46acf4c294821db94248ee89cff7fb32888271b5069a1`; embedded CLI `0.89.0` at `5dc7533314b5ba7ec3875c30143dfe1aec644870`, SHA-256 `e2051ce3598a26b11d29048a6dd3252ae8d3b056b413c0d53ba1fd3a56ec1b74` | End-to-end reference integration |
 | Release host | macOS `26.6.2` (`25G83`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |

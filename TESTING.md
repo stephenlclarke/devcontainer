@@ -10,10 +10,11 @@ driver. The hosted-safe suite is discovered at execution time and must record
 greater than 90% first-party line coverage; documentation does not maintain a
 manual test-count claim that can drift from the executable suite. For version
 1.0.2 to become stable, real Docker, stock Apple `container` 1.4.1, and the
-separately identified `container-compose` 0.15.0 lanes must pass all 18 CLI
+separately identified `container-compose` 0.15.1 lanes must pass all 18 CLI
 fixtures and the pinned real VS Code fixture with zero normalized semantic
 differences and complete timing evidence. The authoritative published provider
-pin remains 0.14.3 until 0.15.0 passes its independent release gates.
+pin is `container-compose` 0.15.1 at
+`81a2263adf30127a3cf774ffdaf56bd23e2f81c1`.
 [`PERFORMANCE.md`](PERFORMANCE.md)
 retains historical results and defines the required 1.0.2 run. Publication
 must bind the new results to the exact source, physical runner, signing,

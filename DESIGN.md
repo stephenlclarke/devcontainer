@@ -473,7 +473,7 @@ byte-identical. The complete fail-closed transaction is defined in
 A stable tag is prohibited until:
 
 - every fixture in `Tests/Parity/manifest.json` is implemented;
-- Docker oracle, stock Apple 1.4.1, and `container-compose` 0.15.0 recordings pass;
+- Docker oracle, stock Apple 1.4.1, and `container-compose` 0.15.1 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
 - hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;

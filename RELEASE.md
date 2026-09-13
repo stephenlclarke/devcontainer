@@ -128,7 +128,7 @@ The formula version uses the same validated algorithm as `container-compose`:
 current.418.0123456789ab
 ```
 
-Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until the designated repository-scoped MBP runner has both the `devcontainer-release` and `devcontainer-designated-mbp` labels, a Developer ID Application identity, the configured notary profile, and the tap token. Manual dispatch remains fail-closed against the same prerequisites.
+Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until the designated repository-scoped MBP runner has both the `devcontainer-release` and `devcontainer-designated-mbp` labels, the release-certificate and tap secrets, and either the notarization secrets or a prevalidated noninteractive local notary profile described below. Manual dispatch remains fail-closed against the same prerequisites.
 
 The full source identity remains the lowercase 40-character commit SHA. The 12-character prefix is only a display and asset-name convenience.
 
@@ -210,6 +210,7 @@ The implemented workflow split is:
 | `parity.yml` | Trusted bare-metal Apple silicon | Live Docker, stock Apple, and Compose-provider parity |
 | `stable-release-gate.yml` | Ubuntu and hosted macOS | Resolve immutable candidate and record release authority |
 | `prebuilt-binaries.yml` | Trusted bare-metal Apple silicon | Sign, notarize, package, attest, release, and update the tap |
+| `stable-release.yml` | Trusted bare-metal tag signer, then hosted Ubuntu | Create or verify the signed tag, dispatch both downstream authorities, wait, and verify GitHub plus Homebrew publication |
 
 ```mermaid
 flowchart TD
@@ -275,15 +276,15 @@ shown below:
 - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
 - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
 - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-- uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
-- uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
-- uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+- uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+- uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+- uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
 ```
 
 Dependabot updates the grouped GitHub Actions ecosystem weekly. Any new action
 is reviewed and pinned before merge.
 
-Permissions begin at read-only and escalate per job. The attestation job alone receives `id-token: write` and `attestations: write`; the release job alone receives `contents: write`; the stable-authority job alone receives `checks: write`; and the Pages deployment receives `pages: write` and `id-token: write`.
+Permissions begin at read-only and escalate per job. The package job alone receives `contents: write`, `id-token: write`, and `attestations: write`; the stable controller's tag job alone receives `contents: write`; its hosted continuation alone receives `actions: write`; and the Pages deployment receives `pages: write` and `id-token: write`. The candidate-bound stable-authority artifact is read-only and does not synthesize a check run.
 
 Self-hosted workflows must never run pull-request code. They accept only protected `main`, a GitHub-verified stable tag, or an explicit trusted dispatch. The release runner registration is repository-scoped.
 
@@ -305,8 +306,8 @@ The runner must provide:
 - A deliberately installed Docker engine and pinned Docker Compose oracle.
 - An explicitly configured `container-compose` executable for the provider lane.
 - `gh`, `git`, `jq`, `make`, `python3`, `shasum`, `ssh-keygen`, `swift`, and `tar`.
-- A noninteractive Developer ID signing identity.
-- A `notarytool` profile in the local keychain.
+- The release-certificate secrets and either notarization repository secrets or
+  the validated compatibility profile described below.
 - Git identity and SSH signing configuration for release commits and tags.
 
 The gate must capture versions and executable paths before testing. It must reject a stock lane when `container system version --format json` identifies a custom distribution.
@@ -377,31 +378,69 @@ Source identity and binary identity are separate requirements:
 - The exact signed executable is submitted to Apple's notary service.
 - GitHub provenance attests the final distributed archive and SBOM.
 
-The release runner should hold signing and notarization material in the macOS keychain. Private keys, certificates, API keys, and notary credentials must not be copied into pull-request workflows, logs, artifacts, repository files, or generic Actions secrets.
+Signing-certificate inputs are repository Actions secrets available only to
+the trusted release job; pull-request workflows never receive them.
+Notarization uses either the three repository secrets or the prevalidated
+compatibility profile described below. Each package run imports the certificate
+into a new operation-scoped keychain below `RUNNER_TEMP`. When all three
+notarization secrets are configured, the run creates its notary profile in that
+same keychain. It verifies the exact configured identity, certificate expiry,
+hardened-runtime timestamp signing, and Apple credentials before the package
+build. Every prompt-capable command has closed standard input and a
+process-group deadline. An `always()` step restores the exact prior user
+keychain search list and deletes the operation keychain after success or
+failure. The helper publishes its restoration record only after a successful
+search-list capture. If restoration or deletion fails, it retains that record
+and fails the job so the exact cleanup can be retried; it never treats an empty
+or incomplete capture as authority to clear the user's search list. This is the
+preferred path and does not depend on the login keychain.
 
-Create the repository's expected local profile once, entering the Apple ID and
-app-specific password only in the local terminal:
+Configure the one-time repository authorities from a private terminal. Each
+`gh secret set` command securely prompts for its value:
 
 ```sh
-xcrun notarytool store-credentials devcontainer-release \
-  --apple-id <APPLE_ID_EMAIL> \
-  --team-id 4MEB7MUTAV
+gh secret set DEVELOPER_ID_APPLICATION_P12_BASE64 \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVELOPER_ID_APPLICATION_P12_PASSWORD \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_APPLE_ID \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_TEAM_ID \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_PASSWORD \
+  --repo stephenlclarke/devcontainer
 ```
 
-Omitting `--password` makes `notarytool` request the app-specific password in a
-secure prompt before storing the credential in Keychain. The password must
-never be placed in shell history, chat, a repository file, or an Actions
-secret. Confirm that the profile is usable without exposing its contents:
+`DEVCONTAINER_NOTARY_PASSWORD` is the Apple ID app-specific password, not the
+Apple account password. The P12 base64 value contains the Developer ID
+Application certificate and private key. Keep all values out of shell history,
+chat, files, logs, and workflow inputs. Configure the expected public identity
+name separately:
 
 ```sh
-xcrun notarytool history --keychain-profile devcontainer-release
+gh variable set DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY \
+  --repo stephenlclarke/devcontainer \
+  --body 'Developer ID Application: Steve Clarke (4MEB7MUTAV)'
 ```
 
-Verification includes:
+For compatibility while those three notary secrets are being migrated, the
+workflow accepts `DEVCONTAINER_NOTARY_PROFILE` from the repository variables.
+Before any expensive build it runs a bounded, stdin-closed `notarytool history`
+against that profile and fails if it is missing, locked, or interactive. The
+current `devcontainer-release` profile has been verified through that exact
+noninteractive probe. A partial set of notarization secrets is always rejected.
+
+When repository notary secrets are present, the release helper creates the
+configured profile inside the unique temporary keychain. Its effective
+verification is equivalent to:
 
 ```sh
-codesign --verify --strict --verbose=2 /path/to/devcontainer
-xcrun notarytool submit /path/to/notarization.zip --keychain-profile devcontainer-release --wait
+codesign --keychain /path/to/operation.keychain-db \
+  --verify --strict --verbose=2 /path/to/devcontainer
+xcrun notarytool submit /path/to/notarization.zip \
+  --keychain-profile devcontainer-release \
+  --keychain /path/to/operation.keychain-db \
+  --wait --timeout 2040s
 ```
 
 A standalone Mach-O executable cannot be stapled like an app, pkg, or dmg. The
@@ -513,9 +552,9 @@ The formula must not:
 
 Tap updates are serialized and use a dedicated token. Automation verifies the tap push remote, commits only the intended formula, pushes one Conventional Commit, waits for tap CI, installs the formula, runs `brew test`, and compares the installed binary's build info with the selected commit.
 
-## Release Operator Commands
+## Unattended Stable Release
 
-The checked-in Make targets are the local release authority:
+The checked-in Make targets remain useful local evidence:
 
 ```console
 make check
@@ -526,19 +565,25 @@ make release-gate-hosted
 make package-release
 ```
 
-For stable 1.0.2 publication:
+After the exact candidate is reviewed, merged to protected `main`, and green,
+the sole operator action for stable 1.0.2 is:
 
-1. Push the exact candidate to protected `main` and require every workflow in
-   the stable gate to succeed for that commit.
-2. Run the serialized three-lane parity workflow and retain its raw, normalized,
-   VS Code, and cleanup evidence.
-3. Create and push the annotated SSH-signed `1.0.2` tag.
-4. Dispatch `stable-release-gate.yml` with `ref=1.0.2`.
-5. After its candidate-bound authority artifact is present, dispatch
-   `prebuilt-binaries.yml` with `ref=1.0.2`.
-6. Verify the finalized GitHub release, attestations, tap commit, fresh
-   `brew install stephenlclarke/tap/devcontainer`, formula test, build identity,
-   and a stock-runtime smoke.
+```sh
+gh workflow run stable-release.yml \
+  --repo stephenlclarke/devcontainer \
+  --ref main \
+  -f version=1.0.2
+```
+
+The controller verifies that the requested version is the exact reviewed
+`Makefile` version and that its checkout is remote `main`. On the designated
+MBP it creates or verifies the annotated SSH-signed tag. A hosted continuation
+then dispatches each downstream workflow through GitHub's versioned API, binds
+the wait to the immutable returned run ID, waits for the candidate-bound stable
+gate and package publication, and verifies the immutable Latest release and
+the matching Homebrew formula. Because the long wait runs on a hosted runner,
+the single release MBP remains free for the package workflow. Rerunning the
+controller safely verifies and reuses an already correct tag.
 
 The publication workflow performs Developer ID signing, notarization, staged
 release upload, immutable non-latest publication, formula rendering, strict

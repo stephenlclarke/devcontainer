@@ -57,7 +57,7 @@ The evidence included:
 
 - the complete source, tests, documentation, package, workflows, release tooling, and parity fixtures in this repository;
 - the pinned stock `apple/container` 1.1.0 and `apple/containerization` 0.35.0 sources;
-- the separately installed `container-compose` 0.15.0 boundary and its current open work;
+- the separately installed `container-compose` 0.15.1 boundary and its current open work;
 - `make check`, which passed 148 Swift tests, all Python harness tests, formatting, lint, documentation generation, parity-manifest validation, and above 91% first-party line coverage;
 - successful hosted CI, AddressSanitizer, ThreadSanitizer, CodeQL, SonarCloud, documentation, Homebrew, dependency-review, and live runtime workflows on the exact reviewed commit;
 - [live three-lane parity run 30522304399](https://github.com/stephenlclarke/devcontainer/actions/runs/30522304399), which recorded zero semantic differences across all 18 CLI fixtures and the real VS Code fixture;
@@ -551,7 +551,7 @@ The runtime-neutral core must remain independent from `ComposeCore`. Cross-repos
 | Repository | Current finding | Project action |
 | --- | --- | --- |
 | `devcontainer` | PR 75 contains the Docker-less adapter, stock/enhanced runtime profiles, and the previously reviewed runtime-round-trip optimisation | Certify the exact final head through the release-bound Docker, stock Apple, enhanced provider, and real VS Code lanes before merge |
-| `container-compose` | The separately installed 0.15.0 provider candidate supplies the stock adapter package and enhanced orchestration boundary required by the release matrix | Consume only its immutable stable release fingerprint; keep `ComposeCore` out of the runtime-neutral Devcontainer core |
+| `container-compose` | The verified 0.15.1 provider supplies the bundled stock adapter package and enhanced orchestration boundary required by the release matrix | Consume only its immutable stable release fingerprint; keep `ComposeCore` out of the runtime-neutral Devcontainer core |
 | `stephenlclarke/container` | The enhanced distribution advertises additive hostname, security, privileged, inventory, health, and logging capabilities | Fingerprint every enhanced-only behavior, retain stock rejection paths, and land any further generic runtime correction through its own pull request |
 | `apple/container` | Stock 1.4.1 still lacks several primitives needed by NC-002 to NC-009 | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
 | `apple/containerization` | Stock 0.45.0 provides useful OCI/runtime primitives, but some require a supported `apple/container` management surface before this bridge can claim them | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |

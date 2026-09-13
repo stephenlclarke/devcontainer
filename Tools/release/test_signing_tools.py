@@ -104,11 +104,15 @@ class SigningToolTests(unittest.TestCase):
             stage = self.make_stage(root)
             fake_bin, trace = self.make_fake_tools(root)
             evidence = root / "notarization.json"
+            keychain = root / "operation.keychain-db"
+            keychain.touch()
             environment = os.environ.copy()
             environment.update(
                 {
                     "DEVCONTAINER_NOTARY_PROFILE": "fixture-profile",
+                    "DEVCONTAINER_NOTARY_KEYCHAIN": str(keychain),
                     "DEVCONTAINER_SIGNING_IDENTITY": "Developer ID Application: Fixture",
+                    "DEVCONTAINER_SIGNING_KEYCHAIN": str(keychain),
                     "PATH": f"{fake_bin}:{environment['PATH']}",
                     "SIGNING_TRACE": str(trace),
                 }
@@ -153,6 +157,10 @@ class SigningToolTests(unittest.TestCase):
             )
             checksum = sbom["packages"][0]["checksums"][0]["checksumValue"]
             self.assertNotEqual(checksum, "0" * 64)
+            script = SIGNING_SCRIPT.read_text(encoding="utf-8")
+            self.assertIn('--keychain "$SIGNING_KEYCHAIN"', script)
+            self.assertIn('--keychain "$NOTARY_KEYCHAIN"', script)
+            self.assertIn('run_bounded "$NOTARY_TIMEOUT_SECONDS"', script)
 
     def test_missing_release_credentials_fail_before_signing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
