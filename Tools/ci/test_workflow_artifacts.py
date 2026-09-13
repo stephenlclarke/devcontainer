@@ -479,6 +479,10 @@ jobs:
             4,
         )
         self.assertEqual(
+            makefile.count("Tools/ci/run-swift-test-shards.sh"),
+            1,
+        )
+        self.assertEqual(
             makefile.count("devcontainerPackageTests.xctest/Contents/MacOS"),
             4,
         )

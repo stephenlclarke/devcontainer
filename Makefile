@@ -207,6 +207,7 @@ asan:
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
+		Tools/ci/run-swift-test-shards.sh \
 		Tools/ci/run-swift-test.sh \
 		Tools/ci/run-swift-testing-bundle.sh \
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
