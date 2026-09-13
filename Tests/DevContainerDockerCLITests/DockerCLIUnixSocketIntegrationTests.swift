@@ -112,7 +112,9 @@ struct DockerCLIUnixSocketIntegrationTests {
             let exec = try await Task.detached {
                 try application.run(
                     arguments: ["exec", "--interactive", containerID, "cat"],
-                    standardInput: Data("from-stdin\n".utf8)
+                    // Exceed the Unix socket send buffer so a fast process
+                    // deterministically closes while input is still pending.
+                    standardInput: Data(repeating: 0x41, count: 4 * 1024 * 1024)
                 )
             }.value
             #expect(exec.exitCode == 0)

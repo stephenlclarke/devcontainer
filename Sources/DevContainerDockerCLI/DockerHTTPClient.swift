@@ -351,15 +351,8 @@ public final class UnixSocketDockerTransport:
                 from: inputFileDescriptor,
                 to: descriptor
             )
-        } else if let input, !input.isEmpty {
-            try write(input, to: descriptor)
-            guard Darwin.shutdown(descriptor, SHUT_WR) == 0 else {
-                throw Self.posixError()
-            }
         } else {
-            guard Darwin.shutdown(descriptor, SHUT_WR) == 0 else {
-                throw Self.posixError()
-            }
+            try finishHijackInput(input, to: descriptor)
         }
         try reader.readUntilEOF(collector.accept)
         return DockerHTTPResponse(
@@ -367,6 +360,29 @@ public final class UnixSocketDockerTransport:
             headers: responseHead.headers,
             body: Data()
         )
+    }
+
+    private func finishHijackInput(_ input: Data?, to descriptor: Int32) throws {
+        if let input, !input.isEmpty {
+            do {
+                try write(input, to: descriptor)
+            } catch let error as POSIXError where Self.peerClosed(error.code) {
+                // A short-lived command can finish and close its read side
+                // after the successful takeover response but before all
+                // caller input reaches it. Its buffered output and exit
+                // status remain authoritative.
+                return
+            }
+        }
+        guard Darwin.shutdown(descriptor, SHUT_WR) == 0 else {
+            let error = Self.posixError()
+            guard Self.peerClosed(error.code) else { throw error }
+            return
+        }
+    }
+
+    private static func peerClosed(_ code: POSIXErrorCode) -> Bool {
+        code == .EPIPE || code == .ECONNRESET || code == .ENOTCONN
     }
 
     private func streamInput(from input: Int32, to socket: Int32) throws {
