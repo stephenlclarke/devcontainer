@@ -125,7 +125,7 @@
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["Dockerfile build argument and label", "plain progress stream", "failed build stream"]
+      "assertions": ["Dockerfile build argument and label", "Docker-cleaned ignore path excludes local secrets", "plain progress stream", "failed build stream"]
     },
     {
       "id": "E05-archive-copy",

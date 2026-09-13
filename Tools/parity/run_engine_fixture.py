@@ -259,8 +259,29 @@ class Probe:
                 check=False,
                 timeout=900,
             )
+            ignored_tag = self.name + "-ignored:latest"
+            self.images.append(ignored_tag)
+            (root / ".env").write_text("local-secret\n", encoding="utf-8")
+            (root / ".dockerignore").write_text(
+                "decoy/../.env\n", encoding="utf-8"
+            )
+            (root / "Dockerfile").write_text(
+                "FROM alpine:latest\nCOPY .env /should-not-exist\n",
+                encoding="utf-8",
+            )
+            ignored = self.command(
+                "build",
+                "--progress",
+                "plain",
+                "--tag",
+                ignored_tag,
+                str(root),
+                check=False,
+                timeout=900,
+            )
         self.emit(
             build_progress=bool(built.stdout or built.stderr),
+            cleaned_ignore_path=ignored.returncode != 0,
             failed_build=failed.returncode != 0,
             inspect_label=label == "true",
         )

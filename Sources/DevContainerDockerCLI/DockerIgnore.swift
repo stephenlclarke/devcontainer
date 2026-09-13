@@ -88,14 +88,23 @@ struct DockerIgnoreMatcher {
     }
 
     private static func normalized(_ pattern: String) -> String {
-        var result = pattern
-        while result.hasPrefix("./") || result.hasPrefix("/") {
-            result.removeFirst(result.hasPrefix("./") ? 2 : 1)
+        let rooted = pattern.hasPrefix("/")
+        var components: [Substring] = []
+        for component in pattern.split(separator: "/", omittingEmptySubsequences: true) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                if components.last.map({ $0 != ".." }) == true {
+                    components.removeLast()
+                } else if !rooted {
+                    components.append(component)
+                }
+            default:
+                components.append(component)
+            }
         }
-        while result.hasSuffix("/") {
-            result.removeLast()
-        }
-        return result
+        return components.joined(separator: "/")
     }
 
     private static func globExpression(_ pattern: String) -> String {
