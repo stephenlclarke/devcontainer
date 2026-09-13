@@ -415,6 +415,7 @@ struct DockerBuildOptions: Equatable {
             arguments: [
                 "--no-xattrs", "-rf", archive.path, "-C",
                 dockerfile.deletingLastPathComponent().path,
+                "--",
                 dockerfile.lastPathComponent
             ],
             environment: ["COPYFILE_DISABLE": "1", "PATH": "/usr/bin:/bin"]

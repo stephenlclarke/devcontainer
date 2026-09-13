@@ -31,7 +31,38 @@ struct DockerIgnoreNormalizationTests {
         try Data("local-secret\n".utf8).write(to: root.appendingPathComponent(".env"))
         try Data("decoy/../.env\n".utf8).write(to: root.appendingPathComponent(".dockerignore"))
 
-        let archive = try DockerBuildOptions(arguments: [root.path]).archive()
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(entries.contains("Dockerfile"))
+        #expect(entries.contains(".dockerignore"))
+        #expect(!entries.contains(".env"))
+    }
+
+    @Test
+    func `external Dockerfile basename cannot inject tar options`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-external-file-\(UUID().uuidString)")
+        let context = root.appendingPathComponent("context")
+        try FileManager.default.createDirectory(at: context, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dockerfile = root.appendingPathComponent("-Tlist")
+        try Data("FROM scratch\n".utf8).write(to: dockerfile)
+        try Data("local-secret\n".utf8).write(to: root.appendingPathComponent(".env"))
+        try Data("./-Tlist\n.env\n".utf8).write(to: root.appendingPathComponent("list"))
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(
+                arguments: ["--file", dockerfile.path, context.path]
+            ).archive()
+        )
+
+        #expect(entries.contains("-Tlist"))
+        #expect(!entries.contains(".env"))
+    }
+
+    private func archiveEntries(_ archive: Data) throws -> Set<String> {
         let result = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
             arguments: ["-tf", "-"],
@@ -40,10 +71,6 @@ struct DockerIgnoreNormalizationTests {
         )
         #expect(result.exitCode == 0)
         let output = try #require(String(data: result.standardOutput, encoding: .utf8))
-        let entries = Set(output.split(whereSeparator: \.isNewline).map(String.init))
-
-        #expect(entries.contains("Dockerfile"))
-        #expect(entries.contains(".dockerignore"))
-        #expect(!entries.contains(".env"))
+        return Set(output.split(whereSeparator: \.isNewline).map(String.init))
     }
 }
