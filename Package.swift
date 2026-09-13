@@ -107,7 +107,7 @@ let package = Package(
             stockURL: "https://github.com/apple/container.git",
             stockVersion: "1.4.1",
             enhancedURL: "https://github.com/stephenlclarke/container.git",
-            enhancedRevision: "780a86b995ac4cb0985db97f38875fdc6e33d16b"
+            enhancedRevision: "14257435e40367d60ac3904f4f67ca35d1c29fe5"
         ),
         runtimeDependency(
             name: "containerization",
@@ -115,7 +115,7 @@ let package = Package(
             stockURL: "https://github.com/apple/containerization.git",
             stockVersion: "0.45.0",
             enhancedURL: "https://github.com/stephenlclarke/containerization.git",
-            enhancedRevision: "7e066a3101bc84fa0f7231daf6a03aa9ef62a567"
+            enhancedRevision: "aa6b0bdeef888b52afaf290cc7ac1909c3ac6fe5"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
