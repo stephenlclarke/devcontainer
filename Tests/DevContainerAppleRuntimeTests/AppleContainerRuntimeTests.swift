@@ -918,6 +918,11 @@ struct FakeAppleCLI {
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ "$mode" = fail-list-once ]; then
+              printf '%s' normal > "$MODE"
+              printf '%s\n' 'transient list failure' >&2
+              exit 42
+            fi
             if [ "$mode" = slow-list ]; then
               sleep 0.3
             fi
@@ -925,7 +930,11 @@ struct FakeAppleCLI {
               printf '%s\\n' '[]'
               exit 0
             fi
-            if [ "$mode" = recreated ]; then
+            if [ "$mode" = recreated ] || [ "$mode" = recreated-stopped ]; then
+              recreated_state=running
+              if [ "$mode" = recreated-stopped ]; then
+                recreated_state=stopped
+              fi
               printf '%s\\n' '[{
                 "id":"fixture",
                 "configuration":{
@@ -942,7 +951,7 @@ struct FakeAppleCLI {
                   "publishedPorts":[],
                   "creationDate":"2027-07-26T12:34:56.123Z"
                 },
-                "status":{"state":"running"}
+                "status":{"state":"'"$recreated_state"'"}
               }]'
               exit 0
             fi
@@ -1129,6 +1138,13 @@ struct FakeAppleCLI {
           "stop --time")
             if [ "$4" = fixture ]; then
               printf '%s' stopped > "$STATE"
+            fi
+            ;;
+          "delete --force")
+            if [ "$mode" = fail-delete-once ]; then
+              printf '%s' normal > "$MODE"
+              printf '%s\n' 'transient delete failure' >&2
+              exit 42
             fi
             ;;
           "cp "*)

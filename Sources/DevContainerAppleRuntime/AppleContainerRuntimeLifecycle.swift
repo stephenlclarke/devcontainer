@@ -221,14 +221,19 @@ public extension AppleContainerRuntime {
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
         var autoRemove = requestedContainers[id]?.spec.autoRemove ?? false
+        var autoRemoveCreatedAt = requestedContainers[id]?.createdAt
         if !autoRemove,
            let metadataStore,
            let metadata = try? await metadataStore.containerMetadata(id: id)
         {
             autoRemove = metadata.spec.autoRemove
+            autoRemoveCreatedAt = metadata.createdAt
         }
         if autoRemove {
-            scheduleAutomaticRemoval(id: id)
+            scheduleAutomaticRemoval(
+                id: id,
+                expectedCreatedAt: autoRemoveCreatedAt
+            )
         }
         await signalEventPollers()
     }
@@ -659,7 +664,10 @@ public extension AppleContainerRuntime {
                     )
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                        scheduleAutomaticRemoval(
+                            id: id,
+                            expectedCreatedAt: snapshot.createdAt
+                        )
                     }
                     return exit.code
                 }
@@ -677,7 +685,10 @@ public extension AppleContainerRuntime {
                     let exitCode = snapshot.exitCode ?? 0
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                        scheduleAutomaticRemoval(
+                            id: id,
+                            expectedCreatedAt: snapshot.createdAt
+                        )
                     }
                     return exitCode
                 }

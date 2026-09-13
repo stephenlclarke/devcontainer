@@ -121,6 +121,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerStartOperations: [String: ContainerStartOperation] = [:]
     var containerMetadataAdoptionOperations: [String: ContainerMetadataAdoptionOperation] = [:]
     var automaticRemovalRegistrations: [String: UUID] = [:]
+    var automaticRemovalTasks: [String: Task<Void, Never>] = [:]
     var containerLifecycleMutationRegistrations: [String: Set<UUID>] = [:]
     var containerLifecycleMutationRevision: UInt64 = 0
     var directProcessLaunchTail: Task<Void, Never>?
@@ -287,6 +288,11 @@ public extension AppleContainerRuntime {
 
     /// Releases all host-side compatibility resources owned by this adapter.
     func shutdown() async {
+        for task in automaticRemovalTasks.values {
+            task.cancel()
+        }
+        automaticRemovalTasks.removeAll()
+        automaticRemovalRegistrations.removeAll()
         await eventPollerState?.shutdown()
         await portForwarding.stopAll()
     }
