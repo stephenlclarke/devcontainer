@@ -48,6 +48,7 @@ create_release_draft() {
     RELEASE_NOTES_FILE="$NOTES_FILE" \
     RELEASE_PRERELEASE="$prerelease" \
     RELEASE_REPOSITORY="$REPOSITORY" \
+    RELEASE_TARGET_COMMITISH="$RELEASE_TARGET_COMMITISH" \
     RELEASE_TAG="$TAG" \
     RELEASE_TITLE="$TITLE" \
     RELEASE_VERIFY_TAG="$verify_tag" \
@@ -93,6 +94,26 @@ if [[ ! "$PUBLISH_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   printf 'publish SHA must be 40 lowercase hexadecimal characters\n' >&2
   exit 2
 fi
+
+case "$MODE" in
+  current-stage | current-finalize)
+    readonly RELEASE_TARGET_COMMITISH="${RELEASE_TARGET_COMMITISH:-$PUBLISH_SHA}"
+    if [[ "$RELEASE_TARGET_COMMITISH" != "$PUBLISH_SHA" ]]; then
+      printf 'Current release metadata must target the exact publish SHA\n' >&2
+      exit 2
+    fi
+    ;;
+  stable-stage | stable-finalize | stable-promote)
+    readonly RELEASE_TARGET_COMMITISH="${RELEASE_TARGET_COMMITISH:-main}"
+    if [[ "$RELEASE_TARGET_COMMITISH" != main ]]; then
+      printf 'stable release metadata must target protected main\n' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    readonly RELEASE_TARGET_COMMITISH="${RELEASE_TARGET_COMMITISH:-main}"
+    ;;
+esac
 if [[ ! -f "$NOTES_FILE" || ! -f "$ASSETS_FILE" ]]; then
   printf 'release notes or asset manifest is missing\n' >&2
   exit 2
@@ -151,9 +172,12 @@ recreate_release_draft() {
     "$GH" release view "$TAG" --repo "$REPOSITORY" \
       --json isDraft,tagName,targetCommitish
   )"
+  local metadata_target
+  metadata_target="$(jq -r '.targetCommitish' <<<"$snapshot")"
   if [[ "$(jq -r '.isDraft' <<<"$snapshot")" != true ||
         "$(jq -r '.tagName' <<<"$snapshot")" != "$TAG" ||
-        "$(jq -r '.targetCommitish' <<<"$snapshot")" != "$PUBLISH_SHA" ]]; then
+        ( "$metadata_target" != "$PUBLISH_SHA" &&
+          "$metadata_target" != "$RELEASE_TARGET_COMMITISH" ) ]]; then
     printf 'release draft changed before bounded replacement: %s\n' "$TAG" >&2
     return 1
   fi
@@ -505,7 +529,7 @@ case "$MODE" in
       reconcile_draft_assets true false
       "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
-        --target "$PUBLISH_SHA" \
+        --target "$RELEASE_TARGET_COMMITISH" \
         --title "$TITLE" \
         --notes-file "$NOTES_FILE" \
         --prerelease \
@@ -542,7 +566,7 @@ case "$MODE" in
     verify_current_tag_target_if_present
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
-      --target "$PUBLISH_SHA" \
+      --target "$RELEASE_TARGET_COMMITISH" \
       --title "$TITLE" \
       --notes-file "$NOTES_FILE" \
       --draft=false \
@@ -567,7 +591,7 @@ case "$MODE" in
       reconcile_draft_assets false true
       "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
-        --target "$PUBLISH_SHA" \
+        --target "$RELEASE_TARGET_COMMITISH" \
         --title "$TITLE" \
         --notes-file "$NOTES_FILE" \
         --latest=false
@@ -601,7 +625,7 @@ case "$MODE" in
     reconcile_draft_assets false true
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
-      --target "$PUBLISH_SHA" \
+      --target "$RELEASE_TARGET_COMMITISH" \
       --title "$TITLE" \
       --notes-file "$NOTES_FILE" \
       --draft=false \

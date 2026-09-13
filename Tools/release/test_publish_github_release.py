@@ -452,6 +452,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             trace = gh_trace.read_text()
             self.assertIn("release create 1.2.3", trace)
             self.assertIn("--verify-tag", trace)
+            self.assertIn("--target main", trace)
             self.assertIn("--draft", trace)
             self.assertNotIn("--prerelease ", trace)
             self.assertIn("ls-remote --tags", git_trace.read_text())
@@ -532,8 +533,23 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn("--draft=false", trace)
             self.assertIn("--prerelease=false", trace)
             self.assertIn("--latest=false", trace)
+            self.assertIn("--target main", trace)
             self.assertIn("isDraft,isImmutable", trace)
             self.assertNotIn("releases/latest --jq .tag_name", trace)
+
+    def test_release_metadata_target_rejects_arbitrary_refs(self) -> None:
+        cases = (
+            ("current-stage", f"current-{COMMIT}"),
+            ("stable-stage", "1.2.3"),
+        )
+        for mode, tag in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                environment, gh_trace, _ = self.fixture(Path(temporary))
+                environment["RELEASE_TARGET_COMMITISH"] = "release-branch"
+                result = self.run_publisher(environment, mode, tag)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("metadata", result.stderr)
+                self.assertFalse(gh_trace.exists())
 
     def test_stable_promote_marks_verified_release_latest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

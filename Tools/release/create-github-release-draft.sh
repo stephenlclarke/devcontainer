@@ -20,6 +20,7 @@ set -Eeuo pipefail
 readonly GH="${GH:-gh}"
 readonly RETRY_ATTEMPTS="${RELEASE_GITHUB_RETRY_ATTEMPTS:-5}"
 readonly RETRY_DELAY_SECONDS="${RELEASE_GITHUB_RETRY_DELAY_SECONDS:-5}"
+readonly RELEASE_TARGET_COMMITISH="${RELEASE_TARGET_COMMITISH:-main}"
 
 required_variables=(
   PUBLISH_SHA
@@ -44,6 +45,11 @@ if [[ ! -f "${RELEASE_NOTES_FILE}" || -L "${RELEASE_NOTES_FILE}" ]]; then
 fi
 if [[ ! "${PUBLISH_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
   printf 'release target must be a lowercase 40-character commit SHA\n' >&2
+  exit 2
+fi
+if [[ "${RELEASE_TARGET_COMMITISH}" != main &&
+  "${RELEASE_TARGET_COMMITISH}" != "${PUBLISH_SHA}" ]]; then
+  printf 'release metadata target must be protected main or the exact publish SHA\n' >&2
   exit 2
 fi
 if [[ ! "${RETRY_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
@@ -98,16 +104,18 @@ matching_draft_exists() {
   snapshot="$(
     "${GH}" release view "${RELEASE_TAG}" \
       --repo "${RELEASE_REPOSITORY}" \
-      --json isDraft,isPrerelease,tagName,name 2>/dev/null
+      --json isDraft,isPrerelease,tagName,targetCommitish,name 2>/dev/null
   )" || return 1
   jq -e \
     --argjson prerelease "${RELEASE_PRERELEASE}" \
     --arg tag "${RELEASE_TAG}" \
+    --arg target "${RELEASE_TARGET_COMMITISH}" \
     --arg title "${RELEASE_TITLE}" \
     '(
       .isDraft == true and
       .isPrerelease == $prerelease and
       .tagName == $tag and
+      .targetCommitish == $target and
       .name == $title
     )' <<<"${snapshot}" >/dev/null && matching_remote_tag_target
 }
@@ -120,7 +128,7 @@ while true; do
       --repo "${RELEASE_REPOSITORY}" \
       --title "${RELEASE_TITLE}" \
       --notes-file "${RELEASE_NOTES_FILE}" \
-      --target "${PUBLISH_SHA}" \
+      --target "${RELEASE_TARGET_COMMITISH}" \
       "${release_flags[@]}" \
       --draft 2>&1
   )"
