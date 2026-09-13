@@ -17,6 +17,9 @@ stock_bin="${DEVCONTAINER_RUNTIME_STOCK_BIN:-/usr/local/bin/container}"
 compose_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-/opt/homebrew/opt/container/bin/container}"
 colima_bin="${DEVCONTAINER_RUNTIME_COLIMA_BIN:-/opt/homebrew/bin/colima}"
 colima_command_timeout_seconds="${DEVCONTAINER_RUNTIME_COLIMA_COMMAND_TIMEOUT_SECONDS:-120}"
+launchctl_bin="${DEVCONTAINER_RUNTIME_LAUNCHCTL_BIN:-/bin/launchctl}"
+apple_control_timeout_seconds="${DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS:-60}"
+apple_start_timeout_seconds="${DEVCONTAINER_RUNTIME_APPLE_START_TIMEOUT_SECONDS:-${DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS:-150}}"
 timeout_runner="$SCRIPT_DIRECTORY/run-with-timeout.py"
 
 usage() {
@@ -31,23 +34,49 @@ fail() {
 runtime_status() {
   local executable="$1"
 
-  "$executable" system status --format json 2>/dev/null \
+  run_with_timeout "$apple_control_timeout_seconds" \
+    "$executable" system status --format json 2>/dev/null \
     | jq -er '.status'
+}
+
+# Deregister stock and Homebrew Container services when a CLI is unresponsive.
+force_stop_runtime_services() {
+  local domain
+  local domain_state
+  local service
+  local service_list
+  local user_id
+
+  [[ -x "$launchctl_bin" ]] \
+    || fail "launchctl executable is not usable: $launchctl_bin"
+  user_id="$(id -u)"
+  for domain in "gui/$user_id" "user/$user_id"; do
+    if ! domain_state="$($launchctl_bin print "$domain" 2>/dev/null)"; then
+      fail "launchd domain is unavailable for forced cleanup: $domain"
+    fi
+    service_list="$(grep -oE \
+      '(com\.apple\.container\.[A-Za-z0-9._-]+|sh\.brew\.container)' \
+      <<<"$domain_state" | sort -u || true)"
+    while IFS= read -r service; do
+      [[ -n "$service" ]] || continue
+      "$launchctl_bin" bootout "$domain/$service" 2>/dev/null || true
+      if "$launchctl_bin" print "$domain/$service" >/dev/null 2>&1; then
+        fail "Container launchd service survived forced cleanup: $domain/$service"
+      fi
+    done <<<"$service_list"
+  done
 }
 
 stop_runtime() {
   local executable="$1"
-  local status
 
   [[ -x "$executable" ]] || return 0
-  status="$(runtime_status "$executable" 2>/dev/null || true)"
-  case "$status" in
-    running | starting | stopping)
-      "$executable" system stop
-      ;;
-    *)
-      ;;
-  esac
+  if run_with_timeout "$apple_control_timeout_seconds" \
+    "$executable" system stop; then
+    return
+  fi
+  force_stop_runtime_services \
+    || fail "runtime stop command failed or timed out: $executable"
 }
 
 stop_all_apple_runtimes() {
@@ -143,7 +172,8 @@ start_runtime() {
   fi
 
   for attempt in 1 2 3; do
-    if "$executable" system start --enable-kernel-install --timeout 120; then
+    if run_with_timeout "$apple_start_timeout_seconds" \
+      "$executable" system start --enable-kernel-install --timeout 120; then
       status="$(runtime_status "$executable" 2>/dev/null || true)"
       if [[ "$status" == "running" ]]; then
         return
@@ -164,6 +194,11 @@ main() {
   fi
   local operation="$1"
   local lane="$2"
+
+  [[ "$apple_control_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || fail "Apple runtime control timeout must be a positive integer"
+  [[ "$apple_start_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || fail "Apple runtime start timeout must be a positive integer"
 
   case "$lane" in
     docker | apple-stock | container-compose)

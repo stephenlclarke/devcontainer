@@ -24,6 +24,7 @@ class RunnerRuntimeTests(unittest.TestCase):
         self.stock = self.make_runtime("stock")
         self.compose = self.make_runtime("compose")
         self.colima = self.make_colima()
+        self.launchctl = self.make_launchctl()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -37,11 +38,29 @@ state="${0}.state"
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$MOCK_RUNTIME_LOG"
 case "${1:-} ${2:-}" in
   "system status")
+    if [[ "${MOCK_RUNTIME_HANG_STATUS:-0}" == "1" ]]; then
+      while :; do
+        sleep 60
+      done
+    fi
     value="unregistered"
     [[ ! -f "$state" ]] || value="$(<"$state")"
     printf '{"status":"%s"}\\n' "$value"
     ;;
   "system start")
+    if [[ "${MOCK_RUNTIME_HANG_START_ONCE:-0}" == "1" && ! -f "${state}.hung" ]]; then
+      : > "${state}.hung"
+      (
+        trap '' TERM INT
+        while :; do
+          sleep 60
+        done
+      ) &
+      resistant_child=$!
+      printf '%s\\n' "$resistant_child" > "${state}.child"
+      trap 'exit 143' TERM INT
+      wait "$resistant_child"
+    fi
     if [[ "${MOCK_START_FAIL_ONCE:-0}" == "1" && ! -f "${state}.failed" ]]; then
       : > "${state}.failed"
       exit 17
@@ -49,6 +68,11 @@ case "${1:-} ${2:-}" in
     printf 'running\\n' > "$state"
     ;;
   "system stop")
+    if [[ "${MOCK_RUNTIME_HANG_STOP:-0}" == "1" ]]; then
+      while :; do
+        sleep 60
+      done
+    fi
     printf 'unregistered\\n' > "$state"
     ;;
   *)
@@ -110,6 +134,36 @@ esac
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         return executable
 
+    def make_launchctl(self) -> Path:
+        executable = self.root / "launchctl"
+        executable.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+printf 'launchctl %s\\n' "$*" >> "$MOCK_RUNTIME_LOG"
+case "${1:-}" in
+  print)
+    if [[ -f "$MOCK_LAUNCHCTL_STATE" ]]; then
+      printf '0 1 sh.brew.container\\n'
+      printf '0 - com.apple.container.apiserver\\n'
+    elif [[ "${2:-}" == */*/* ]]; then
+      exit 113
+    fi
+    ;;
+  bootout)
+    if [[ "${MOCK_LAUNCHCTL_SURVIVE:-0}" != "1" ]]; then
+      rm -f "$MOCK_LAUNCHCTL_STATE"
+    fi
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+        return executable
+
     def run_script(
         self,
         operation: str,
@@ -122,8 +176,10 @@ esac
                 "DEVCONTAINER_RUNTIME_STOCK_BIN": str(self.stock),
                 "DEVCONTAINER_RUNTIME_COMPOSE_BIN": str(self.compose),
                 "DEVCONTAINER_RUNTIME_COLIMA_BIN": str(self.colima),
+                "DEVCONTAINER_RUNTIME_LAUNCHCTL_BIN": str(self.launchctl),
                 "DEVCONTAINER_RUNTIME_SKIP_SUDO": "1",
                 "MOCK_RUNTIME_LOG": str(self.log),
+                "MOCK_LAUNCHCTL_STATE": str(self.root / "launchctl.state"),
             }
         )
         environment.update(extra_environment or {})
@@ -183,6 +239,85 @@ esac
             "stock system start --enable-kernel-install --timeout 120",
             operations,
         )
+
+    def test_fails_closed_and_bounds_a_hung_post_start_status(self) -> None:
+        started_at = time.monotonic()
+        result = self.run_script(
+            "start",
+            "apple-stock",
+            {
+                "DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_RUNTIME_HANG_STATUS": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertLess(time.monotonic() - started_at, 10)
+        self.assertIn("runtime did not reach running state", result.stderr)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertNotIn("colima start", operations)
+
+    def test_bounds_and_retries_a_hung_apple_start(self) -> None:
+        started_at = time.monotonic()
+        result = self.run_script(
+            "start",
+            "apple-stock",
+            {
+                "DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_RUNTIME_HANG_START_ONCE": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(time.monotonic() - started_at, 10)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertEqual(operations.count("stock system start"), 2)
+        child_id = int((self.root / "stock.state.child").read_text().strip())
+        for _ in range(20):
+            try:
+                os.kill(child_id, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail(f"timed-out Apple runtime descendant survived: {child_id}")
+
+    def test_bounds_a_hung_apple_stop(self) -> None:
+        (self.root / "stock.state").write_text("running\n", encoding="utf-8")
+        (self.root / "launchctl.state").touch()
+        started_at = time.monotonic()
+        result = self.run_script(
+            "stop",
+            "apple-stock",
+            {
+                "DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_RUNTIME_HANG_STOP": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(time.monotonic() - started_at, 5)
+        operations = self.log.read_text(encoding="utf-8")
+        self.assertIn(
+            f"launchctl bootout gui/{os.getuid()}/sh.brew.container",
+            operations,
+        )
+
+    def test_fails_closed_when_forced_runtime_cleanup_cannot_deregister(self) -> None:
+        (self.root / "stock.state").write_text("running\n", encoding="utf-8")
+        (self.root / "launchctl.state").touch()
+        result = self.run_script(
+            "stop",
+            "apple-stock",
+            {
+                "DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_LAUNCHCTL_SURVIVE": "1",
+                "MOCK_RUNTIME_HANG_STOP": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("runtime stop command failed or timed out", result.stderr)
 
     def test_candidate_lanes_stop_a_running_docker_oracle_before_start(self) -> None:
         (self.root / "colima.state").write_text("running\n", encoding="utf-8")

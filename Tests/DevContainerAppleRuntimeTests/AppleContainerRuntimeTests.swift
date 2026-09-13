@@ -579,10 +579,10 @@ struct AppleContainerRuntimeTests {
             ) == 23
         )
 
-        // Sanitized suites run many fake Apple CLI processes concurrently.
-        // Preserve a bounded liveness assertion without treating ordinary
-        // instrumentation contention as an order-of-magnitude regression.
-        let deadline = ContinuousClock.now + .seconds(10)
+        // Sanitizer instrumentation can make this process-backed cleanup
+        // substantially slower than the ordinary suite. Preserve a bounded
+        // liveness assertion without treating sub-10x overhead as failure.
+        let deadline = ContinuousClock.now + .seconds(30)
         while await store.containerMetadata(id: "fixture") != nil,
               ContinuousClock.now < deadline
         {
