@@ -977,7 +977,7 @@ public extension AppleContainerRuntime {
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
                 arguments: ["-xf", "-", "-C", temporary.url.path],
                 environment: environment,
-                input: extractionInput
+                options: AppleCommandRunner.Options(input: extractionInput)
             )
             try requireSuccess(extractResult, operation: "archive extraction")
             let staging = "/tmp/.devcontainer-copy-\(UUID().uuidString.lowercased())"
@@ -1221,7 +1221,7 @@ public extension AppleContainerRuntime {
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
             arguments: ["--no-xattrs", "-xf", "-", "-C", temporary.url.path],
             environment: environment,
-            input: extractionInput
+            options: AppleCommandRunner.Options(input: extractionInput)
         )
         try requireSuccess(extractResult, operation: "build context extraction")
         let dockerfile = try buildDockerfile(

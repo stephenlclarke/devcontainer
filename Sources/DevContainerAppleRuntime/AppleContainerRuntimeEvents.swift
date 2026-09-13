@@ -289,6 +289,12 @@ actor AppleEventPoller {
 }
 
 extension AppleContainerRuntime {
+    static let maximumManagedHostsBytes = 1024 * 1024
+    static let maximumManagedHostsBase64Bytes =
+        ((maximumManagedHostsBytes + 2) / 3) * 4
+    static let maximumManagedHostsEncodedOutputBytes =
+        maximumManagedHostsBase64Bytes + 8 * 1024
+
     func createNativeVolumeIfNeeded(
         spec: VolumeSpec
     ) async throws -> VolumeSnapshot {
@@ -640,6 +646,7 @@ extension AppleContainerRuntime {
                 try requireSuccess(download, operation: "container hosts download")
             }
         }
+        try Self.validateManagedHostsFileSize(localHosts)
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
         if current != updated {
@@ -755,6 +762,7 @@ extension AppleContainerRuntime {
                 }
             }
         }
+        try Self.validateManagedHostsFileSize(source)
         let upload = try await uploadHostsWithExec(
             id: id,
             contents: Data(contentsOf: source)
@@ -776,7 +784,8 @@ extension AppleContainerRuntime {
         guard useDirectProcessAPI else {
             return try await executeHostsCommand(
                 id: id,
-                command: ["cat", "/etc/hosts"]
+                command: ["cat", "/etc/hosts"],
+                maximumStandardOutputBytes: Self.maximumManagedHostsBytes
             )
         }
         let startMarker = "__DEVCONTAINER_HOSTS_BEGIN__"
@@ -785,9 +794,10 @@ extension AppleContainerRuntime {
             "printf '\(startMarker)'; "
                 + "base64 /etc/hosts | tr -d '\\n'; status=$?; "
                 + "printf '\(endMarker)'; exit $status"
-        let result = try await terminalCommand([
-            "exec", id, "/bin/sh", "-c", script
-        ])
+        let result = try await terminalCommand(
+            ["exec", id, "/bin/sh", "-c", script],
+            maximumStandardOutputBytes: Self.maximumManagedHostsEncodedOutputBytes
+        )
         guard result.exitCode == 0 else {
             return result
         }
@@ -796,7 +806,9 @@ extension AppleContainerRuntime {
             startMarker: startMarker,
             endMarker: endMarker
         ),
-            let decoded = Data(base64Encoded: encoded)
+            encoded.count <= Self.maximumManagedHostsBase64Bytes,
+            let decoded = Data(base64Encoded: encoded),
+            decoded.count <= Self.maximumManagedHostsBytes
         else {
             return AppleCommandResult(
                 standardOutput: Data(),
@@ -837,7 +849,8 @@ extension AppleContainerRuntime {
     private func executeHostsCommand(
         id: String,
         command arguments: [String],
-        input: Data? = nil
+        input: Data? = nil,
+        maximumStandardOutputBytes: Int? = 64 * 1024
     ) async throws -> AppleCommandResult {
         var commandArguments = ["exec"]
         if input != nil {
@@ -845,10 +858,17 @@ extension AppleContainerRuntime {
         }
         commandArguments.append(id)
         commandArguments += arguments
-        return try await command(commandArguments, input: input)
+        return try await command(
+            commandArguments,
+            input: input,
+            maximumStandardOutputBytes: maximumStandardOutputBytes
+        )
     }
 
-    private func terminalCommand(_ arguments: [String]) async throws -> AppleCommandResult {
+    private func terminalCommand(
+        _ arguments: [String],
+        maximumStandardOutputBytes: Int? = 64 * 1024
+    ) async throws -> AppleCommandResult {
         // Apple's `container exec` requires a controlling terminal for this
         // runtime-owned file on the stock distribution. macOS ships `script`,
         // which supplies that PTY while presenting finite pipes to our command
@@ -856,7 +876,11 @@ extension AppleContainerRuntime {
         try await AppleCommandRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/script"),
             arguments: ["-q", "/dev/null", executable.path] + arguments,
-            environment: environment
+            environment: environment,
+            options: AppleCommandRunner.Options(
+                maximumStandardOutputBytes: maximumStandardOutputBytes,
+                maximumStandardErrorBytes: 64 * 1024
+            )
         )
     }
 
@@ -874,6 +898,18 @@ extension AppleContainerRuntime {
             return nil
         }
         return data[start.upperBound ..< end.lowerBound]
+    }
+
+    static func validateManagedHostsFileSize(_ source: URL) throws {
+        let sourceSize = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        guard let sourceSize,
+              sourceSize <= maximumManagedHostsBytes
+        else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container hosts file exceeds the \(maximumManagedHostsBytes)-byte safety limit"
+            )
+        }
     }
 
     static func isTransientContainerCopyFailure(
@@ -1022,13 +1058,20 @@ extension AppleContainerRuntime {
 
     func command(
         _ arguments: [String],
-        input: Data? = nil
+        input: Data? = nil,
+        maximumStandardOutputBytes: Int? = nil
     ) async throws -> AppleCommandResult {
         try await AppleCommandRunner.run(
             executable: executable,
             arguments: arguments,
             environment: environment,
-            input: input
+            options: AppleCommandRunner.Options(
+                input: input,
+                maximumStandardOutputBytes: maximumStandardOutputBytes,
+                maximumStandardErrorBytes: maximumStandardOutputBytes == nil
+                    ? nil
+                    : 64 * 1024
+            )
         )
     }
 

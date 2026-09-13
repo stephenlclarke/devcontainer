@@ -829,20 +829,37 @@ final class ApplePollingLogSession: RuntimeProcessSession, @unchecked Sendable {
 }
 
 enum AppleCommandRunner {
+    struct Options: Sendable {
+        var workingDirectory: URL?
+        var input: Data?
+        var maximumStandardOutputBytes: Int?
+        var maximumStandardErrorBytes: Int?
+
+        init(
+            workingDirectory: URL? = nil,
+            input: Data? = nil,
+            maximumStandardOutputBytes: Int? = nil,
+            maximumStandardErrorBytes: Int? = nil
+        ) {
+            self.workingDirectory = workingDirectory
+            self.input = input
+            self.maximumStandardOutputBytes = maximumStandardOutputBytes
+            self.maximumStandardErrorBytes = maximumStandardErrorBytes
+        }
+    }
+
     static func run(
         executable: URL,
         arguments: [String],
         environment: [String: String],
-        workingDirectory: URL? = nil,
-        input: Data? = nil
+        options: Options = Options()
     ) async throws -> AppleCommandResult {
         try await RuntimeRequestScope.withDeadline {
             try await runWithoutDeadline(
                 executable: executable,
                 arguments: arguments,
                 environment: environment,
-                workingDirectory: workingDirectory,
-                input: input
+                options: options
             )
         }
     }
@@ -851,8 +868,7 @@ enum AppleCommandRunner {
         executable: URL,
         arguments: [String],
         environment: [String: String],
-        workingDirectory: URL?,
-        input: Data?
+        options: Options
     ) async throws -> AppleCommandResult {
         let session: AppleProcessSession
         do {
@@ -860,7 +876,7 @@ enum AppleCommandRunner {
                 executable: executable,
                 arguments: arguments,
                 environment: environment,
-                workingDirectory: workingDirectory
+                workingDirectory: options.workingDirectory
             )
         } catch {
             throw DevContainerError(
@@ -869,8 +885,15 @@ enum AppleCommandRunner {
             )
         }
 
-        return try await withTaskCancellationHandler {
-            if let input {
+        return try await capture(session: session, options: options)
+    }
+
+    private static func capture(
+        session: AppleProcessSession,
+        options: Options
+    ) async throws -> AppleCommandResult {
+        try await withTaskCancellationHandler {
+            if let input = options.input {
                 try await session.write(input)
             }
             try await session.closeStandardInput()
@@ -880,9 +903,21 @@ enum AppleCommandRunner {
                 try Task.checkCancellation()
                 switch frame.channel {
                 case .standardOutput:
-                    standardOutput.append(frame.data)
+                    try append(
+                        frame.data,
+                        to: &standardOutput,
+                        maximumBytes: options.maximumStandardOutputBytes,
+                        stream: "standard output",
+                        session: session
+                    )
                 case .standardError:
-                    standardError.append(frame.data)
+                    try append(
+                        frame.data,
+                        to: &standardError,
+                        maximumBytes: options.maximumStandardErrorBytes,
+                        stream: "standard error",
+                        session: session
+                    )
                 case .standardInput:
                     break
                 }
@@ -896,5 +931,28 @@ enum AppleCommandRunner {
         } onCancel: {
             session.cancel()
         }
+    }
+
+    private static func append(
+        _ incoming: Data,
+        to accumulated: inout Data,
+        maximumBytes: Int?,
+        stream: String,
+        session: AppleProcessSession
+    ) throws {
+        if let maximumBytes {
+            let remaining = maximumBytes >= accumulated.count
+                ? maximumBytes - accumulated.count
+                : -1
+            let exceedsLimit = remaining < 0 || incoming.count > remaining
+            guard !exceedsLimit else {
+                session.cancel()
+                throw DevContainerError(
+                    .providerProtocolMismatch,
+                    message: "Apple container command \(stream) exceeds the \(max(0, maximumBytes))-byte safety limit"
+                )
+            }
+        }
+        accumulated.append(incoming)
     }
 }

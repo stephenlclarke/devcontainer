@@ -23,6 +23,51 @@ import Testing
 
 struct AppleProcessSessionSupportTests {
     @Test
+    func `command runner bounds captured process output`() async throws {
+        let exact = try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf 12345678; printf error >&2"],
+            environment: [:],
+            options: AppleCommandRunner.Options(
+                maximumStandardOutputBytes: 8,
+                maximumStandardErrorBytes: 5
+            )
+        )
+        #expect(exact.standardOutput == Data("12345678".utf8))
+        #expect(exact.standardError == Data("error".utf8))
+
+        do {
+            _ = try await AppleCommandRunner.run(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "printf 123456789"],
+                environment: [:],
+                options: AppleCommandRunner.Options(
+                    maximumStandardOutputBytes: 8
+                )
+            )
+            Issue.record("oversized command output unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .providerProtocolMismatch)
+            #expect(error.message.contains("8-byte safety limit"))
+        }
+    }
+
+    @Test
+    func `managed hosts file rejects oversized guest content`() throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-hosts-limit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data(
+            repeating: 0x78,
+            count: AppleContainerRuntime.maximumManagedHostsBytes + 1
+        ).write(to: source)
+
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime.validateManagedHostsFileSize(source)
+        }
+    }
+
+    @Test
     func `deferred session replays ordered operations after launch`() async throws {
         let launched = RecordingRuntimeSession()
         let deferred = DeferredAppleProcessSession {
