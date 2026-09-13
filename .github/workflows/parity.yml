@@ -71,6 +71,9 @@ jobs:
             Tools/release/build-native-compose.sh "${compose_root}"
           printf 'DEVCONTAINER_COMPOSE_BIN=%s\n' \
             "${compose_root}/bin/compose" >>"${GITHUB_ENV}"
+      - name: Configure isolated Apple runtime
+        if: matrix.lane != 'docker'
+        run: Tools/parity/configure-runtime-environment.sh "${{ matrix.lane }}"
       - name: Prepare isolated runtime
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance

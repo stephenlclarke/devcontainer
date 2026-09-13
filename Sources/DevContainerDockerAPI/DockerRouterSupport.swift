@@ -499,7 +499,12 @@ extension DockerRouter {
         _ mount: DockerMountRequest,
         prefix: String
     ) throws {
-        if mount.consistency?.isEmpty == false {
+        if let consistency = mount.consistency,
+           !consistency.isEmpty,
+           !["cached", "consistent", "delegated"].contains(
+               consistency.lowercased()
+           )
+        {
             try unsupportedCreateField("\(prefix).Consistency")
         }
         if let options = mount.bindOptions,

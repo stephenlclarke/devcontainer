@@ -36,7 +36,7 @@ roadmap](PARITY-ROADMAP.md).
 > [!IMPORTANT]
 > Version 1.0.2 is the current release candidate; it is not yet an immutable
 > stable baseline. The latest published stable release remains 1.0.1. Before
-> 1.0.2 can be published, its exact source must pass all 18 CLI fixtures plus
+> 1.0.2 can be published, its exact source must pass all 19 CLI fixtures plus
 > the real VS Code end-to-end fixture against real Docker, unmodified Apple
 > `container` 1.4.1, and the separately maintained `container-compose` 0.15.1
 > provider stack with zero normalized semantic differences.

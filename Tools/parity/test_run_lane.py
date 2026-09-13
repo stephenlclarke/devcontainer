@@ -429,6 +429,181 @@ class FixtureProbeTests(unittest.TestCase):
         self.assertIs(result, expected)
         runner.run_engine_fixture.assert_called_once()
 
+    def test_feature_test_fixture_uses_the_upstream_cli_for_docker(self) -> None:
+        result, command = self.run_feature_test_fixture("docker")
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            command[:4],
+            [
+                "/usr/bin/npx",
+                "--yes",
+                "@devcontainers/cli@0.89.0",
+                "features",
+            ],
+        )
+        self.assertIn("--project-folder", command)
+
+    def test_feature_test_fixture_uses_the_product_for_apple(self) -> None:
+        result, command = self.run_feature_test_fixture("apple-stock")
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(command[:3], [command[0], "features", "test"])
+        self.assertTrue(command[0].endswith("/.build/debug/devcontainer"))
+
+    def run_feature_test_fixture(
+        self,
+        lane: str,
+    ) -> tuple[dict[str, object], list[str]]:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            source = root / "source"
+            (source / "src" / "hello").mkdir(parents=True)
+            (source / "test" / "hello").mkdir(parents=True)
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = lane
+            runner.output = root / "evidence"
+            runner.repository = repository
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.node_package_runner = "/usr/bin/npx"
+            runner.cli_version = "0.89.0"
+            runner.docker = "/usr/bin/docker"
+            runner.feature_test_container_ids = mock.Mock(return_value=[])
+            runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+            runner.cleanup_feature_test_containers = mock.Mock(return_value="")
+            fixture = Fixture(
+                directory=source,
+                identifier="D08-feature-test-command",
+                expected={
+                    "automatic_cleanup": "true",
+                    "feature_test": "true",
+                },
+                backends=(lane,),
+                runner="feature-test",
+            )
+            completed = mock.Mock(returncode=0, stdout="passed\n", stderr="")
+            with mock.patch(
+                "run_lane.subprocess.run",
+                return_value=completed,
+            ) as run:
+                result = runner.run_fixture(fixture)
+            return result, run.call_args.args[0]
+
+
+class FeatureTestRuntimeTests(unittest.TestCase):
+    def test_candidate_reference_cli_is_checksum_staged(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            runner.output = root / "evidence"
+            runner.output.mkdir()
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.cli_version = "0.89.0"
+            runner.cli_reference = {"tarballSHA256": "a" * 64}
+
+            def stage(command: list[str], **_: object) -> mock.Mock:
+                destination = Path(command[-1])
+                destination.mkdir(parents=True)
+                (destination / "devcontainer.js").write_text(
+                    "#!/usr/bin/env node\n",
+                    encoding="utf-8",
+                )
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch("run_lane.subprocess.run", side_effect=stage) as run:
+                runner.prepare_candidate_reference_cli()
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[-2], "a" * 64)
+            self.assertTrue(Path(command[-1], "devcontainer.js").is_file())
+
+    def test_feature_test_container_ids_are_strictly_parsed(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        completed = mock.Mock(returncode=0, stdout="one\n\ntwo\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            identifiers = runner.feature_test_container_ids()
+
+        self.assertEqual(identifiers, ["one", "two"])
+        self.assertEqual(
+            run.call_args.args[0][-2:],
+            ["--filter", "label=devcontainer.is_test_run=true"],
+        )
+
+    def test_feature_test_cleanup_removes_only_returned_identifiers(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        runner.feature_test_container_ids = mock.Mock(return_value=["one", "two"])
+        runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+        completed = mock.Mock(returncode=0, stdout="removed\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            output = runner.cleanup_feature_test_containers()
+
+        self.assertEqual(output, "removed\nremoved\n")
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["/project/devcontainer-docker", "rm", "-f", "one"],
+                ["/project/devcontainer-docker", "rm", "-f", "two"],
+            ],
+        )
+
+    def test_feature_test_cleanup_preserves_preexisting_test_containers(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        runner.feature_test_container_ids = mock.Mock(return_value=["new"])
+        runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+        completed = mock.Mock(returncode=0, stdout="removed\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            output = runner.cleanup_feature_test_containers({"existing"})
+
+        self.assertEqual(output, "removed\n")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/project/devcontainer-docker", "rm", "-f", "new"],
+        )
+        runner.feature_test_container_ids.assert_called_once_with({"existing"})
+        runner.wait_for_feature_test_cleanup.assert_called_once_with({"existing"})
+
+    def test_feature_test_cleanup_waits_for_asynchronous_removal(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.feature_test_container_ids = mock.Mock(
+            side_effect=[["removing"], []]
+        )
+
+        with mock.patch("run_lane.time.sleep") as sleep:
+            cleaned = runner.wait_for_feature_test_cleanup()
+
+        self.assertTrue(cleaned)
+        sleep.assert_called_once_with(0.1)
+        self.assertEqual(
+            runner.feature_test_container_ids.call_args_list,
+            [mock.call(None), mock.call(None)],
+        )
+
 
 class FixtureWorkspaceTests(unittest.TestCase):
     def test_fixture_workspace_is_copied_under_the_repository_build_root(self) -> None:
@@ -880,7 +1055,7 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.cleanup_differences = []
             state = runner.runtime_root / "state.sqlite"
             with closing(sqlite3.connect(state)) as database, database:
-                database.execute("CREATE TABLE projects (key TEXT)")
+                database.execute("CREATE TABLE projects (project_key TEXT)")
                 database.execute(
                     "CREATE TABLE runtime_containers (runtime_id TEXT)"
                 )
@@ -898,6 +1073,28 @@ class BuilderCleanupTests(unittest.TestCase):
                 "1 runtime container record(s)"
             ],
         )
+
+    def test_runtime_state_cleanup_ignores_preexisting_records(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.runtime_root = Path(temporary)
+            runner.cleanup_differences = []
+            state = runner.runtime_root / "state.sqlite"
+            with closing(sqlite3.connect(state)) as database, database:
+                database.execute("CREATE TABLE projects (project_key TEXT)")
+                database.execute(
+                    "CREATE TABLE runtime_containers (runtime_id TEXT)"
+                )
+                database.execute("INSERT INTO projects VALUES ('preexisting')")
+                database.execute(
+                    "INSERT INTO runtime_containers VALUES ('preexisting')"
+                )
+
+            runner.capture_runtime_state_baseline()
+            runner.check_runtime_state_cleanup()
+
+        self.assertEqual(runner.cleanup_differences, [])
 
 
 if __name__ == "__main__":

@@ -235,9 +235,11 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     stateRootUUID: stateRootUUID
                 ),
                 publicServer: ContainerUnixHTTPServer(
-                    responder: ContainerEngineGatewayResponder(
-                        providerSocketPath: internalProviderSocket,
-                        fingerprint: providerFingerprint
+                    responder: DevContainerIdentityResponder(
+                        responder: ContainerEngineGatewayResponder(
+                            providerSocketPath: internalProviderSocket,
+                            fingerprint: providerFingerprint
+                        )
                     ),
                     socketPath: socket,
                     logger: logger
@@ -342,6 +344,17 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
 private enum ServiceCompletion: Sendable {
     case serverClosed
     case signal(Int32)
+}
+
+private struct DevContainerIdentityResponder: DockerHTTPResponder, Sendable {
+    let responder: any DockerHTTPResponder
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        var response = await responder.respond(to: request)
+        response.headers[DevContainerEngineIdentity.header] =
+            DevContainerEngineIdentity.value
+        return response
+    }
 }
 
 private enum ServiceServer: Sendable {

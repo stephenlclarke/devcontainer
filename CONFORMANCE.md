@@ -32,7 +32,7 @@ The specification is a moving upstream branch. This audit is reproducible becaus
 ## Executive conclusion
 
 Version 1.0.2 is a release candidate for the bounded configurations exercised
-by its 18 CLI fixtures and real VS Code fixture. That scope becomes a stable
+by its 19 CLI fixtures and real VS Code fixture. That scope becomes a stable
 conformance claim only after the release-bound parity gate passes. Even then,
 it is not a complete implementation of every `devcontainer.json` property,
 every Feature requirement, every Docker Compose configuration, or every
@@ -206,7 +206,8 @@ Private registries, credential helpers, registry mirrors, content trust, BuildKi
 
 ## Release parity versus full-standard parity
 
-All release fixtures passed with zero normalized semantic differences. That proves exact parity for their assertions:
+The published 1.0.1 release fixtures passed with zero normalized semantic
+differences. That proves exact parity for their assertions:
 
 - 18 CLI fixtures;
 - one real VS Code fixture;
@@ -215,6 +216,10 @@ All release fixtures passed with zero normalized semantic differences. That prov
 - separate `container-compose` provider lane.
 
 It does not prove configurations that the manifest does not contain. The [timing analysis](PERFORMANCE.md) likewise reports only those same fixtures.
+
+The 1.0.2 candidate adds a nineteenth CLI fixture for the upstream Feature
+author test command. It does not enter the stable claim until its exact
+three-lane release evidence passes.
 
 ## Remediation priorities
 

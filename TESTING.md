@@ -10,7 +10,7 @@ driver. The hosted-safe suite is discovered at execution time and must record
 greater than 90% first-party line coverage; documentation does not maintain a
 manual test-count claim that can drift from the executable suite. For version
 1.0.2 to become stable, real Docker, stock Apple `container` 1.4.1, and the
-separately identified `container-compose` 0.15.1 lanes must pass all 18 CLI
+separately identified `container-compose` 0.15.1 lanes must pass all 19 CLI
 fixtures and the pinned real VS Code fixture with zero normalized semantic
 differences and complete timing evidence. The authoritative published provider
 pin is `container-compose` 0.15.1 at
@@ -253,6 +253,9 @@ moving the checked pin.
 - Container and remote users, explicit `updateRemoteUserUID: false`, container/remote environment, and container-environment expansion.
 - String-valued lifecycle command order across initialize, create, update, post-create, start, and attach.
 - Two public Dev Container Features, generated build context, lockfile use, and frozen-lock rejection.
+- The upstream `devcontainer features test` author workflow against a local
+  Feature, including its generated image, assertion script, and automatic
+  test-container cleanup.
 - Workspace mounts, bind mounts, named volumes, port attributes, TCP publishing, and forwarding.
 - Same-configuration reuse, forced replacement, lifecycle-hook counts, and
   explicit container/volume cleanup.
@@ -307,6 +310,14 @@ quiet Docker-free state fails the lane instead of relying on a prior cleanup.
 Each run creates an explicit application root, Docker
 context, socket, state database, runtime namespace, and fixture prefix. Cleanup
 runs even after cancellation and fails the job if owned resources remain.
+The Apple runtime root is short, marker-protected, and bound to the selected
+packaged runtime executable rather than a Homebrew wrapper. Its XDG
+configuration home is contained inside that root, and the harness writes a
+lane-owned empty configuration snapshot so ambient
+`~/.config/container/config.toml` values cannot replace the selected binary's
+immutable builder or VM-init defaults. Existing unmarked roots, mismatched
+runtime identities, and configuration paths outside the owned root fail before
+startup.
 
 The self-hosted runner never executes untrusted public-fork pull-request code.
 Live runs are limited to an exact trusted commit from protected `main`, a

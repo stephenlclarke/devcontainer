@@ -18,8 +18,14 @@ it cannot establish a quiet Docker-free host. A pinned VS Code and Dev
 Containers extension perform open, attach, terminal, port, rebuild, reopen, and
 cleanup flows.
 
+Each Apple lane uses a short marker-owned application root fingerprinted from
+the real packaged runtime binary. Its XDG configuration home is inside that
+root, and a lane-owned empty configuration snapshot prevents ambient user
+configuration from overriding the runtime's compiled builder and VM-init
+authority.
+
 Real Docker, stock Apple `container` 1.4.1, and the matched
-`container-compose` 0.15.1 provider must pass all 18 CLI fixtures and the real VS
+`container-compose` 0.15.1 provider must pass all 19 CLI fixtures and the real VS
 Code fixture without normalized semantic differences and with complete timing
 evidence. The provider authority is the verified 0.15.1 tag at
 `81a2263adf30127a3cf774ffdaf56bd23e2f81c1`. The client fixture pins VS Code 1.137.0, Dev Containers extension

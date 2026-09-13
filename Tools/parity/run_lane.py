@@ -68,6 +68,8 @@ class LaneRunner:
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
         self.cleanup_differences: list[str] = []
+        self.baseline_projects: set[str] = set()
+        self.baseline_runtime_containers: set[str] = set()
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
         self.configure_runtime_path()
@@ -143,9 +145,14 @@ class LaneRunner:
         results: list[dict[str, Any]] = []
         try:
             self.configure_devcontainer_client()
+            if self.lane != "docker" and any(
+                fixture.runner == "feature-test" for fixture in fixtures
+            ):
+                self.prepare_candidate_reference_cli()
             if self.lane == "docker":
                 self.prepare_builder()
             atomic_json(self.output / "fingerprint.json", self.fingerprint())
+            self.capture_runtime_state_baseline()
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
         finally:
@@ -299,6 +306,40 @@ class LaneRunner:
         self.docker = str(wrapper)
         self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
 
+    def prepare_candidate_reference_cli(self) -> None:
+        """Install the checksum-pinned upstream CLI beside debug candidates."""
+
+        executable = (self.repository / ".build/debug/devcontainer").resolve()
+        destination = (
+            executable.parent.parent
+            / "share"
+            / "devcontainer"
+            / "reference-cli"
+        )
+        if destination.exists():
+            shutil.rmtree(destination)
+        result = subprocess.run(
+            [
+                str(self.repository / "Tools/release/fetch-reference-cli.sh"),
+                self.cli_version,
+                str(self.cli_reference["tarballSHA256"]),
+                str(destination),
+            ],
+            cwd=self.repository,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+        (self.output / "reference-cli-fetch.log").write_text(
+            result.stdout + result.stderr,
+            encoding="utf-8",
+        )
+        script = destination / "devcontainer.js"
+        if result.returncode != 0 or not script.is_file():
+            raise ParityError("checksum-pinned reference CLI could not be staged")
+
     def prepare_builder(self) -> None:
         if self.lane != "docker":
             raise ParityError("Buildx is restricted to the Docker oracle lane")
@@ -337,25 +378,56 @@ class LaneRunner:
             with closing(
                 sqlite3.connect(f"file:{state}?mode=ro", uri=True)
             ) as database:
-                projects = int(
-                    database.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
-                )
-                containers = int(
-                    database.execute(
-                        "SELECT COUNT(*) FROM runtime_containers"
-                    ).fetchone()[0]
-                )
+                projects = {
+                    str(row[0])
+                    for row in database.execute("SELECT project_key FROM projects")
+                }
+                containers = {
+                    str(row[0])
+                    for row in database.execute(
+                        "SELECT runtime_id FROM runtime_containers"
+                    )
+                }
         except sqlite3.Error as error:
             self.cleanup_differences.append(
                 f"cannot inspect lane state cleanup: {error}"
             )
             return
-        if projects or containers:
+        leaked_projects = projects - getattr(self, "baseline_projects", set())
+        leaked_containers = containers - getattr(
+            self,
+            "baseline_runtime_containers",
+            set(),
+        )
+        if leaked_projects or leaked_containers:
             self.cleanup_differences.append(
                 "lane state leaked "
-                f"{projects} project claim(s) and "
-                f"{containers} runtime container record(s)"
+                f"{len(leaked_projects)} project claim(s) and "
+                f"{len(leaked_containers)} runtime container record(s)"
             )
+
+    def capture_runtime_state_baseline(self) -> None:
+        """Exclude runtime records that predate this isolated parity run."""
+
+        if self.lane == "docker":
+            return
+        state = self.runtime_root / "state.sqlite"
+        try:
+            with closing(
+                sqlite3.connect(f"file:{state}?mode=ro", uri=True)
+            ) as database:
+                self.baseline_projects = {
+                    str(row[0])
+                    for row in database.execute("SELECT project_key FROM projects")
+                }
+                self.baseline_runtime_containers = {
+                    str(row[0])
+                    for row in database.execute(
+                        "SELECT runtime_id FROM runtime_containers"
+                    )
+                }
+        except sqlite3.Error as error:
+            raise ParityError(f"cannot capture lane state baseline: {error}") from error
 
     def require_docker_oracle(self) -> None:
         result = run_checked(
@@ -499,6 +571,8 @@ class LaneRunner:
         raw.mkdir(parents=True)
         if fixture.runner == "engine":
             return self.run_engine_fixture(fixture, raw)
+        if fixture.runner == "feature-test":
+            return self.run_feature_test_fixture(fixture, raw)
         workspace_root, workspace = self.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
         started = time.monotonic()
@@ -576,6 +650,187 @@ class LaneRunner:
             "differences": differences,
             "diagnostic": diagnostic,
         }
+
+    def run_feature_test_fixture(
+        self,
+        fixture: Any,
+        raw: Path,
+    ) -> dict[str, Any]:
+        """Run the upstream Feature author test through the selected product."""
+
+        workspace_root, workspace = self.create_fixture_workspace(fixture)
+        started = time.monotonic()
+        status = "failed"
+        observations: dict[str, str] = {}
+        differences: list[str] = []
+        diagnostic = ""
+        cleanup = ""
+        command_temporary_root: Path | None = None
+        baseline_container_ids: set[str] | None = None
+        try:
+            build_root = self.repository / ".build"
+            build_root.mkdir(parents=True, exist_ok=True)
+            command_temporary_root = Path(
+                tempfile.mkdtemp(
+                    prefix=f"feature-test-{self.lane}-",
+                    dir=build_root,
+                )
+            )
+            command_environment = dict(self.environment)
+            command_environment["TMPDIR"] = str(command_temporary_root)
+            baseline_container_ids = set(self.feature_test_container_ids())
+            arguments = [
+                "features",
+                "test",
+                "--project-folder",
+                str(workspace),
+                "--features",
+                "hello",
+                "--skip-scenarios",
+                "--skip-duplicated",
+                "--base-image",
+                (
+                    "ubuntu:24.04@sha256:"
+                    "4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90"
+                ),
+                "--remote-user",
+                "root",
+                "--quiet",
+            ]
+            if self.lane == "docker":
+                command = [
+                    self.node_package_runner,
+                    "--yes",
+                    f"@devcontainers/cli@{self.cli_version}",
+                    *arguments,
+                ]
+            else:
+                command = [
+                    str(self.repository / ".build/debug/devcontainer"),
+                    *arguments,
+                ]
+            result = subprocess.run(
+                command,
+                cwd=self.repository,
+                env=command_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1800,
+            )
+            (raw / "test.stdout").write_text(result.stdout, encoding="utf-8")
+            (raw / "test.stderr").write_text(result.stderr, encoding="utf-8")
+            observations["feature_test"] = (
+                "true" if result.returncode == 0 else "false"
+            )
+            observations["automatic_cleanup"] = (
+                "true"
+                if self.wait_for_feature_test_cleanup(baseline_container_ids)
+                else "false"
+            )
+            differences = assert_contract(fixture, observations)
+            if differences:
+                raise ParityError("; ".join(differences))
+            status = "passed"
+        except (OSError, ParityError, subprocess.TimeoutExpired) as error:
+            diagnostic = str(error)
+        finally:
+            if baseline_container_ids is not None:
+                cleanup = self.cleanup_feature_test_containers(
+                    baseline_container_ids
+                )
+            if command_temporary_root is not None:
+                shutil.rmtree(command_temporary_root, ignore_errors=True)
+            workspace_cleanup = self.cleanup_fixture_workspace(workspace_root)
+            cleanup += workspace_cleanup
+            (raw / "cleanup.log").write_text(cleanup, encoding="utf-8")
+            if "ERROR:" in cleanup:
+                status = "failed"
+                diagnostic = f"{diagnostic}; {cleanup}".strip("; ")
+        return {
+            "id": fixture.identifier,
+            "status": status,
+            "durationSeconds": round(time.monotonic() - started, 3),
+            "observations": observations,
+            "differences": differences,
+            "diagnostic": diagnostic,
+        }
+
+    def feature_test_container_ids(
+        self,
+        excluding: set[str] | None = None,
+    ) -> list[str]:
+        """Return Feature-test containers without accepting free-form filters."""
+
+        result = subprocess.run(
+            [
+                self.docker,
+                "ps",
+                "-aq",
+                "--filter",
+                "label=devcontainer.is_test_run=true",
+            ],
+            cwd=self.repository,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise ParityError("could not inspect Feature-test cleanup state")
+        ignored = excluding or set()
+        return [
+            value
+            for value in (
+                line.strip() for line in result.stdout.splitlines()
+            )
+            if value and value not in ignored
+        ]
+
+    def wait_for_feature_test_cleanup(
+        self,
+        baseline_container_ids: set[str] | None = None,
+    ) -> bool:
+        """Allow asynchronous runtime removal to reach its terminal state."""
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if not self.feature_test_container_ids(baseline_container_ids):
+                return True
+            time.sleep(0.1)
+        return not self.feature_test_container_ids(baseline_container_ids)
+
+    def cleanup_feature_test_containers(
+        self,
+        baseline_container_ids: set[str] | None = None,
+    ) -> str:
+        """Remove only Feature-test containers created by this fixture."""
+
+        try:
+            identifiers = self.feature_test_container_ids(baseline_container_ids)
+        except (OSError, ParityError, subprocess.TimeoutExpired) as error:
+            return f"ERROR: {error}\n"
+        output = ""
+        for identifier in identifiers:
+            result = subprocess.run(
+                [self.docker, "rm", "-f", identifier],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            output += result.stdout + result.stderr
+            removal_in_progress = "removal of container" in result.stderr and (
+                "already in progress" in result.stderr
+            )
+            if result.returncode != 0 and not removal_in_progress:
+                return f"{output}ERROR: could not remove Feature-test container\n"
+        if not self.wait_for_feature_test_cleanup(baseline_container_ids):
+            return f"{output}ERROR: Feature-test container cleanup timed out\n"
+        return output
 
     def fixture_workspace_parent(self) -> Path:
         """Return the Docker-visible parent for copied fixture workspaces."""

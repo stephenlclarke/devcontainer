@@ -182,6 +182,13 @@ private func exerciseEngineProcess(
         try await waitForSocket(socket, process: process)
         let ping = try runCurl(socket: socket, path: "/_ping")
         #expect(ping == "OK")
+        let pingHeaders = try runCurlHeaders(socket: socket, path: "/_ping")
+        #expect(
+            pingHeaders.contains(
+                "\(DevContainerEngineIdentity.header): "
+                    + DevContainerEngineIdentity.value
+            )
+        )
         let version = try runCurl(socket: socket, path: "/version")
         #expect(version.contains("\"Version\":\"1.1.0\""))
         let selectionData = try Data(contentsOf: providerSelection)
@@ -529,6 +536,35 @@ private func runCurl(socket: String, path: String) throws -> String {
         )
     }
     return response.body
+}
+
+private func runCurlHeaders(socket: String, path: String) throws -> String {
+    let process = Process()
+    let output = Pipe()
+    let error = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    process.arguments = [
+        "--silent",
+        "--show-error",
+        "--unix-socket",
+        socket,
+        "--head",
+        "http://localhost\(path)"
+    ]
+    process.standardOutput = output
+    process.standardError = error
+    try process.run()
+    process.waitUntilExit()
+    let data = try output.fileHandleForReading.readToEnd() ?? Data()
+    let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
+    guard process.terminationStatus == 0 else {
+        throw ServiceIntegrationError(
+            String(data: diagnostic, encoding: .utf8)
+                ?? "non-UTF-8 curl diagnostic"
+        )
+    }
+    return String(data: data, encoding: .utf8)
+        ?? "non-UTF-8 response headers"
 }
 
 private func runCurlResponse(

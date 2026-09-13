@@ -5,6 +5,7 @@
       "version": "0.89.0",
       "source": "https://github.com/devcontainers/cli",
       "commit": "5dc7533314b5ba7ec3875c30143dfe1aec644870",
+      "tarballSHA256": "49c7d71d40058f89e1fd8b019a193ed4215b7fc773c0f6273f7032a46cd33f4b",
       "npmIntegrity": "sha512-LzaoOGKQ/Zql6PsiZ4hVIYVZagzWkD65aG/1ou5/Kly5Y1PtjLg1yn7qu+LZCzVoAl6DZZ/pbz8qOO4RLNlqMg=="
     },
     "docker": {
@@ -25,7 +26,9 @@
     },
     "containerCompose": {
       "stableVersion": "0.15.1",
-      "stableCommit": "81a2263adf30127a3cf774ffdaf56bd23e2f81c1"
+      "stableCommit": "81a2263adf30127a3cf774ffdaf56bd23e2f81c1",
+      "containerCommit": "780a86b995ac4cb0985db97f38875fdc6e33d16b",
+      "containerizationCommit": "7e066a3101bc84fa0f7231daf6a03aa9ef62a567"
     },
     "vscode": {
       "version": "1.137.0",
@@ -182,6 +185,13 @@
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
       "assertions": ["reuse and forced rebuild", "create and start hook counts", "owned-resource cleanup"]
+    },
+    {
+      "id": "D08-feature-test-command",
+      "status": "implemented",
+      "runner": "feature-test",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["local Feature build and install", "Feature assertion execution", "automatic test-container cleanup"]
     },
     {
       "id": "C01-compose-service",

@@ -21,6 +21,8 @@ launchctl_bin="${DEVCONTAINER_RUNTIME_LAUNCHCTL_BIN:-/bin/launchctl}"
 apple_control_timeout_seconds="${DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS:-60}"
 apple_start_timeout_seconds="${DEVCONTAINER_RUNTIME_APPLE_START_TIMEOUT_SECONDS:-${DEVCONTAINER_RUNTIME_APPLE_COMMAND_TIMEOUT_SECONDS:-150}}"
 timeout_runner="$SCRIPT_DIRECTORY/run-with-timeout.py"
+runtime_root_marker=".devcontainer-parity-runtime-root"
+runtime_root_marker_content="devcontainer parity runtime root v1"
 
 usage() {
   sed -n 's/^# *//p' "$SELF_PATH" | sed -n '/^USAGE:/,$p'
@@ -45,18 +47,22 @@ force_stop_runtime_services() {
   local domain_state
   local service
   local service_list
+  local service_namespace
   local user_id
 
   [[ -x "$launchctl_bin" ]] \
     || fail "launchctl executable is not usable: $launchctl_bin"
   user_id="$(id -u)"
+  service_namespace="${CONTAINER_SERVICE_NAMESPACE:-com.apple.container}"
   for domain in "gui/$user_id" "user/$user_id"; do
     if ! domain_state="$($launchctl_bin print "$domain" 2>/dev/null)"; then
       fail "launchd domain is unavailable for forced cleanup: $domain"
     fi
-    service_list="$(grep -oE \
-      '(com\.apple\.container\.[A-Za-z0-9._-]+|sh\.brew\.container)' \
-      <<<"$domain_state" | sort -u || true)"
+    service_list="$(awk -v namespace="$service_namespace" \
+      'index($3, namespace ".") == 1 ||
+       (namespace == "com.apple.container" && $3 == "sh.brew.container") {
+         print $3
+       }' <<<"$domain_state" | sort -u || true)"
     while IFS= read -r service; do
       [[ -n "$service" ]] || continue
       "$launchctl_bin" bootout "$domain/$service" 2>/dev/null || true
@@ -65,6 +71,87 @@ force_stop_runtime_services() {
       fi
     done <<<"$service_list"
   done
+}
+
+# Prepare a short, marker-owned application root for one isolated Apple lane.
+prepare_runtime_root() {
+  local executable="$1"
+  local lane="$2"
+  local candidate_runtime_binary
+  local digest
+  local identifier
+  local install_root
+  local marker
+  local provider_directory
+  local provider_socket
+  local runtime_configuration
+  local runtime_configuration_temporary
+  local state_root_file
+
+  [[ -n "${CONTAINER_APP_ROOT:-}" ]] \
+    || fail "CONTAINER_APP_ROOT is required for isolated Apple parity"
+  [[ "$CONTAINER_APP_ROOT" == /* ]] \
+    || fail "CONTAINER_APP_ROOT must be absolute: $CONTAINER_APP_ROOT"
+  [[ ! -L "$CONTAINER_APP_ROOT" ]] \
+    || fail "runtime root must not be a symbolic link: $CONTAINER_APP_ROOT"
+  marker="$CONTAINER_APP_ROOT/$runtime_root_marker"
+  if [[ -e "$CONTAINER_APP_ROOT" && ! -f "$marker" ]]; then
+    fail "runtime root exists without its parity marker: $CONTAINER_APP_ROOT"
+  fi
+  mkdir -p "$CONTAINER_APP_ROOT"
+  chmod 700 "$CONTAINER_APP_ROOT"
+  if [[ -f "$marker" ]]; then
+    [[ ! -L "$marker" ]] || fail "runtime root marker must not be a symbolic link"
+    [[ "$(<"$marker")" == "$runtime_root_marker_content" ]] \
+      || fail "runtime root marker did not match: $marker"
+  else
+    printf '%s\n' "$runtime_root_marker_content" >"$marker"
+  fi
+
+  [[ -n "${XDG_CONFIG_HOME:-}" ]] \
+    || fail "XDG_CONFIG_HOME is required for isolated Apple parity"
+  [[ "$XDG_CONFIG_HOME" == "$CONTAINER_APP_ROOT/xdg" ]] \
+    || fail "XDG_CONFIG_HOME must be owned by the parity runtime root"
+  [[ ! -L "$XDG_CONFIG_HOME" && ! -L "$CONTAINER_APP_ROOT/config" ]] \
+    || fail "runtime configuration directories must not be symbolic links"
+  mkdir -p "$XDG_CONFIG_HOME" "$CONTAINER_APP_ROOT/config"
+  chmod 700 "$XDG_CONFIG_HOME" "$CONTAINER_APP_ROOT/config"
+  runtime_configuration="$CONTAINER_APP_ROOT/config/config.toml"
+  runtime_configuration_temporary="$(
+    mktemp "$CONTAINER_APP_ROOT/config/.config.toml.XXXXXX"
+  )"
+  printf '# Lane-owned configuration: use the selected binary defaults.\n' \
+    >"$runtime_configuration_temporary"
+  chmod 400 "$runtime_configuration_temporary"
+  mv -f "$runtime_configuration_temporary" "$runtime_configuration"
+
+  provider_socket="$CONTAINER_APP_ROOT/engine-provider/provider.sock"
+  (( ${#provider_socket} < 104 )) \
+    || fail "runtime root is too long for the provider Unix socket: $CONTAINER_APP_ROOT"
+
+  if [[ "$lane" != "container-compose" ]]; then
+    return 0
+  fi
+  install_root="${CONTAINER_INSTALL_ROOT:-$(cd "$(dirname "$executable")/.." && pwd -P)}"
+  candidate_runtime_binary="$install_root/libexec/bin/$(basename "$executable")"
+  if [[ -x "$candidate_runtime_binary" ]]; then
+    executable="$candidate_runtime_binary"
+  fi
+  digest="$(shasum -a 256 "$executable" | awk '{print $1}')"
+  identifier="${digest:0:8}-${digest:8:4}-${digest:12:4}-${digest:16:4}-${digest:20:12}"
+  provider_directory="$CONTAINER_APP_ROOT/engine-provider"
+  state_root_file="$provider_directory/state-root-id"
+  [[ ! -L "$provider_directory" && ! -L "$state_root_file" ]] \
+    || fail "runtime provider identity path must not be a symbolic link"
+  mkdir -p "$provider_directory"
+  chmod 700 "$provider_directory"
+  if [[ -f "$state_root_file" ]]; then
+    [[ "$(tr '[:upper:]' '[:lower:]' <"$state_root_file")" == "$identifier" ]] \
+      || fail "runtime root identity does not match the selected runtime binary"
+  else
+    printf '%s\n' "$identifier" >"$state_root_file"
+    chmod 600 "$state_root_file"
+  fi
 }
 
 stop_runtime() {
@@ -166,6 +253,7 @@ start_runtime() {
   stop_all_apple_runtimes
   executable="$(selected_runtime "$lane")"
   [[ -x "$executable" ]] || fail "runtime executable is not usable: $executable"
+  prepare_runtime_root "$executable" "$lane"
   if [[ "${DEVCONTAINER_RUNTIME_SKIP_SUDO:-0}" != "1" ]]; then
     sudo -n true \
       || fail "passwordless sudo is required to prepare the trusted runner"
@@ -173,7 +261,10 @@ start_runtime() {
 
   for attempt in 1 2 3; do
     if run_with_timeout "$apple_start_timeout_seconds" \
-      "$executable" system start --enable-kernel-install --timeout 120; then
+      "$executable" system start \
+      --app-root "$CONTAINER_APP_ROOT" \
+      --install-root "${CONTAINER_INSTALL_ROOT:-$(cd "$(dirname "$executable")/.." && pwd -P)}" \
+      --enable-kernel-install --timeout 120; then
       status="$(runtime_status "$executable" 2>/dev/null || true)"
       if [[ "$status" == "running" ]]; then
         return

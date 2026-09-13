@@ -270,6 +270,21 @@ main() {
         .commit == $commit and
         ((.distribution // "apple") == "apple")
       )) | length == 1'
+  elif [[ "$lane" == "container-compose" ]]; then
+    "$container_bin" system version --format json | jq -e \
+      --arg commit "$(
+        jq -r '.referencePins.containerCompose.containerCommit' Tests/Parity/manifest.json
+      )" \
+      --arg containerization "stephenlclarke/containerization@$(
+        jq -r '.referencePins.containerCompose.containerizationCommit' Tests/Parity/manifest.json
+      )" \
+      'map(select(
+        .appName == "container" and
+        .commit == $commit and
+        .containerization == $containerization and
+        .distribution == "custom" and
+        .source == "stephenlclarke/container"
+      )) | length == 1'
   fi
 
   if [[ "$lane" != "docker" ]]; then

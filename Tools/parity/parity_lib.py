@@ -57,7 +57,7 @@ def implemented_fixtures(repository: Path, manifest: dict[str, Any]) -> list[Fix
                 directory / "probe.sh",
                 directory / ".devcontainer" / "devcontainer.json",
             ]
-        elif runner not in {"engine", "fault", "vscode"}:
+        elif runner not in {"engine", "fault", "feature-test", "vscode"}:
             raise ParityError(f"{identifier} has unknown runner {runner!r}")
         missing = [
             str(path.relative_to(repository))

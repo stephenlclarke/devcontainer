@@ -301,7 +301,7 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]],
         ["Image": "edge:latest", "Mounts": [[
             "Type": "bind", "Source": "/tmp", "Target": "/work",
-            "Consistency": "cached"
+            "Consistency": "future"
         ]]],
         ["Image": "edge:latest", "Mounts": [[
             "Type": "bind", "Source": "/tmp", "Target": "/work",
