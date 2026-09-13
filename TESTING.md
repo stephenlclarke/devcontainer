@@ -199,7 +199,7 @@ Container-family release processes to be absent. The gate invalidates any old
 success receipt before checking and retains thermal state, load, process
 inventory, matching process IDs, the exact load policy, and a machine-readable
 success summary with the lane evidence. A host that does not become quiet
-within ten minutes fails the run; its timings cannot enter release or
+within one hour fails the run; its timings cannot enter release or
 optimization evidence.
 
 Timing is not an exact-equivalence assertion. Comparable or better performance

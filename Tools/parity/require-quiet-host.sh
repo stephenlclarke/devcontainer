@@ -116,7 +116,7 @@ main() {
   fi
 
   local evidence_directory="$1"
-  local wait_seconds="${DEVCONTAINER_QUIET_HOST_WAIT_SECONDS:-600}"
+  local wait_seconds="${DEVCONTAINER_QUIET_HOST_WAIT_SECONDS:-3600}"
   local poll_seconds="${DEVCONTAINER_QUIET_HOST_POLL_SECONDS:-10}"
   validate_nonnegative_integer "quiet-host wait seconds" "$wait_seconds"
   validate_nonnegative_integer "quiet-host poll seconds" "$poll_seconds"
