@@ -173,7 +173,9 @@ private struct DockerIgnoreGlobPattern {
     ) -> (value: DockerIgnoreCharacterClass, endingAt: Int)? {
         var index = start + 1
         guard index < characters.count else { return nil }
-        let inverted = characters[index] == "!" || characters[index] == "^"
+        // Docker delegates character classes to Go's path.Match grammar,
+        // where only ^ negates a class. A leading ! is a literal member.
+        let inverted = characters[index] == "^"
         if inverted {
             index += 1
         }

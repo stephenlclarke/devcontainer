@@ -215,30 +215,6 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
-    func `build archive honors Docker ignore character classes`() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("docker-ignore-class-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
-        for name in ["secret1.txt", "secretA.txt", "public1.txt", "publicA.txt"] {
-            try Data(name.utf8).write(to: root.appendingPathComponent(name))
-        }
-        try Data("secret[0-9].txt\npublic*.txt\n!public[!A-Z].txt\n".utf8).write(
-            to: root.appendingPathComponent(".dockerignore")
-        )
-
-        let entries = try archiveEntries(
-            DockerBuildOptions(arguments: [root.path]).archive()
-        )
-
-        #expect(!entries.contains("secret1.txt"))
-        #expect(entries.contains("secretA.txt"))
-        #expect(entries.contains("public1.txt"))
-        #expect(!entries.contains("publicA.txt"))
-    }
-
-    @Test
     func `reports a Docker-shaped version without contacting the engine`() throws {
         let transport = StubTransport([])
         let result = try DockerCLIApplication(transport: transport).run(arguments: ["-v"])

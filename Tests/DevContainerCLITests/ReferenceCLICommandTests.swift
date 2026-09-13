@@ -17,6 +17,7 @@
 import ArgumentParser
 @testable import DevContainerCLI
 import DevContainerModel
+import DevContainerProcess
 import Foundation
 import Testing
 
@@ -84,6 +85,66 @@ struct ReferenceCLICommandTests {
         #expect(invocation.environment["NODE_OPTIONS"] == nil)
         #expect(invocation.environment["NODE_PATH"] == nil)
         #expect(invocation.environment["DEVCONTAINER_UNTRUSTED"] == nil)
+        #expect(invocation.runtimeAdapterAliasDirectory == nil)
+    }
+
+    @Test
+    func `feature tests use private Apple adapter command aliases`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let invocation = try ReferenceCLIInvocation.configured(
+            command: "features",
+            arguments: ["test", "."],
+            injectRuntimeAdapters: false,
+            injectRuntimeAdapterAliases: true,
+            environment: fixture.environment,
+            executable: fixture.devcontainer
+        )
+        let aliasDirectory = try #require(invocation.runtimeAdapterAliasDirectory)
+        defer { invocation.removeRuntimeAdapterAliases() }
+
+        #expect(invocation.arguments == [fixture.script.path, "features", "test", "."])
+        #expect(invocation.environment["PATH"] == [
+            aliasDirectory.path, "/usr/bin", "/bin", "/usr/sbin", "/sbin"
+        ].joined(separator: ":"))
+        #expect(
+            aliasDirectory.appendingPathComponent("docker")
+                .resolvingSymlinksInPath() == fixture.docker
+        )
+        #expect(
+            aliasDirectory.appendingPathComponent("docker-compose")
+                .resolvingSymlinksInPath() == fixture.compose
+        )
+        let docker = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: ["docker"],
+            environment: invocation.environment
+        )
+        let compose = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: ["docker-compose"],
+            environment: invocation.environment
+        )
+        #expect(docker.standardOutput == Data("devcontainer-docker\n".utf8))
+        #expect(compose.standardOutput == Data("devcontainer-compose\n".utf8))
+        invocation.removeRuntimeAdapterAliases()
+        #expect(!FileManager.default.fileExists(atPath: aliasDirectory.path))
+    }
+
+    @Test
+    func `only the runtime using feature test subcommand requests aliases`() {
+        #expect(ReferenceFeaturesCommand.requiresRuntimeAdapterAliases(
+            arguments: ["test", "."]
+        ))
+        #expect(ReferenceFeaturesCommand.requiresRuntimeAdapterAliases(
+            arguments: ["--oci-auth-hardening", "test", "."]
+        ))
+        #expect(!ReferenceFeaturesCommand.requiresRuntimeAdapterAliases(
+            arguments: ["package", "."]
+        ))
+        #expect(!ReferenceFeaturesCommand.requiresRuntimeAdapterAliases(
+            arguments: ["publish", "test"]
+        ))
     }
 
     @Test
@@ -247,8 +308,19 @@ private struct InvocationFixture {
         socket = root.appendingPathComponent("engine.sock")
         configuration = root.appendingPathComponent("config.toml")
         state = root.appendingPathComponent("state.sqlite")
-        for executable in [devcontainer, docker, compose, node] {
+        for executable in [devcontainer, node] {
             #expect(FileManager.default.createFile(atPath: executable.path, contents: Data()))
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: executable.path
+            )
+        }
+        for (executable, marker) in [
+            (docker, "devcontainer-docker"),
+            (compose, "devcontainer-compose")
+        ] {
+            let script = Data("#!/bin/sh\nprintf '%s\\n' '\(marker)'\n".utf8)
+            #expect(FileManager.default.createFile(atPath: executable.path, contents: script))
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700],
                 ofItemAtPath: executable.path

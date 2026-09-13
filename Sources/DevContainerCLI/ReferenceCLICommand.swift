@@ -25,6 +25,7 @@ private let referenceAbstract = "Run the pinned Dev Containers CLI using Apple c
 protocol ReferenceCLICommand: AsyncParsableCommand {
     static var referenceCommand: String { get }
     static var injectRuntimeAdapters: Bool { get }
+    static func requiresRuntimeAdapterAliases(arguments: [String]) -> Bool
     var arguments: [String] { get }
 }
 
@@ -33,12 +34,20 @@ extension ReferenceCLICommand {
         true
     }
 
+    static func requiresRuntimeAdapterAliases(arguments _: [String]) -> Bool {
+        false
+    }
+
     mutating func run() async throws {
         let invocation = try ReferenceCLIInvocation.configured(
             command: Self.referenceCommand,
             arguments: arguments,
-            injectRuntimeAdapters: Self.injectRuntimeAdapters
+            injectRuntimeAdapters: Self.injectRuntimeAdapters,
+            injectRuntimeAdapterAliases: Self.requiresRuntimeAdapterAliases(
+                arguments: arguments
+            )
         )
+        defer { invocation.removeRuntimeAdapterAliases() }
         let status = try await ProcessRunner.inherited(
             executable: invocation.node,
             arguments: invocation.arguments,
@@ -97,6 +106,26 @@ struct ReferenceFeaturesCommand: ReferenceCLICommand {
     static let injectRuntimeAdapters = false
     static let configuration = commandConfiguration(referenceCommand)
     @Argument(parsing: .captureForPassthrough) var arguments: [String] = []
+
+    static func requiresRuntimeAdapterAliases(arguments: [String]) -> Bool {
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" {
+                return false
+            }
+            if argument == "--allow-cross-origin-auth-host" {
+                index += 2
+                continue
+            }
+            if argument.hasPrefix("-") {
+                index += 1
+                continue
+            }
+            return argument == "test"
+        }
+        return false
+    }
 }
 
 struct ReferenceTemplatesCommand: ReferenceCLICommand {
@@ -122,11 +151,13 @@ struct ReferenceCLIInvocation: Equatable {
     var node: URL
     var arguments: [String]
     var environment: [String: String]
+    var runtimeAdapterAliasDirectory: URL?
 
     static func configured(
         command: String,
         arguments: [String],
         injectRuntimeAdapters: Bool,
+        injectRuntimeAdapterAliases: Bool = false,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         executable: URL? = Bundle.main.executableURL
     ) throws -> ReferenceCLIInvocation {
@@ -156,15 +187,31 @@ struct ReferenceCLIInvocation: Equatable {
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
             environment: environment
         )
-        let childEnvironment = configuredEnvironment(
+        var childEnvironment = configuredEnvironment(
             inherited: environment,
             selection: selection
         )
+        let aliasDirectory = if injectRuntimeAdapterAliases {
+            try runtimeAdapterAliasDirectory(executableDirectory: directory)
+        } else {
+            URL?.none
+        }
+        if let aliasDirectory {
+            childEnvironment["PATH"] = [
+                aliasDirectory.path, "/usr/bin", "/bin", "/usr/sbin", "/sbin"
+            ].joined(separator: ":")
+        }
         return ReferenceCLIInvocation(
             node: node,
             arguments: upstreamArguments,
-            environment: childEnvironment
+            environment: childEnvironment,
+            runtimeAdapterAliasDirectory: aliasDirectory
         )
+    }
+
+    func removeRuntimeAdapterAliases() {
+        guard let runtimeAdapterAliasDirectory else { return }
+        try? FileManager.default.removeItem(at: runtimeAdapterAliasDirectory)
     }
 
     private static func runtimeAdapterArguments(
@@ -172,6 +219,16 @@ struct ReferenceCLIInvocation: Equatable {
         userArguments: [String]
     ) throws -> [String] {
         try rejectRuntimeOverrides(userArguments)
+        let adapters = try runtimeAdapters(directory: directory)
+        return [
+            "--docker-path", adapters.docker.path,
+            "--docker-compose-path", adapters.compose.path
+        ]
+    }
+
+    private static func runtimeAdapters(directory: URL) throws
+        -> (docker: URL, compose: URL)
+    {
         let docker = directory.appendingPathComponent("devcontainer-docker")
         let compose = directory.appendingPathComponent("devcontainer-compose")
         guard
@@ -191,10 +248,34 @@ struct ReferenceCLIInvocation: Equatable {
             compose.path,
             name: "packaged native Compose adapter"
         )
-        return [
-            "--docker-path", docker.path,
-            "--docker-compose-path", compose.path
-        ]
+        return (docker, compose)
+    }
+
+    private static func runtimeAdapterAliasDirectory(
+        executableDirectory: URL
+    ) throws -> URL {
+        let adapters = try runtimeAdapters(directory: executableDirectory)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-runtime-adapters-\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.createSymbolicLink(
+                at: directory.appendingPathComponent("docker"),
+                withDestinationURL: adapters.docker
+            )
+            try FileManager.default.createSymbolicLink(
+                at: directory.appendingPathComponent("docker-compose"),
+                withDestinationURL: adapters.compose
+            )
+            return directory
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     private static func configuredEnvironment(

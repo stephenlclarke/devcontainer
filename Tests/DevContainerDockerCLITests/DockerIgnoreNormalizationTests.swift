@@ -48,6 +48,34 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `build archive honors Go compatible Docker ignore character classes`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-class-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        for name in [
+            "secret1.txt", "secretA.txt", "public1.txt", "publicA.txt", ".env", "!env"
+        ] {
+            try Data(name.utf8).write(to: root.appendingPathComponent(name))
+        }
+        try Data("secret[0-9].txt\npublic*.txt\n!public[^A-Z].txt\n[!.]env\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(!entries.contains("secret1.txt"))
+        #expect(entries.contains("secretA.txt"))
+        #expect(entries.contains("public1.txt"))
+        #expect(!entries.contains("publicA.txt"))
+        #expect(!entries.contains(".env"))
+        #expect(!entries.contains("!env"))
+    }
+
+    @Test
     func `build archive cleans Docker ignore paths before matching`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-ignore-clean-\(UUID().uuidString)")

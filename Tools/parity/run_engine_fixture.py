@@ -296,11 +296,25 @@ class Probe:
                 check=False,
                 timeout=900,
             )
+            class_tag = self.name + "-class-ignored:latest"
+            self.images.append(class_tag)
+            (root / ".dockerignore").write_text("[!.]env\n", encoding="utf-8")
+            class_ignored = self.command(
+                "build",
+                "--progress",
+                "plain",
+                "--tag",
+                class_tag,
+                str(root),
+                check=False,
+                timeout=900,
+            )
         self.emit(
             build_progress=bool(built.stdout or built.stderr),
             cleaned_ignore_path=ignored.returncode != 0,
             failed_build=failed.returncode != 0,
             inspect_label=label == "true",
+            literal_bang_class=class_ignored.returncode != 0,
         )
 
     def archive_copy(self) -> None:
