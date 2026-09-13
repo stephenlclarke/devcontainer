@@ -31,6 +31,9 @@ readonly GH="${GH:-gh}"
 readonly GIT="${GIT:-git}"
 readonly IMMUTABILITY_ATTEMPTS="${RELEASE_IMMUTABILITY_ATTEMPTS:-60}"
 readonly IMMUTABILITY_DELAY_SECONDS="${RELEASE_IMMUTABILITY_DELAY_SECONDS:-10}"
+readonly RECOVERY_SIGNER_WORKFLOW="${RELEASE_SIGNER_WORKFLOW:-}"
+readonly RECOVERY_SOURCE_REF="${RELEASE_SOURCE_REF:-}"
+readonly RECOVERY_VERIFIER="${RELEASE_RECOVERY_VERIFIER:-$SELF_DIRECTORY/verify-recovered-assets.sh}"
 
 # Create a metadata-only draft through bounded, exact-state reconciliation.
 # Assets are uploaded only after the complete local set has been validated.
@@ -346,6 +349,20 @@ reconcile_draft_assets() {
 restore_published_assets() {
   local expected_names snapshot remote_assets remote_names temporary
   local asset name expected actual downloaded
+  if [[ "$RECOVERY_SIGNER_WORKFLOW" != \
+        "$REPOSITORY/.github/workflows/prebuilt-binaries.yml" ]]; then
+    printf 'published recovery requires an exact trusted signer workflow\n' >&2
+    return 1
+  fi
+  if [[ "$RECOVERY_SOURCE_REF" != refs/heads/main ]]; then
+    printf 'published recovery requires an exact trusted source ref\n' >&2
+    return 1
+  fi
+  if [[ "$RECOVERY_VERIFIER" != /* || ! -x "$RECOVERY_VERIFIER" ||
+        -L "$RECOVERY_VERIFIER" ]]; then
+    printf 'published recovery verifier is missing or unsafe\n' >&2
+    return 1
+  fi
   expected_names="$(expected_release_asset_names)"
   snapshot="$(
     "$GH" release view "$TAG" --repo "$REPOSITORY" --json assets
@@ -382,7 +399,13 @@ restore_published_assets() {
       printf 'published asset digest mismatch: %s\n' "$name" >&2
       return 1
     fi
+    "$GH" attestation verify "$downloaded" \
+      --repo "$REPOSITORY" \
+      --signer-workflow "$RECOVERY_SIGNER_WORKFLOW" \
+      --source-digest "$PUBLISH_SHA" \
+      --source-ref "$RECOVERY_SOURCE_REF" >/dev/null
   done
+  "$RECOVERY_VERIFIER" "$temporary" "$PUBLISH_SHA"
   for asset in "${ASSETS[@]}"; do
     name="$(basename "$asset")"
     mv "$temporary/$name" "$asset"

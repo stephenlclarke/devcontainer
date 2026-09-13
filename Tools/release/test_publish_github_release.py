@@ -94,6 +94,13 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             state = state_path.read_text(encoding="utf-8")
             tag = os.environ["RELEASE_TAG"]
 
+            if args[:2] == ["attestation", "verify"]:
+                artifact = Path(args[2]).name
+                if os.environ["ATTESTATION_FAILURE"] == artifact:
+                    print("attestation rejected", file=sys.stderr)
+                    raise SystemExit(1)
+                raise SystemExit(0)
+
             def names() -> list[str]:
                 value = (
                     os.environ["REMOTE_ASSETS_AFTER_UPLOAD"]
@@ -285,6 +292,15 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             "  fi\n"
             "fi\n",
         )
+        recovery_trace = root / "recovery-verifier.trace"
+        self.write_executable(
+            fake_bin / "verify-recovered-assets",
+            'printf "%s\\n" "$*" >> "$RECOVERY_VERIFIER_TRACE"\n'
+            'if [[ "$RECOVERY_VERIFIER_FAILURE" == true ]]; then\n'
+            '  printf "recovered package verification failed\\n" >&2\n'
+            "  exit 1\n"
+            "fi\n",
+        )
         asset = root / "package.tar.gz"
         checksum = root / "package.tar.gz.sha256"
         notes = root / "notes.md"
@@ -297,6 +313,7 @@ class GitHubReleasePublisherTests(unittest.TestCase):
         environment.update(
             {
                 "ARCHIVE": str(asset),
+                "ATTESTATION_FAILURE": "",
                 "CHECKSUM": str(checksum),
                 "DOWNLOAD_CONTENT": download_content,
                 "GH": str(fake_bin / "gh"),
@@ -314,6 +331,14 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "RELEASE_ASSETS_FILE": str(manifest),
                 "RELEASE_NOTES_FILE": str(notes),
                 "RELEASE_REPOSITORY": "stephenlclarke/devcontainer",
+                "RELEASE_RECOVERY_VERIFIER": str(
+                    fake_bin / "verify-recovered-assets"
+                ),
+                "RELEASE_SIGNER_WORKFLOW": (
+                    "stephenlclarke/devcontainer/"
+                    ".github/workflows/prebuilt-binaries.yml"
+                ),
+                "RELEASE_SOURCE_REF": "refs/heads/main",
                 "RELEASE_TITLE": "Release",
                 "REMOTE_ASSETS": remote_assets,
                 "REMOTE_ASSETS_AFTER_UPLOAD": remote_assets_after_upload,
@@ -323,6 +348,8 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                 "LATEST_TAG": "1.2.3",
                 "RELEASE_IMMUTABILITY_ATTEMPTS": "1",
                 "RELEASE_IMMUTABILITY_DELAY_SECONDS": "0",
+                "RECOVERY_VERIFIER_FAILURE": "false",
+                "RECOVERY_VERIFIER_TRACE": str(recovery_trace),
             }
         )
         return environment, gh_trace, git_trace
@@ -559,6 +586,62 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertEqual(
                 gh_trace.read_text().count("release download 1.2.3"),
                 2,
+            )
+            trace = gh_trace.read_text()
+            self.assertEqual(trace.count("attestation verify"), 2)
+            self.assertIn(
+                "--signer-workflow stephenlclarke/devcontainer/"
+                ".github/workflows/prebuilt-binaries.yml",
+                trace,
+            )
+            self.assertIn(f"--source-digest {COMMIT}", trace)
+            self.assertIn("--source-ref refs/heads/main", trace)
+            recovery_trace = Path(environment["RECOVERY_VERIFIER_TRACE"])
+            self.assertEqual(
+                recovery_trace.read_text(encoding="utf-8").strip().split()[1],
+                COMMIT,
+            )
+
+    def test_published_recovery_rejects_untrusted_provenance_before_replacement(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, gh_trace, _ = self.fixture(
+                Path(temporary),
+                state="published",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                download_content="published-bytes",
+            )
+            environment["ATTESTATION_FAILURE"] = "package.tar.gz"
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("attestation rejected", result.stderr)
+            self.assertEqual(Path(environment["ARCHIVE"]).read_bytes(), b"archive")
+            self.assertEqual(
+                Path(environment["CHECKSUM"]).read_text(encoding="utf-8"),
+                "checksum\n",
+            )
+            self.assertIn("attestation verify", gh_trace.read_text())
+            self.assertFalse(Path(environment["RECOVERY_VERIFIER_TRACE"]).exists())
+
+    def test_published_recovery_rejects_failed_package_authority_before_replacement(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, _, _ = self.fixture(
+                Path(temporary),
+                state="published",
+                remote_assets="package.tar.gz\npackage.tar.gz.sha256\n",
+                download_content="published-bytes",
+            )
+            environment["RECOVERY_VERIFIER_FAILURE"] = "true"
+            result = self.run_publisher(environment, "stable-stage", "1.2.3")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("recovered package verification failed", result.stderr)
+            self.assertEqual(Path(environment["ARCHIVE"]).read_bytes(), b"archive")
+            self.assertEqual(
+                Path(environment["CHECKSUM"]).read_text(encoding="utf-8"),
+                "checksum\n",
             )
 
     def test_published_current_is_recovered_without_mutation(self) -> None:

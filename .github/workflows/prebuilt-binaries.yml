@@ -94,6 +94,16 @@ jobs:
               exit 1
             fi
             sha="$(jq -r '.object.sha' <<<"${tag_document}")"
+            current_main="$(
+              git ls-remote --heads "${remote}" refs/heads/main \
+                | awk '{ print $1 }' \
+                | tail -n 1
+            )"
+            if [[ "${sha}" != "${current_main}" ]] ||
+               [[ "${sha}" != "${GITHUB_SHA}" ]]; then
+              printf 'stable source must remain the exact workflow main commit\n' >&2
+              exit 1
+            fi
             authority=""
             authority_name="stable-authority-${ref_name}-${sha}"
             authority_root="${RUNNER_TEMP}/stable-authority"
@@ -434,6 +444,8 @@ jobs:
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
         working-directory: devcontainer
@@ -460,6 +472,8 @@ jobs:
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
         working-directory: devcontainer
@@ -610,6 +624,8 @@ jobs:
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           RELEASE_TITLE: ${{ steps.package.outputs.release_tag }}
         working-directory: devcontainer

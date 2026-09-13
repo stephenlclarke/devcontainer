@@ -613,6 +613,8 @@ jobs:
         for marker in (
             "gh run download",
             "stable-authority-${ref_name}-${sha}",
+            '"${sha}" != "${current_main}"',
+            '"${sha}" != "${GITHUB_SHA}"',
             '.headBranch == "main"',
             '.candidateSha == $candidate_sha',
             '.workflow == "Stable Release Gate"',
@@ -793,6 +795,17 @@ jobs:
             'Tools/release/publish-github-release.sh "${mode}"',
             contents,
         )
+        self.assertEqual(
+            contents.count(
+                "RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/"
+                ".github/workflows/prebuilt-binaries.yml"
+            ),
+            3,
+        )
+        self.assertEqual(
+            contents.count("RELEASE_SOURCE_REF: refs/heads/main"),
+            3,
+        )
         self.assertIn(
             'formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"',
             contents,
@@ -823,6 +836,35 @@ jobs:
         self.assertIn('brew install --formula "${test_tap}/${formula}"', contents)
         self.assertNotIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
         self.assertNotIn('brew untap "stephenlclarke/tap"', contents)
+
+    def test_published_recovery_reauthenticates_every_distribution_boundary(
+        self,
+    ) -> None:
+        publisher = (
+            ROOT / "Tools" / "release" / "publish-github-release.sh"
+        ).read_text(encoding="utf-8")
+        verifier = (
+            ROOT / "Tools" / "release" / "verify-recovered-assets.sh"
+        ).read_text(encoding="utf-8")
+
+        for marker in (
+            '"$GH" attestation verify "$downloaded"',
+            '--signer-workflow "$RECOVERY_SIGNER_WORKFLOW"',
+            '--source-digest "$PUBLISH_SHA"',
+            '--source-ref "$RECOVERY_SOURCE_REF"',
+            '"$RECOVERY_VERIFIER" "$temporary" "$PUBLISH_SHA"',
+        ):
+            self.assertIn(marker, publisher)
+        for marker in (
+            'python3 "$PACKAGE_VERIFIER"',
+            '--require-notarization',
+            '"$CODESIGN" --verify --strict --verbose=2',
+            '--extract-certificates',
+            "flags=.*\\(runtime\\)",
+            'notarytool info "$notary_id"',
+            '.status == "Accepted"',
+        ):
+            self.assertIn(marker, verifier)
 
     def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
