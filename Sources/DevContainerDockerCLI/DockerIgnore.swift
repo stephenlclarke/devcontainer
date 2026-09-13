@@ -14,22 +14,205 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import Foundation
+private struct DockerIgnoreRule {
+    let includes: Bool
+    let pattern: DockerIgnoreGlobPattern
 
-struct DockerIgnoreMatcher {
-    private struct Rule {
-        let includes: Bool
-        let expression: NSRegularExpression
+    func matches(_ path: String) -> Bool {
+        if pattern.containsSeparator {
+            return pattern.matches(path, allowingDescendants: true)
+        }
+        return path.split(separator: "/", omittingEmptySubsequences: false)
+            .contains { pattern.matches(String($0), allowingDescendants: false) }
+    }
+}
 
-        func matches(_ path: String) -> Bool {
-            expression.firstMatch(
-                in: path,
-                range: NSRange(path.startIndex..., in: path)
-            ) != nil
+private struct DockerIgnoreCharacterClass {
+    enum Member {
+        case literal(Character)
+        case range(Character, Character)
+
+        func contains(_ character: Character) -> Bool {
+            switch self {
+            case let .literal(expected):
+                character == expected
+            case let .range(lower, upper):
+                lower <= character && character <= upper
+            }
         }
     }
 
-    private let rules: [Rule]
+    let inverted: Bool
+    let members: [Member]
+
+    func contains(_ character: Character) -> Bool {
+        let found = members.contains { $0.contains(character) }
+        return inverted ? !found : found
+    }
+}
+
+private struct DockerIgnoreGlobPattern {
+    private enum Token {
+        case literal(Character)
+        case anyNonSeparator
+        case starNonSeparator
+        case starAny
+        case starDirectories
+        case characterClass(DockerIgnoreCharacterClass)
+    }
+
+    let containsSeparator: Bool
+    private let tokens: [Token]
+
+    init(_ source: String) {
+        containsSeparator = source.contains("/")
+        let characters = Array(source)
+        var compiled: [Token] = []
+        var index = 0
+        while index < characters.count {
+            switch characters[index] {
+            case "*":
+                compiled.append(Self.starToken(characters, index: &index))
+            case "?":
+                compiled.append(.anyNonSeparator)
+            case "[":
+                if let characterClass = Self.characterClass(
+                    characters,
+                    startingAt: index
+                ) {
+                    compiled.append(.characterClass(characterClass.value))
+                    index = characterClass.endingAt
+                } else {
+                    compiled.append(.literal("["))
+                }
+            case "\\":
+                if index + 1 < characters.count {
+                    index += 1
+                    compiled.append(.literal(characters[index]))
+                } else {
+                    compiled.append(.literal("\\"))
+                }
+            default:
+                compiled.append(.literal(characters[index]))
+            }
+            index += 1
+        }
+        tokens = compiled
+    }
+
+    /// Dynamic programming evaluates each compiled-state/input pair once.
+    /// Unlike a backtracking regular expression, adjacent or interleaved
+    /// stars therefore cannot cause exponential work.
+    func matches(_ value: String, allowingDescendants: Bool) -> Bool {
+        let characters = Array(value)
+        var following = (0 ... characters.count).map { index in
+            index == characters.count
+                || (allowingDescendants && characters[index] == "/")
+        }
+        for token in tokens.reversed() {
+            var current = Array(repeating: false, count: characters.count + 1)
+            var directorySuffixMatches = false
+            for index in stride(from: characters.count, through: 0, by: -1) {
+                switch token {
+                case let .literal(expected):
+                    current[index] = index < characters.count
+                        && characters[index] == expected
+                        && following[index + 1]
+                case .anyNonSeparator:
+                    current[index] = index < characters.count
+                        && characters[index] != "/"
+                        && following[index + 1]
+                case .starNonSeparator:
+                    current[index] = following[index]
+                        || (index < characters.count
+                            && characters[index] != "/"
+                            && current[index + 1])
+                case .starAny:
+                    current[index] = following[index]
+                        || (index < characters.count && current[index + 1])
+                case .starDirectories:
+                    if index < characters.count,
+                       characters[index] == "/",
+                       following[index + 1]
+                    {
+                        directorySuffixMatches = true
+                    }
+                    current[index] = following[index] || directorySuffixMatches
+                case let .characterClass(characterClass):
+                    current[index] = index < characters.count
+                        && characters[index] != "/"
+                        && characterClass.contains(characters[index])
+                        && following[index + 1]
+                }
+            }
+            following = current
+        }
+        return following[0]
+    }
+
+    private static func starToken(
+        _ characters: [Character],
+        index: inout Int
+    ) -> Token {
+        guard index + 1 < characters.count, characters[index + 1] == "*" else {
+            return .starNonSeparator
+        }
+        while index + 1 < characters.count, characters[index + 1] == "*" {
+            index += 1
+        }
+        guard index + 1 < characters.count, characters[index + 1] == "/" else {
+            return .starAny
+        }
+        index += 1
+        return .starDirectories
+    }
+
+    private static func characterClass(
+        _ characters: [Character],
+        startingAt start: Int
+    ) -> (value: DockerIgnoreCharacterClass, endingAt: Int)? {
+        var index = start + 1
+        guard index < characters.count else { return nil }
+        let inverted = characters[index] == "!" || characters[index] == "^"
+        if inverted {
+            index += 1
+        }
+        var literals: [Character] = []
+        if index < characters.count, characters[index] == "]" {
+            literals.append("]")
+            index += 1
+        }
+        while index < characters.count, characters[index] != "]" {
+            if characters[index] == "\\", index + 1 < characters.count {
+                index += 1
+            }
+            literals.append(characters[index])
+            index += 1
+        }
+        guard index < characters.count, !literals.isEmpty else { return nil }
+
+        var members: [DockerIgnoreCharacterClass.Member] = []
+        var literalIndex = 0
+        while literalIndex < literals.count {
+            if literalIndex + 2 < literals.count,
+               literals[literalIndex + 1] == "-"
+            {
+                members.append(.range(
+                    literals[literalIndex],
+                    literals[literalIndex + 2]
+                ))
+                literalIndex += 3
+            } else {
+                members.append(.literal(literals[literalIndex]))
+                literalIndex += 1
+            }
+        }
+        return (DockerIgnoreCharacterClass(inverted: inverted, members: members), index)
+    }
+}
+
+struct DockerIgnoreMatcher {
+    private let rules: [DockerIgnoreRule]
 
     init(contents: String) throws {
         rules = try contents.split(
@@ -61,7 +244,7 @@ struct DockerIgnoreMatcher {
         return result
     }
 
-    private static func rule(_ rawLine: String) throws -> Rule? {
+    private static func rule(_ rawLine: String) throws -> DockerIgnoreRule? {
         guard !rawLine.hasPrefix("#") else {
             return nil
         }
@@ -77,13 +260,9 @@ struct DockerIgnoreMatcher {
         guard !pattern.isEmpty, pattern != "." else {
             return nil
         }
-        let body = globExpression(pattern)
-        let prefix = pattern.contains("/") ? "^" : "(?:^|.*/)"
-        return try Rule(
+        return DockerIgnoreRule(
             includes: includes,
-            expression: NSRegularExpression(
-                pattern: prefix + body + "(?:/.*)?$"
-            )
+            pattern: DockerIgnoreGlobPattern(pattern)
         )
     }
 
@@ -105,97 +284,5 @@ struct DockerIgnoreMatcher {
             }
         }
         return components.joined(separator: "/")
-    }
-
-    private static func globExpression(_ pattern: String) -> String {
-        let characters = Array(pattern)
-        var result = ""
-        var index = 0
-        while index < characters.count {
-            switch characters[index] {
-            case "*":
-                result += starExpression(characters, index: &index)
-            case "?":
-                result += "[^/]"
-            case "[":
-                if let characterClass = characterClassExpression(
-                    characters,
-                    startingAt: index
-                ) {
-                    result += characterClass.expression
-                    index = characterClass.endingAt
-                } else {
-                    result += "\\["
-                }
-            case "\\":
-                if index + 1 < characters.count {
-                    index += 1
-                    result += NSRegularExpression.escapedPattern(
-                        for: String(characters[index])
-                    )
-                } else {
-                    result += "\\\\"
-                }
-            default:
-                result += NSRegularExpression.escapedPattern(
-                    for: String(characters[index])
-                )
-            }
-            index += 1
-        }
-        return result
-    }
-
-    private static func starExpression(
-        _ characters: [Character],
-        index: inout Int
-    ) -> String {
-        guard index + 1 < characters.count,
-              characters[index + 1] == "*"
-        else {
-            return "[^/]*"
-        }
-        while index + 1 < characters.count, characters[index + 1] == "*" {
-            index += 1
-        }
-        guard index + 1 < characters.count, characters[index + 1] == "/" else {
-            return ".*"
-        }
-        index += 1
-        return "(?:.*/)?"
-    }
-
-    private static func characterClassExpression(
-        _ characters: [Character],
-        startingAt start: Int
-    ) -> (expression: String, endingAt: Int)? {
-        var index = start + 1
-        guard index < characters.count else {
-            return nil
-        }
-        var expression = "["
-        if characters[index] == "!" || characters[index] == "^" {
-            expression += "^"
-            index += 1
-        }
-        if index < characters.count, characters[index] == "]" {
-            expression += "\\]"
-            index += 1
-        }
-        let contentStart = index
-        while index < characters.count, characters[index] != "]" {
-            let character = characters[index]
-            switch character {
-            case "\\": expression += "\\\\"
-            case "^" where index == contentStart: expression += "\\^"
-            default: expression.append(character)
-            }
-            index += 1
-        }
-        guard index < characters.count, index > contentStart else {
-            return nil
-        }
-        expression += "]"
-        return (expression, index)
     }
 }

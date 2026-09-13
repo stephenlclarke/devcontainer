@@ -853,7 +853,7 @@ struct DockerCLIApplicationTests {
 
         let transport = StubTransport([
             .json(["Id": "foreground"], status: 201),
-            .init(status: 204),
+            .init(status: 204, target: "/containers/foreground/start"),
             .json(
                 ["StatusCode": 17],
                 target: "/containers/foreground/wait"
@@ -873,11 +873,12 @@ struct DockerCLIApplicationTests {
         #expect(foreground.standardOutput == Data("logs".utf8))
         #expect(foreground.exitCode == 17)
         let foregroundTargets = transport.requests.map(\.target)
-        #expect(try #require(foregroundTargets.firstIndex(
-            of: "/containers/foreground/wait"
-        )) < #require(foregroundTargets.firstIndex(
-            of: "/containers/foreground/logs?follow=true&stdout=true&stderr=true"
-        )))
+        let order = [
+            "/containers/foreground/wait", "/containers/foreground/start",
+            "/containers/foreground/logs?follow=true&stdout=true&stderr=true"
+        ].compactMap { foregroundTargets.firstIndex(of: $0) }
+        #expect(order.count == 3)
+        #expect(order == order.sorted())
 
         var streamed = Data()
         let build = try application.run(arguments: ["build", root.path]) { data, _ in

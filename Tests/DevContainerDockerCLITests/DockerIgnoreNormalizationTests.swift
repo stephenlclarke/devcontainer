@@ -22,6 +22,32 @@ import Testing
 @Suite("Docker ignore normalization")
 struct DockerIgnoreNormalizationTests {
     @Test
+    func `pathological stars have deterministic bounded matching work`() throws {
+        let matcher = try DockerIgnoreMatcher(
+            contents: "a*a*a*a*a*a*a*a*a*b\n"
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        #expect(matcher.includes(String(repeating: "a", count: 40)))
+        #expect(started.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test
+    func `double stars and escaped character classes preserve ignore semantics`() throws {
+        let matcher = try DockerIgnoreMatcher(contents: """
+        build/**/secret[0-9].txt
+        literal\\[name\\].txt
+        """)
+
+        #expect(!matcher.includes("build/secret1.txt"))
+        #expect(!matcher.includes("build/a/b/secret9.txt"))
+        #expect(matcher.includes("build/a/b/secretA.txt"))
+        #expect(matcher.includes("build/xsecret1.txt"))
+        #expect(!matcher.includes("nested/literal[name].txt"))
+    }
+
+    @Test
     func `build archive cleans Docker ignore paths before matching`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-ignore-clean-\(UUID().uuidString)")

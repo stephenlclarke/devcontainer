@@ -148,7 +148,24 @@ class Probe:
         self.command("rm", created)
         self.containers.remove(created)
         repeated = self.command("rm", created, check=False)
+        automatic_name = self.name + "-automatic-remove"
+        automatic = self.command(
+            "run",
+            "--rm",
+            "--name",
+            automatic_name,
+            "alpine:latest",
+            "sh",
+            "-c",
+            "exit 7",
+            check=False,
+        )
+        automatic_inspect = self.command(
+            "inspect", automatic_name, check=False
+        )
         self.emit(
+            automatic_remove_cleanup=automatic_inspect.returncode != 0,
+            automatic_remove_exit=automatic.returncode == 7,
             create_state=created_state,
             exit_status=inspect_code,
             idempotent_cleanup=repeated.returncode != 0,

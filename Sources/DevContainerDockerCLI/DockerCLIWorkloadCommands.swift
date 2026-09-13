@@ -60,8 +60,15 @@ extension DockerCLIApplication {
                 streamingOutput: streamingOutput
             )
         }
+        // Register the wait before start so a short-lived --rm container
+        // cannot disappear before its exit status has a subscriber.
+        let waitResult = concurrentWait(for: identifier)
         _ = try request("POST", "/containers/\(Self.path(identifier))/start")
-        return try followContainer(identifier, streamingOutput: streamingOutput)
+        return try followContainer(
+            identifier,
+            waitResult: waitResult,
+            streamingOutput: streamingOutput
+        )
     }
 
     private func createContainer(_ options: DockerRunOptions) throws -> String {
@@ -86,10 +93,9 @@ extension DockerCLIApplication {
 
     private func followContainer(
         _ identifier: String,
+        waitResult: DockerConcurrentResponse,
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
-        let waitResult = concurrentWait(for: identifier)
-
         var decoder = DockerMultiplexedStreamDecoder()
         var captured = Data()
         _ = try transport.send(
