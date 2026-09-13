@@ -477,7 +477,10 @@ the published repository.
 
 Checksums are calculated only after signing and notarization, because those bytes are the distributed identity. Formula rendering downloads the published archive and checksum again, verifies both, checks required archive entries, and derives the Homebrew SHA from that verified archive.
 
-Publication is a retryable transaction. The workflow creates a private draft,
+Publication is a retryable transaction. GitHub draft creation has bounded
+retries and reconciles an ambiguous failure only when the returned draft has
+the exact tag, target commit, title, and prerelease state. The workflow creates
+a private draft,
 uploads and verifies the complete asset inventory and GitHub-computed digests,
 attests those exact bytes, then publishes the draft as an immutable release
 before testing and promoting the matching tap formula. A stable release is

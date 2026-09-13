@@ -25,10 +25,31 @@ set -euo pipefail
 readonly SELF_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_NAME="$(basename "$SELF_PATH")"
 readonly SCRIPT_NAME
+SELF_DIRECTORY="$(cd "$(dirname "$SELF_PATH")" && pwd -P)"
+readonly SELF_DIRECTORY
 readonly GH="${GH:-gh}"
 readonly GIT="${GIT:-git}"
 readonly IMMUTABILITY_ATTEMPTS="${RELEASE_IMMUTABILITY_ATTEMPTS:-60}"
 readonly IMMUTABILITY_DELAY_SECONDS="${RELEASE_IMMUTABILITY_DELAY_SECONDS:-10}"
+
+# Create a metadata-only draft through bounded, exact-state reconciliation.
+# Assets are uploaded only after the complete local set has been validated.
+create_release_draft() {
+  local prerelease="$1" verify_tag="$2"
+  env \
+    GH="$GH" \
+    PUBLISH_SHA="$PUBLISH_SHA" \
+    RELEASE_GITHUB_RETRY_ATTEMPTS="${RELEASE_GITHUB_RETRY_ATTEMPTS:-5}" \
+    RELEASE_GITHUB_RETRY_DELAY_SECONDS="${RELEASE_GITHUB_RETRY_DELAY_SECONDS:-5}" \
+    RELEASE_LATEST=false \
+    RELEASE_NOTES_FILE="$NOTES_FILE" \
+    RELEASE_PRERELEASE="$prerelease" \
+    RELEASE_REPOSITORY="$REPOSITORY" \
+    RELEASE_TAG="$TAG" \
+    RELEASE_TITLE="$TITLE" \
+    RELEASE_VERIFY_TAG="$verify_tag" \
+    "$SELF_DIRECTORY/create-github-release-draft.sh"
+}
 
 # Print the command-line interface.
 usage() {
@@ -117,6 +138,38 @@ require_release_draft() {
       "$channel" "$TAG" >&2
     exit 1
   fi
+}
+
+# Replace only a private draft that still names the exact immutable input tag.
+# GitHub release deletion does not remove the tag unless --cleanup-tag is used.
+recreate_release_draft() {
+  local prerelease="$1" verify_tag="$2" snapshot remote_target
+  snapshot="$(
+    "$GH" release view "$TAG" --repo "$REPOSITORY" \
+      --json isDraft,tagName,targetCommitish
+  )"
+  if [[ "$(jq -r '.isDraft' <<<"$snapshot")" != true ||
+        "$(jq -r '.tagName' <<<"$snapshot")" != "$TAG" ||
+        "$(jq -r '.targetCommitish' <<<"$snapshot")" != "$PUBLISH_SHA" ]]; then
+    printf 'release draft changed before bounded replacement: %s\n' "$TAG" >&2
+    return 1
+  fi
+  remote_target="$(remote_tag_target)"
+  if [[ "$remote_target" != "$PUBLISH_SHA" ]]; then
+    printf 'release draft tag changed before bounded replacement: %s\n' \
+      "$TAG" >&2
+    return 1
+  fi
+  "$GH" release delete "$TAG" --repo "$REPOSITORY" --yes
+  if [[ "$(remote_tag_target)" != "$PUBLISH_SHA" ]]; then
+    printf 'bounded draft replacement changed immutable tag %s\n' "$TAG" >&2
+    return 1
+  fi
+  create_release_draft "$prerelease" "$verify_tag"
+  RELEASE_DOCUMENT="$(
+    "$GH" api "repos/$REPOSITORY/releases/tags/$TAG"
+  )"
+  require_release_draft release
 }
 
 # Require repository-level immutability before staging release bytes.
@@ -223,6 +276,7 @@ expected_release_asset_names() {
 
 # Reconcile an interrupted release draft without replacing staged bytes.
 reconcile_draft_assets() {
+  local prerelease="$1" verify_tag="$2"
   local temporary initial remote_names expected_names asset name
   local downloaded final_snapshot remote_assets
   local -a missing_assets=()
@@ -231,7 +285,10 @@ reconcile_draft_assets() {
     "$GH" release view "$TAG" \
       --repo "$REPOSITORY" --json assets --jq '.assets[].name'
   )"
-  validate_release_asset_names "$remote_names" "$expected_names" false
+  if ! validate_release_asset_names "$remote_names" "$expected_names" false; then
+    recreate_release_draft "$prerelease" "$verify_tag"
+    remote_names=""
+  fi
 
   temporary="$(
     mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-stable-assets.XXXXXX"
@@ -248,9 +305,16 @@ reconcile_draft_assets() {
       if [[ ! -f "$downloaded" ]] || \
         [[ "$(shasum -a 256 "$downloaded" | awk '{print $1}')" != \
           "$(shasum -a 256 "$asset" | awk '{print $1}')" ]]; then
-        printf 'release draft asset conflicts with candidate: %s\n' \
-          "$name" >&2
-        return 1
+        find "$temporary" -depth -delete >/dev/null 2>&1 || true
+        trap - RETURN
+        recreate_release_draft "$prerelease" "$verify_tag"
+        temporary="$(
+          mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/devcontainer-stable-assets.XXXXXX"
+        )"
+        trap 'find "$temporary" -depth -delete >/dev/null 2>&1 || true' RETURN
+        missing_assets=("${ASSETS[@]}")
+        remote_names=""
+        break
       fi
     else
       missing_assets+=("$asset")
@@ -415,7 +479,7 @@ case "$MODE" in
         exit 0
       fi
       require_release_draft current
-      reconcile_draft_assets
+      reconcile_draft_assets true false
       "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
         --target "$PUBLISH_SHA" \
@@ -424,20 +488,13 @@ case "$MODE" in
         --prerelease \
         --latest=false
     else
-      "$GH" release create "$TAG" "${ASSETS[@]}" \
-        --repo "$REPOSITORY" \
-        --target "$PUBLISH_SHA" \
-        --title "$TITLE" \
-        --notes-file "$NOTES_FILE" \
-        --draft \
-        --prerelease \
-        --latest=false
+      create_release_draft true false
       if ! release_exists; then
         printf 'Current draft was not visible after creation: %s\n' "$TAG" >&2
         exit 1
       fi
       require_release_draft current
-      reconcile_draft_assets
+      reconcile_draft_assets true false
     fi
     ;;
   current-finalize)
@@ -458,7 +515,7 @@ case "$MODE" in
       exit 0
     fi
     require_release_draft current
-    reconcile_draft_assets
+    reconcile_draft_assets true false
     verify_current_tag_target_if_present
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
@@ -484,7 +541,7 @@ case "$MODE" in
         exit 0
       fi
       require_release_draft stable
-      reconcile_draft_assets
+      reconcile_draft_assets false true
       "$GH" release edit "$TAG" \
         --repo "$REPOSITORY" \
         --target "$PUBLISH_SHA" \
@@ -492,20 +549,13 @@ case "$MODE" in
         --notes-file "$NOTES_FILE" \
         --latest=false
     else
-      "$GH" release create "$TAG" "${ASSETS[@]}" \
-        --repo "$REPOSITORY" \
-        --target "$PUBLISH_SHA" \
-        --verify-tag \
-        --title "$TITLE" \
-        --notes-file "$NOTES_FILE" \
-        --draft \
-        --latest=false
+      create_release_draft false true
       if ! release_exists; then
         printf 'stable draft was not visible after creation: %s\n' "$TAG" >&2
         exit 1
       fi
       require_release_draft stable
-      reconcile_draft_assets
+      reconcile_draft_assets false true
     fi
     ;;
   stable-finalize)
@@ -525,7 +575,7 @@ case "$MODE" in
       exit 0
     fi
     require_release_draft stable
-    reconcile_draft_assets
+    reconcile_draft_assets false true
     "$GH" release edit "$TAG" \
       --repo "$REPOSITORY" \
       --target "$PUBLISH_SHA" \

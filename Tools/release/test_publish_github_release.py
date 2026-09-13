@@ -17,6 +17,14 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
 class GitHubReleasePublisherTests(unittest.TestCase):
+    def test_release_creation_uses_bounded_reconciliation_helper(self) -> None:
+        contents = PUBLISHER.read_text(encoding="utf-8")
+
+        self.assertIn('"$SELF_DIRECTORY/create-github-release-draft.sh"', contents)
+        self.assertIn("RELEASE_GITHUB_RETRY_ATTEMPTS", contents)
+        self.assertIn("recreate_release_draft", contents)
+        self.assertNotIn('"$GH" release create', contents)
+
     def test_help_lists_every_supported_mode(self) -> None:
         result = subprocess.run(
             [str(PUBLISHER), "--help"],
@@ -154,12 +162,23 @@ class GitHubReleasePublisherTests(unittest.TestCase):
 
             if args[:2] == ["release", "create"]:
                 if "--draft" in args:
-                    created = "current-draft" if "--prerelease" in args else "draft"
+                    created = (
+                        "current-draft"
+                        if any(
+                            value in {"--prerelease", "--prerelease=true"}
+                            for value in args
+                        )
+                        else "draft"
+                    )
                     state_path.write_text(created, encoding="utf-8")
                 else:
                     created = "published-current" if "--prerelease" in args else "published"
                     state_path.write_text(created, encoding="utf-8")
-                Path(os.environ["GH_UPLOAD_MARKER"]).touch()
+                raise SystemExit(0)
+
+            if args[:2] == ["release", "delete"]:
+                state_path.write_text("missing", encoding="utf-8")
+                Path(os.environ["GH_UPLOAD_MARKER"]).unlink(missing_ok=True)
                 raise SystemExit(0)
 
             if args[:2] == ["release", "upload"]:
@@ -196,6 +215,24 @@ class GitHubReleasePublisherTests(unittest.TestCase):
 
             if args[:2] == ["release", "view"]:
                 requested = args[args.index("--json") + 1]
+                if requested == "isDraft,tagName,targetCommitish":
+                    print(json.dumps({
+                        "isDraft": state in {"draft", "current-draft"},
+                        "tagName": tag,
+                        "targetCommitish": os.environ["PUBLISH_SHA"],
+                    }))
+                    raise SystemExit(0)
+                if requested == (
+                    "isDraft,isPrerelease,tagName,targetCommitish,name"
+                ):
+                    print(json.dumps({
+                        "isDraft": state in {"draft", "current-draft"},
+                        "isPrerelease": state == "current-draft",
+                        "tagName": tag,
+                        "targetCommitish": os.environ["PUBLISH_SHA"],
+                        "name": os.environ["RELEASE_TITLE"],
+                    }))
+                    raise SystemExit(0)
                 if requested == "assets" and "--jq" in args:
                     print("\n".join(names()))
                     raise SystemExit(0)
@@ -406,13 +443,15 @@ class GitHubReleasePublisherTests(unittest.TestCase):
             self.assertIn("release upload 1.2.3", trace)
             self.assertNotIn("--clobber", trace)
 
-    def test_stable_stage_rejects_foreign_or_conflicting_draft_assets(self) -> None:
+    def test_stable_stage_replaces_foreign_or_conflicting_private_draft(
+        self,
+    ) -> None:
         cases = (
-            ("foreign.tar.gz\n", "", "unexpected asset"),
-            ("package.tar.gz\n", "different", "conflicts with candidate"),
+            ("foreign.tar.gz\n", ""),
+            ("package.tar.gz\n", "different"),
         )
-        for remote_assets, content, message in cases:
-            with self.subTest(message=message), tempfile.TemporaryDirectory() as temporary:
+        for remote_assets, content in cases:
+            with self.subTest(assets=remote_assets), tempfile.TemporaryDirectory() as temporary:
                 environment, gh_trace, _ = self.fixture(
                     Path(temporary),
                     state="draft",
@@ -420,9 +459,12 @@ class GitHubReleasePublisherTests(unittest.TestCase):
                     download_content=content,
                 )
                 result = self.run_publisher(environment, "stable-stage", "1.2.3")
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(message, result.stderr)
-                self.assertNotIn("release edit", gh_trace.read_text())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                trace = gh_trace.read_text()
+                self.assertIn("release delete 1.2.3", trace)
+                self.assertIn("release create 1.2.3", trace)
+                self.assertIn("release upload 1.2.3", trace)
+                self.assertNotIn("--draft=false", trace)
 
     def test_stable_stage_rejects_changed_final_inventory_or_digest(self) -> None:
         cases = (
