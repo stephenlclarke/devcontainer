@@ -66,8 +66,11 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
-    func `unescaped edge hyphens are rejected like Go path match`() {
-        for pattern in ["[-.]env\n", "[.-]env\n"] {
+    func `malformed patterns are rejected like Go path match`() {
+        for pattern in [
+            "[-.]env\n", "[.-]env\n", "[a--.]env\n", "[a-b-c]env\n",
+            "[z-a]env\n", "secret\\\n", "!\n"
+        ] {
             #expect(throws: DockerCLIError.self) {
                 _ = try DockerIgnoreMatcher(contents: pattern)
             }
@@ -101,6 +104,58 @@ struct DockerIgnoreNormalizationTests {
 
         #expect(!entries.contains(".env"))
         #expect(entries.contains("aenv"))
+    }
+
+    @Test
+    func `invalid UTF-8 Docker ignore files fail closed`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-encoding-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try Data("secret\n".utf8).write(to: root.appendingPathComponent(".env"))
+        try (Data(".env\n".utf8) + Data([0xFF])).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerBuildOptions(arguments: [root.path]).archive()
+        }
+    }
+
+    @Test
+    func `UTF-8 byte order mark does not disable the first ignore rule`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-bom-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try Data("secret\n".utf8).write(to: root.appendingPathComponent(".env"))
+        try (Data([0xEF, 0xBB, 0xBF]) + Data(".env\n".utf8)).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(!entries.contains(".env"))
+    }
+
+    @Test
+    func `oversized Docker ignore lines fail closed`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-line-limit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try (Data(repeating: 0x61, count: 64 * 1024) + Data([0x0A])).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerBuildOptions(arguments: [root.path]).archive()
+        }
     }
 
     @Test

@@ -14,6 +14,8 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Foundation
+
 private struct DockerIgnoreRule {
     let includes: Bool
     let pattern: DockerIgnoreGlobPattern
@@ -93,7 +95,9 @@ private struct DockerIgnoreGlobPattern {
                     index += 1
                     compiled.append(.literal(scalars[index]))
                 } else {
-                    compiled.append(.literal("\\"))
+                    throw DockerCLIError.invalidArguments(
+                        "malformed .dockerignore pattern: \(source)"
+                    )
                 }
             default:
                 compiled.append(.literal(scalars[index]))
@@ -209,24 +213,51 @@ private struct DockerIgnoreGlobPattern {
             )
         }
 
+        return try (
+            DockerIgnoreCharacterClass(
+                inverted: inverted,
+                members: characterClassMembers(literals, source: source)
+            ),
+            index
+        )
+    }
+
+    private static func characterClassMembers(
+        _ literals: [ParsedLiteral],
+        source: String
+    ) throws -> [DockerIgnoreCharacterClass.Member] {
         var members: [DockerIgnoreCharacterClass.Member] = []
         var literalIndex = 0
         while literalIndex < literals.count {
+            let lower = literals[literalIndex]
+            guard lower.scalar != "-" || lower.escaped else {
+                throw DockerCLIError.invalidArguments(
+                    "malformed .dockerignore pattern: \(source)"
+                )
+            }
             if literalIndex + 2 < literals.count,
                literals[literalIndex + 1].scalar == "-",
                !literals[literalIndex + 1].escaped
             {
+                let upper = literals[literalIndex + 2]
+                guard upper.scalar != "-" || upper.escaped,
+                      lower.scalar.value <= upper.scalar.value
+                else {
+                    throw DockerCLIError.invalidArguments(
+                        "malformed .dockerignore pattern: \(source)"
+                    )
+                }
                 members.append(.range(
-                    literals[literalIndex].scalar,
-                    literals[literalIndex + 2].scalar
+                    lower.scalar,
+                    upper.scalar
                 ))
                 literalIndex += 3
             } else {
-                members.append(.literal(literals[literalIndex].scalar))
+                members.append(.literal(lower.scalar))
                 literalIndex += 1
             }
         }
-        return (DockerIgnoreCharacterClass(inverted: inverted, members: members), index)
+        return members
     }
 }
 
@@ -239,6 +270,52 @@ struct DockerIgnoreMatcher {
             omittingEmptySubsequences: false
         ).compactMap { rawLine in
             try Self.rule(String(rawLine))
+        }
+    }
+
+    init(contentsOf url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            try self.init(contents: "")
+            return
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw DockerCLIError.invalidArguments(
+                "could not read .dockerignore: \(error.localizedDescription)"
+            )
+        }
+        try Self.validateLineLengths(in: data)
+        let utf8BOM = Data([0xEF, 0xBB, 0xBF])
+        let contentData = data.starts(with: utf8BOM) ? data.dropFirst(utf8BOM.count) : data[...]
+        guard let contents = String(data: contentData, encoding: .utf8) else {
+            throw DockerCLIError.invalidArguments(
+                "could not read .dockerignore: contents are not valid UTF-8"
+            )
+        }
+        try self.init(contents: contents)
+    }
+
+    private static func validateLineLengths(in data: Data) throws {
+        let maximumTokenSize = 64 * 1024
+        var lineLength = 0
+        for byte in data {
+            if byte == 0x0A {
+                guard lineLength < maximumTokenSize else {
+                    throw DockerCLIError.invalidArguments(
+                        "could not read .dockerignore: line is too long"
+                    )
+                }
+                lineLength = 0
+            } else {
+                lineLength += 1
+                guard lineLength <= maximumTokenSize else {
+                    throw DockerCLIError.invalidArguments(
+                        "could not read .dockerignore: line is too long"
+                    )
+                }
+            }
         }
     }
 
@@ -278,6 +355,11 @@ struct DockerIgnoreMatcher {
         pattern = normalized(pattern)
         let includes = pattern.hasPrefix("!")
         if includes {
+            guard pattern != "!" else {
+                throw DockerCLIError.invalidArguments(
+                    "malformed .dockerignore pattern: \(rawLine)"
+                )
+            }
             pattern.removeFirst()
         }
         pattern = normalized(pattern)
