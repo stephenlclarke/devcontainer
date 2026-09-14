@@ -385,7 +385,9 @@ extension AppleContainerRuntimeTests {
             Issue.record("Apple runtime copy-out should return a file-backed archive")
             return
         }
-        #expect(try !Data(contentsOf: file.url).isEmpty)
+        let archiveReader = try file.makeReadingHandle()
+        #expect(try !(archiveReader.readToEnd() ?? Data()).isEmpty)
+        try archiveReader.close()
         #expect(archive.stat.mode & (1 << 31) == 0)
         #expect(archive.stat.mode & 0o777 == 0o644)
         try await runtime.copyArchiveToContainer(

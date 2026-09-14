@@ -147,7 +147,6 @@ private struct DockerIgnoreGlobPattern {
                     current[index] = following[index] || directorySuffixMatches
                 case let .characterClass(characterClass):
                     current[index] = index < scalars.count
-                        && scalars[index] != "/"
                         && characterClass.contains(scalars[index])
                         && following[index + 1]
                 }
@@ -316,6 +315,11 @@ struct DockerIgnoreMatcher {
                     )
                 }
             }
+        }
+        guard lineLength < maximumTokenSize else {
+            throw DockerCLIError.invalidArguments(
+                "could not read .dockerignore: line is too long"
+            )
         }
     }
 

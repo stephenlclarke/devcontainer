@@ -51,17 +51,18 @@ func `archive HEAD uses metadata without materialising an archive`() async throw
 }
 
 @Test
-func `file backed archives stream in bounded chunks and remove their spool`() async throws {
+func `file backed archives stream anonymously in bounded chunks`() async throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("devcontainer-archive-stream-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let file = try RuntimeArchiveFile(baseDirectory: root)
-    #expect(
-        try FileManager.default.attributesOfItem(atPath: file.url.path)[.posixPermissions]
-            as? Int == 0o600
-    )
+    #expect(!FileManager.default.fileExists(atPath: file.url.path))
     let payload = Data(repeating: 0x5A, count: (64 * 1024 * 2) + 17)
     let writer = try file.makeWritingHandle()
+    var writerStatus = Darwin.stat()
+    #expect(fstat(writer.fileDescriptor, &writerStatus) == 0)
+    #expect(writerStatus.st_mode & 0o777 == 0o600)
+    #expect(writerStatus.st_nlink == 0)
     try writer.write(contentsOf: payload)
     try writer.close()
 
@@ -106,6 +107,22 @@ func `file backed archives stream in bounded chunks and remove their spool`() as
 }
 
 @Test
+func `archive spool cannot be hard linked after creation`() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("devcontainer-archive-link-race-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = try RuntimeArchiveFile(baseDirectory: root)
+    let exposed = root.appendingPathComponent("exposed.tar")
+
+    let linkStatus = Darwin.link(file.url.path, exposed.path)
+    let linkError = errno
+    #expect(linkStatus == -1)
+    #expect(linkError == ENOENT)
+    #expect(!FileManager.default.fileExists(atPath: exposed.path))
+}
+
+@Test
 func `cancelling a file backed archive removes its spool`() async throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("devcontainer-archive-cancel-\(UUID().uuidString)")
@@ -132,7 +149,7 @@ func `archive descriptors ignore pathname replacement and preserve foreign clean
     try Data("safe".utf8).write(to: victim)
     let archive = try RuntimeArchiveFile(baseDirectory: root)
     let writer = try archive.makeWritingHandle()
-    try FileManager.default.removeItem(at: archive.url)
+    #expect(!FileManager.default.fileExists(atPath: archive.url.path))
     try FileManager.default.createSymbolicLink(
         at: archive.url,
         withDestinationURL: victim

@@ -443,16 +443,21 @@ public final class RuntimeArchiveFile: @unchecked Sendable, Equatable {
             throw Self.posixError()
         }
         var status = Darwin.stat()
+        guard Darwin.unlink(candidate.path) == 0 else {
+            let failure = errno
+            Darwin.close(opened)
+            errno = failure
+            throw Self.posixError()
+        }
         guard fchmod(opened, mode_t(0o600)) == 0,
               fstat(opened, &status) == 0,
               status.st_mode & S_IFMT == S_IFREG,
               status.st_uid == geteuid(),
-              status.st_nlink == 1,
+              status.st_nlink == 0,
               status.st_mode & 0o777 == 0o600
         else {
             let failure = errno
             Darwin.close(opened)
-            Darwin.unlink(candidate.path)
             errno = failure == 0 ? EACCES : failure
             throw Self.posixError()
         }
@@ -555,9 +560,13 @@ public struct RuntimeArchive: Equatable, Sendable {
     public var data: Data {
         switch body {
         case let .bytes(data):
-            data
+            return data
         case let .file(file):
-            (try? Data(contentsOf: file.url)) ?? Data()
+            guard let handle = try? file.makeReadingHandle() else {
+                return Data()
+            }
+            defer { try? handle.close() }
+            return (try? handle.readToEnd()) ?? Data()
         }
     }
 }

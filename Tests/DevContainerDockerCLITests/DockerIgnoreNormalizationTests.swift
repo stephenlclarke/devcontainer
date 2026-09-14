@@ -156,6 +156,21 @@ struct DockerIgnoreNormalizationTests {
         #expect(throws: DockerCLIError.self) {
             _ = try DockerBuildOptions(arguments: [root.path]).archive()
         }
+
+        try Data(repeating: 0x61, count: 64 * 1024).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerBuildOptions(arguments: [root.path]).archive()
+        }
+    }
+
+    @Test
+    func `character classes can match path separators like Go`() throws {
+        let matcher = try DockerIgnoreMatcher(contents: "secrets[/].env\n")
+
+        #expect(!matcher.includes("secrets/.env"))
+        #expect(matcher.includes("secrets/a.env"))
     }
 
     @Test
