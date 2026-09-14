@@ -20,12 +20,24 @@ private struct DockerIgnoreRule {
     let includes: Bool
     let pattern: DockerIgnoreGlobPattern
 
-    func matches(_ path: String) -> Bool {
+    func matches(_ path: String, remainingWork: inout Int) throws -> Bool {
         if pattern.containsSeparator {
-            return pattern.matches(path, allowingDescendants: true)
+            return try pattern.matches(
+                path,
+                allowingDescendants: true,
+                remainingWork: &remainingWork
+            )
         }
-        return path.split(separator: "/", omittingEmptySubsequences: false)
-            .contains { pattern.matches(String($0), allowingDescendants: false) }
+        for component in path.split(separator: "/", omittingEmptySubsequences: false)
+            where try pattern.matches(
+                String(component),
+                allowingDescendants: false,
+                remainingWork: &remainingWork
+            )
+        {
+            return true
+        }
+        return false
     }
 }
 
@@ -70,6 +82,7 @@ private struct DockerIgnoreGlobPattern {
 
     let containsSeparator: Bool
     private let tokens: [Token]
+    private let literal: String?
 
     init(_ source: String) throws {
         containsSeparator = source.contains("/")
@@ -105,13 +118,51 @@ private struct DockerIgnoreGlobPattern {
             index += 1
         }
         tokens = compiled
+        var literalScalars: [Unicode.Scalar] = []
+        for token in compiled {
+            guard case let .literal(scalar) = token else {
+                literal = nil
+                return
+            }
+            literalScalars.append(scalar)
+        }
+        literal = String(String.UnicodeScalarView(literalScalars))
     }
 
     /// Dynamic programming evaluates each compiled-state/input pair once.
     /// Unlike a backtracking regular expression, adjacent or interleaved
     /// stars therefore cannot cause exponential work.
-    func matches(_ value: String, allowingDescendants: Bool) -> Bool {
+    func matches(
+        _ value: String,
+        allowingDescendants: Bool,
+        remainingWork: inout Int
+    ) throws -> Bool {
         let scalars = Array(value.unicodeScalars)
+        let work = requiredWork(inputCount: scalars.count)
+        guard work <= remainingWork else {
+            throw DockerCLIError.invalidArguments(
+                ".dockerignore matching work exceeds the safe build-context limit"
+            )
+        }
+        remainingWork -= work
+        if let literal {
+            return value == literal
+                || (allowingDescendants && value.hasPrefix(literal + "/"))
+        }
+        return dynamicMatch(scalars, allowingDescendants: allowingDescendants)
+    }
+
+    private func requiredWork(inputCount: Int) -> Int {
+        let calculation = literal == nil
+            ? tokens.count.multipliedReportingOverflow(by: inputCount + 1)
+            : tokens.count.addingReportingOverflow(inputCount)
+        return calculation.overflow ? Int.max : calculation.partialValue
+    }
+
+    private func dynamicMatch(
+        _ scalars: [Unicode.Scalar],
+        allowingDescendants: Bool
+    ) -> Bool {
         var following = (0 ... scalars.count).map { index in
             index == scalars.count
                 || (allowingDescendants && scalars[index] == "/")
@@ -261,9 +312,13 @@ private struct DockerIgnoreGlobPattern {
 }
 
 struct DockerIgnoreMatcher {
-    private let rules: [DockerIgnoreRule]
+    private static let maximumMatchingWork = 32 * 1024 * 1024
 
-    init(contents: String) throws {
+    private let rules: [DockerIgnoreRule]
+    private var remainingWork: Int
+
+    init(contents: String, matchingWorkLimit: Int? = nil) throws {
+        remainingWork = matchingWorkLimit ?? Self.maximumMatchingWork
         rules = try contents.split(
             separator: "\n",
             omittingEmptySubsequences: false
@@ -272,9 +327,9 @@ struct DockerIgnoreMatcher {
         }
     }
 
-    init(contentsOf url: URL) throws {
+    init(contentsOf url: URL, matchingWorkLimit: Int? = nil) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
-            try self.init(contents: "")
+            try self.init(contents: "", matchingWorkLimit: matchingWorkLimit)
             return
         }
         let data: Data
@@ -293,7 +348,7 @@ struct DockerIgnoreMatcher {
                 "could not read .dockerignore: contents are not valid UTF-8"
             )
         }
-        try self.init(contents: contents)
+        try self.init(contents: contents, matchingWorkLimit: matchingWorkLimit)
     }
 
     private static func validateLineLengths(in data: Data) throws {
@@ -323,22 +378,22 @@ struct DockerIgnoreMatcher {
         }
     }
 
-    func includes(_ path: String) -> Bool {
+    mutating func includes(_ path: String) throws -> Bool {
         let components = path.split(separator: "/")
         if components.count > 1 {
             for end in 1 ..< components.count {
                 let ancestor = components[..<end].joined(separator: "/")
-                if !ruleResult(for: ancestor) {
+                if try !ruleResult(for: ancestor) {
                     return false
                 }
             }
         }
-        return ruleResult(for: path)
+        return try ruleResult(for: path)
     }
 
-    private func ruleResult(for path: String) -> Bool {
+    private mutating func ruleResult(for path: String) throws -> Bool {
         var result = true
-        for rule in rules where rule.matches(path) {
+        for rule in rules where try rule.matches(path, remainingWork: &remainingWork) {
             result = rule.includes
         }
         return result

@@ -234,6 +234,8 @@ The generated shared route ledger contains all 107 method/path operations in the
 
 Each HTTP/1.1 connection has a 1 GiB aggregate retained-body budget and a bounded pending-request queue. The project Docker CLI creates Dockerfile build archives inside a mode-0700 temporary directory, streams the file to the project-owned socket in bounded chunks, verifies its owner, link count, type, and length before transfer, and removes the staging directory on every return path. The engine currently transfers large request bodies from SwiftNIO storage into `Data` without copying the bytes; completing file-backed engine ingress remains an explicit optimisation in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). A client that exceeds either the per-request, aggregate-byte, or queue bound is rejected without allowing a later pipelined response to overtake an earlier one.
 
+The build-context selector compiles Docker-ignore rules into Go-compatible scalar tokens. Literal-only rules use a linear comparison path; wildcard rules use deterministic dynamic programming and share a 33,554,432-state-evaluation budget across the complete context walk. A workspace that exhausts that budget fails before an archive is submitted, preventing a syntactically valid near-64 KiB pattern from multiplying unbounded matching work across context entries.
+
 Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and Dockerfile-build fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
 
 ## Identity and label projection

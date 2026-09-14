@@ -23,46 +23,84 @@ import Testing
 struct DockerIgnoreNormalizationTests {
     @Test
     func `pathological stars have deterministic bounded matching work`() throws {
-        let matcher = try DockerIgnoreMatcher(
+        var matcher = try DockerIgnoreMatcher(
             contents: "a*a*a*a*a*a*a*a*a*b\n"
         )
         let clock = ContinuousClock()
         let started = clock.now
 
-        #expect(matcher.includes(String(repeating: "a", count: 40)))
+        #expect(try matcher.includes(String(repeating: "a", count: 40)))
         #expect(started.duration(to: clock.now) < .seconds(1))
     }
 
     @Test
-    func `wildcards consume one Unicode scalar like Docker`() throws {
-        let matcher = try DockerIgnoreMatcher(contents: "*\n!?\n")
+    func `long literal rules use bounded linear matching work`() throws {
+        var matcher = try DockerIgnoreMatcher(
+            contents: String(repeating: "a", count: 65000) + "\n"
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
 
-        #expect(matcher.includes("é"))
-        #expect(!matcher.includes("e\u{301}"))
+        for index in 0 ..< 100 {
+            #expect(try matcher.includes("path-\(index)-" + String(repeating: "b", count: 240)))
+        }
+        #expect(started.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test
+    func `global work budget rejects adversarial wildcard rules`() throws {
+        var matcher = try DockerIgnoreMatcher(
+            contents: String(repeating: "a", count: 65000) + "*\n",
+            matchingWorkLimit: 1
+        )
+        let path = String(repeating: "a", count: 250)
+        let clock = ContinuousClock()
+        let started = clock.now
+        var rejected = false
+
+        for _ in 0 ..< 10 {
+            do {
+                _ = try matcher.includes(path)
+            } catch let DockerCLIError.invalidArguments(message) {
+                #expect(message.contains("matching work exceeds"))
+                rejected = true
+                break
+            }
+        }
+        #expect(rejected)
+        #expect(started.duration(to: clock.now) < .seconds(2))
+    }
+
+    @Test
+    func `wildcards consume one Unicode scalar like Docker`() throws {
+        var matcher = try DockerIgnoreMatcher(contents: "*\n!?\n")
+
+        #expect(try matcher.includes("é"))
+        #expect(try !matcher.includes("e\u{301}"))
     }
 
     @Test
     func `double stars and escaped character classes preserve ignore semantics`() throws {
-        let matcher = try DockerIgnoreMatcher(contents: """
+        var matcher = try DockerIgnoreMatcher(contents: """
         build/**/secret[0-9].txt
         literal\\[name\\].txt
         """)
 
-        #expect(!matcher.includes("build/secret1.txt"))
-        #expect(!matcher.includes("build/a/b/secret9.txt"))
-        #expect(matcher.includes("build/a/b/secretA.txt"))
-        #expect(matcher.includes("build/xsecret1.txt"))
-        #expect(!matcher.includes("nested/literal[name].txt"))
+        #expect(try !matcher.includes("build/secret1.txt"))
+        #expect(try !matcher.includes("build/a/b/secret9.txt"))
+        #expect(try matcher.includes("build/a/b/secretA.txt"))
+        #expect(try matcher.includes("build/xsecret1.txt"))
+        #expect(try !matcher.includes("nested/literal[name].txt"))
     }
 
     @Test
     func `escaped class hyphens remain literals`() throws {
-        let matcher = try DockerIgnoreMatcher(contents: "[z\\-.]env\n")
+        var matcher = try DockerIgnoreMatcher(contents: "[z\\-.]env\n")
 
-        #expect(!matcher.includes("zenv"))
-        #expect(!matcher.includes("-env"))
-        #expect(!matcher.includes(".env"))
-        #expect(matcher.includes("aenv"))
+        #expect(try !matcher.includes("zenv"))
+        #expect(try !matcher.includes("-env"))
+        #expect(try !matcher.includes(".env"))
+        #expect(try matcher.includes("aenv"))
     }
 
     @Test
@@ -167,10 +205,10 @@ struct DockerIgnoreNormalizationTests {
 
     @Test
     func `character classes can match path separators like Go`() throws {
-        let matcher = try DockerIgnoreMatcher(contents: "secrets[/].env\n")
+        var matcher = try DockerIgnoreMatcher(contents: "secrets[/].env\n")
 
-        #expect(!matcher.includes("secrets/.env"))
-        #expect(matcher.includes("secrets/a.env"))
+        #expect(try !matcher.includes("secrets/.env"))
+        #expect(try matcher.includes("secrets/a.env"))
     }
 
     @Test

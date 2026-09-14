@@ -468,7 +468,7 @@ struct DockerBuildOptions: Equatable {
             contextURL: contextURL,
             dockerfileURL: dockerfileURL
         )
-        let matcher = try DockerIgnoreMatcher(contentsOf: ignoreURL)
+        var matcher = try DockerIgnoreMatcher(contentsOf: ignoreURL)
         let dockerfilePath = relativePath(dockerfileURL, within: contextURL)
         let enumerator = FileManager.default.enumerator(
             at: contextURL,
@@ -480,7 +480,11 @@ struct DockerBuildOptions: Equatable {
             guard let path = relativePath(url, within: contextURL) else {
                 continue
             }
-            if path == dockerfilePath || matcher.includes(path) {
+            if path == dockerfilePath {
+                entries.append(path)
+                continue
+            }
+            if try matcher.includes(path) {
                 entries.append(path)
             }
         }
