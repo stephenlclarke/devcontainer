@@ -170,8 +170,6 @@ private struct DockerIgnoreGlobPattern {
         return .starDirectories
     }
 
-    // Keep Go path.Match character-class validation and compilation together.
-    // swiftlint:disable:next function_body_length
     private static func characterClass(
         _ scalars: [Unicode.Scalar],
         startingAt start: Int,
@@ -190,10 +188,6 @@ private struct DockerIgnoreGlobPattern {
             index += 1
         }
         var literals: [ParsedLiteral] = []
-        if index < scalars.count, scalars[index] == "]" {
-            literals.append(ParsedLiteral(scalar: "]", escaped: false))
-            index += 1
-        }
         while index < scalars.count, scalars[index] != "]" {
             var escaped = false
             if scalars[index] == "\\", index + 1 < scalars.count {

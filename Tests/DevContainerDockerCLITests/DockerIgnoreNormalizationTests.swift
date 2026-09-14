@@ -75,6 +75,16 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `unescaped leading closing brackets are rejected like Go path match`() {
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerIgnoreMatcher(contents: "*\n![^]a]env\n")
+        }
+        #expect(throws: Never.self) {
+            _ = try DockerIgnoreMatcher(contents: "[\\]a]env\n")
+        }
+    }
+
+    @Test
     func `escaped class hyphens exclude matching secrets from build archives`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-ignore-hyphen-\(UUID().uuidString)")
