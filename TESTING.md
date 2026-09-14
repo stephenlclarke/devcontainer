@@ -66,7 +66,7 @@ Unit tests own fast, deterministic coverage of:
 - provider selection, immutable project leases, and idempotency keys;
 - stream multiplexing, TTY/non-TTY behavior, chunk boundaries, cancellation, and EOF;
 - POSIX tar creation and extraction, modes, ownership, timestamps, symlinks, and long paths;
-- Docker-ignore grammar, Unicode-scalar behavior, long-literal optimization, and global wildcard-work exhaustion;
+- Docker-ignore grammar, exact Unicode-scalar behavior, budget-free linear literal matching, character-class scan accounting, and global wildcard-work exhaustion;
 - event ordering, cursor resume, filtering, and reconnect behavior;
 - SQLite migrations, crash recovery, reconciliation, and cleanup plans;
 - deadlines, retry classification, privacy redaction, and diagnostic manifests.

@@ -48,6 +48,19 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `literal rules do not consume the wildcard work budget`() throws {
+        let literal = String(repeating: "a", count: 65000)
+        var matcher = try DockerIgnoreMatcher(
+            contents: literal + "\n",
+            matchingWorkLimit: 1
+        )
+
+        for _ in 0 ..< 600 {
+            #expect(try !matcher.includes(literal))
+        }
+    }
+
+    @Test
     func `global work budget rejects adversarial wildcard rules`() throws {
         var matcher = try DockerIgnoreMatcher(
             contents: String(repeating: "a", count: 65000) + "*\n",
@@ -72,8 +85,32 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `character class scans consume the wildcard work budget`() throws {
+        let members = String(repeating: "a", count: 65000)
+        var matcher = try DockerIgnoreMatcher(
+            contents: "[\(members)]*\n",
+            matchingWorkLimit: 1
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        #expect(throws: DockerCLIError.self) {
+            _ = try matcher.includes(String(repeating: "z", count: 250))
+        }
+        #expect(started.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test
     func `wildcards consume one Unicode scalar like Docker`() throws {
         var matcher = try DockerIgnoreMatcher(contents: "*\n!?\n")
+
+        #expect(try matcher.includes("é"))
+        #expect(try !matcher.includes("e\u{301}"))
+    }
+
+    @Test
+    func `literal reinclusions compare Unicode scalar sequences like Docker`() throws {
+        var matcher = try DockerIgnoreMatcher(contents: "*\n!é\n")
 
         #expect(try matcher.includes("é"))
         #expect(try !matcher.includes("e\u{301}"))

@@ -59,6 +59,10 @@ private struct DockerIgnoreCharacterClass {
     let inverted: Bool
     let members: [Member]
 
+    var maximumMembershipWork: Int {
+        members.count + 1
+    }
+
     func contains(_ scalar: Unicode.Scalar) -> Bool {
         let found = members.contains { $0.contains(scalar) }
         return inverted ? !found : found
@@ -82,7 +86,7 @@ private struct DockerIgnoreGlobPattern {
 
     let containsSeparator: Bool
     private let tokens: [Token]
-    private let literal: String?
+    private let literal: [Unicode.Scalar]?
 
     init(_ source: String) throws {
         containsSeparator = source.contains("/")
@@ -126,7 +130,7 @@ private struct DockerIgnoreGlobPattern {
             }
             literalScalars.append(scalar)
         }
-        literal = String(String.UnicodeScalarView(literalScalars))
+        literal = literalScalars
     }
 
     /// Dynamic programming evaluates each compiled-state/input pair once.
@@ -138,6 +142,15 @@ private struct DockerIgnoreGlobPattern {
         remainingWork: inout Int
     ) throws -> Bool {
         let scalars = Array(value.unicodeScalars)
+        if let literal {
+            return scalars == literal
+                || (
+                    allowingDescendants
+                        && scalars.count > literal.count
+                        && scalars.prefix(literal.count).elementsEqual(literal)
+                        && scalars[literal.count] == "/"
+                )
+        }
         let work = requiredWork(inputCount: scalars.count)
         guard work <= remainingWork else {
             throw DockerCLIError.invalidArguments(
@@ -145,17 +158,24 @@ private struct DockerIgnoreGlobPattern {
             )
         }
         remainingWork -= work
-        if let literal {
-            return value == literal
-                || (allowingDescendants && value.hasPrefix(literal + "/"))
-        }
         return dynamicMatch(scalars, allowingDescendants: allowingDescendants)
     }
 
     private func requiredWork(inputCount: Int) -> Int {
-        let calculation = literal == nil
-            ? tokens.count.multipliedReportingOverflow(by: inputCount + 1)
-            : tokens.count.addingReportingOverflow(inputCount)
+        var units = 0
+        for token in tokens {
+            let tokenUnits: Int = if case let .characterClass(characterClass) = token {
+                characterClass.maximumMembershipWork
+            } else {
+                1
+            }
+            let addition = units.addingReportingOverflow(tokenUnits)
+            guard !addition.overflow else {
+                return Int.max
+            }
+            units = addition.partialValue
+        }
+        let calculation = units.multipliedReportingOverflow(by: inputCount + 1)
         return calculation.overflow ? Int.max : calculation.partialValue
     }
 
