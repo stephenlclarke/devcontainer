@@ -3,7 +3,9 @@
 Use the official Dev Containers CLI and VS Code extension with stock Apple
 `container` through a local Apple-backed Engine API socket. This is a
 project-owned Unix socket that implements the required Docker-shaped protocol,
-not a Docker daemon or proxy. Its default filename is `engine.sock`; the Docker-shaped names exposed
+not a Docker daemon or proxy. Its default path is
+`devcontainer/engine.sock` below the current user's private macOS temporary
+directory; the Docker-shaped names exposed
 to VS Code are compatibility vocabulary only. Before sending a workload
 request, the adapter verifies that the socket is served by the project-owned
 Apple runtime engine and rejects any foreign Docker-compatible endpoint.

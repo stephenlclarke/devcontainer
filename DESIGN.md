@@ -407,7 +407,12 @@ See [SECURITY.md](SECURITY.md) and [QUALITY.md](QUALITY.md) for disclosure and r
 
 ## Configuration and state
 
-User configuration lives in `~/.config/devcontainer/config.toml`:
+User configuration lives in `~/.config/devcontainer/config.toml`. By default,
+the generated `socket` is the absolute path returned by
+`FileManager.default.temporaryDirectory`, followed by
+`devcontainer/engine.sock`; on macOS this is the current user's private
+per-login temporary root. The following example instead selects an explicit
+stable user-owned runtime path:
 
 ```toml
 backend = "stock"

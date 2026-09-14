@@ -161,16 +161,26 @@ devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-docker
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/bin/compose
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/compose-normalizer
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/build-info.json
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/config.toml
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/notarization.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/NOTICE.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/README.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/devcontainer.js
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/package.json
 ```
+
+The `reference-cli` directory contains the checksum-pinned official
+`@devcontainers/cli` distribution, including its license and third-party
+notices. The notarization record contains only the accepted submission ID,
+status, and archive digest; it contains no credential material.
 
 The packaged `README.md` points repository files, directories, and images at
 the archive's exact source commit. Package verification rejects relative or
@@ -178,7 +188,9 @@ mismatched source links, so installed documentation cannot silently drift with
 `main`.
 
 Homebrew installs only the package payload under its own prefix and exposes
-`bin/devcontainer`. It does not write under Apple's package prefix or
+`devcontainer`, `devcontainer-engine`, `devcontainer-docker`, and
+`devcontainer-compose` from that prefix's `bin` directory. It does not write
+under Apple's package prefix or
 `/usr/local/libexec/container-plugins`. Register the packaged Apple CLI plug-in
 only after selecting and starting the intended runtime:
 

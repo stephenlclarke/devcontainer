@@ -9,10 +9,11 @@ harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
 below. The executable gate discovers the complete current Swift suite and
 requires at least 90.0% first-party line coverage; the documentation does not
-carry a manually maintained test count. Sonar analysis fails unless the
-project has zero open issues and security hotspots, the quality gate passes,
-and coverage remains above the repository threshold. CodeQL, dependency
-review, AddressSanitizer, and ThreadSanitizer are active required checks. Real
+carry a manually maintained test count. Sonar analysis on protected `main` and
+explicit stable candidates fails unless the project has zero open issues and
+security hotspots, the quality gate passes, and coverage remains above the
+repository threshold. CodeQL, dependency review, AddressSanitizer, and
+ThreadSanitizer are active exact-commit release checks. Real
 Docker is confined to the reference-oracle workflow; stock Apple and the
 separately identified `container-compose` lane must match that oracle in every
 claimed CLI and real VS Code fixture while retaining complete timing evidence.
@@ -48,7 +49,7 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
 | Memory safety | Swift AddressSanitizer | Pass for relevant changes | Pass on exact candidate |
 | Concurrency safety | Swift ThreadSanitizer | Nightly/dispatch | Pass on exact candidate |
 | Static security | CodeQL Swift | Required | Required on exact candidate |
-| Sonar new code | Reliability, security, maintainability, coverage, duplication | Quality gate passes | Candidate analysis passes |
+| Sonar new code | Reliability, security, maintainability, coverage, duplication | Repository-owned coverage gate; Sonar runs after merge or explicit dispatch | Candidate analysis passes |
 | Dependencies | Dependency review and pinned resolution | No disallowed addition | Reviewed lockfile and licenses |
 | Supply chain | SBOM, checksums, signatures/attestations | Build artifacts only | Complete candidate-bound evidence |
 | Packaging | Archive and Homebrew install/test | Package validation | Physical-runner installed smoke passes |
@@ -221,8 +222,9 @@ findings require disposition before stable release and may not be dismissed as
 ### SonarCloud
 
 The implemented `sonar.yml` submits sources, tests, and generic coverage XML to
-SonarCloud after the repository-owned 90% gate passes. The quality gate for new
-code requires:
+SonarCloud after a protected-`main` push or explicit workflow dispatch and only
+after the repository-owned 90% gate passes. The quality gate for new code
+requires:
 
 - at least 90% line coverage;
 - at most 3% duplicated lines;
@@ -289,15 +291,17 @@ live validation:
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
+| `specification-drift.yml` | Hosted `macos-26` | Compare the live upstream Dev Containers base schema with the checked-in conformance ledger |
 | `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and the separate `container-compose` provider |
+| `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
+| `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
+| `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
+| `stable-release.yml` | Trusted bare-metal tag signer, then hosted verifier | Create or verify the signed stable tag, dispatch the downstream authorities, and verify GitHub plus Homebrew publication |
 
 Each parity lane must additionally retain successful quiet-host receipts
 captured after runtime startup and immediately before both its CLI and VS Code
 timed suites. Missing, overloaded, or competing-process evidence fails the
 lane rather than producing benchmark numbers from a busy machine.
-| `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
-| `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
-| `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
 
 The standard `lint` target also runs
 `Tools/ci/check-dockerless-product.py`. This fail-closed inventory scans the
@@ -344,13 +348,23 @@ Runner maintenance includes OS/toolchain pin records, clean workspace verificati
 
 ## Branch protection and merge gates
 
-Protected `main` requires:
+Protected `main` currently requires:
 
 - reviewed pull requests and resolved conversations;
-- successful required-check aggregation for build, test, overall coverage, changed coverage, style, ASan where relevant, Sonar, dependency review, documentation, and package validation;
+- the `Validate` required check, which aggregates the primary build, lint,
+  test, overall and changed coverage, CLI smoke, and stock-package compile/test
+  jobs;
 - current branch with no stale approval after material changes;
-- signed or otherwise policy-verified commits where repository settings support it;
-- no administrator bypass for ordinary delivery.
+- verified signed commits.
+
+CodeQL, dependency review, documentation, Homebrew, ASan, and TSan run as
+separate pull-request checks but are not duplicated inside the `Validate`
+context. Sonar runs only after the change reaches protected `main` or is
+explicitly dispatched. Regardless of the merge-check configuration, the stable
+release authority requires every applicable exact-commit result above before a
+tag or package can be published. Administrator bypass is reserved for an
+otherwise fully reviewed and checked solo-maintainer merge; it cannot bypass
+the release authority.
 
 Live runtime jobs cannot safely run arbitrary pull-request code and therefore do not become a fork-triggered merge requirement. Instead, a merge queue or protected-main candidate is automatically held from promotion until candidate-bound live parity succeeds. A failure opens a corrective change; it never causes the same untested SHA to be released.
 
@@ -446,7 +460,7 @@ result.
 
 ## Reference implementations and primary sources
 
-The current sibling repositories provide implementation precedents, not proof that this repository already has the controls:
+The current sibling repositories provide the implementation precedents used to keep Container-family controls aligned:
 
 - `container-compose/.github/workflows/quality.yml` and `container-compose/Tools/ci/run-swift-test.sh` for the ASan/TSan retry and log harness described above;
 - `container-compose/.github/workflows/ci.yml` for Swift coverage export and Sonar integration;

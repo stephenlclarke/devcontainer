@@ -24,8 +24,7 @@ multi-service provider tested in both Apple runtime lanes.
 - A package is authorized by an exact commit, never by a branch name alone.
 - Live Docker, stock Apple, and Compose-provider parity runs only on trusted bare-metal Apple silicon.
 - GitHub-hosted macOS validates source, tests, coverage, package structure, formula rendering, and documentation, but is not accepted as live Virtualization.framework evidence.
-- Releases never install, replace, or start a custom `container` runtime as a side effect.
-- Releases never install or select a custom Container runtime as a side effect.
+- Releases never install, replace, start, or select a custom `container` runtime as a side effect.
 - Product and Homebrew verification fail if they invoke Docker, Colima, Podman, or nerdctl
   software; only the isolated parity-oracle lane may do so.
 - Candidate workload adapters must authenticate the project-owned Apple engine;
@@ -179,10 +178,10 @@ An existing stable release is immutable. Recovery may recreate only a missing or
 
 ```json
 {
+  "architecture": "arm64",
   "buildType": "release",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "containerDistribution": "apple",
-  "containerVersion": "1.4.1",
   "lane": "stable",
   "provider": "none",
   "source": "stephenlclarke/devcontainer",
@@ -205,7 +204,9 @@ The implemented workflow split is:
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
 | `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |
+| `sonar.yml` | `macos-26` | Export coverage, analyze the exact commit, and enforce the SonarQube Cloud quality gate |
 | `docs.yml` | `macos-26`, then Ubuntu | Build and publish DocC Pages |
+| `specification-drift.yml` | `macos-26` | Compare the live upstream Dev Containers base schema with the checked-in conformance ledger |
 | `homebrew.yml` | `macos-26` | Render the candidate package/formula, check Ruby syntax and formula style, and upload evidence |
 | `parity.yml` | Trusted bare-metal Apple silicon | Live Docker, stock Apple, and Compose-provider parity |
 | `stable-release-gate.yml` | Ubuntu and hosted macOS | Resolve immutable candidate and record release authority |
@@ -427,8 +428,11 @@ For compatibility while those three notary secrets are being migrated, the
 workflow accepts `DEVCONTAINER_NOTARY_PROFILE` from the repository variables.
 Before any expensive build it runs a bounded, stdin-closed `notarytool history`
 against that profile and fails if it is missing, locked, or interactive. The
-current `devcontainer-release` profile has been verified through that exact
-noninteractive probe. A partial set of notarization secrets is always rejected.
+configured `devcontainer-release` profile is only usable after it passes that
+exact noninteractive probe on the designated release host. A partial set of
+notarization secrets is always rejected. The three operation-scoped repository
+secrets remain the preferred unattended authority because they do not depend on
+the state of a user's login keychain.
 
 When repository notary secrets are present, the release helper creates the
 configured profile inside the unique temporary keychain. Its effective

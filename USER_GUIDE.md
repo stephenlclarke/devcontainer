@@ -118,6 +118,11 @@ The default configuration file is:
 ~/.config/devcontainer/config.toml
 ```
 
+The generated default socket is `devcontainer/engine.sock` below the current
+user's private macOS temporary directory. Supply `--socket` if a stable
+user-owned path is preferred; Docker and Docker Desktop socket names remain
+forbidden.
+
 The engine, `context`, `doctor`, `diagnostics`, and Compose wrapper all read the
 same configuration. Explicit command options override environment variables;
 environment variables override the file. Configuration does not start or stop
@@ -620,6 +625,7 @@ installed `container-compose`, runtime resources, or unrelated user data. See
 
 | Command | Purpose |
 | --- | --- |
+| `devcontainer` | Run the packaged official Dev Containers CLI through the Apple-backed adapters |
 | `devcontainer version` | Show version and immutable build provenance |
 | `devcontainer doctor` | Validate the selected runtime and compatibility endpoint |
 | `devcontainer configure` | Write backend, Compose provider, socket, and strictness configuration |
@@ -627,10 +633,13 @@ installed `container-compose`, runtime resources, or unrelated user data. See
 | `devcontainer backend show/set/reset` | Manage durable project ownership |
 | `devcontainer diagnostics` | Create a bounded, redacted support archive |
 | `devcontainer plugin register/unregister/status` | Manage the optional Apple CLI plug-in link |
+| `devcontainer-docker` | Provide the project-owned Docker CLI-compatible adapter used by the official clients |
 | `devcontainer-compose` | Adapt the expected Compose invocation to native `container-compose` |
 | `devcontainer-engine` | Run the local Docker Engine compatibility endpoint |
 
-Use `devcontainer SUBCOMMAND --help` for the authoritative option list.
+Use `devcontainer help SUBCOMMAND` for the authoritative option list; append a
+nested subcommand where applicable, for example `devcontainer help backend
+set`.
 
 ## Further reading
 

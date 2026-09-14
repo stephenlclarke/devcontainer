@@ -77,7 +77,7 @@ roadmap](PARITY-ROADMAP.md).
 > The official CLI entry point always runs the checksum-pinned packaged script;
 > an environment variable cannot replace it with an external implementation.
 
-Current main additionally has a clean compile gate against unmodified Apple
+The current source candidate additionally has a clean compile gate against unmodified Apple
 `container` 1.4.1 and `containerization` 0.45.0. That build result is not a
 substitute for the outstanding real-runtime parity rerun.
 

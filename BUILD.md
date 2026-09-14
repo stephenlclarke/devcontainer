@@ -66,18 +66,25 @@ ContainerEngineProviderSession -> DevContainerService
 ContainerUnixHTTPServer -> DevContainerService
 ```
 
-The three executable products are:
+The four executable products are:
 
 | Product | Purpose |
 | --- | --- |
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
-| `container-engine` (from the exact `container-engine-api` dependency) | Own the public user socket, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed provider dispatch |
 | `devcontainer-engine` | Translate requests to stock Apple runtime operations; serve the legacy standalone endpoint or only the private provider-session socket selected by `--provider-socket` |
+| `devcontainer-docker` | Present the Docker CLI-compatible command surface expected by the official Dev Containers CLI and VS Code while connecting only to the project-owned Apple-backed socket |
 | `devcontainer-compose` | Docker-shaped invocation adapter that selects the bundled stock-profile native `container-compose` executable or an explicit development override |
 
 Only `DevContainerAppleRuntime` links Apple runtime products. The Compose
 provider invokes an executable and has no `ComposeCore` or custom Apple-stack
 source dependency.
+
+The exact `container-engine-api` dependency also provides the shared
+`container-engine` development executable. It owns the public user socket,
+generated API 1.44 through 1.53 route ledger, persistent provider selection,
+and fail-closed provider dispatch. Release packages embed that gateway in
+`devcontainer-engine`; they do not install a separate `container-engine`
+command.
 
 `Package.resolved` is authoritative. CI copies it, resolves the package, and
 fails if resolution changes the copy. Use:
@@ -297,11 +304,13 @@ Create and verify an unsigned development archive without installing it:
 make package
 ```
 
-The arm64 archive in `dist` contains all three executables, the
-`container-devcontainer` plug-in entry point, launchd template, Apache license,
-complete reviewed legal texts for every exact SwiftPM dependency, build
-metadata, and an SPDX 2.3 SBOM. The checked-in dependency-license ledger must
-match `Package.resolved` exactly. The packaging script writes a SHA-256
+The arm64 archive in `dist` contains all four project commands, the pinned
+official Dev Containers CLI, the stock-profile native Compose provider and its
+volume initializers, the `container-devcontainer` plug-in entry point, launchd
+template, Apache license, complete reviewed legal texts for every exact SwiftPM
+dependency, build metadata, and an SPDX 2.3 SBOM. The checked-in
+dependency-license ledger must match `Package.resolved` exactly. The packaging
+script writes a SHA-256
 checksum and machine-readable verification result. It also rewrites
 repository-relative README links to immutable file, directory, and image URLs
 for the exact packaged commit, so the installed documentation never depends on

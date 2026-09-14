@@ -57,7 +57,7 @@ The evidence included:
 
 - the complete source, tests, documentation, package, workflows, release tooling, and parity fixtures in this repository;
 - the pinned stock `apple/container` 1.1.0 and `apple/containerization` 0.35.0 sources;
-- the separately installed `container-compose` 0.15.1 boundary and its current open work;
+- the separately installed `container-compose` 0.10.1 boundary used by that historical run and its then-current open work;
 - `make check`, which passed 148 Swift tests, all Python harness tests, formatting, lint, documentation generation, parity-manifest validation, and above 91% first-party line coverage;
 - successful hosted CI, AddressSanitizer, ThreadSanitizer, CodeQL, SonarCloud, documentation, Homebrew, dependency-review, and live runtime workflows on the exact reviewed commit;
 - [live three-lane parity run 30522304399](https://github.com/stephenlclarke/devcontainer/actions/runs/30522304399), which recorded zero semantic differences across all 18 CLI fixtures and the real VS Code fixture;
@@ -122,7 +122,7 @@ duplex stress runs and the complete matrix passed after this change.
 ## Implementation status
 
 The implementation record was first produced on 30 July 2026 and was updated
-on 12 September 2026 for the current PR 75 candidate. “Implemented” means
+on 14 September 2026 for the current PR 75 candidate. “Implemented” means
 production wiring, focused regression tests, and the local three-lane CLI
 matrix exist. It does not replace exact-head hosted CLI and VS Code evidence
 or the repeated performance protocol. “Partial” identifies the remaining
@@ -150,7 +150,7 @@ proof or primitive rather than normalising it.
 | TEST-003 | Implemented for checked fixtures: images use digests and Feature tags are bound by a checked integrity lock | Live preflight must continue to verify each resolved payload |
 | TEST-004 | Partial: deterministic malformed-request and generated unknown-field corpora run in the Swift suite | Continuous hosted fuzzing and retained minimised crash reproducers remain |
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
-| GOV-001 | Implemented | CodeQL runs on non-draft pull requests and exact stable candidates; branch protection and the stable gate require the complete named check set |
+| GOV-001 | Partial: the exact-commit stable release authority requires the complete named check set, and the documented merge policy now matches live protection | Branch protection currently requires only the aggregate `Validate` context; the other pull-request checks remain visible but are not protected contexts |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
 | DOC-001 | Implemented for the changed production paths, final local CLI and VS Code matrices, and current blockers | Retain the exact-head hosted artefacts with the merge and release evidence |
 
@@ -389,9 +389,14 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 **Acceptance:** End-to-end tests join one request across layers, verify required fields, and prove that home paths, credential-shaped values, environment secrets, and raw command arguments are absent.
 
-### GOV-001: Live branch protection does not require all gates claimed by `QUALITY.md`
+### GOV-001: Live branch protection does not require every release gate
 
-**Evidence:** live `main` protection requires `Validate` and `CodeQL`. `QUALITY.md` describes ASan, TSan, Sonar, dependency review, documentation, and package/Homebrew validation as merge requirements. Those workflows run, but they are not all branch-protection requirements.
+**Evidence:** live `main` protection requires the aggregate `Validate` context.
+CodeQL, ASan, TSan, dependency review, documentation, and Homebrew validation
+run as separate pull-request checks but are not protected contexts; Sonar runs
+after merge or explicit dispatch. `QUALITY.md` now distinguishes those visible
+checks from the complete exact-commit set enforced by the stable release
+authority.
 
 **Impact:** A maintainer or automation path can merge while a documented gate is failing or absent.
 

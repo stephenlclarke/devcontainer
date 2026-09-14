@@ -6,7 +6,7 @@ This document states exactly where `devcontainer` 1.0.2 conforms to, delegates, 
 
 ## Audit basis
 
-The audit was completed on 29 July 2026 and revalidated on 11 September 2026
+The audit was completed on 29 July 2026 and revalidated on 14 September 2026
 against the unchanged pinned specification commit and refreshed release clients:
 
 - [`devcontainers/spec` commit `c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421`](https://github.com/devcontainers/spec/tree/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421), including the [`devcontainer.json` property reference](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md), [base schema](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/schemas/devContainer.base.schema.json), [Feature specification](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-features.md), [image metadata](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/image-metadata.md), [lockfiles](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-lockfile.md), [declarative secrets](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/declarative-secrets.md), and [GPU host requirements](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/gpu-host-requirement.md);
