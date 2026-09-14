@@ -174,10 +174,16 @@ sonar-scan:
 		exit 2; \
 	fi
 	@sonar_token="$${SONAR_TOKEN:-$${SONAR_TOKEN_PERSONAL:-}}"; \
+	sonar_project_version="$${SONAR_PROJECT_VERSION:-$$(git rev-parse HEAD)}"; \
+	if ! [[ "$$sonar_project_version" =~ ^[0-9a-f]{40}$$ ]]; then \
+		printf 'SONAR_PROJECT_VERSION must be an exact lowercase commit SHA\n' >&2; \
+		exit 2; \
+	fi; \
 	attempt=1; \
 	while true; do \
 		set +e; \
 		SONAR_TOKEN="$$sonar_token" sonar-scanner \
+			-Dsonar.projectVersion="$$sonar_project_version" \
 			-Dsonar.qualitygate.wait="$(SONAR_QUALITYGATE_WAIT)"; \
 		status="$$?"; \
 		set -e; \

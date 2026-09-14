@@ -106,7 +106,8 @@ record_process_matches() {
 }
 
 main() {
-  if [[ "$#" -eq 1 && ("$1" == "-h" || "$1" == "--help") ]]; then
+  local argument="${1:-}"
+  if [[ "$#" -eq 1 && ("${argument}" == "-h" || "${argument}" == "--help") ]]; then
     usage 1
     return 0
   fi
@@ -115,7 +116,7 @@ main() {
     return 2
   fi
 
-  local evidence_directory="$1"
+  local evidence_directory="${argument}"
   local wait_seconds="${DEVCONTAINER_QUIET_HOST_WAIT_SECONDS:-3600}"
   local poll_seconds="${DEVCONTAINER_QUIET_HOST_POLL_SECONDS:-10}"
   validate_nonnegative_integer "quiet-host wait seconds" "$wait_seconds"

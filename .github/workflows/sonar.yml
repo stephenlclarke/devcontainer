@@ -147,10 +147,10 @@ jobs:
           jq -e '
             (
               [.settings[] | select(.key == "sonar.leak.period") | .value]
-              == ["30"]
+              == ["previous_version"]
             ) and (
               [.settings[] | select(.key == "sonar.leak.period.type") | .value]
-              == ["days"]
+              == ["previous_version"]
             )
           ' <<< "${new_code}" >/dev/null
 
@@ -158,6 +158,7 @@ jobs:
         if: steps.sonar_credentials.outputs.configured == 'true'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_VERSION: ${{ github.sha }}
           SONAR_QUALITYGATE_WAIT: "true"
         run: make sonar-scan
 

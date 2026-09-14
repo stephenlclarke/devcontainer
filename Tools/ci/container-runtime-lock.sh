@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#===----------------------------------------------------------------------===#
+# Copyright © 2026 container-compose and devcontainer project authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#===----------------------------------------------------------------------===#
+
+# Release the host-wide Container runtime lock held by this shell.
+release_container_runtime_lock() {
+  local keeper_pid="${CONTAINER_RUNTIME_LOCK_KEEPER_PID:-}"
+  if [[ -z "${keeper_pid}" ]]; then
+    return
+  fi
+
+  kill -USR1 "${keeper_pid}" >/dev/null 2>&1 || true
+  wait "${keeper_pid}" >/dev/null 2>&1 || true
+  unset CONTAINER_RUNTIME_LOCK_KEEPER_PID
+  unset CONTAINER_RUNTIME_LOCK_HELD
+}
+
+# Acquire the shared lock protecting Container's user launchd namespace.
+acquire_container_runtime_lock() {
+  if [[ "${CONTAINER_RUNTIME_LOCK_HELD:-0}" == "1" ]]; then
+    return
+  fi
+
+  local lock_file="${CONTAINER_RUNTIME_LOCK_FILE:-/tmp/container-compose-runtime-${UID}.lock}"
+  local timeout_seconds="${CONTAINER_RUNTIME_LOCK_TIMEOUT_SECONDS:-10800}"
+
+  if ! [[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'CONTAINER_RUNTIME_LOCK_TIMEOUT_SECONDS must be a positive integer: %s\n' \
+      "${timeout_seconds}" >&2
+    return 2
+  fi
+
+  local lock_backend
+  if command -v lockf >/dev/null 2>&1; then
+    lock_backend="lockf"
+  elif command -v flock >/dev/null 2>&1; then
+    lock_backend="flock"
+  else
+    printf 'lockf or flock is required to serialize access to the macOS Container runtime\n' >&2
+    return 2
+  fi
+
+  printf 'Waiting for macOS Container runtime lock: %s\n' "${lock_file}"
+  exec 9>>"${lock_file}"
+  local lock_acquired=0
+  case "${lock_backend}" in
+    lockf)
+      if lockf -t "${timeout_seconds}" 9; then
+        lock_acquired=1
+      fi
+      ;;
+    flock)
+      if flock -w "${timeout_seconds}" 9; then
+        lock_acquired=1
+      fi
+      ;;
+  esac
+  if [[ "${lock_acquired}" != "1" ]]; then
+    printf 'timed out after %ss waiting for macOS Container runtime lock: %s\n' \
+      "${timeout_seconds}" "${lock_file}" >&2
+    return 1
+  fi
+
+  # A dedicated child owns the descriptor so runtime descendants cannot retain
+  # the lock after the calling workflow exits.
+  local lock_owner_pid="$$"
+  local keeper_ready
+  if ! keeper_ready="$(
+    mktemp "${TMPDIR:-/tmp}/container-runtime-lock-keeper.XXXXXX"
+  )"; then
+    printf 'failed to create runtime lock-keeper readiness file\n' >&2
+    exec 9>&-
+    return 1
+  fi
+  local keeper_ready_status=0
+  (
+    trap '' HUP INT QUIT TERM
+    trap 'exit 0' USR1
+    printf 'ready\n' >"${keeper_ready}"
+    while kill -0 "${lock_owner_pid}" >/dev/null 2>&1; do
+      sleep 0.1
+    done
+  ) </dev/null >/dev/null 2>&1 &
+  CONTAINER_RUNTIME_LOCK_KEEPER_PID=$!
+  for _ in {1..100}; do
+    if [[ "$(<"${keeper_ready}")" == "ready" ]]; then
+      keeper_ready_status=1
+      break
+    fi
+    if ! kill -0 "${CONTAINER_RUNTIME_LOCK_KEEPER_PID}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.01
+  done
+  rm -f -- "${keeper_ready}"
+  if [[ "${keeper_ready_status}" != "1" ]]; then
+    printf 'runtime lock keeper did not become ready\n' >&2
+    kill -USR1 "${CONTAINER_RUNTIME_LOCK_KEEPER_PID}" >/dev/null 2>&1 || true
+    wait "${CONTAINER_RUNTIME_LOCK_KEEPER_PID}" >/dev/null 2>&1 || true
+    unset CONTAINER_RUNTIME_LOCK_KEEPER_PID
+    exec 9>&-
+    return 1
+  fi
+  exec 9>&-
+
+  export CONTAINER_RUNTIME_LOCK_HELD=1
+  printf 'Acquired macOS Container runtime lock: %s\n' "${lock_file}"
+}

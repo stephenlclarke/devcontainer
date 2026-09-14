@@ -232,11 +232,14 @@ requires:
 - zero security hotspots;
 - no unresolved analysis failure or missing coverage import.
 
-The SonarCloud project uses `main` as its real main branch and a project-level
-30-day new-code definition. The workflow validates both remote invariants
-before scanning so a newly created project cannot silently publish
-`Not Computed` badges. After the quality gate completes, it also queries the
-issues and hotspots APIs and fails unless both totals are zero.
+The SonarCloud project uses `main` as its real main branch and the project-level
+Previous version new-code definition. Every exact-commit analysis supplies its
+40-character source commit as `sonar.projectVersion`, so the previous analyzed
+commit becomes the baseline instead of a rolling date window. The workflow
+validates the remote policy and exact project version before scanning so a
+newly created or misconfigured project cannot silently publish `Not Computed`
+badges. After the quality gate completes, it also queries the issues and
+hotspots APIs and fails unless both totals are zero.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A
 passing Sonar gate cannot override an independent coverage, compiler,
@@ -341,6 +344,10 @@ serializes the profiles, verifies the exact selected executable before every
 lane, and proves cleanup before switching runtime distributions. Stock and
 enhanced Apple lanes also stop any running Docker oracle before their runtime
 starts, so each candidate independently establishes a quiet Docker-free host.
+Every live lane holds the Container family's shared host-wide runtime lock for
+its runtime, CLI, VS Code, evidence-scrub, and cleanup boundary. This
+cross-repository lock makes independently queued `container-compose` work wait
+instead of invalidating the lane after its quiet-host check.
 
 Untrusted fork pull requests never execute on the self-hosted runner. A dispatcher may enqueue only an exact commit from protected `main`, a scheduled protected ref, or a maintainer-approved manual input that already passed hosted checks. The live workflow checks the commit's repository and ancestry again before checkout. Test jobs do not receive release or tap credentials.
 

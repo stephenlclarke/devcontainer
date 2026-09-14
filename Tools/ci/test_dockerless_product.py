@@ -10,7 +10,8 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("check-dockerless-product.py")
 SPEC = importlib.util.spec_from_file_location("dockerless_product", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 

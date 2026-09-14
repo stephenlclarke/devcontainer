@@ -307,6 +307,12 @@ when the workflow serializes them and validates the exact selected runtime
 before each lane. Every Apple candidate lane independently stops a running
 Docker oracle before starting its selected runtime; failure to establish that
 quiet Docker-free state fails the lane instead of relying on a prior cleanup.
+The complete CLI and VS Code sequence for every lane holds the same host-wide
+runtime lock used by `container-compose`, from runtime startup through evidence
+scrubbing and cleanup. Separate repository runners can therefore remain online
+without allowing either project to stop or replace the other's user-scoped
+Apple Container launchd services. A lane waits for that owner to finish and
+still requires a fresh quiet-host receipt before each timed suite.
 Each run creates an explicit application root, Docker
 context, socket, state database, runtime namespace, and fixture prefix. Cleanup
 runs even after cancellation and fails the job if owned resources remain.

@@ -310,6 +310,9 @@ main() {
     cleanup)
       cleanup_keychain
       ;;
+    *)
+      fail "unsupported temporary release keychain mode: ${MODE}"
+      ;;
   esac
 }
 

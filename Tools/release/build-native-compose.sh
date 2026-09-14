@@ -44,8 +44,8 @@ git init -q "$source_root"
 git -C "$source_root" remote add origin "$compose_repository"
 git -C "$source_root" fetch -q --depth 1 origin "$compose_commit"
 git -C "$source_root" checkout -q --detach FETCH_HEAD
-test "$(git -C "$source_root" rev-parse HEAD)" = "$compose_commit"
-test -z "$(git -C "$source_root" status --short)"
+[[ "$(git -C "$source_root" rev-parse HEAD)" == "$compose_commit" ]]
+[[ -z "$(git -C "$source_root" status --short)" ]]
 
 cp "$source_root/Package.stock.resolved" "$source_root/Package.resolved"
 CONTAINER_COMPOSE_BUILD_PROFILE=stock swift build \
@@ -72,8 +72,8 @@ install -m 0755 "$source_root/.build/release/compose" "$stage/bin/compose"
     -o "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64" \
     ./cmd/volume-initializer
 )
-test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-arm64"
-test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64"
+[[ -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-arm64" ]]
+[[ -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64" ]]
 install -m 0644 "$source_root/LICENSE" "$stage/LICENSE"
 install -m 0644 "$source_root/config.toml" "$stage/config.toml"
 install -m 0644 "$source_root/Package.stock.resolved" \
@@ -126,8 +126,8 @@ jq -e \
    (.containerizationRef == $containerization_revision) and
    (.runtimeCapabilities == [])' \
   "$stage/resources/build-info.json" >/dev/null
-test "$container_version" = "1.4.1"
-test "$containerization_version" = "0.45.0"
+[[ "$container_version" == "1.4.1" ]]
+[[ "$containerization_version" == "0.45.0" ]]
 
 mkdir -p "$(dirname "$output")"
 mv "$stage" "$output"

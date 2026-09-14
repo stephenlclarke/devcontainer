@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
 SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "compose-cli-smoke-fixture.sh"
+LIVE_PARITY_LANE = ROOT / "Tools" / "parity" / "run-live-lane.sh"
 GITHUB_HOSTED_RUNNER_LABELS = frozenset(
     {
         "macos-26",
@@ -225,14 +226,26 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("cp Package.stock.resolved Package.resolved", lane)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", lane)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=enhanced", lane)
-        self.assertEqual(lane.count("Tools/parity/require-quiet-host.sh"), 2)
+        self.assertIn("Tools/parity/run-live-lane.sh", lane)
+        self.assertIn('CONTAINER_RUNTIME_LOCK_TIMEOUT_SECONDS: "10800"', lane)
+        live_lane = LIVE_PARITY_LANE.read_text(encoding="utf-8")
         self.assertIn(
-            '.build/parity/host-quiet/${{ matrix.lane }}/cli',
-            lane,
+            'source "${REPOSITORY}/Tools/ci/container-runtime-lock.sh"',
+            live_lane,
+        )
+        self.assertIn("acquire_container_runtime_lock", live_lane)
+        self.assertIn("release_container_runtime_lock", live_lane)
+        self.assertEqual(
+            live_lane.count("Tools/parity/require-quiet-host.sh"),
+            2,
         )
         self.assertIn(
-            '.build/parity/host-quiet/${{ matrix.lane }}/vscode',
-            lane,
+            '".build/parity/host-quiet/${lane}/cli"',
+            live_lane,
+        )
+        self.assertIn(
+            '".build/parity/host-quiet/${lane}/vscode"',
+            live_lane,
         )
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
@@ -414,6 +427,20 @@ jobs:
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
             self.assertIn("\nconcurrency:\n", contents, name)
             self.assertIn("  cancel-in-progress: true\n", contents, name)
+
+    def test_sonar_compares_each_analysis_with_the_previous_commit(self) -> None:
+        workflow = (WORKFLOWS / "sonar.yml").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        quality = (ROOT / "QUALITY.md").read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count('== ["previous_version"]'), 2)
+        self.assertIn("SONAR_PROJECT_VERSION: ${{ github.sha }}", workflow)
+        self.assertIn(
+            '-Dsonar.projectVersion="$$sonar_project_version"',
+            makefile,
+        )
+        self.assertIn("Previous version new-code definition", quality)
+        self.assertIn("previous analyzed\ncommit becomes the baseline", quality)
 
     def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
         for name in ("ci.yml", "quality.yml", "sonar.yml"):

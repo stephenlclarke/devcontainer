@@ -219,7 +219,9 @@ final class DevContainerEngineTransport:
         let response = try transport.send(
             DockerHTTPRequest(method: "HEAD", target: "/_ping"),
             maximumBodyBytes: 0,
-            onBody: { _ in }
+            onBody: { _ in
+                // HEAD identity probes deliberately discard an absent body.
+            }
         )
         let identity = response.headers.first {
             $0.key.caseInsensitiveCompare(DevContainerEngineIdentity.header) == .orderedSame
@@ -271,7 +273,9 @@ public final class UnixSocketDockerTransport:
         try send(
             request,
             maximumBodyBytes: maximumBodyBytes,
-            onRequestSent: {},
+            onRequestSent: {
+                // Ordinary requests do not need a post-write notification.
+            },
             onBody: onBody
         )
     }
@@ -697,7 +701,9 @@ private struct SocketReader {
                 throw DockerHTTPClientError.invalidResponse("invalid chunk size")
             }
             if size == 0 {
-                while try !readLine().isEmpty {}
+                while try !readLine().isEmpty {
+                    // Trailer fields are not part of the Docker API payload.
+                }
                 return
             }
             try readExactly(size, handler: handler)
