@@ -191,13 +191,31 @@ func `container creation rejects invalid bind port and mount forms`() async thro
     let invalidPort = try JSONSerialization.data(
         withJSONObject: ["Image": "edge:latest", "HostConfig": ["PortBindings": ["invalid/tcp": []]]]
     )
+    let nonnumericHostPort = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "edge:latest",
+            "HostConfig": ["PortBindings": ["8080/tcp": [["HostPort": "abc"]]]]
+        ]
+    )
+    let oversizedHostPort = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "edge:latest",
+            "HostConfig": ["PortBindings": ["8080/tcp": [["HostPort": "70000"]]]]
+        ]
+    )
     let invalidMount = try JSONSerialization.data(
         withJSONObject: [
             "Image": "edge:latest",
             "Mounts": [["Type": "unknown", "Target": "/workspace"]]
         ]
     )
-    for (body, expectedStatus) in [(invalidBind, 400), (invalidPort, 400), (invalidMount, 501)] {
+    for (body, expectedStatus) in [
+        (invalidBind, 400),
+        (invalidPort, 400),
+        (nonnumericHostPort, 400),
+        (oversizedHostPort, 400),
+        (invalidMount, 501)
+    ] {
         let response = await fixture.router.respond(
             to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
         )

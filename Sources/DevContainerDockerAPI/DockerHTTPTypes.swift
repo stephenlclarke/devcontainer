@@ -135,3 +135,56 @@ public enum DockerStreamFraming {
         return result
     }
 }
+
+actor DockerArchiveFileStream: DockerHTTPStreamSession {
+    private static let chunkSize = 64 * 1024
+
+    private let archive: RuntimeArchiveFile
+    private var handle: FileHandle?
+
+    init(archive: RuntimeArchiveFile) throws {
+        self.archive = archive
+        handle = try FileHandle(forReadingFrom: archive.url)
+    }
+
+    func nextChunk() async throws -> Data? {
+        guard let handle else {
+            return nil
+        }
+        let chunk = try await Self.read(handle)
+        guard !chunk.isEmpty else {
+            close()
+            return nil
+        }
+        return chunk
+    }
+
+    func close() {
+        try? handle?.close()
+        handle = nil
+        archive.remove()
+    }
+
+    func cancel() {
+        close()
+    }
+
+    deinit {
+        try? handle?.close()
+        archive.remove()
+    }
+
+    private static func read(_ handle: FileHandle) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    try continuation.resume(
+                        returning: handle.read(upToCount: chunkSize) ?? Data()
+                    )
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}

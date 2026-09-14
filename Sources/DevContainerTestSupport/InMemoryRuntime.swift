@@ -31,7 +31,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private var images: [String: ImageSnapshot] = [:]
     private var networks: [String: NetworkSnapshot] = [:]
     private var volumes: [String: VolumeSnapshot] = [:]
-    private var archives: [String: Data] = [:]
+    private var archives: [String: RuntimeArchiveBody] = [:]
     private var eventValues: [RuntimeEvent] = []
     private var nextEventSequence: Int64 = 1
 
@@ -424,15 +424,18 @@ public actor InMemoryRuntime: DevContainerRuntime {
         context _: RuntimeRequestContext
     ) throws -> RuntimeArchive {
         let snapshot = try container(id: id)
-        return RuntimeArchive(
-            data: archives["\(snapshot.runtimeID):\(path)"] ?? Data(),
-            stat: ArchivePathStat(
-                name: URL(fileURLWithPath: path).lastPathComponent,
-                size: 0,
-                mode: (1 << 31) | 0o755,
-                modificationTime: snapshot.createdAt
-            )
+        let stat = ArchivePathStat(
+            name: URL(fileURLWithPath: path).lastPathComponent,
+            size: 0,
+            mode: (1 << 31) | 0o755,
+            modificationTime: snapshot.createdAt
         )
+        switch archives["\(snapshot.runtimeID):\(path)"] ?? .bytes(Data()) {
+        case let .bytes(data):
+            return RuntimeArchive(data: data, stat: stat)
+        case let .file(file):
+            return RuntimeArchive(file: file, stat: stat)
+        }
     }
 
     public func copyArchiveToContainer(
@@ -442,7 +445,16 @@ public actor InMemoryRuntime: DevContainerRuntime {
         context _: RuntimeRequestContext
     ) throws {
         let snapshot = try container(id: id)
-        archives["\(snapshot.runtimeID):\(path)"] = archive
+        archives["\(snapshot.runtimeID):\(path)"] = .bytes(archive)
+    }
+
+    public func seedArchiveFile(
+        id: String,
+        path: String,
+        file: RuntimeArchiveFile
+    ) throws {
+        let snapshot = try container(id: id)
+        archives["\(snapshot.runtimeID):\(path)"] = .file(file)
     }
 
     public func listNetworks(context _: RuntimeRequestContext) -> [NetworkSnapshot] {

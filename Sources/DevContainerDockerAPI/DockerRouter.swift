@@ -984,13 +984,19 @@ extension DockerRouter {
                 path: path,
                 context: context
             )
+            let body: DockerHTTPBody = switch archive.body {
+            case let .bytes(data):
+                .bytes(data)
+            case let .file(file):
+                try .managedStream(DockerArchiveFileStream(archive: file))
+            }
             return try DockerHTTPResponse(
                 status: 200,
                 headers: [
                     "Content-Type": "application/x-tar",
                     "X-Docker-Container-Path-Stat": archiveStatHeader(archive.stat)
                 ],
-                body: .bytes(archive.data)
+                body: body
             )
         case .head:
             let archive = try await runtime.copyArchiveFromContainer(

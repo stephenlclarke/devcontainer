@@ -373,7 +373,11 @@ extension AppleContainerRuntimeTests {
             path: "/workspace/file.txt",
             context: context
         )
-        #expect(!archive.data.isEmpty)
+        guard case let .file(file) = archive.body else {
+            Issue.record("Apple runtime copy-out should return a file-backed archive")
+            return
+        }
+        #expect(try !Data(contentsOf: file.url).isEmpty)
         #expect(archive.stat.mode & (1 << 31) == 0)
         #expect(archive.stat.mode & 0o777 == 0o644)
         try await runtime.copyArchiveToContainer(

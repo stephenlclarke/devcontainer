@@ -842,6 +842,18 @@ extension DockerRouter {
                 continue
             }
             for binding in hostBindings {
+                let hostPort: UInt16?
+                if let requested = binding.hostPort, !requested.isEmpty {
+                    guard let parsed = UInt16(requested) else {
+                        throw DevContainerError(
+                            .invalidRequest,
+                            message: "invalid host port \(requested)"
+                        )
+                    }
+                    hostPort = parsed
+                } else {
+                    hostPort = nil
+                }
                 let hostAddress: String =
                     if let requested = binding.hostIP, !requested.isEmpty {
                         requested
@@ -851,7 +863,7 @@ extension DockerRouter {
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
-                        hostPort: binding.hostPort.flatMap(UInt16.init),
+                        hostPort: hostPort,
                         protocolName: protocolName,
                         hostAddress: hostAddress,
                         published: true

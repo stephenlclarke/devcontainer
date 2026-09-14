@@ -415,13 +415,83 @@ public struct ArchivePathStat: Codable, Equatable, Sendable {
     }
 }
 
+public final class RuntimeArchiveFile: @unchecked Sendable, Equatable {
+    public let url: URL
+
+    private let lock = NSLock()
+    private var removalPending = true
+
+    public init(baseDirectory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: baseDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        let candidate = baseDirectory.appendingPathComponent(
+            "devcontainer-archive-\(UUID().uuidString.lowercased()).tar"
+        )
+        do {
+            try Data().write(to: candidate, options: .withoutOverwriting)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: candidate.path
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: candidate)
+            throw error
+        }
+        url = candidate
+    }
+
+    public static func == (lhs: RuntimeArchiveFile, rhs: RuntimeArchiveFile) -> Bool {
+        lhs === rhs || lhs.url == rhs.url
+    }
+
+    public func remove() {
+        let shouldRemove = lock.withLock {
+            guard removalPending else {
+                return false
+            }
+            removalPending = false
+            return true
+        }
+        if shouldRemove {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    deinit {
+        remove()
+    }
+}
+
+public enum RuntimeArchiveBody: Equatable, Sendable {
+    case bytes(Data)
+    case file(RuntimeArchiveFile)
+}
+
 public struct RuntimeArchive: Equatable, Sendable {
-    public var data: Data
+    public var body: RuntimeArchiveBody
     public var stat: ArchivePathStat
 
     public init(data: Data, stat: ArchivePathStat) {
-        self.data = data
+        body = .bytes(data)
         self.stat = stat
+    }
+
+    public init(file: RuntimeArchiveFile, stat: ArchivePathStat) {
+        body = .file(file)
+        self.stat = stat
+    }
+
+    @available(*, deprecated, message: "Use body so file-backed archives remain streaming")
+    public var data: Data {
+        switch body {
+        case let .bytes(data):
+            data
+        case let .file(file):
+            (try? Data(contentsOf: file.url)) ?? Data()
+        }
     }
 }
 
