@@ -182,16 +182,24 @@ run_with_timeout() {
 
 start_colima() {
   local attempt
+  local status
 
   [[ -x "$colima_bin" ]] || fail "Colima executable is not usable: $colima_bin"
   [[ -f "$timeout_runner" ]] || fail "timeout runner is missing: $timeout_runner"
   command -v python3 >/dev/null || fail "python3 is required to bound Colima commands"
   [[ "$colima_command_timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
     || fail "Colima command timeout must be a positive integer"
-  if run_with_timeout "$colima_command_timeout_seconds" \
-    "$colima_bin" status >/dev/null 2>&1; then
-    return
-  fi
+  set +e
+  run_with_timeout "$colima_command_timeout_seconds" \
+    "$colima_bin" status >/dev/null 2>&1
+  status="$?"
+  set -e
+  case "$status" in
+    0) return ;;
+    1) ;;
+    124) fail "Colima status timed out before start" ;;
+    *) fail "Colima status failed before start" ;;
+  esac
   for attempt in 1 2 3; do
     if run_with_timeout "$colima_command_timeout_seconds" "$colima_bin" start \
       && run_with_timeout "$colima_command_timeout_seconds" \
@@ -207,16 +215,32 @@ start_colima() {
 
 # Stop the Docker oracle so later candidate timings run on a quiet host.
 stop_colima() {
+  local status
+
   [[ -x "$colima_bin" ]] || return 0
   [[ -f "$timeout_runner" ]] || fail "timeout runner is missing: $timeout_runner"
-  if run_with_timeout "$colima_command_timeout_seconds" \
-    "$colima_bin" status >/dev/null 2>&1; then
+  set +e
+  run_with_timeout "$colima_command_timeout_seconds" \
+    "$colima_bin" status >/dev/null 2>&1
+  status="$?"
+  set -e
+  case "$status" in
+    0)
     run_with_timeout "$colima_command_timeout_seconds" "$colima_bin" stop
-    if run_with_timeout "$colima_command_timeout_seconds" \
-      "$colima_bin" status >/dev/null 2>&1; then
+    set +e
+    run_with_timeout "$colima_command_timeout_seconds" \
+      "$colima_bin" status >/dev/null 2>&1
+    status="$?"
+    set -e
+    if [[ "$status" -eq 0 ]]; then
       fail "Colima remained running after stop"
     fi
-  fi
+    [[ "$status" -eq 1 ]] || fail "Colima status failed after stop"
+    ;;
+    1) return ;;
+    124) fail "Colima status timed out before stop" ;;
+    *) fail "Colima status failed before stop" ;;
+  esac
 }
 
 selected_runtime() {

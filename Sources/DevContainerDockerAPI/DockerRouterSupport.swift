@@ -715,13 +715,49 @@ extension DockerRouter {
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
             let name = source.lastPathComponent.lowercased()
-            guard name != "docker.sock", name != "docker.raw.sock" else {
+            let containsDockerSocket = Self.dockerSocketCandidates(source: source)
+                .contains { candidate in
+                    FileManager.default.fileExists(atPath: candidate.path)
+                        && Self.isSameOrDescendant(candidate, of: source)
+                }
+            guard name != "docker.sock",
+                  name != "docker.raw.sock",
+                  !containsDockerSocket
+            else {
                 throw DevContainerError(
                     .unsupportedCapability,
                     message: "mounting a Docker runtime socket is disabled in the Docker-less product"
                 )
             }
         }
+    }
+
+    private static func dockerSocketCandidates(source: URL) -> [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            source.appendingPathComponent("docker.sock"),
+            source.appendingPathComponent("docker.raw.sock"),
+            source.appendingPathComponent("run/docker.sock"),
+            source.appendingPathComponent("run/docker.raw.sock"),
+            URL(fileURLWithPath: "/var/run/docker.sock"),
+            URL(fileURLWithPath: "/private/var/run/docker.sock"),
+            URL(fileURLWithPath: "/run/docker.sock"),
+            home.appendingPathComponent(".docker/run/docker.sock"),
+            home.appendingPathComponent(".docker/run/docker.raw.sock"),
+            home.appendingPathComponent(".colima/default/docker.sock"),
+            home.appendingPathComponent(
+                "Library/Containers/com.docker.docker/Data/docker.sock"
+            ),
+            home.appendingPathComponent(
+                "Library/Containers/com.docker.docker/Data/docker.raw.sock"
+            )
+        ].map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+    }
+
+    private static func isSameOrDescendant(_ candidate: URL, of directory: URL) -> Bool {
+        candidate.path == directory.path
+            || directory.path == "/"
+            || candidate.path.hasPrefix(directory.path + "/")
     }
 
     func containerMounts(

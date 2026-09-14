@@ -118,6 +118,11 @@ case "${1:-}" in
     printf 'running\\n' > "$state"
     ;;
   status)
+    if [[ "${MOCK_COLIMA_HANG_STATUS:-0}" == "1" ]]; then
+      while :; do
+        sleep 60
+      done
+    fi
     [[ -f "$state" && "$(<"$state")" == "running" ]]
     ;;
   stop)
@@ -366,6 +371,22 @@ esac
         self.assertIn("Colima remained running after stop", result.stderr)
         operations = self.log.read_text(encoding="utf-8")
         self.assertNotIn("stock system start", operations)
+
+    def test_candidate_lane_fails_closed_when_colima_status_times_out(self) -> None:
+        started_at = time.monotonic()
+        result = self.run_script(
+            "start",
+            "apple-stock",
+            {
+                "DEVCONTAINER_RUNTIME_COLIMA_COMMAND_TIMEOUT_SECONDS": "1",
+                "MOCK_COLIMA_HANG_STATUS": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertLess(time.monotonic() - started_at, 10)
+        self.assertIn("Colima status timed out before stop", result.stderr)
+        self.assertNotIn("stock system start", self.log.read_text(encoding="utf-8"))
 
     def test_retries_an_interrupted_colima_start(self) -> None:
         result = self.run_script(

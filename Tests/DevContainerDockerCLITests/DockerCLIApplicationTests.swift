@@ -497,12 +497,19 @@ struct DockerCLIApplicationTests {
         #expect(try application.run(arguments: ["tag", "source", "registry.example:5000/a"])
             .exitCode == 0)
         #expect(try application.run(
-            arguments: ["events", "--format", "{{json .}}", "--filter", "type=container"]
+            arguments: [
+                "events", "--format", "{{json .}}", "--filter", "type=container",
+                "--since", "100", "--until=200"
+            ]
         ).standardOutput.contains(Data("container".utf8)))
 
         let buildx = try application.run(arguments: ["buildx", "version"])
         #expect(buildx.exitCode == 1)
         #expect(buildx.standardError.contains(Data("classic build path".utf8)))
+        #expect(transport.requests[4].target == "/containers/first?force=true")
+        #expect(transport.requests[5].target == "/containers/second?force=true")
+        #expect(transport.requests.last?.target.contains("since=100") == true)
+        #expect(transport.requests.last?.target.contains("until=200") == true)
     }
 
     @Test
@@ -913,6 +920,11 @@ struct DockerCLIApplicationTests {
         #expect(throws: (any Error).self) { try DockerRunOptions(arguments: ["-p", "1:2:3:4", "image"]) }
         #expect(throws: (any Error).self) {
             try DockerRunOptions(arguments: ["-p", "8080:53/sctp", "image"])
+        }
+        for value in ["abc:80", "65536:80", "8080:abc", "8080:65536", "0:80"] {
+            #expect(throws: (any Error).self) {
+                try DockerRunOptions(arguments: ["-p", value, "image"])
+            }
         }
         #expect(throws: (any Error).self) {
             try DockerRunOptions(arguments: ["--stop-timeout", "-1", "image"])

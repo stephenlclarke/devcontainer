@@ -43,12 +43,18 @@ public struct ExecutableComposeProvider: ComposeProvider {
         baseEnvironment = Self.filteredEnvironment(environment)
     }
 
-    public func descriptor(context _: RuntimeRequestContext) async throws -> ProtocolDescriptor {
-        let result = try await execute(
-            arguments: ["version", "--format", "json"],
-            environment: baseEnvironment,
-            workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        )
+    public func descriptor(context: RuntimeRequestContext) async throws -> ProtocolDescriptor {
+        let result = try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await execute(
+                    arguments: ["version", "--format", "json"],
+                    environment: baseEnvironment,
+                    workingDirectory: URL(
+                        fileURLWithPath: FileManager.default.currentDirectoryPath
+                    )
+                )
+            }
+        }
         guard result.exitCode == 0 else {
             throw DevContainerError(
                 .providerProtocolMismatch,
@@ -88,7 +94,7 @@ public struct ExecutableComposeProvider: ComposeProvider {
 
     public func invoke(
         _ invocation: ComposeInvocation,
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) async throws -> ComposeResult {
         var environment = baseEnvironment
         for (key, value) in invocation.environment {
@@ -100,11 +106,16 @@ public struct ExecutableComposeProvider: ComposeProvider {
             }
             environment[key] = value
         }
-        return try await execute(
-            arguments: invocation.arguments,
-            environment: environment,
-            workingDirectory: invocation.workingDirectory
-        )
+        let invocationEnvironment = environment
+        return try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await execute(
+                    arguments: invocation.arguments,
+                    environment: invocationEnvironment,
+                    workingDirectory: invocation.workingDirectory
+                )
+            }
+        }
     }
 
     private func execute(

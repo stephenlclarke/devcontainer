@@ -163,9 +163,8 @@ struct ReferenceCLIInvocation: Equatable {
     ) throws -> ReferenceCLIInvocation {
         let executable = try absoluteExecutable(executable)
         let directory = executable.deletingLastPathComponent()
-        let script = try referenceScript(
-            executableDirectory: directory
-        )
+        let layout = try installationLayout(executableDirectory: directory)
+        let script = layout.script
         let node = try executablePath(
             environment["DEVCONTAINER_NODE_BIN"],
             candidates: [
@@ -179,7 +178,7 @@ struct ReferenceCLIInvocation: Equatable {
         var upstreamArguments = [script.path, command]
         if injectRuntimeAdapters {
             upstreamArguments += try runtimeAdapterArguments(
-                directory: directory,
+                adapters: layout,
                 userArguments: arguments
             )
         }
@@ -192,7 +191,7 @@ struct ReferenceCLIInvocation: Equatable {
             selection: selection
         )
         let aliasDirectory = if injectRuntimeAdapterAliases {
-            try runtimeAdapterAliasDirectory(executableDirectory: directory)
+            try runtimeAdapterAliasDirectory(adapters: layout)
         } else {
             URL?.none
         }
@@ -215,46 +214,19 @@ struct ReferenceCLIInvocation: Equatable {
     }
 
     private static func runtimeAdapterArguments(
-        directory: URL,
+        adapters: InstallationLayout,
         userArguments: [String]
     ) throws -> [String] {
         try rejectRuntimeOverrides(userArguments)
-        let adapters = try runtimeAdapters(directory: directory)
         return [
             "--docker-path", adapters.docker.path,
             "--docker-compose-path", adapters.compose.path
         ]
     }
 
-    private static func runtimeAdapters(directory: URL) throws
-        -> (docker: URL, compose: URL)
-    {
-        let docker = directory.appendingPathComponent("devcontainer-docker")
-        let compose = directory.appendingPathComponent("devcontainer-compose")
-        guard
-            FileManager.default.isExecutableFile(atPath: docker.path),
-            FileManager.default.isExecutableFile(atPath: compose.path)
-        else {
-            throw DevContainerError(
-                .runtimeUnavailable,
-                message: "packaged Apple runtime adapters are missing"
-            )
-        }
-        try DevContainerExecutablePolicy.requireDockerless(
-            docker.path,
-            name: "packaged Apple runtime adapter"
-        )
-        try DevContainerExecutablePolicy.requireDockerless(
-            compose.path,
-            name: "packaged native Compose adapter"
-        )
-        return (docker, compose)
-    }
-
     private static func runtimeAdapterAliasDirectory(
-        executableDirectory: URL
+        adapters: InstallationLayout
     ) throws -> URL {
-        let adapters = try runtimeAdapters(directory: executableDirectory)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-runtime-adapters-\(UUID().uuidString)")
         do {
@@ -304,14 +276,51 @@ struct ReferenceCLIInvocation: Equatable {
         return executable.resolvingSymlinksInPath()
     }
 
-    private static func referenceScript(executableDirectory: URL) throws -> URL {
-        let packaged = executableDirectory
-            .deletingLastPathComponent()
-            .appendingPathComponent("share/devcontainer/reference-cli/devcontainer.js")
-        return try executablePath(
-            nil,
-            candidates: [packaged.path],
-            name: "pinned @devcontainers/cli (version)"
+    private static func installationLayout(
+        executableDirectory: URL
+    ) throws -> InstallationLayout {
+        var candidates: [InstallationLayout] = []
+        let developmentRoot = executableDirectory.deletingLastPathComponent()
+        candidates.append(InstallationLayout(
+            script: developmentRoot.appendingPathComponent(
+                "share/devcontainer/reference-cli/devcontainer.js"
+            ),
+            docker: executableDirectory.appendingPathComponent("devcontainer-docker"),
+            compose: executableDirectory.appendingPathComponent("devcontainer-compose")
+        ))
+        var root = executableDirectory
+        for _ in 0 ..< 8 {
+            candidates.append(InstallationLayout(
+                script: root.appendingPathComponent(
+                    "share/devcontainer/reference-cli/devcontainer.js"
+                ),
+                docker: root.appendingPathComponent("bin/devcontainer-docker"),
+                compose: root.appendingPathComponent("bin/devcontainer-compose")
+            ))
+            let parent = root.deletingLastPathComponent()
+            if parent.path == root.path {
+                break
+            }
+            root = parent
+        }
+        for candidate in candidates where candidate.exists {
+            try DevContainerExecutablePolicy.requireDockerless(
+                candidate.script.path,
+                name: "pinned @devcontainers/cli (version)"
+            )
+            try DevContainerExecutablePolicy.requireDockerless(
+                candidate.docker.path,
+                name: "packaged Apple runtime adapter"
+            )
+            try DevContainerExecutablePolicy.requireDockerless(
+                candidate.compose.path,
+                name: "packaged native Compose adapter"
+            )
+            return candidate
+        }
+        throw DevContainerError(
+            .runtimeUnavailable,
+            message: "packaged Dev Containers CLI and Apple runtime adapters are missing"
         )
     }
 
@@ -371,5 +380,17 @@ struct ReferenceCLIInvocation: Equatable {
                 && key != "NODE_OPTIONS"
                 && key != "NODE_PATH"
         }
+    }
+}
+
+private struct InstallationLayout {
+    let script: URL
+    let docker: URL
+    let compose: URL
+
+    var exists: Bool {
+        FileManager.default.isReadableFile(atPath: script.path)
+            && FileManager.default.isExecutableFile(atPath: docker.path)
+            && FileManager.default.isExecutableFile(atPath: compose.path)
     }
 }

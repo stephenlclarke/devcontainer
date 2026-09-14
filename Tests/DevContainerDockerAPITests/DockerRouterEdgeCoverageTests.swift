@@ -206,6 +206,7 @@ func `container creation rejects invalid bind port and mount forms`() async thro
 }
 
 @Test
+// swiftlint:disable:next function_body_length
 func `container creation rejects host Docker sockets before side effects`() async throws {
     let fixture = try await makeEdgeFixture()
     let socketDirectory = FileManager.default.temporaryDirectory
@@ -238,6 +239,14 @@ func `container creation rejects host Docker sockets before side effects`() asyn
                 "Type": "bind",
                 "Source": alias.path,
                 "Target": "/runtime.sock"
+            ]]
+        ],
+        [
+            "Image": "edge:latest",
+            "Mounts": [[
+                "Type": "bind",
+                "Source": socketDirectory.path,
+                "Target": "/host-run"
             ]]
         ]
     ]

@@ -308,7 +308,10 @@ The arm64 archive in `dist` contains all four project commands, the pinned
 official Dev Containers CLI, the stock-profile native Compose provider and its
 volume initializers, the `container-devcontainer` plug-in entry point, launchd
 template, Apache license, complete reviewed legal texts for every exact SwiftPM
-dependency, build metadata, and an SPDX 2.3 SBOM. The checked-in
+dependency, build metadata, and SPDX 2.3 SBOMs. The bundled native Compose
+payload separately records its exact SwiftPM lockfile, vendored Go build list,
+full legal texts, and a provider SBOM that includes the Go standard library.
+Unknown or missing provider licences fail packaging. The checked-in
 dependency-license ledger must match `Package.resolved` exactly. The packaging
 script writes a SHA-256
 checksum and machine-readable verification result. It also rewrites

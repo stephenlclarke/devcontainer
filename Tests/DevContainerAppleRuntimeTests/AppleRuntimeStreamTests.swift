@@ -46,6 +46,50 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `attached start waits for running state before returning`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        try fixture.setMode("attached-delayed-running")
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext(deadline: Date().addingTimeInterval(1))
+        )
+
+        #expect(
+            try await runtime.inspectContainer(
+                id: "fixture",
+                context: RuntimeRequestContext()
+            ).state == .running
+        )
+        try await session.closeStandardInput()
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 0)
+    }
+
+    @Test
+    func `fast attached failure is recorded before wait observes stopped state`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("attached-fast-failure")
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 7)
+        #expect(
+            try await runtime.waitContainer(
+                id: "fixture",
+                context: RuntimeRequestContext(deadline: Date().addingTimeInterval(1))
+            ) == 7
+        )
+    }
+
+    @Test
     func `superseded attached exits cannot overwrite the replacement generation`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()

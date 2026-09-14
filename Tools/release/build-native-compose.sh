@@ -38,6 +38,7 @@ cleanup() {
 trap cleanup EXIT
 source_root="$temporary_root/source"
 stage="$temporary_root/stage"
+go_vendor="$source_root/Tools/compose-normalizer/vendor"
 
 git init -q "$source_root"
 git -C "$source_root" remote add origin "$compose_repository"
@@ -58,13 +59,16 @@ mkdir -p "$stage/bin" "$stage/resources"
 install -m 0755 "$source_root/.build/release/compose" "$stage/bin/compose"
 (
   cd "$source_root/Tools/compose-normalizer"
-  CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
+  GOTOOLCHAIN=local go mod vendor
+  CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=vendor -trimpath -ldflags '-s -w' \
     -o "$stage/resources/compose-normalizer" .
   mkdir -p "$stage/resources/volume-initializer"
-  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '-s -w' \
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=local \
+    go build -mod=vendor -trimpath -ldflags '-s -w' \
     -o "$stage/resources/volume-initializer/compose-volume-initializer-linux-arm64" \
     ./cmd/volume-initializer
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local \
+    go build -mod=vendor -trimpath -ldflags '-s -w' \
     -o "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64" \
     ./cmd/volume-initializer
 )
@@ -72,6 +76,24 @@ test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-ar
 test -x "$stage/resources/volume-initializer/compose-volume-initializer-linux-amd64"
 install -m 0644 "$source_root/LICENSE" "$stage/LICENSE"
 install -m 0644 "$source_root/config.toml" "$stage/config.toml"
+install -m 0644 "$source_root/Package.stock.resolved" \
+  "$stage/resources/Package.resolved"
+install -m 0644 "$go_vendor/modules.txt" "$stage/resources/go-modules.txt"
+
+source_date_epoch="$(git -C "$source_root" show -s --format=%ct HEAD)"
+go_root="$(go env GOROOT)"
+python3 "$repository_root/Tools/release/write-native-compose-legal.py" \
+  --version "$compose_version" \
+  --commit "$compose_commit" \
+  --source-date-epoch "$source_date_epoch" \
+  --resolved "$source_root/Package.stock.resolved" \
+  --license-manifest "$repository_root/Tools/release/dependency-licenses.stock.json" \
+  --checkouts "$source_root/.build/checkouts" \
+  --go-vendor "$go_vendor" \
+  --go-version "$go_version" \
+  --go-license "$go_root/LICENSE" \
+  --notices-output "$stage/THIRD-PARTY-NOTICES.txt" \
+  --sbom-output "$stage/resources/container-compose.spdx.json"
 
 compose_go_version="$(
   python3 "$source_root/Tools/release/go-module-version.py" \

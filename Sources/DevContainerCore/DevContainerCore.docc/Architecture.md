@@ -17,6 +17,8 @@ when it has been assigned another socket filename.
 
 The stock adapter launches an exact Apple `container` executable without a shell. The configured runtime path and its resolved symlink target must both be named `container`, and its version record must identify stock `apple/container` or the explicit `stephenlclarke/container` distribution. Foreign custom distributions and Docker-named backend or Compose-provider values fail before project work. The Compose dispatcher launches an exact native `container-compose` executable and never links its implementation into this package. No product path launches a Docker CLI, Docker Compose, Docker Desktop, Docker daemon, Colima, Podman, or nerdctl. Runtime overrides naming another container runtime and bind mounts resolving to a Docker daemon socket fail before launch or container creation. Every product child-process launch passes through one shared policy that checks both the selected name and resolved symlink target; the source audit rejects direct launch APIs outside that runner.
 
+Release archives make the Compose process boundary auditable. The bundled stock provider includes its exact SwiftPM lockfile, vendored Go module build list, complete dependency legal texts, and a dedicated SPDX 2.3 document covering the Swift packages, Go modules, and Go standard library compiled into it.
+
 Project provider claims are durable and immutable while resources exist. This
 prevents stock and custom runtime operations from creating split-brain projects.
 The dispatcher classifies the complete supported Compose global-option surface

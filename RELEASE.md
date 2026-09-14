@@ -470,7 +470,11 @@ The repository-owned deterministic SPDX 2.3 generator records the exact source
 commit, source-date epoch, and every pin in `Package.resolved`. A checked-in
 ledger assigns a reviewed Apache-compatible SPDX license to every pin; any
 missing or stale entry fails packaging. Release archives also contain complete
-root license and notice texts for all pins. Package validation rejects
+root license and notice texts for all pins. The bundled stock-profile Compose
+provider carries a second SPDX document, its exact SwiftPM lockfile and
+vendored Go module build list, plus complete legal texts for those SwiftPM and
+Go dependencies and the linked Go standard library. Missing, replaced, or
+unrecognized provider dependencies fail closed. Package validation rejects
 dependency, version, revision, source, license, relationship, notice,
 provenance, normalized-archive-metadata drift, and packaged README links that
 are relative or bound to a different source commit.

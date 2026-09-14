@@ -171,6 +171,10 @@ class ReleaseDocumentationTests(unittest.TestCase):
         for payload in (
             "compose-volume-initializer-linux-arm64",
             "compose-volume-initializer-linux-amd64",
+            "libexec/devcontainer-compose/resources/Package.resolved",
+            "libexec/devcontainer-compose/resources/go-modules.txt",
+            "libexec/devcontainer-compose/resources/container-compose.spdx.json",
+            "libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt",
             "share/devcontainer/notarization.json",
             "share/devcontainer/reference-cli/devcontainer.js",
             "share/devcontainer/reference-cli/package.json",

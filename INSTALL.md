@@ -161,8 +161,12 @@ devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-docker
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/bin/compose
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/compose-normalizer
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/build-info.json
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/Package.resolved
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/go-modules.txt
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/container-compose.spdx.json
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/config.toml
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
@@ -179,7 +183,9 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/package.json
 
 The `reference-cli` directory contains the checksum-pinned official
 `@devcontainers/cli` distribution, including its license and third-party
-notices. The notarization record contains only the accepted submission ID,
+notices. The bundled Compose directory contains a separate SPDX inventory and
+complete legal texts for its exact SwiftPM graph, vendored Go build graph, and
+Go standard library. The notarization record contains only the accepted submission ID,
 status, and archive digest; it contains no credential material.
 
 The packaged `README.md` points repository files, directories, and images at

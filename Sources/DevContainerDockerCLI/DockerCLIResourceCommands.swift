@@ -188,7 +188,10 @@ extension DockerCLIApplication {
         }
         let archive = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["--no-xattrs", "-cf", "-", "-C", archiveRoot.path, archiveEntry],
+            arguments: [
+                "--no-xattrs", "-cf", "-", "-C", archiveRoot.path, "--",
+                archiveEntry
+            ],
             environment: ["COPYFILE_DISABLE": "1", "PATH": "/usr/bin:/bin"]
         )
         guard archive.exitCode == 0 else {
@@ -210,16 +213,68 @@ extension DockerCLIApplication {
         remote: (container: String, path: String),
         local: String
     ) throws {
-        let response = try request(
-            "GET",
-            Self.target(
-                "/containers/\(Self.path(remote.container))/archive",
-                query: [("path", remote.path)]
-            )
-        )
-        let stat = try Self.copyPathStat(response)
-        let destination = URL(fileURLWithPath: local)
         let fileManager = FileManager.default
+        let transferRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "devcontainer-cp-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: transferRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? fileManager.removeItem(at: transferRoot) }
+        let (response, archive) = try downloadContainerArchive(
+            remote: remote,
+            into: transferRoot
+        )
+        try Self.placeContainerArchive(
+            archive,
+            stat: Self.copyPathStat(response),
+            local: local,
+            transferRoot: transferRoot
+        )
+    }
+
+    private func downloadContainerArchive(
+        remote: (container: String, path: String),
+        into transferRoot: URL
+    ) throws -> (DockerHTTPResponse, URL) {
+        let fileManager = FileManager.default
+        let archive = transferRoot.appendingPathComponent("archive.tar")
+        guard fileManager.createFile(
+            atPath: archive.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw DockerCLIError.invalidArguments("could not create container copy staging file")
+        }
+        let archiveWriter = try FileHandle(forWritingTo: archive)
+        defer { try? archiveWriter.close() }
+        let response = try transport.send(
+            DockerHTTPRequest(
+                method: "GET",
+                target: Self.target(
+                    "/containers/\(Self.path(remote.container))/archive",
+                    query: [("path", remote.path)]
+                )
+            ),
+            maximumBodyBytes: nil
+        ) { chunk in
+            try archiveWriter.write(contentsOf: chunk)
+        }
+        try archiveWriter.close()
+        return (response, archive)
+    }
+
+    private static func placeContainerArchive(
+        _ archive: URL,
+        stat: DockerCopyPathStat,
+        local: String,
+        transferRoot: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let destination = URL(fileURLWithPath: local)
         var destinationIsDirectory = ObjCBool(false)
         let destinationExists = fileManager.fileExists(
             atPath: destination.path,
@@ -236,19 +291,18 @@ extension DockerCLIApplication {
             )
         }
         if destinationExists, destinationIsDirectory.boolValue {
-            try Self.extractArchive(response.body, into: destination)
+            try Self.extractArchive(archive, into: destination)
             return
         }
 
         let parent = destination.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-        let staging = parent.appendingPathComponent(
-            ".devcontainer-cp-\(UUID().uuidString)",
+        let staging = transferRoot.appendingPathComponent(
+            "extracted",
             isDirectory: true
         )
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
-        defer { try? fileManager.removeItem(at: staging) }
-        try Self.extractArchive(response.body, into: staging)
+        try Self.extractArchive(archive, into: staging)
         let source = staging.appendingPathComponent(stat.name)
         guard fileManager.fileExists(atPath: source.path) else {
             throw DockerCLIError.malformedResponse(
@@ -261,12 +315,11 @@ extension DockerCLIApplication {
         try fileManager.moveItem(at: source, to: destination)
     }
 
-    private static func extractArchive(_ archive: Data, into destination: URL) throws {
+    private static func extractArchive(_ archive: URL, into destination: URL) throws {
         let extracted = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-xf", "-", "-C", destination.path],
-            environment: ["PATH": "/usr/bin:/bin"],
-            input: archive
+            arguments: ["-xf", archive.path, "-C", destination.path],
+            environment: ["PATH": "/usr/bin:/bin"]
         )
         guard extracted.exitCode == 0 else {
             throw DockerCLIError.invalidArguments(
@@ -300,7 +353,7 @@ extension DockerCLIApplication {
         return (String(parts[0]), String(parts[1]))
     }
 
-    private static func removalArguments(
+    static func removalArguments(
         _ arguments: [String],
         resource: String
     ) throws -> (force: Bool, identifiers: [String]) {

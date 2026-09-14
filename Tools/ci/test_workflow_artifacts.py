@@ -617,14 +617,18 @@ jobs:
         for marker in (
             "gh run download",
             "stable-authority-${ref_name}-${sha}",
-            '"${sha}" != "${current_main}"',
-            '"${sha}" != "${GITHUB_SHA}"',
             '.headBranch == "main"',
             '.candidateSha == $candidate_sha',
             '.workflow == "Stable Release Gate"',
             '.runId == $run_id',
         ):
             self.assertIn(marker, prebuilt)
+        stable_resolution = prebuilt[
+            prebuilt.index('elif [[ "${DISPATCH_REF}" =~'):
+            prebuilt.index('else\n            printf \'unsupported package ref')
+        ]
+        self.assertNotIn('"${sha}" != "${current_main}"', stable_resolution)
+        self.assertNotIn('"${sha}" != "${GITHUB_SHA}"', stable_resolution)
 
     def test_parity_container_images_are_digest_pinned(self) -> None:
         fixtures = ROOT / "Tests" / "Parity" / "fixtures"

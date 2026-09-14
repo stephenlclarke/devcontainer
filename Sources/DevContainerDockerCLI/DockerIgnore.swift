@@ -254,6 +254,11 @@ struct DockerIgnoreMatcher {
         guard !pattern.isEmpty else {
             return nil
         }
+        // Docker cleans the complete line before interpreting a leading `!`.
+        // Cleaning only the text after `!` changes `!dir/../secret` from an
+        // exclusion into an inclusion and can leak an ignored build-context
+        // file.
+        pattern = normalized(pattern)
         let includes = pattern.hasPrefix("!")
         if includes {
             pattern.removeFirst()

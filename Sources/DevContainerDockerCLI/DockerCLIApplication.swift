@@ -375,14 +375,15 @@ public final class DockerCLIApplication: @unchecked Sendable {
     }
 
     private func removeContainer(_ arguments: [String]) throws -> DockerCLIResult {
-        let identifiers = arguments.filter { !$0.hasPrefix("-") }
-        guard !identifiers.isEmpty else {
-            throw DockerCLIError.invalidArguments("rm requires a container")
+        let parsed = try Self.removalArguments(arguments, resource: "container")
+        for identifier in parsed.identifiers {
+            let path = "/containers/\(Self.path(identifier))"
+            let target = parsed.force
+                ? Self.target(path, query: [("force", "true")])
+                : path
+            _ = try request("DELETE", target)
         }
-        for identifier in identifiers {
-            _ = try request("DELETE", "/containers/\(Self.path(identifier))?force=true")
-        }
-        return .stdout(identifiers.joined(separator: "\n") + "\n")
+        return .stdout(parsed.identifiers.joined(separator: "\n") + "\n")
     }
 
     private func lifecycle(_ arguments: [String], action: String) throws -> DockerCLIResult {
@@ -527,31 +528,15 @@ public final class DockerCLIApplication: @unchecked Sendable {
         _ arguments: [String],
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
-        var filters: [String: [String]] = [:]
-        var index = 0
-        while index < arguments.count {
-            switch arguments[index] {
-            case "--format":
-                index += 1
-                guard index < arguments.count else {
-                    throw DockerCLIError.invalidArguments("--format requires a value")
-                }
-            case "--filter":
-                index += 1
-                guard index < arguments.count else {
-                    throw DockerCLIError.invalidArguments("--filter requires a value")
-                }
-                let parts = arguments[index].split(separator: "=", maxSplits: 1).map(String.init)
-                guard parts.count == 2 else {
-                    throw DockerCLIError.invalidArguments("invalid event filter")
-                }
-                filters[parts[0], default: []].append(parts[1])
-            default:
-                throw DockerCLIError.invalidArguments("unsupported events option \(arguments[index])")
-            }
-            index += 1
+        let options = try DockerEventOptions(arguments: arguments)
+        var query = try [("filters", Self.jsonString(options.filters))]
+        if let since = options.since {
+            query.append(("since", since))
         }
-        let target = try Self.target("/events", query: [("filters", Self.jsonString(filters))])
+        if let until = options.until {
+            query.append(("until", until))
+        }
+        let target = Self.target("/events", query: query)
         return try streamRequest("GET", target, maximumBodyBytes: nil, streamingOutput: streamingOutput)
     }
 
@@ -708,6 +693,72 @@ public final class DockerCLIApplication: @unchecked Sendable {
             return (value, nil)
         }
         return (String(value[..<colon]), String(value[value.index(after: colon)...]))
+    }
+}
+
+private struct DockerEventOptions {
+    var filters: [String: [String]] = [:]
+    var since: String?
+    var until: String?
+
+    init(arguments: [String]) throws {
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--format":
+                index = try Self.valueIndex(after: index, in: arguments, option: argument)
+            case "--filter":
+                index = try Self.valueIndex(after: index, in: arguments, option: argument)
+                try addFilter(arguments[index])
+            case "--since":
+                index = try Self.valueIndex(after: index, in: arguments, option: argument)
+                since = try Self.nonempty(arguments[index], option: argument)
+            case "--until":
+                index = try Self.valueIndex(after: index, in: arguments, option: argument)
+                until = try Self.nonempty(arguments[index], option: argument)
+            case let option where option.hasPrefix("--since="):
+                since = try Self.nonempty(
+                    String(option.dropFirst("--since=".count)),
+                    option: "--since"
+                )
+            case let option where option.hasPrefix("--until="):
+                until = try Self.nonempty(
+                    String(option.dropFirst("--until=".count)),
+                    option: "--until"
+                )
+            default:
+                throw DockerCLIError.invalidArguments("unsupported events option \(argument)")
+            }
+            index += 1
+        }
+    }
+
+    private mutating func addFilter(_ value: String) throws {
+        let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            throw DockerCLIError.invalidArguments("invalid event filter")
+        }
+        filters[parts[0], default: []].append(parts[1])
+    }
+
+    private static func valueIndex(
+        after index: Int,
+        in arguments: [String],
+        option: String
+    ) throws -> Int {
+        let valueIndex = index + 1
+        guard valueIndex < arguments.count else {
+            throw DockerCLIError.invalidArguments("\(option) requires a value")
+        }
+        return valueIndex
+    }
+
+    private static func nonempty(_ value: String, option: String) throws -> String {
+        guard !value.isEmpty else {
+            throw DockerCLIError.invalidArguments("\(option) requires a value")
+        }
+        return value
     }
 }
 

@@ -799,15 +799,20 @@ struct DockerRunOptions {
             maxSplits: 1,
             omittingEmptySubsequences: false
         ).map(String.init)
-        guard !target[0].isEmpty else {
+        guard let parsedHostPort = UInt16(hostPort), parsedHostPort > 0,
+              let parsedContainerPort = UInt16(target[0]), parsedContainerPort > 0
+        else {
             throw DockerCLIError.invalidArguments("invalid published port \(value)")
         }
         let protocolName = target.count == 1 ? "tcp" : target[1].lowercased()
         guard protocolName == "tcp" || protocolName == "udp" else {
             throw DockerCLIError.invalidArguments("unsupported port protocol \(protocolName)")
         }
-        let containerPort = target[0] + "/" + protocolName
-        ports[containerPort, default: []].append(["HostIp": hostIP, "HostPort": hostPort])
+        let containerPort = String(parsedContainerPort) + "/" + protocolName
+        ports[containerPort, default: []].append([
+            "HostIp": hostIP,
+            "HostPort": String(parsedHostPort)
+        ])
     }
 
     private static func volume(_ value: String) throws -> [String: Any] {

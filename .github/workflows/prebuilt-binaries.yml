@@ -94,16 +94,6 @@ jobs:
               exit 1
             fi
             sha="$(jq -r '.object.sha' <<<"${tag_document}")"
-            current_main="$(
-              git ls-remote --heads "${remote}" refs/heads/main \
-                | awk '{ print $1 }' \
-                | tail -n 1
-            )"
-            if [[ "${sha}" != "${current_main}" ]] ||
-               [[ "${sha}" != "${GITHUB_SHA}" ]]; then
-              printf 'stable source must remain the exact workflow main commit\n' >&2
-              exit 1
-            fi
             authority=""
             authority_name="stable-authority-${ref_name}-${sha}"
             authority_root="${RUNNER_TEMP}/stable-authority"

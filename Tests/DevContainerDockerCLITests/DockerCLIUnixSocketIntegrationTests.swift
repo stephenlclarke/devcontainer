@@ -68,7 +68,16 @@ struct DockerCLIUnixSocketIntegrationTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let socket = root.appendingPathComponent("engine.sock").path
-        let runtime = InMemoryRuntime(version: "1.4.1")
+        let duplexOutput = Data(repeating: 0x42, count: 4 * 1024 * 1024)
+        let runtime = InMemoryRuntime(
+            version: "1.4.1",
+            execSession: InMemoryProcessSession(
+                frames: [
+                    RuntimeIOFrame(channel: .standardOutput, data: duplexOutput)
+                ],
+                exitCode: 0
+            )
+        )
         let server = ContainerUnixHTTPServer(
             responder: DockerRouter(runtime: runtime),
             socketPath: socket,
@@ -118,7 +127,7 @@ struct DockerCLIUnixSocketIntegrationTests {
                 )
             }.value
             #expect(exec.exitCode == 0)
-            #expect(exec.standardOutput == Data("cat\n".utf8))
+            #expect(exec.standardOutput == duplexOutput)
 
             let interactive = try await Task.detached {
                 try application.run(

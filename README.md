@@ -299,4 +299,7 @@ This is an independent open-source project. It is not affiliated with or endorse
 
 Licensed under [Apache License 2.0](LICENSE), matching `apple/container` and
 `apple/containerization`. The package builder includes third-party notices,
-deterministic build metadata, checksums, and an SPDX 2.3 SBOM.
+deterministic build metadata, checksums, and SPDX 2.3 SBOMs. The bundled
+stock-profile Compose provider carries its own complete legal notice and SBOM
+inventory for the exact SwiftPM graph, vendored Go module graph, and Go
+standard library compiled into that process-isolated payload.

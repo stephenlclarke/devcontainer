@@ -285,6 +285,110 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertIn("----- NOTICE.txt -----", rendered)
             self.assertIn("Fixture attribution", rendered)
 
+    def test_native_compose_legal_inventory_covers_swift_go_and_standard_library(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            resolved = root / "Package.resolved"
+            licenses = root / "dependency-licenses.json"
+            checkouts = root / "checkouts"
+            swift_checkout = checkouts / "swift-fixture"
+            vendor = root / "vendor"
+            go_module = vendor / "example.com" / "go-fixture"
+            go_license = root / "go" / "LICENSE"
+            notices = root / "THIRD-PARTY-NOTICES.txt"
+            sbom = root / "container-compose.spdx.json"
+            swift_checkout.mkdir(parents=True)
+            go_module.mkdir(parents=True)
+            go_license.parent.mkdir(parents=True)
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "swift-fixture",
+                                "location": "https://example.com/swift-fixture.git",
+                                "state": {
+                                    "revision": "a" * 40,
+                                    "version": "1.2.3",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            licenses.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "licenses": {"swift-fixture": "MIT"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mit = (
+                "MIT License\nPermission is hereby granted, free of charge, "
+                "to any person obtaining a copy\n"
+            )
+            bsd = (
+                "Redistribution and use in source and binary forms are permitted.\n"
+            )
+            (swift_checkout / "LICENSE").write_text(mit, encoding="utf-8")
+            (go_module / "LICENSE").write_text(mit, encoding="utf-8")
+            (vendor / "modules.txt").write_text(
+                "# example.com/go-fixture v2.3.4\n## explicit; go 1.26\n",
+                encoding="utf-8",
+            )
+            go_license.write_text(bsd, encoding="utf-8")
+
+            self.run_tool(
+                "write-native-compose-legal.py",
+                "--version",
+                "0.15.1",
+                "--commit",
+                "b" * 40,
+                "--source-date-epoch",
+                "1785100000",
+                "--resolved",
+                str(resolved),
+                "--license-manifest",
+                str(licenses),
+                "--checkouts",
+                str(checkouts),
+                "--go-vendor",
+                str(vendor),
+                "--go-version",
+                "1.26.3",
+                "--go-license",
+                str(go_license),
+                "--notices-output",
+                str(notices),
+                "--sbom-output",
+                str(sbom),
+            )
+
+            package_names = {
+                package["name"]
+                for package in json.loads(sbom.read_text(encoding="utf-8"))[
+                    "packages"
+                ]
+            }
+            self.assertEqual(
+                package_names,
+                {
+                    "container-compose",
+                    "container-compose-swift:swift-fixture",
+                    "container-compose-go:example.com/go-fixture",
+                    "container-compose-go:standard-library",
+                },
+            )
+            rendered = notices.read_text(encoding="utf-8")
+            self.assertIn("Dependency type: SwiftPM", rendered)
+            self.assertIn("Dependency type: Go module", rendered)
+            self.assertIn("Dependency type: Go standard library", rendered)
+
     def test_dependency_license_ledger_must_exactly_match_lockfile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -580,6 +684,8 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertIn("CONTAINER_COMPOSE_BUILD_PROFILE=stock", builder)
         self.assertIn('go env GOVERSION', builder)
         self.assertIn("Package.stock.resolved", builder)
+        self.assertIn("go mod vendor", builder)
+        self.assertIn("write-native-compose-legal.py", builder)
         self.assertIn("--runtime-profile stock", builder)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", package)
         self.assertIn("Tools/release/build-native-compose.sh", package)

@@ -303,6 +303,93 @@ def require_native_compose_build_info(value: object) -> None:
         raise ValueError("bundled native Compose does not match its stock Apple pin")
 
 
+def native_compose_dependency_names(
+    resolved: object,
+    go_modules: str,
+) -> list[str]:
+    """Return the exact packaged Swift and Go provider dependency names."""
+
+    if not isinstance(resolved, dict) or not isinstance(resolved.get("pins"), list):
+        raise ValueError("bundled native Compose Package.resolved is invalid")
+    swift_names = []
+    for pin in resolved["pins"]:
+        if not isinstance(pin, dict) or not isinstance(pin.get("identity"), str):
+            raise ValueError("bundled native Compose Swift pin is invalid")
+        swift_names.append(f"container-compose-swift:{pin['identity']}")
+    module_pattern = re.compile(r"^# (?P<module>\S+) (?P<version>\S+)$")
+    go_names = [
+        f"container-compose-go:{match.group('module')}"
+        for line in go_modules.splitlines()
+        if " => " not in line and (match := module_pattern.fullmatch(line)) is not None
+    ]
+    if not swift_names or not go_names:
+        raise ValueError("bundled native Compose dependency inventory is empty")
+    names = [*swift_names, *go_names, "container-compose-go:standard-library"]
+    if len(names) != len(set(names)):
+        raise ValueError("bundled native Compose dependency inventory is duplicated")
+    return names
+
+
+def require_native_compose_legal_inventory(
+    sbom: object,
+    notices: str,
+    resolved: object,
+    go_modules: str,
+) -> None:
+    """Require complete provider SBOM and legal text coverage."""
+
+    metadata = json.loads(NATIVE_COMPOSE_METADATA.read_text(encoding="utf-8"))
+    dependency_names = native_compose_dependency_names(resolved, go_modules)
+    expected_names = {"container-compose", *dependency_names}
+    if not isinstance(sbom, dict) or sbom.get("spdxVersion") != "SPDX-2.3":
+        raise ValueError("bundled native Compose SBOM is invalid")
+    packages = sbom.get("packages")
+    if not isinstance(packages, list) or not all(
+        isinstance(package, dict) for package in packages
+    ):
+        raise ValueError("bundled native Compose SBOM packages are invalid")
+    by_name = {package.get("name"): package for package in packages}
+    if set(by_name) != expected_names or len(packages) != len(expected_names):
+        raise ValueError("bundled native Compose SBOM dependency set is incomplete")
+    root = by_name["container-compose"]
+    if (
+        root.get("versionInfo") != metadata["version"]
+        or root.get("sourceInfo") != f"Exact Git revision {metadata['commit']}"
+        or root.get("licenseDeclared") != "Apache-2.0"
+    ):
+        raise ValueError("bundled native Compose SBOM root metadata is invalid")
+    if any(
+        not package.get("licenseDeclared")
+        or package.get("licenseDeclared") == "NOASSERTION"
+        or package.get("licenseConcluded") != package.get("licenseDeclared")
+        for package in packages
+    ):
+        raise ValueError("bundled native Compose SBOM license metadata is invalid")
+    relationships = sbom.get("relationships")
+    if not isinstance(relationships, list):
+        raise ValueError("bundled native Compose SBOM relationships are missing")
+    root_identifier = root.get("SPDXID")
+    related = {
+        relationship.get("relatedSpdxElement")
+        for relationship in relationships
+        if isinstance(relationship, dict)
+        and relationship.get("spdxElementId") == root_identifier
+        and relationship.get("relationshipType") == "DEPENDS_ON"
+    }
+    expected_related = {by_name[name].get("SPDXID") for name in dependency_names}
+    if related != expected_related or len(relationships) != len(dependency_names):
+        raise ValueError("bundled native Compose SBOM relationships are incomplete")
+    headers = [
+        line.removeprefix("Dependency: ")
+        for line in notices.splitlines()
+        if line.startswith("Dependency: ")
+    ]
+    if headers != dependency_names:
+        raise ValueError("bundled native Compose legal notice set is incomplete")
+    if len(notices.encode("utf-8")) < 1_024:
+        raise ValueError("bundled native Compose legal notices are unexpectedly small")
+
+
 def require_third_party_notices(
     text: str,
     dependencies: list[Dependency],
@@ -442,6 +529,29 @@ def verify_archive(
         require_nonempty_regular_member(
             archive,
             f"{root}/libexec/devcontainer-compose/LICENSE",
+        )
+        native_compose_root = f"{root}/libexec/devcontainer-compose"
+        native_resolved = read_json_member(
+            archive,
+            f"{native_compose_root}/resources/Package.resolved",
+        )
+        native_go_modules = read_text_member(
+            archive,
+            f"{native_compose_root}/resources/go-modules.txt",
+        )
+        native_notices = read_text_member(
+            archive,
+            f"{native_compose_root}/THIRD-PARTY-NOTICES.txt",
+        )
+        native_sbom = read_json_member(
+            archive,
+            f"{native_compose_root}/resources/container-compose.spdx.json",
+        )
+        require_native_compose_legal_inventory(
+            native_sbom,
+            native_notices,
+            native_resolved,
+            native_go_modules,
         )
         for legal_file in ("LICENSE.txt", "ThirdPartyNotices.txt"):
             require_nonempty_regular_member(

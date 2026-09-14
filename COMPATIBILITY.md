@@ -57,7 +57,9 @@ all Compose-backed Dev Container fixtures must pass through both
 `container-compose` is not a Swift package dependency of the runtime-neutral
 core. Packaging builds its exact stock profile as a private process-isolated
 artifact, records its provenance and SBOM entry, and launches it with argv-based
-process creation. An external enhanced build requires an explicit override. The
+process creation. Its payload also contains the exact provider SwiftPM and
+vendored Go inventories, full third-party legal texts, and a provider SPDX
+document. An external enhanced build requires an explicit override. The
 core must not import `ComposeCore` or another implementation module.
 
 ## Pinned candidate provenance

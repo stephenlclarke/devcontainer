@@ -132,6 +132,39 @@ struct ReferenceCLICommandTests {
     }
 
     @Test
+    func `apple plugin entry point resolves package root assets`() throws {
+        let fixture = try InvocationFixture()
+        defer { fixture.remove() }
+        let plugin = fixture.root.appendingPathComponent(
+            "libexec/container/plugins/devcontainer/bin/devcontainer"
+        )
+        try FileManager.default.createDirectory(
+            at: plugin.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: plugin)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: plugin.path
+        )
+
+        let invocation = try ReferenceCLIInvocation.configured(
+            command: "up",
+            arguments: [],
+            injectRuntimeAdapters: true,
+            environment: fixture.environment,
+            executable: plugin
+        )
+
+        #expect(invocation.arguments.prefix(6) == [
+            fixture.script.path,
+            "up",
+            "--docker-path", fixture.docker.path,
+            "--docker-compose-path", fixture.compose.path
+        ])
+    }
+
+    @Test
     func `only the runtime using feature test subcommand requests aliases`() {
         #expect(ReferenceFeaturesCommand.requiresRuntimeAdapterAliases(
             arguments: ["test", "."]

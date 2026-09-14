@@ -979,7 +979,9 @@ struct FakeAppleCLI {
               }]'
               exit 0
             fi
-            if [ "$state" = stopped ] || [ "$state" = created ]; then
+            if [ "$state" = created ]; then
+              cstate=created
+            elif [ "$state" = stopped ]; then
               cstate=stopped
             else
               cstate=running
@@ -1133,6 +1135,14 @@ struct FakeAppleCLI {
             fi
             ;;
           "start --attach")
+            if [ "$mode" = attached-delayed-running ]; then
+              sleep 0.1
+              printf '%s' running > "$STATE"
+            fi
+            if [ "$mode" = attached-fast-failure ]; then
+              printf '%s' stopped > "$STATE"
+              exit 7
+            fi
             cat
             ;;
           "stop --time")

@@ -101,6 +101,51 @@ class PackageVerificationTests(unittest.TestCase):
             ],
             "relationships": [],
         }
+        native_dependency_names = [
+            "container-compose-swift:fixture",
+            "container-compose-go:example.com/fixture",
+            "container-compose-go:standard-library",
+        ]
+
+        def native_spdx_id(name: str) -> str:
+            readable = "".join(
+                character if character.isalnum() else "-" for character in name
+            )
+            digest = hashlib.sha256(name.encode()).hexdigest()[:12]
+            return f"SPDXRef-{readable}-{digest}"
+
+        native_root_identifier = native_spdx_id("container-compose")
+        native_sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [
+                {
+                    "SPDXID": native_root_identifier,
+                    "name": "container-compose",
+                    "versionInfo": NATIVE_COMPOSE["version"],
+                    "licenseDeclared": "Apache-2.0",
+                    "licenseConcluded": "Apache-2.0",
+                    "sourceInfo": f"Exact Git revision {NATIVE_COMPOSE['commit']}",
+                },
+                *[
+                    {
+                        "SPDXID": native_spdx_id(name),
+                        "name": name,
+                        "versionInfo": "1.2.3",
+                        "licenseDeclared": "MIT",
+                        "licenseConcluded": "MIT",
+                    }
+                    for name in native_dependency_names
+                ],
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": native_root_identifier,
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": native_spdx_id(name),
+                }
+                for name in native_dependency_names
+            ],
+        }
         dependencies = load_dependencies(
             REPOSITORY_ROOT / "Package.resolved",
             TOOLS / "dependency-licenses.json",
@@ -239,6 +284,42 @@ class PackageVerificationTests(unittest.TestCase):
                 archive,
                 f"{package_root}/libexec/devcontainer-compose/LICENSE",
                 b"Apache License, Version 2.0\n",
+            )
+            native_compose_root = (
+                f"{package_root}/libexec/devcontainer-compose"
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/Package.resolved",
+                json.dumps({"pins": [{"identity": "fixture"}]}).encode(),
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/go-modules.txt",
+                b"# example.com/fixture v1.2.3\n## explicit; go 1.26\n",
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/container-compose.spdx.json",
+                json.dumps(native_sbom).encode(),
+            )
+            native_notices = [
+                "container-compose bundled provider third-party notices",
+                "=" * 78,
+                "",
+            ]
+            for name in native_dependency_names:
+                native_notices.extend(
+                    [
+                        f"Dependency: {name}",
+                        "Declared license: MIT",
+                        "x" * 400,
+                    ]
+                )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/THIRD-PARTY-NOTICES.txt",
+                ("\n".join(native_notices) + "\n").encode(),
             )
             self.add_bytes(
                 archive,

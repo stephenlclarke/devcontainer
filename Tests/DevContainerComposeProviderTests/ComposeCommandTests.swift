@@ -347,6 +347,17 @@ func `provider rejects unsafe overrides and incompatible version probes`() async
     }
 }
 
+@Test
+func `provider probe enforces its request deadline`() async throws {
+    let fixture = try FakeComposeExecutable(mode: .hang)
+    let provider = try ExecutableComposeProvider(executable: fixture.executable)
+    let context = RuntimeRequestContext(deadline: Date().addingTimeInterval(0.1))
+
+    await #expect(throws: DevContainerError.self) {
+        _ = try await provider.descriptor(context: context)
+    }
+}
+
 private struct FakeComposeExecutable {
     enum Mode: String {
         case valid
@@ -355,6 +366,7 @@ private struct FakeComposeExecutable {
         case invalidVersion
         case invalidJSON
         case failure
+        case hang
     }
 
     let root: URL
@@ -421,6 +433,9 @@ private struct FakeComposeExecutable {
             failure)
               printf '%s' 'probe-failed' >&2
               exit 23
+              ;;
+            hang)
+              while :; do sleep 60; done
               ;;
           esac
         else

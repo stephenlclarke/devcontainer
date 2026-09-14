@@ -51,20 +51,25 @@ public extension AppleContainerRuntime {
             ? terminalProcess(arguments)
             : process(arguments)
         let exitRegistration = UUID()
-        try await performAttachedContainerStart(
-            requestedID: id,
-            runtimeID: resolved,
-            context: context,
-            exitRegistration: exitRegistration,
-            session: session
-        )
-        return TrackedAppleProcessSession(session: session) { [weak self] exitCode in
+        containerExitTasks[resolved]?.cancel()
+        containerExitTasks.removeValue(forKey: resolved)
+        containerExitRegistrations[resolved] = exitRegistration
+        containerExits.removeValue(forKey: resolved)
+        let tracked = TrackedAppleProcessSession(session: session) { [weak self] exitCode in
             await self?.handleContainerExit(
                 ContainerExit(code: exitCode, finishedAt: Date()),
                 id: resolved,
                 registration: exitRegistration
             )
         }
+        try await performAttachedContainerStart(
+            requestedID: id,
+            runtimeID: resolved,
+            context: context,
+            exitRegistration: exitRegistration,
+            session: tracked
+        )
+        return tracked
     }
 
     func performAttachedContainerStart(
@@ -74,17 +79,14 @@ public extension AppleContainerRuntime {
         exitRegistration: UUID,
         session: any RuntimeProcessSession
     ) async throws {
-        containerExitTasks[runtimeID]?.cancel()
-        containerExitTasks.removeValue(forKey: runtimeID)
-        containerExitRegistrations[runtimeID] = exitRegistration
-        containerExits.removeValue(forKey: runtimeID)
         let registration = UUID()
         let task = Task {
             try await self.finishContainerStart(
                 requestedID: requestedID,
                 runtimeID: runtimeID,
                 context: context,
-                processGeneration: exitRegistration
+                processGeneration: exitRegistration,
+                recordBeforeWait: false
             )
         }
         containerStartOperations[runtimeID] = ContainerStartOperation(

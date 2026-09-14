@@ -346,15 +346,32 @@ public final class UnixSocketDockerTransport:
                 message: collector.errorMessage
             )
         }
+        var bufferedInput: DockerHijackInputCompletion?
         if let inputFileDescriptor {
             try streamInput(
                 from: inputFileDescriptor,
                 to: descriptor
             )
         } else {
-            try finishHijackInput(input, to: descriptor)
+            let writerDescriptor = Darwin.dup(descriptor)
+            guard writerDescriptor >= 0 else { throw Self.posixError() }
+            let completion = DockerHijackInputCompletion()
+            bufferedInput = completion
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                defer { Darwin.close(writerDescriptor) }
+                completion.store(Result {
+                    try finishHijackInput(input, to: writerDescriptor)
+                })
+            }
         }
-        try reader.readUntilEOF(collector.accept)
+        do {
+            try reader.readUntilEOF(collector.accept)
+        } catch {
+            _ = Darwin.shutdown(descriptor, SHUT_RDWR)
+            _ = bufferedInput?.load()
+            throw error
+        }
+        try bufferedInput?.load().get()
         return DockerHTTPResponse(
             status: responseHead.status,
             headers: responseHead.headers,
@@ -557,6 +574,34 @@ public final class UnixSocketDockerTransport:
 
     private static func posixError() -> POSIXError {
         POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
+private final class DockerHijackInputCompletion: @unchecked Sendable {
+    private let group = DispatchGroup()
+    private let lock = NSLock()
+    private var result: Result<Void, any Error>?
+
+    init() {
+        group.enter()
+    }
+
+    func store(_ result: Result<Void, any Error>) {
+        lock.withLock {
+            self.result = result
+        }
+        group.leave()
+    }
+
+    func load() -> Result<Void, any Error> {
+        group.wait()
+        return lock.withLock {
+            result ?? .failure(
+                DockerHTTPClientError.invalidResponse(
+                    "hijack input completed without a result"
+                )
+            )
+        }
     }
 }
 

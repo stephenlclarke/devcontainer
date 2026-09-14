@@ -95,6 +95,27 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `build archive cleans before interpreting ignore negation`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-negation-clean-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try Data("local-secret\n".utf8).write(to: root.appendingPathComponent(".env"))
+        try Data("!decoy/../.env\n".utf8).write(
+            to: root.appendingPathComponent(".dockerignore")
+        )
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(entries.contains("Dockerfile"))
+        #expect(entries.contains(".dockerignore"))
+        #expect(!entries.contains(".env"))
+    }
+
+    @Test
     func `external Dockerfile basename cannot inject tar options`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-external-file-\(UUID().uuidString)")
