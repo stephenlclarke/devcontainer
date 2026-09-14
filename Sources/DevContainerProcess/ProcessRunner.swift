@@ -84,7 +84,8 @@ public enum ProcessRunner {
         environment: [String: String],
         workingDirectory: URL? = nil,
         input: Data? = nil,
-        maximumOutputBytes: Int? = nil
+        maximumOutputBytes: Int? = nil,
+        standardOutputFile: URL? = nil
     ) async throws -> CapturedProcessResult {
         if let maximumOutputBytes {
             precondition(maximumOutputBytes >= 0)
@@ -92,7 +93,8 @@ public enum ProcessRunner {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
         let standardInput = input.map { _ in Pipe() }
-        let standardOutput = Pipe()
+        let standardOutput = standardOutputFile == nil ? Pipe() : nil
+        let outputFile = try standardOutputFile.map(FileHandle.init(forWritingTo:))
         let standardError = Pipe()
         var command = try configuredCommand(
             executable: executable,
@@ -101,13 +103,15 @@ public enum ProcessRunner {
             workingDirectory: workingDirectory
         )
         command.stdin = standardInput?.fileHandleForReading
-        command.stdout = standardOutput.fileHandleForWriting
+        command.stdout = outputFile ?? standardOutput?.fileHandleForWriting
         command.stderr = standardError.fileHandleForWriting
         let termination = OwnedProcessTermination()
-        let outputTask = drain(
-            standardOutput.fileHandleForReading,
-            maximumBytes: maximumOutputBytes
-        )
+        let outputTask = standardOutput.map {
+            drain(
+                $0.fileHandleForReading,
+                maximumBytes: maximumOutputBytes
+            )
+        }
         let errorTask = drain(
             standardError.fileHandleForReading,
             maximumBytes: maximumOutputBytes
@@ -116,14 +120,16 @@ public enum ProcessRunner {
             try command.start()
             termination.didLaunch(processGroup: command.pid)
             try? standardInput?.fileHandleForReading.close()
-            try? standardOutput.fileHandleForWriting.close()
+            try? standardOutput?.fileHandleForWriting.close()
+            try? outputFile?.close()
             try? standardError.fileHandleForWriting.close()
         } catch {
             try? standardInput?.fileHandleForReading.close()
             try? standardInput?.fileHandleForWriting.close()
-            try? standardOutput.fileHandleForWriting.close()
+            try? standardOutput?.fileHandleForWriting.close()
+            try? outputFile?.close()
             try? standardError.fileHandleForWriting.close()
-            _ = await outputTask.value
+            _ = await outputTask?.value
             _ = await errorTask.value
             throw error
         }
@@ -147,7 +153,7 @@ public enum ProcessRunner {
                 try await inputTask.value
                 let exitCode = try await waitTask.value
                 termination.didExit()
-                let output = await outputTask.value
+                let output = await outputTask?.value ?? (data: Data(), omitted: 0)
                 let error = await errorTask.value
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
@@ -162,7 +168,7 @@ public enum ProcessRunner {
                 termination.cancel()
                 _ = try? await waitTask.value
                 termination.didExit()
-                _ = await outputTask.value
+                _ = await outputTask?.value
                 _ = await errorTask.value
                 throw error
             }

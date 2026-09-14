@@ -41,6 +41,30 @@ struct ProcessRunnerTests {
     }
 
     @Test
+    func `captured runner writes standard output directly to a file`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-runner-output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = root.appendingPathComponent("output.bin")
+        try Data().write(to: output, options: .withoutOverwriting)
+
+        let result = try await ProcessRunner.captured(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "yes o | head -c 2097152; printf error >&2"],
+            environment: [:],
+            maximumOutputBytes: 4096,
+            standardOutputFile: output
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.standardOutput.isEmpty)
+        #expect(result.omittedStandardOutputBytes == 0)
+        #expect(result.standardError == Data("error".utf8))
+        #expect(try Data(contentsOf: output).count == 2_097_152)
+    }
+
+    @Test
     func `captured runner cancels and reaps a TERM ignoring process tree`() async throws {
         let pidFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-runner-group-\(UUID().uuidString)")

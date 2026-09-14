@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import DevContainerModel
+import DevContainerProcess
 import Foundation
 
 enum AppleCommandRunner {
@@ -62,6 +63,22 @@ enum AppleCommandRunner {
         environment: [String: String],
         options: Options
     ) async throws -> AppleCommandResult {
+        if let standardOutputFile = options.standardOutputFile {
+            let result = try await ProcessRunner.captured(
+                executable: executable,
+                arguments: arguments,
+                environment: environment,
+                workingDirectory: options.workingDirectory,
+                input: options.input,
+                maximumOutputBytes: options.maximumStandardErrorBytes,
+                standardOutputFile: standardOutputFile
+            )
+            return AppleCommandResult(
+                standardOutput: Data(),
+                standardError: result.standardError,
+                exitCode: result.exitCode
+            )
+        }
         let session: AppleProcessSession
         do {
             session = try AppleProcessSession(
@@ -84,20 +101,8 @@ enum AppleCommandRunner {
         session: AppleProcessSession,
         options: Options
     ) async throws -> AppleCommandResult {
-        let outputFile: FileHandle?
-        do {
-            outputFile = try options.standardOutputFile.map(FileHandle.init(forWritingTo:))
-        } catch {
-            session.cancel()
-            throw error
-        }
-        defer { try? outputFile?.close() }
-        return try await withTaskCancellationHandler {
-            try await captureFrames(
-                session: session,
-                options: options,
-                outputFile: outputFile
-            )
+        try await withTaskCancellationHandler {
+            try await captureFrames(session: session, options: options)
         } onCancel: {
             session.cancel()
         }
@@ -105,8 +110,7 @@ enum AppleCommandRunner {
 
     private static func captureFrames(
         session: AppleProcessSession,
-        options: Options,
-        outputFile: FileHandle?
+        options: Options
     ) async throws -> AppleCommandResult {
         if let input = options.input {
             try await session.write(input)
@@ -118,11 +122,11 @@ enum AppleCommandRunner {
             try Task.checkCancellation()
             switch frame.channel {
             case .standardOutput:
-                try await captureStandardOutput(
+                try append(
                     frame.data,
-                    accumulated: &standardOutput,
-                    file: outputFile,
+                    to: &standardOutput,
                     maximumBytes: options.maximumStandardOutputBytes,
+                    stream: "standard output",
                     session: session
                 )
             case .standardError:
@@ -142,44 +146,6 @@ enum AppleCommandRunner {
             standardError: standardError,
             exitCode: session.wait()
         )
-    }
-
-    private static func captureStandardOutput(
-        _ data: Data,
-        accumulated: inout Data,
-        file: FileHandle?,
-        maximumBytes: Int?,
-        session: AppleProcessSession
-    ) async throws {
-        guard let file else {
-            try append(
-                data,
-                to: &accumulated,
-                maximumBytes: maximumBytes,
-                stream: "standard output",
-                session: session
-            )
-            return
-        }
-        do {
-            try await write(data, to: file)
-        } catch {
-            session.cancel()
-            throw error
-        }
-    }
-
-    private static func write(_ data: Data, to file: FileHandle) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                do {
-                    try file.write(contentsOf: data)
-                    continuation.resume()
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
     }
 
     private static func append(
