@@ -315,6 +315,40 @@ struct DevContainerComposeCommandTests {
     }
 
     @Test
+    func `volume reconciliation cannot outlive the mutation deadline`() async throws {
+        let projectName = "volume-deadline-project"
+        let fixture = try ComposeCommandFixture(projectName: "ignored")
+        var environment = fixture.environment
+        environment["HANG_VOLUME_PROBE"] = "1"
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        #expect(
+            try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", projectName, "down"],
+                environment: environment,
+                mutationTimeout: 2
+            ) == 0
+        )
+
+        #expect(started.duration(to: clock.now) < .seconds(5))
+        #expect(try fixture.invocations() == [
+            "--project-name \(projectName) down",
+            "--project-name \(projectName) volumes --quiet"
+        ])
+        let recordedProcessID = try fixture.mutationProcessID()
+        let processID = try #require(recordedProcessID)
+        let processStatus = Darwin.kill(processID, 0)
+        let processError = errno
+        #expect(processStatus == -1)
+        #expect(processError == ESRCH)
+
+        let store = try SQLiteStateStore(path: fixture.state)
+        let project = ProjectKey(rawValue: "\(getuid()):\(projectName)")
+        #expect(try await store.project(key: project)?.provider == .stock)
+    }
+
+    @Test
     func `successful project removal releases the provider claim`() async throws {
         for arguments in [
             ["--project-name", "down-project", "down"],
@@ -457,6 +491,10 @@ private final class ComposeCommandFixture {
             printf '%s\n' '{"name":"\(projectName)"}'
             ;;
           *" volumes --quiet "*)
+            if [ "${HANG_VOLUME_PROBE-0}" = 1 ]; then
+              printf '%s\n' "$$" > "$MUTATION_PROCESS_ID_LOG"
+              while :; do sleep 60; done
+            fi
             if [ -n "${LIVE_VOLUMES-}" ]; then
               printf '%s\n' "$LIVE_VOLUMES"
             fi

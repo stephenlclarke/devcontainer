@@ -136,7 +136,8 @@ enum DevContainerComposeCommand {
                 envelope: envelope,
                 provider: provider,
                 claim: claim,
-                execution: execution
+                execution: execution,
+                context: mutationContext
             )
         }
         return result
@@ -166,11 +167,13 @@ enum DevContainerComposeCommand {
         envelope: ComposeCommandEnvelope,
         provider _: ComposeProviderKind,
         claim: ComposeProjectClaim,
-        execution: ComposeExecutionEnvironment
+        execution: ComposeExecutionEnvironment,
+        context: RuntimeRequestContext
     ) async throws {
         guard let liveVolumes = await liveContainerComposeVolumes(
             envelope: envelope,
-            execution: execution
+            execution: execution,
+            context: context
         ) else {
             return
         }
@@ -186,17 +189,24 @@ enum DevContainerComposeCommand {
 
     private static func liveContainerComposeVolumes(
         envelope: ComposeCommandEnvelope,
-        execution: ComposeExecutionEnvironment
+        execution: ComposeExecutionEnvironment,
+        context: RuntimeRequestContext
     ) async -> Set<String>? {
         let child = childCommand(
             arguments: envelope.projectArguments + ["volumes", "--quiet"],
             execution: execution
         )
-        guard let result = try? await executeCaptured(
-            executable: child.executable,
-            arguments: child.arguments,
-            environment: child.environment
-        ), result.exitCode == 0 else {
+        let result = try? await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try context.checkActive()
+                return try await executeCaptured(
+                    executable: child.executable,
+                    arguments: child.arguments,
+                    environment: child.environment
+                )
+            }
+        }
+        guard let result, result.exitCode == 0 else {
             return nil
         }
         guard let output = String(bytes: result.standardOutput, encoding: .utf8) else {
