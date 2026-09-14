@@ -19,8 +19,13 @@ import Foundation
 enum DockerBuildContextTraversal {
     static func pruneExcludedDirectory(
         _ url: URL,
+        path: String,
+        preserving requiredPath: String?,
         in enumerator: FileManager.DirectoryEnumerator?
     ) {
+        guard requiredPath?.hasPrefix(path + "/") != true else {
+            return
+        }
         let values = try? url.resourceValues(
             forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
         )

@@ -36,7 +36,12 @@ struct DockerBuildContextTraversalTests {
 
         let first = try #require(enumerator.nextObject() as? URL)
         #expect(first.lastPathComponent == "ignored")
-        DockerBuildContextTraversal.pruneExcludedDirectory(first, in: enumerator)
+        DockerBuildContextTraversal.pruneExcludedDirectory(
+            first,
+            path: "ignored",
+            preserving: nil,
+            in: enumerator
+        )
 
         #expect(enumerator.nextObject() == nil)
     }
@@ -64,6 +69,27 @@ struct DockerBuildContextTraversalTests {
         )
 
         #expect(!entries.contains(where: { $0.hasPrefix("Generated.bundle") }))
+    }
+
+    @Test
+    func `build archive preserves a requested Dockerfile inside an ignored directory`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-required-file-\(UUID().uuidString)")
+        let ignored = root.appendingPathComponent("ignored")
+        try FileManager.default.createDirectory(at: ignored, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: ignored.appendingPathComponent("Dockerfile"))
+        try Data("secret\n".utf8).write(to: ignored.appendingPathComponent("secret.txt"))
+        try Data("ignored\n".utf8).write(to: root.appendingPathComponent(".dockerignore"))
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(
+                arguments: ["--file", ignored.appendingPathComponent("Dockerfile").path, root.path]
+            ).archive()
+        )
+
+        #expect(entries.contains("ignored/Dockerfile"))
+        #expect(!entries.contains("ignored/secret.txt"))
     }
 
     private func archiveEntries(_ archive: Data) throws -> Set<String> {

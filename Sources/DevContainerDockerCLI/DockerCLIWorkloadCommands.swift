@@ -482,7 +482,9 @@ struct DockerBuildOptions: Equatable {
                 continue
             }
             guard try matcher.includes(path) else {
-                DockerBuildContextTraversal.pruneExcludedDirectory(url, in: enumerator)
+                DockerBuildContextTraversal.pruneExcludedDirectory(
+                    url, path: path, preserving: dockerfilePath, in: enumerator
+                )
                 continue
             }
             entries.append(path)
