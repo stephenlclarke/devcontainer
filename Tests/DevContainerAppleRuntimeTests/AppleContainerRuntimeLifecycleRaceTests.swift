@@ -105,6 +105,21 @@ struct AppleContainerRuntimeLifecycleRaceTests {
     }
 
     @Test
+    func `automatic removal scheduling does not wait for native inventory`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        try fixture.setMode("slow-list")
+        let runtime = try fixture.runtime()
+        let deadline = ContinuousClock.now + .milliseconds(200)
+
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+
+        #expect(ContinuousClock.now < deadline)
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+        #expect(try fixture.log().contains("delete --force fixture"))
+    }
+
+    @Test
     func `automatic removal coalesces native and Docker aliases`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setState("stopped")
@@ -274,7 +289,9 @@ private extension AppleContainerRuntime {
     }
 
     func waitForTestAutomaticRemoval(id: String) async {
-        await automaticRemovalTasks[id]?.value
+        while let task = automaticRemovalTasks[id] {
+            await task.value
+        }
     }
 
     func registerTestExitTask(

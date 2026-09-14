@@ -277,7 +277,7 @@ public extension AppleContainerRuntime {
             autoRemoveCreatedAt = metadata.createdAt
         }
         if autoRemove {
-            await scheduleAutomaticRemoval(
+            scheduleAutomaticRemoval(
                 id: id,
                 expectedCreatedAt: autoRemoveCreatedAt
             )
@@ -711,7 +711,7 @@ public extension AppleContainerRuntime {
                     )
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        await scheduleAutomaticRemoval(
+                        scheduleAutomaticRemoval(
                             id: id,
                             expectedCreatedAt: snapshot.createdAt
                         )
@@ -732,7 +732,7 @@ public extension AppleContainerRuntime {
                     let exitCode = snapshot.exitCode ?? 0
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        await scheduleAutomaticRemoval(
+                        scheduleAutomaticRemoval(
                             id: id,
                             expectedCreatedAt: snapshot.createdAt
                         )

@@ -21,34 +21,17 @@ extension AppleContainerRuntime {
     func scheduleAutomaticRemoval(
         id: String,
         expectedCreatedAt suppliedCreatedAt: Date? = nil
-    ) async {
+    ) {
         // Preserve the caller's known incarnation before inspection can discard
         // stale request metadata for a same-name replacement.
-        let preservedCreatedAt = suppliedCreatedAt ?? requestedContainers[id]?.createdAt
-        let snapshot = try? await automaticRemovalSnapshot(id: id)
-        let initialIdentifiers = snapshot.map {
-            Set([
-                id,
-                $0.runtimeID.rawValue,
-                $0.dockerID.rawValue,
-                $0.spec.name
-            ])
-        } ?? [id]
-        guard initialIdentifiers.allSatisfy({
-            automaticRemovalRegistrations[$0] == nil
-        }) else {
+        let expectedCreatedAt = suppliedCreatedAt ?? requestedContainers[id]?.createdAt
+        guard automaticRemovalRegistrations[id] == nil else {
             return
         }
-        let canonicalID = snapshot?.runtimeID.rawValue ?? id
         let registration = UUID()
-        let expectedCreatedAt = preservedCreatedAt
-            ?? initialIdentifiers.lazy.compactMap { self.requestedContainers[$0]?.createdAt }.first
-            ?? snapshot?.createdAt
-        for identifier in initialIdentifiers {
-            automaticRemovalRegistrations[identifier] = registration
-        }
+        automaticRemovalRegistrations[id] = registration
         let task = Task {
-            var identifiers = initialIdentifiers
+            var identifiers: Set<String> = [id]
             defer {
                 finishAutomaticRemoval(
                     registration: registration,
@@ -59,15 +42,13 @@ extension AppleContainerRuntime {
             // become visible before deleting a stable native container name.
             try? await Task.sleep(for: .milliseconds(100))
             await performAutomaticRemoval(
-                id: canonicalID,
+                id: id,
                 registration: registration,
                 expectedCreatedAt: expectedCreatedAt,
                 identifiers: &identifiers
             )
         }
-        for identifier in initialIdentifiers {
-            automaticRemovalTasks[identifier] = task
-        }
+        automaticRemovalTasks[id] = task
     }
 
     private func finishAutomaticRemoval(
@@ -113,16 +94,17 @@ extension AppleContainerRuntime {
                     return
                 }
                 identifiers.formUnion(observedIdentifiers)
-                guard canPerformAutomaticRemoval(
-                    registration: registration,
-                    identifiers: identifiers
-                ) else {
+                guard automaticRemovalRegistrations[id] == registration,
+                      canClaimAutomaticRemoval(identifiers: identifiers)
+                else {
                     return
                 }
+                let task = automaticRemovalTasks[id]
                 for identifier in identifiers {
                     automaticRemovalRegistrations[identifier] = registration
+                    automaticRemovalTasks[identifier] = task
                 }
-                try await removeAutomatically(id: id)
+                try await removeAutomatically(id: snapshot.runtimeID.rawValue)
                 return
             } catch let error as DevContainerError where error.code == .notFound {
                 // The native runtime already completed the requested removal.
@@ -169,6 +151,13 @@ extension AppleContainerRuntime {
                 && containerExitRegistrations[$0] == nil
                 && (automaticRemovalRegistrations[$0] == nil
                     || automaticRemovalRegistrations[$0] == registration)
+        }
+    }
+
+    private func canClaimAutomaticRemoval(identifiers: Set<String>) -> Bool {
+        identifiers.allSatisfy {
+            containerStartOperations[$0] == nil
+                && containerExitRegistrations[$0] == nil
         }
     }
 
