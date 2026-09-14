@@ -67,6 +67,12 @@ acquire_container_runtime_lock() {
         lock_acquired=1
       fi
       ;;
+    *)
+      printf 'unsupported Container runtime lock backend: %s\n' \
+        "${lock_backend}" >&2
+      exec 9>&-
+      return 2
+      ;;
   esac
   if [[ "${lock_acquired}" != "1" ]]; then
     printf 'timed out after %ss waiting for macOS Container runtime lock: %s\n' \
