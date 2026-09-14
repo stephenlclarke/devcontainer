@@ -515,6 +515,81 @@ struct DockerCLITransferRegressionTests {
         #expect(try Data(contentsOf: destination.appendingPathComponent("large.bin")) == payload)
     }
 
+    @Test
+    func `copy from container rejects a missing destination parent`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-missing-parent-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("missing/renamed.txt")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("wanted\n".utf8).write(to: source.appendingPathComponent("value.txt"))
+        let archive = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", "-", "-C", source.path, "value.txt"],
+            environment: ["PATH": "/usr/bin:/bin"]
+        ).standardOutput
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "value.txt",
+                        mode: 0o644
+                    )
+                ],
+                body: archive
+            )
+        ])
+
+        #expect(throws: DockerCLIError.self) {
+            _ = try DockerCLIApplication(transport: transport).run(arguments: [
+                "cp", "box:/tmp/value.txt", destination.path
+            ])
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.deletingLastPathComponent().path))
+    }
+
+    @Test
+    func `copy from container preserves a renamed dangling symbolic link`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-remote-symlink-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("renamed")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createSymbolicLink(
+            atPath: source.appendingPathComponent("dangling").path,
+            withDestinationPath: "missing"
+        )
+        let archive = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", "-", "-C", source.path, "dangling"],
+            environment: ["PATH": "/usr/bin:/bin"]
+        ).standardOutput
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "dangling",
+                        mode: (1 << 27) | 0o777,
+                        linkTarget: "missing"
+                    )
+                ],
+                body: archive
+            )
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", "box:/tmp/dangling", destination.path
+        ]).exitCode == 0)
+        var status = Darwin.stat()
+        #expect(lstat(destination.path, &status) == 0)
+        #expect(status.st_mode & S_IFMT == S_IFLNK)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: destination.path) == "missing")
+    }
+
     private func archiveEntries(_ archive: Data) throws -> Set<String> {
         let result = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),

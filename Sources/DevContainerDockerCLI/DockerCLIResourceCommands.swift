@@ -455,7 +455,15 @@ extension DockerCLIApplication {
         }
 
         let parent = destination.deletingLastPathComponent()
-        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        var parentIsDirectory = ObjCBool(false)
+        guard fileManager.fileExists(
+            atPath: parent.path,
+            isDirectory: &parentIsDirectory
+        ), parentIsDirectory.boolValue else {
+            throw DockerCLIError.invalidArguments(
+                "cp destination parent directory does not exist: \(local)"
+            )
+        }
         let staging = transferRoot.appendingPathComponent(
             "extracted",
             isDirectory: true
@@ -463,7 +471,8 @@ extension DockerCLIApplication {
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
         try Self.extractArchive(archive, into: staging)
         let source = staging.appendingPathComponent(stat.name)
-        guard fileManager.fileExists(atPath: source.path) else {
+        var sourceStatus = Darwin.stat()
+        guard lstat(source.path, &sourceStatus) == 0 else {
             throw DockerCLIError.malformedResponse(
                 "container archive does not contain \(stat.name)"
             )
