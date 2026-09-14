@@ -288,10 +288,12 @@ devcontainer plugin register
 container devcontainer doctor
 ```
 
-Beginning with 1.0.2, the stable formula installs this project, Node.js, and a
-pinned stock-profile native Compose provider in the same archive. It does not
-install Docker software, Colima, an external Compose formula, or a container
-runtime. The published legacy 1.0.1 formula is excluded from this statement.
+Beginning with 1.0.2, the stable formula installs Node.js as its sole Homebrew
+runtime dependency and unpacks this project, the pinned official CLI, and a
+stock-profile native Compose provider from the same signed archive. It does
+not install Docker software, Colima, an external Compose formula, or a
+container runtime. The published legacy 1.0.1 formula is excluded from this
+statement.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
 See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
