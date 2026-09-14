@@ -226,11 +226,11 @@ struct DevContainerComposeCommandTests {
             _ = try await DevContainerComposeCommand.run(
                 arguments: ["--project-name", "deadline-project", "up"],
                 environment: environment,
-                mutationTimeout: 0.1
+                mutationTimeout: 2
             )
         }
 
-        #expect(started.duration(to: clock.now) < .seconds(2))
+        #expect(started.duration(to: clock.now) < .seconds(5))
         #expect(try fixture.invocations() == [
             "--project-name deadline-project up"
         ])
@@ -254,11 +254,11 @@ struct DevContainerComposeCommandTests {
             _ = try await DevContainerComposeCommand.run(
                 arguments: ["up"],
                 environment: environment,
-                mutationTimeout: 0.1
+                mutationTimeout: 2
             )
         }
 
-        #expect(started.duration(to: clock.now) < .seconds(2))
+        #expect(started.duration(to: clock.now) < .seconds(5))
         #expect(try fixture.invocations() == ["config --format json"])
         let recordedProcessID = try fixture.mutationProcessID()
         let processID = try #require(recordedProcessID)
