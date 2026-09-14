@@ -70,7 +70,11 @@ SonarCloud reported 91.2% coverage, zero bugs, zero vulnerabilities, zero code s
 
 ### Functional
 
-The current release evidence is strong within its declared boundary: 18 CLI fixtures and one real VS Code fixture pass with zero recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) still records ten confirmed non-conformances and several partial or unverified Development Containers properties. The project therefore has bounded parity, not full parity.
+The reviewed baseline's release evidence was strong within its declared
+boundary: 18 CLI fixtures and one real VS Code fixture passed with zero
+recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) records the
+current non-conformances and partial or unverified Development Containers
+properties. The project therefore has bounded parity, not full parity.
 
 ### Performance at the reviewed commit
 
@@ -83,7 +87,11 @@ The exact reviewed `main` run produced:
 
 The C01 Compose service fixture was `4.350x` Docker on stock Apple and `2.704x` on the provider. Both results exceed the current `2.50x` investigation trigger. The aggregate CLI and VS Code results do not cross that trigger, but all four candidate ratios above `1.00x` miss the comparable-or-better objective.
 
-The largest current stock-Apple absolute overheads were C01 Compose service (+5.383s), D05 Features (+5.037s), D07 reuse and cleanup (+3.691s), C04 Compose lifecycle (+3.525s), and E06 network and volume handling (+2.907s). The provider's largest overheads were D05 (+6.708s), C04 (+3.717s), D07 (+3.577s), C02 Compose dependencies (+3.382s), and E06 (+3.055s).
+The reviewed baseline's largest stock-Apple absolute overheads were C01 Compose
+service (+5.383s), D05 Features (+5.037s), D07 reuse and cleanup (+3.691s), C04
+Compose lifecycle (+3.525s), and E06 network and volume handling (+2.907s).
+The provider's largest baseline overheads were D05 (+6.708s), C04 (+3.717s),
+D07 (+3.577s), C02 Compose dependencies (+3.382s), and E06 (+3.055s).
 
 The PR 10 performance work is integrated in the current candidate with two
 correctness constraints added during review: enhanced distributions retain
@@ -497,7 +505,10 @@ Engine negotiation and several build/resource scenarios are already close to or 
 
 ### TEST-001: Fixture coverage is not derived from the specification
 
-**Evidence:** the manifest has 18 CLI fixtures and one VS Code fixture, while the conformance ledger contains multiple partial and unverified properties. There is no scheduled schema-drift comparison.
+**Historical evidence:** the reviewed manifest had 18 CLI fixtures and one VS
+Code fixture, while the conformance ledger contained multiple partial and
+unverified properties. The current implementation status above records the
+subsequent schema-derived coverage map and scheduled drift detection.
 
 **Solution design:** generate a versioned coverage map from the pinned Dev Containers schema, reference documentation, CLI-emitted Docker requests, and Compose property surface. Fail validation if any property lacks a certified fixture, an explicit blocker, and an owner. A scheduled job should report upstream additions without changing pins automatically.
 
