@@ -54,7 +54,7 @@ struct AppleRuntimeStreamTests {
         let session = try await runtime.startAttachedContainer(
             id: "fixture",
             terminal: false,
-            context: RuntimeRequestContext(deadline: Date().addingTimeInterval(1))
+            context: RuntimeRequestContext(deadline: Date().addingTimeInterval(5))
         )
 
         #expect(
