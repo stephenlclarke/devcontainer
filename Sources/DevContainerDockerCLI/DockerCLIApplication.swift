@@ -581,6 +581,37 @@ public final class DockerCLIApplication: @unchecked Sendable {
         return DockerCLIResult(standardOutput: captured)
     }
 
+    func streamFileRequest(
+        _ method: String,
+        _ target: String,
+        bodyFile: URL,
+        bodyLength: UInt64,
+        maximumBodyBytes: Int? = 64 * 1024 * 1024,
+        streamingOutput: ((Data, Bool) throws -> Void)?
+    ) throws -> DockerCLIResult {
+        guard let transport = transport as? any DockerEngineFileUploadTransport else {
+            throw DockerCLIError.unsupported("file-backed build upload transport")
+        }
+        var captured = Data()
+        _ = try transport.send(
+            DockerHTTPRequest(
+                method: method,
+                target: target,
+                headers: ["Content-Type": "application/x-tar"]
+            ),
+            bodyFile: bodyFile,
+            bodyLength: bodyLength,
+            maximumBodyBytes: maximumBodyBytes
+        ) { chunk in
+            if let streamingOutput {
+                try streamingOutput(chunk, false)
+            } else {
+                captured.append(chunk)
+            }
+        }
+        return DockerCLIResult(standardOutput: captured)
+    }
+
     private static func stripGlobalOptions(_ arguments: [String]) throws -> [String] {
         var result = arguments
         let index = 0

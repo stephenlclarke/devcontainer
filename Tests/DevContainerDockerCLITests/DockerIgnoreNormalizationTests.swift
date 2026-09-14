@@ -48,6 +48,35 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `escaped class hyphens remain literals`() throws {
+        let matcher = try DockerIgnoreMatcher(contents: "[z\\-.]env\n")
+
+        #expect(!matcher.includes("zenv"))
+        #expect(!matcher.includes("-env"))
+        #expect(!matcher.includes(".env"))
+        #expect(matcher.includes("aenv"))
+    }
+
+    @Test
+    func `escaped class hyphens exclude matching secrets from build archives`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-ignore-hyphen-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
+        try Data("secret\n".utf8).write(to: root.appendingPathComponent(".env"))
+        try Data("public\n".utf8).write(to: root.appendingPathComponent("aenv"))
+        try Data("[z\\-.]env\n".utf8).write(to: root.appendingPathComponent(".dockerignore"))
+
+        let entries = try archiveEntries(
+            DockerBuildOptions(arguments: [root.path]).archive()
+        )
+
+        #expect(!entries.contains(".env"))
+        #expect(entries.contains("aenv"))
+    }
+
+    @Test
     func `build archive honors Go compatible Docker ignore character classes`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-ignore-class-\(UUID().uuidString)")

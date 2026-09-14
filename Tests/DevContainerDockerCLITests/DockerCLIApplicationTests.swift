@@ -827,13 +827,7 @@ struct DockerCLIApplicationTests {
     }
 
     @Test
-    func `streams foreground run build and terminal exec output`() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("docker-stream-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        try Data("FROM scratch\n".utf8).write(to: root.appendingPathComponent("Dockerfile"))
-        defer { try? FileManager.default.removeItem(at: root) }
-
+    func `streams foreground run and terminal exec output`() throws {
         let transport = StubTransport([
             .json(["Id": "foreground"], status: 201),
             .init(status: 204, target: "/containers/foreground/start"),
@@ -846,7 +840,6 @@ struct DockerCLIApplicationTests {
                 body: frame(channel: 1, text: "logs"),
                 target: "/containers/foreground/logs?follow=true&stdout=true&stderr=true"
             ),
-            .init(status: 200, body: Data("build-output".utf8)),
             .json(["Id": "terminal-exec"], status: 201),
             .init(status: 101, body: Data("terminal-output".utf8)),
             .json(["ExitCode": 0])
@@ -862,13 +855,6 @@ struct DockerCLIApplicationTests {
         ].compactMap { foregroundTargets.firstIndex(of: $0) }
         #expect(order.count == 3)
         #expect(order == order.sorted())
-
-        var streamed = Data()
-        let build = try application.run(arguments: ["build", root.path]) { data, _ in
-            streamed.append(data)
-        }
-        #expect(build.standardOutput.isEmpty)
-        #expect(streamed == Data("build-output".utf8))
 
         let terminal = try application.run(arguments: ["exec", "-t", "box", "printf", "ok"])
         #expect(terminal.standardOutput == Data("terminal-output".utf8))

@@ -51,6 +51,7 @@ public struct DockerHTTPResponse: Equatable, Sendable {
 
 public enum DockerHTTPClientError: Error, Equatable, CustomStringConvertible {
     case invalidSocketPath(String)
+    case invalidRequestBody(String)
     case unsafeSocket(String)
     case invalidResponse(String)
     case responseTooLarge(Int)
@@ -60,6 +61,8 @@ public enum DockerHTTPClientError: Error, Equatable, CustomStringConvertible {
         switch self {
         case let .invalidSocketPath(path):
             "invalid local engine socket path: \(path)"
+        case let .invalidRequestBody(message):
+            "invalid engine request body: \(message)"
         case let .unsafeSocket(message):
             "unsafe local engine socket: \(message)"
         case let .invalidResponse(message):
@@ -95,6 +98,16 @@ public protocol DockerEngineRequestNotificationTransport: DockerEngineTransport 
         _ request: DockerHTTPRequest,
         maximumBodyBytes: Int?,
         onRequestSent: @escaping @Sendable () -> Void,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse
+}
+
+public protocol DockerEngineFileUploadTransport: DockerEngineTransport {
+    func send(
+        _ request: DockerHTTPRequest,
+        bodyFile: URL,
+        bodyLength: UInt64,
+        maximumBodyBytes: Int?,
         onBody: @escaping (Data) throws -> Void
     ) throws -> DockerHTTPResponse
 }
@@ -151,17 +164,20 @@ public extension DockerEngineRequestNotificationTransport {
 /// Apple-container-backed engine. The identity probe is side-effect free and is
 /// cached for the lifetime of the short-lived adapter process.
 final class DevContainerEngineTransport:
+    DockerEngineFileUploadTransport,
     DockerEngineHijackTransport,
     DockerEngineRequestNotificationTransport,
     @unchecked Sendable
 {
     private let transport: any DockerEngineHijackTransport
+        & DockerEngineFileUploadTransport
         & DockerEngineRequestNotificationTransport
     private let verificationLock = NSLock()
     private var verified = false
 
     init(
         transport: any DockerEngineHijackTransport
+            & DockerEngineFileUploadTransport
             & DockerEngineRequestNotificationTransport
     ) {
         self.transport = transport
@@ -175,6 +191,23 @@ final class DevContainerEngineTransport:
         try verifyEngine()
         return try transport.send(
             request,
+            maximumBodyBytes: maximumBodyBytes,
+            onBody: onBody
+        )
+    }
+
+    func send(
+        _ request: DockerHTTPRequest,
+        bodyFile: URL,
+        bodyLength: UInt64,
+        maximumBodyBytes: Int?,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        try verifyEngine()
+        return try transport.send(
+            request,
+            bodyFile: bodyFile,
+            bodyLength: bodyLength,
             maximumBodyBytes: maximumBodyBytes,
             onBody: onBody
         )
@@ -236,10 +269,25 @@ final class DevContainerEngineTransport:
 }
 
 public final class UnixSocketDockerTransport:
+    DockerEngineFileUploadTransport,
     DockerEngineHijackTransport,
     DockerEngineRequestNotificationTransport,
     @unchecked Sendable
 {
+    private enum RequestBody {
+        case data(Data)
+        case file(URL, length: UInt64)
+
+        var length: UInt64 {
+            switch self {
+            case let .data(data):
+                UInt64(data.count)
+            case let .file(_, length):
+                length
+            }
+        }
+    }
+
     fileprivate static let readSize = 64 * 1024
     private static let maximumHeaderBytes = 64 * 1024
 
@@ -286,9 +334,43 @@ public final class UnixSocketDockerTransport:
         onRequestSent: @escaping @Sendable () -> Void,
         onBody: @escaping (Data) throws -> Void
     ) throws -> DockerHTTPResponse {
+        try sendRequest(
+            request,
+            body: .data(request.body),
+            maximumBodyBytes: maximumBodyBytes,
+            onRequestSent: onRequestSent,
+            onBody: onBody
+        )
+    }
+
+    public func send(
+        _ request: DockerHTTPRequest,
+        bodyFile: URL,
+        bodyLength: UInt64,
+        maximumBodyBytes: Int?,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        try sendRequest(
+            request,
+            body: .file(bodyFile, length: bodyLength),
+            maximumBodyBytes: maximumBodyBytes,
+            onRequestSent: {
+                // File uploads do not coordinate a concurrent follow-up.
+            },
+            onBody: onBody
+        )
+    }
+
+    private func sendRequest(
+        _ request: DockerHTTPRequest,
+        body: RequestBody,
+        maximumBodyBytes: Int?,
+        onRequestSent: @escaping @Sendable () -> Void,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
         let descriptor = try connect()
         defer { Darwin.close(descriptor) }
-        try write(Self.serialized(request), to: descriptor)
+        try writeRequest(request, body: body, to: descriptor)
         onRequestSent()
 
         var reader = SocketReader(descriptor: descriptor)
@@ -337,7 +419,7 @@ public final class UnixSocketDockerTransport:
     ) throws -> DockerHTTPResponse {
         let descriptor = try connect()
         defer { Darwin.close(descriptor) }
-        try write(Self.serialized(request), to: descriptor)
+        try writeRequest(request, body: .data(request.body), to: descriptor)
 
         var reader = SocketReader(descriptor: descriptor)
         let head = try reader.readHead(maximumBytes: Self.maximumHeaderBytes)
@@ -381,6 +463,23 @@ public final class UnixSocketDockerTransport:
             headers: responseHead.headers,
             body: Data()
         )
+    }
+
+    private func writeRequest(
+        _ request: DockerHTTPRequest,
+        body: RequestBody,
+        to descriptor: Int32
+    ) throws {
+        try write(
+            Self.serializedHead(request, bodyLength: body.length),
+            to: descriptor
+        )
+        switch body {
+        case let .data(data):
+            try write(data, to: descriptor)
+        case let .file(file, length):
+            try write(contentsOf: file, expectedLength: length, to: descriptor)
+        }
     }
 
     private func finishHijackInput(_ input: Data?, to descriptor: Int32) throws {
@@ -517,18 +616,19 @@ public final class UnixSocketDockerTransport:
         }
     }
 
-    private static func serialized(_ request: DockerHTTPRequest) -> Data {
+    private static func serializedHead(
+        _ request: DockerHTTPRequest,
+        bodyLength: UInt64
+    ) -> Data {
         var headers = request.headers
         headers["Host"] = headers["Host"] ?? "localhost"
         headers["User-Agent"] = headers["User-Agent"] ?? "devcontainer-docker/1"
-        headers["Content-Length"] = String(request.body.count)
+        headers["Content-Length"] = String(bodyLength)
         headers["Connection"] = headers["Connection"] ?? "close"
         let lines = headers.sorted { $0.key.lowercased() < $1.key.lowercased() }
             .map { "\($0.key): \($0.value)" }
             .joined(separator: "\r\n")
-        var data = Data("\(request.method) \(request.target) HTTP/1.1\r\n\(lines)\r\n\r\n".utf8)
-        data.append(request.body)
-        return data
+        return Data("\(request.method) \(request.target) HTTP/1.1\r\n\(lines)\r\n\r\n".utf8)
     }
 
     private static func parseHead(_ data: Data) throws -> (status: Int, headers: [String: String]) {
@@ -557,22 +657,83 @@ public final class UnixSocketDockerTransport:
         return (status, headers)
     }
 
-    private func write(_ data: Data, to descriptor: Int32) throws {
-        try data.withUnsafeBytes { bytes in
-            guard let base = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.write(
-                    descriptor,
-                    base.advanced(by: offset),
-                    bytes.count - offset
+    private func write(
+        contentsOf file: URL,
+        expectedLength: UInt64,
+        to descriptor: Int32
+    ) throws {
+        let input = file.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard input >= 0 else { throw Self.posixError() }
+        defer { Darwin.close(input) }
+
+        var status = stat()
+        guard fstat(input, &status) == 0 else { throw Self.posixError() }
+        guard status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              status.st_size >= 0,
+              UInt64(status.st_size) == expectedLength
+        else {
+            throw DockerHTTPClientError.invalidRequestBody(
+                "file identity or length changed before upload"
+            )
+        }
+
+        var buffer = [UInt8](repeating: 0, count: Self.readSize)
+        var remaining = expectedLength
+        while remaining > 0 {
+            let requested = Int(min(UInt64(buffer.count), remaining))
+            let count = Darwin.read(input, &buffer, requested)
+            if count == 0 {
+                throw DockerHTTPClientError.invalidRequestBody(
+                    "file length changed during upload"
                 )
-                if count < 0, errno == EINTR {
+            }
+            if count < 0 {
+                if errno == EINTR {
                     continue
                 }
-                guard count > 0 else { throw Self.posixError() }
-                offset += count
+                throw Self.posixError()
             }
+            try buffer.withUnsafeBytes { bytes in
+                try write(
+                    UnsafeRawBufferPointer(
+                        start: bytes.baseAddress,
+                        count: count
+                    ),
+                    to: descriptor
+                )
+            }
+            remaining -= UInt64(count)
+        }
+    }
+
+    private func write(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { bytes in
+            try write(bytes, to: descriptor)
+        }
+    }
+
+    private func write(
+        _ bytes: UnsafeRawBufferPointer,
+        to descriptor: Int32
+    ) throws {
+        guard let base = bytes.baseAddress else { return }
+        var offset = 0
+        while offset < bytes.count {
+            let count = Darwin.write(
+                descriptor,
+                base.advanced(by: offset),
+                bytes.count - offset
+            )
+            if count < 0, errno == EINTR {
+                continue
+            }
+            guard count > 0 else { throw Self.posixError() }
+            offset += count
         }
     }
 

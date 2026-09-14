@@ -18,6 +18,7 @@
 import Foundation
 
 final class StubTransport:
+    DockerEngineFileUploadTransport,
     DockerEngineHijackTransport,
     DockerEngineRequestNotificationTransport,
     @unchecked Sendable
@@ -65,6 +66,9 @@ final class StubTransport:
     private let lock = NSLock()
     private var responses: [StubResponse]
     private var recordedRequests: [DockerHTTPRequest] = []
+    private var recordedFileUploadLengths: [UInt64] = []
+    private var recordedFileUploadPaths: [String] = []
+    private var recordedFileUploadDirectoryPermissions: [Int] = []
     private var recordedHijackInput: Data?
 
     init(_ responses: [StubResponse]) {
@@ -77,6 +81,18 @@ final class StubTransport:
 
     var hijackInput: Data? {
         lock.withLock { recordedHijackInput }
+    }
+
+    var fileUploadLengths: [UInt64] {
+        lock.withLock { recordedFileUploadLengths }
+    }
+
+    var fileUploadPaths: [String] {
+        lock.withLock { recordedFileUploadPaths }
+    }
+
+    var fileUploadDirectoryPermissions: [Int] {
+        lock.withLock { recordedFileUploadDirectoryPermissions }
     }
 
     func send(
@@ -94,6 +110,37 @@ final class StubTransport:
         onBody: @escaping (Data) throws -> Void
     ) throws -> DockerHTTPResponse {
         try respond(to: request, onRequestSent: onRequestSent, onBody: onBody)
+    }
+
+    func send(
+        _ request: DockerHTTPRequest,
+        bodyFile: URL,
+        bodyLength: UInt64,
+        maximumBodyBytes _: Int?,
+        onBody: @escaping (Data) throws -> Void
+    ) throws -> DockerHTTPResponse {
+        let data = try Data(contentsOf: bodyFile)
+        guard UInt64(data.count) == bodyLength else {
+            throw DockerHTTPClientError.invalidRequestBody(
+                "test upload length does not match its file"
+            )
+        }
+        let directoryAttributes = try FileManager.default.attributesOfItem(
+            atPath: bodyFile.deletingLastPathComponent().path
+        )
+        guard let permissions = directoryAttributes[.posixPermissions] as? NSNumber else {
+            throw DockerHTTPClientError.invalidRequestBody(
+                "test upload directory permissions are unavailable"
+            )
+        }
+        lock.withLock {
+            recordedFileUploadLengths.append(bodyLength)
+            recordedFileUploadPaths.append(bodyFile.path)
+            recordedFileUploadDirectoryPermissions.append(permissions.intValue)
+        }
+        var materialized = request
+        materialized.body = data
+        return try respond(to: materialized, onBody: onBody)
     }
 
     func hijack(

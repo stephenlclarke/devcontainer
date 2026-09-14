@@ -215,6 +215,60 @@ struct DevContainerComposeCommandTests {
     }
 
     @Test
+    func `mutating child cannot outlive its request deadline`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "ignored")
+        var environment = fixture.environment
+        environment["HANG_MUTATION"] = "1"
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "deadline-project", "up"],
+                environment: environment,
+                mutationTimeout: 0.1
+            )
+        }
+
+        #expect(started.duration(to: clock.now) < .seconds(2))
+        #expect(try fixture.invocations() == [
+            "--project-name deadline-project up"
+        ])
+        let recordedProcessID = try fixture.mutationProcessID()
+        let processID = try #require(recordedProcessID)
+        let processStatus = Darwin.kill(processID, 0)
+        let processError = errno
+        #expect(processStatus == -1)
+        #expect(processError == ESRCH)
+    }
+
+    @Test
+    func `project discovery cannot outlive its mutation deadline`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "ignored")
+        var environment = fixture.environment
+        environment["HANG_CONFIG"] = "1"
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["up"],
+                environment: environment,
+                mutationTimeout: 0.1
+            )
+        }
+
+        #expect(started.duration(to: clock.now) < .seconds(2))
+        #expect(try fixture.invocations() == ["config --format json"])
+        let recordedProcessID = try fixture.mutationProcessID()
+        let processID = try #require(recordedProcessID)
+        let processStatus = Darwin.kill(processID, 0)
+        let processError = errno
+        #expect(processStatus == -1)
+        #expect(processError == ESRCH)
+    }
+
+    @Test
     func `native down retains claim when live volume probe is nonempty`() async throws {
         let projectName = "native-volume-project"
         let fixture = try ComposeCommandFixture(
@@ -318,6 +372,7 @@ private final class ComposeCommandFixture {
     private let invocationLog: URL
     private let trapLog: URL
     private let runtimeSelectionLog: URL
+    private let mutationProcessIDLog: URL
     private let backend: BackendProvider
     private let exitStatus: Int32
     private let liveVolumes: [String]
@@ -346,6 +401,7 @@ private final class ComposeCommandFixture {
         invocationLog = root.appendingPathComponent("invocations.log")
         trapLog = root.appendingPathComponent("forbidden-executables.log")
         runtimeSelectionLog = root.appendingPathComponent("runtime-selections.log")
+        mutationProcessIDLog = root.appendingPathComponent("mutation-process.pid")
         try FileManager.default.createDirectory(
             at: root,
             withIntermediateDirectories: false,
@@ -394,6 +450,10 @@ private final class ComposeCommandFixture {
           "$DOCKER_HOST" >> "$RUNTIME_SELECTION_LOG"
         case " $* " in
           *" config --format json "*)
+            if [ "${HANG_CONFIG-0}" = 1 ]; then
+              printf '%s\n' "$$" > "$MUTATION_PROCESS_ID_LOG"
+              while :; do sleep 60; done
+            fi
             printf '%s\n' '{"name":"\(projectName)"}'
             ;;
           *" volumes --quiet "*)
@@ -403,6 +463,10 @@ private final class ComposeCommandFixture {
             exit "$VOLUME_PROBE_STATUS"
             ;;
           *)
+            if [ "${HANG_MUTATION-0}" = 1 ]; then
+              printf '%s\n' "$$" > "$MUTATION_PROCESS_ID_LOG"
+              while :; do sleep 60; done
+            fi
             exit \(exitStatus)
             ;;
         esac
@@ -425,6 +489,7 @@ private final class ComposeCommandFixture {
             "DOCKER_API_VERSION": "1.24",
             "DEVCONTAINER_STATE": state.path,
             "INVOCATION_LOG": invocationLog.path,
+            "MUTATION_PROCESS_ID_LOG": mutationProcessIDLog.path,
             "RUNTIME_SELECTION_LOG": runtimeSelectionLog.path,
             "LIVE_VOLUMES": liveVolumes.joined(separator: "\n"),
             "VOLUME_PROBE_STATUS": String(volumeProbeStatus),
@@ -452,6 +517,15 @@ private final class ComposeCommandFixture {
         return try String(contentsOf: trapLog, encoding: .utf8)
             .split(separator: "\n")
             .map(String.init)
+    }
+
+    func mutationProcessID() throws -> Int32? {
+        guard FileManager.default.fileExists(atPath: mutationProcessIDLog.path) else {
+            return nil
+        }
+        let value = try String(contentsOf: mutationProcessIDLog, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Int32(value)
     }
 
     func forbiddenExecutable(named name: String) -> URL {

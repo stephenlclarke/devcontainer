@@ -239,8 +239,8 @@ moving the checked pin.
   behavior.
 - Exec TTY and non-TTY output, user/environment/workdir selection, byte-exact
   4 MiB stdin/stdout transfer, stderr separation, and exact exit status.
-- Dockerfile build arguments and labels, plain progress output, and a failed
-  build stream.
+- Dockerfile build arguments and labels, a private file-backed client upload,
+  staging cleanup, plain progress output, and a failed build stream.
 - Archive copy in and out with content, file mode, symlink, long-path, and
   1 MiB file preservation.
 - Network and volume creation and inspection, service-name DNS, read-only bind,

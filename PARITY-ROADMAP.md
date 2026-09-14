@@ -142,7 +142,7 @@ proof or primitive rather than normalising it.
 | PAR-002 | Implemented fail-closed stock behaviour | A future tagged Apple API must preserve legal embedded `=` labels before stock support can be advertised |
 | ARC-001 | Partial: production Docker and Compose mutations use keyed coordination, ownership labels, intent records, and explicit unfinished-operation recovery state | Deterministic phase-by-phase runtime reconciliation and safe automatic resume remain required |
 | ARC-002 | Partial: correlation, deadline propagation, disconnect cancellation, hashed idempotency keys, request conflict detection, and replay are wired | Replay results must persist across service restart and be reconciled with native runtime state |
-| ENG-001 | Partial: connection, pending-request, 512 MiB per-request, 1 GiB process-wide body, and write-buffer bounds are enforced; completed hijacks release the shared 64-connection budget | Build, image, and archive uploads still need private-file or byte-stream transfer and the 1 GiB streamed-context/RSS acceptance test |
+| ENG-001 | Partial: connection, pending-request, 512 MiB per-request, 1 GiB process-wide body, and write-buffer bounds are enforced; Dockerfile build archives stream from a mode-0700 temporary directory to the client socket without a second in-memory copy; completed hijacks release the shared 64-connection budget | Engine ingress plus image and archive uploads still need private-file or byte-stream transfer and the 1 GiB streamed-context/RSS acceptance test |
 | ENG-002 | Implemented with exactly-once direct session cancellation | Full live runtime process-tree evidence remains part of release certification |
 | PROC-001 | Implemented through the shared `DevContainerProcess` supervisor | None locally; live provider and runtime certification remains |
 | ENG-003 and ENG-004 | Implemented with awaited streamed writes, cancellation, byte accounting, and encoded Docker error envelopes | Slow-reader live evidence remains |
@@ -152,7 +152,7 @@ proof or primitive rather than normalising it.
 | OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, restart-safe managed-host caching, and PTY-backed interactive exec passed the final local three-lane CLI and real VS Code matrices | The hosted workflow must retain exact-head evidence; the repeated performance protocol remains |
 | OPT-002 | Blocked in this repository | Compose model caching belongs in `container-compose`, preserving the provider boundary |
 | OPT-003 | Implemented with immediate owned-mutation wakeups plus bounded external-writer polling | Native runtime events should replace the residual poll when a tagged stable API exists |
-| OPT-004 and OPT-005 | Partial | End-to-end upload streaming and parity-artifact resource measurements remain |
+| OPT-004 and OPT-005 | Partial: Dockerfile build uploads are file-backed from the project CLI to the engine socket | Engine-side upload streaming, image/archive streaming, bounded diagnostic tails, and parity-artifact resource measurements remain |
 | TEST-001 | Implemented through `spec-coverage.json`, fail-closed validation, and scheduled upstream schema drift detection | Blocked rows must be closed before a full-parity claim |
 | TEST-002 | Blocked | The real VS Code matrix still contains one representative workspace |
 | TEST-003 | Implemented for checked fixtures: images use digests and Feature tags are bound by a checked integrity lock | Live preflight must continue to verify each resolved payload |
@@ -245,13 +245,9 @@ read as an assertion that the original source evidence still exists.
 
 ### ENG-001: Request buffering permits excessive process-wide memory use
 
-**Evidence:** production limits allow a 512 MiB request, 512 MiB retained body
-per connection, a 1 GiB process-wide retained-body budget, and 64 active
-connections. Each body is accumulated in a `ByteBuffer`, converted to `Data`,
-and passed through the router. Buildx exported a 100,132,864-byte Feature image
-through `/images/load`; the previous 64 MiB limit rejected that valid request.
+**Evidence:** production limits allow a 512 MiB request, 512 MiB retained body per connection, a 1 GiB process-wide retained-body budget, and 64 active connections. The project Docker CLI now creates a build archive inside a mode-0700 temporary directory and streams that file to the engine socket without materialising it as `Data`. Engine ingress still accumulates each body in a `ByteBuffer`, transfers it into `Data`, and passes it through the router. Buildx exported a 100,132,864-byte Feature image through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
-**Impact:** Concurrent build contexts or image loads can exhaust memory. Large contexts incur extra copies and delay processing until the entire body arrives. A local user process can use the user-owned socket to create severe memory pressure.
+**Impact:** Concurrent engine-side build contexts or image loads can exhaust memory. Large contexts still delay engine processing until the entire body arrives, even though the project CLI no longer retains its own archive-sized `Data` copy. A local user process can use the user-owned socket to create severe memory pressure.
 
 **Solution design:**
 
@@ -485,9 +481,9 @@ guest filesystem state.
 
 ### OPT-004: Stream build, image, archive, and log data end to end
 
-**Evidence:** HTTP requests are fully buffered, build contexts are passed as `Data`, command output is often accumulated in `Data`, and generic HTTP streams do not apply backpressure.
+**Evidence:** Dockerfile build archives now stream from a private file into the project-owned Unix socket, eliminating the previous client-side archive-sized `Data` copy. Engine request ingress, image and archive uploads, and some command output remain buffered; generic HTTP streams do not apply backpressure.
 
-**Design:** use bounded asynchronous byte streams or private file descriptors from NIO through validation and native transfer; validate tar metadata incrementally; retain bounded diagnostic tails rather than entire output where the Docker protocol permits streaming.
+**Design:** extend the file-backed build path through engine ingress, validation, and native transfer, and apply bounded asynchronous byte streams or private file descriptors to image and archive uploads. Validate tar metadata incrementally and retain bounded diagnostic tails rather than entire output where the Docker protocol permits streaming.
 
 **Acceptance:** large Feature and Dockerfile builds reduce copies and peak RSS, slow readers remain bounded, and byte-exact archive and progress fixtures remain equal.
 

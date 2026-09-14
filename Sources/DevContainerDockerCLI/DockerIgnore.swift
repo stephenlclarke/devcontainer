@@ -52,6 +52,11 @@ private struct DockerIgnoreCharacterClass {
 }
 
 private struct DockerIgnoreGlobPattern {
+    private struct ParsedLiteral {
+        let character: Character
+        let escaped: Bool
+    }
+
     private enum Token {
         case literal(Character)
         case anyNonSeparator
@@ -179,16 +184,20 @@ private struct DockerIgnoreGlobPattern {
         if inverted {
             index += 1
         }
-        var literals: [Character] = []
+        var literals: [ParsedLiteral] = []
         if index < characters.count, characters[index] == "]" {
-            literals.append("]")
+            literals.append(ParsedLiteral(character: "]", escaped: false))
             index += 1
         }
         while index < characters.count, characters[index] != "]" {
+            var escaped = false
             if characters[index] == "\\", index + 1 < characters.count {
                 index += 1
+                escaped = true
             }
-            literals.append(characters[index])
+            literals.append(
+                ParsedLiteral(character: characters[index], escaped: escaped)
+            )
             index += 1
         }
         guard index < characters.count, !literals.isEmpty else { return nil }
@@ -197,15 +206,16 @@ private struct DockerIgnoreGlobPattern {
         var literalIndex = 0
         while literalIndex < literals.count {
             if literalIndex + 2 < literals.count,
-               literals[literalIndex + 1] == "-"
+               literals[literalIndex + 1].character == "-",
+               !literals[literalIndex + 1].escaped
             {
                 members.append(.range(
-                    literals[literalIndex],
-                    literals[literalIndex + 2]
+                    literals[literalIndex].character,
+                    literals[literalIndex + 2].character
                 ))
                 literalIndex += 3
             } else {
-                members.append(.literal(literals[literalIndex]))
+                members.append(.literal(literals[literalIndex].character))
                 literalIndex += 1
             }
         }

@@ -630,6 +630,18 @@ extension AppleContainerRuntime {
         )
     }
 
+    static func archiveTransferNames(
+        for path: String
+    ) -> (requested: String, staging: String) {
+        let component = URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .lastPathComponent
+        if component.isEmpty || component == "/" || component == "." || component == ".." {
+            return (requested: "/", staging: "root")
+        }
+        return (requested: component, staging: component)
+    }
+
     static func dockerFileMode(_ mode: mode_t) -> UInt32 {
         UInt32(mode & (S_IRWXU | S_IRWXG | S_IRWXO))
             | dockerFileTypeMode(mode)

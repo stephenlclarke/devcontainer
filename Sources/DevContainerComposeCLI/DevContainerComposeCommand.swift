@@ -54,7 +54,8 @@ enum DevContainerComposeCommand {
     // swiftlint:disable:next function_body_length
     static func run(
         arguments: [String],
-        environment: [String: String]
+        environment: [String: String],
+        mutationTimeout: TimeInterval = 30 * 60
     ) async throws -> Int32 {
         var paths = Paths(environment: environment)
         try DevContainerExecutablePolicy.requireNativeCompose(
@@ -91,9 +92,13 @@ enum DevContainerComposeCommand {
             compatibilityExecutable: paths.dockerCompatibility.path
         )
         let child = childCommand(arguments: arguments, execution: execution)
+        let mutationContext = RuntimeRequestContext(
+            deadline: Date().addingTimeInterval(mutationTimeout)
+        )
         let claim = try await claimIfNeeded(
             envelope: envelope,
-            execution: execution
+            execution: execution,
+            context: mutationContext
         )
 
         let result: Int32
@@ -112,20 +117,9 @@ enum DevContainerComposeCommand {
                         requestHash: requestHash,
                         resourceKey: "compose-project:\(claim.projectName)"
                     ),
-                    context: RuntimeRequestContext(
-                        deadline: Date().addingTimeInterval(30 * 60)
-                    )
+                    context: mutationContext
                 ) { context in
-                    try context.checkActive()
-                    let status = try await execute(
-                        executable: child.executable,
-                        arguments: child.arguments,
-                        environment: child.environment
-                    )
-                    guard status == 0 else {
-                        throw ChildCommandFailure(status: status)
-                    }
-                    return status
+                    try await executeMutationChild(child, context: context)
                 }
             } catch let failure as ChildCommandFailure {
                 result = failure.status
@@ -146,6 +140,26 @@ enum DevContainerComposeCommand {
             )
         }
         return result
+    }
+
+    private static func executeMutationChild(
+        _ child: ComposeChildCommand,
+        context: RuntimeRequestContext
+    ) async throws -> Int32 {
+        try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try context.checkActive()
+                let status = try await execute(
+                    executable: child.executable,
+                    arguments: child.arguments,
+                    environment: child.environment
+                )
+                guard status == 0 else {
+                    throw ChildCommandFailure(status: status)
+                }
+                return status
+            }
+        }
     }
 
     private static func reconcileProjectRemoval(
@@ -221,15 +235,20 @@ enum DevContainerComposeCommand {
 
     private static func claimIfNeeded(
         envelope: ComposeCommandEnvelope,
-        execution: ComposeExecutionEnvironment
+        execution: ComposeExecutionEnvironment,
+        context: RuntimeRequestContext
     ) async throws -> ComposeProjectClaim? {
         guard envelope.mutating else {
             return nil
         }
-        let projectName = try await resolvedProjectName(
-            envelope: envelope,
-            execution: execution
-        )
+        let projectName = try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await resolvedProjectName(
+                    envelope: envelope,
+                    execution: execution
+                )
+            }
+        }
         let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
         let store = try SQLiteStateStore(path: execution.paths.state)
         return ComposeProjectClaim(
@@ -418,7 +437,7 @@ private struct ComposeConfiguration: Decodable {
     let name: String
 }
 
-private struct ComposeChildCommand {
+private struct ComposeChildCommand: Sendable {
     let executable: URL
     let arguments: [String]
     let environment: [String: String]

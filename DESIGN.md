@@ -232,7 +232,7 @@ The generated shared route ledger contains all 107 method/path operations in the
 | Resources | volume and network create/list/inspect/connect/disconnect/remove |
 | Events | label-filtered, ordered JSON event stream with reconnect cursor |
 
-Each HTTP/1.1 connection has a 1 GiB aggregate retained-body budget and a bounded pending-request queue. Large request bodies transfer from SwiftNIO storage into `Data` without copying the bytes, and a client that exceeds either the per-request, aggregate-byte, or queue bound is rejected without allowing a later pipelined response to overtake an earlier one.
+Each HTTP/1.1 connection has a 1 GiB aggregate retained-body budget and a bounded pending-request queue. The project Docker CLI creates Dockerfile build archives inside a mode-0700 temporary directory, streams the file to the project-owned socket in bounded chunks, verifies its owner, link count, type, and length before transfer, and removes the staging directory on every return path. The engine currently transfers large request bodies from SwiftNIO storage into `Data` without copying the bytes; completing file-backed engine ingress remains an explicit optimisation in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). A client that exceeds either the per-request, aggregate-byte, or queue bound is rejected without allowing a later pipelined response to overtake an earlier one.
 
 Buildx support is advertised only when session and streaming semantics pass the pinned Dev Container Feature and Dockerfile-build fixtures. Until then, the compatibility service forces the reference CLI's proven non-Buildx path instead of returning a false-positive `buildx version`.
 

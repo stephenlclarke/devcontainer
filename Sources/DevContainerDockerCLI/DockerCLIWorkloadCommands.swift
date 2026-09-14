@@ -28,15 +28,17 @@ extension DockerCLIApplication {
         streamingOutput: ((Data, Bool) throws -> Void)?
     ) throws -> DockerCLIResult {
         let options = try DockerBuildOptions(arguments: arguments)
-        let archive = try options.archive()
         let query = try options.query()
-        return try streamRequest(
-            "POST",
-            Self.target("/build", query: query),
-            body: archive,
-            maximumBodyBytes: nil,
-            streamingOutput: streamingOutput
-        )
+        return try options.withArchiveFile { archive, length in
+            try streamFileRequest(
+                "POST",
+                Self.target("/build", query: query),
+                bodyFile: archive,
+                bodyLength: length,
+                maximumBodyBytes: nil,
+                streamingOutput: streamingOutput
+            )
+        }
     }
 
     func runContainer(
@@ -367,6 +369,14 @@ struct DockerBuildOptions: Equatable {
     }
 
     func archive() throws -> Data {
+        try withArchiveFile { archive, _ in
+            try Data(contentsOf: archive)
+        }
+    }
+
+    func withArchiveFile<Result>(
+        _ operation: (URL, UInt64) throws -> Result
+    ) throws -> Result {
         let contextURL = URL(fileURLWithPath: context).standardizedFileURL
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: contextURL.path, isDirectory: &isDirectory),
@@ -385,14 +395,30 @@ struct DockerBuildOptions: Equatable {
             contextURL: contextURL,
             dockerfileURL: dockerfileURL
         )
-        let archiveURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("devcontainer-build-\(UUID().uuidString).tar")
-        defer { try? FileManager.default.removeItem(at: archiveURL) }
+        let archiveRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "devcontainer-build-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: archiveRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: archiveRoot) }
+        let archiveURL = archiveRoot.appendingPathComponent("context.tar")
         try writeArchive(entries, from: contextURL, to: archiveURL)
         if !dockerfileURL.path.hasPrefix(contextURL.path + "/") {
             try appendDockerfile(dockerfileURL, to: archiveURL)
         }
-        return try Data(contentsOf: archiveURL)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: archiveURL.path
+        )
+        guard let size = attributes[.size] as? NSNumber else {
+            throw DockerCLIError.invalidArguments(
+                "could not determine build archive size"
+            )
+        }
+        return try operation(archiveURL, size.uint64Value)
     }
 
     private func writeArchive(_ entries: [String], from root: URL, to archive: URL) throws {

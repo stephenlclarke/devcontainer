@@ -906,8 +906,9 @@ public extension AppleContainerRuntime {
         ) {
             let temporary = try TemporaryDirectory(base: Self.transferDirectory)
             defer { temporary.remove() }
-            let requestedName = URL(fileURLWithPath: path).lastPathComponent
-            let archiveName = requestedName.isEmpty ? "root" : requestedName
+            let archiveNames = Self.archiveTransferNames(for: path)
+            let requestedName = archiveNames.requested
+            let archiveName = archiveNames.staging
             let copied = temporary.url.appendingPathComponent(archiveName)
             if useDirectContainerAPI {
                 do {
@@ -931,11 +932,11 @@ public extension AppleContainerRuntime {
             }
             let stat = try Self.archiveStat(
                 url: copied,
-                requestedName: requestedName.isEmpty ? "/" : requestedName
+                requestedName: requestedName
             )
             let tarResult = try await AppleCommandRunner.run(
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
-                arguments: ["-cf", "-", "-C", temporary.url.path, archiveName],
+                arguments: ["-cf", "-", "-C", temporary.url.path, "--", archiveName],
                 environment: environment
             )
             try requireSuccess(tarResult, operation: "archive creation")

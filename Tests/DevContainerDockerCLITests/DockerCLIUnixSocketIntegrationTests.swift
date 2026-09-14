@@ -101,6 +101,37 @@ struct DockerCLIUnixSocketIntegrationTests {
             let pullOutput = try #require(String(data: pull.standardOutput, encoding: .utf8))
             #expect(pullOutput.contains("Download complete"))
 
+            let buildContext = root.appendingPathComponent("build-context")
+            try FileManager.default.createDirectory(
+                at: buildContext,
+                withIntermediateDirectories: false
+            )
+            try Data("FROM scratch\n".utf8).write(
+                to: buildContext.appendingPathComponent("Dockerfile")
+            )
+            try Data(repeating: 0x41, count: 3 * 64 * 1024).write(
+                to: buildContext.appendingPathComponent("payload.bin")
+            )
+            let build = try await Task.detached {
+                try application.run(arguments: ["build", buildContext.path])
+            }.value
+            let buildOutput = try #require(
+                String(data: build.standardOutput, encoding: .utf8)
+            )
+            #expect(buildOutput.contains("Step 1"))
+            #expect(buildOutput.contains("FROM scratch"))
+            #expect(throws: DockerHTTPClientError.invalidRequestBody(
+                "file identity or length changed before upload"
+            )) {
+                try UnixSocketDockerTransport(socketPath: socket).send(
+                    DockerHTTPRequest(method: "POST", target: "/build"),
+                    bodyFile: buildContext.appendingPathComponent("Dockerfile"),
+                    bodyLength: 0,
+                    maximumBodyBytes: 1024,
+                    onBody: { _ in }
+                )
+            }
+
             let inspect = try await Task.detached {
                 try application.run(arguments: ["inspect", "--type", "image", "alpine:3.22"])
             }.value
