@@ -999,14 +999,14 @@ extension DockerRouter {
                 body: body
             )
         case .head:
-            let archive = try await runtime.copyArchiveFromContainer(
+            let stat = try await runtime.statContainerPath(
                 id: id,
                 path: path,
                 context: context
             )
             return try DockerHTTPResponse(
                 status: 200,
-                headers: ["X-Docker-Container-Path-Stat": archiveStatHeader(archive.stat)]
+                headers: ["X-Docker-Container-Path-Stat": archiveStatHeader(stat)]
             )
         case .put:
             try await runtime.copyArchiveToContainer(

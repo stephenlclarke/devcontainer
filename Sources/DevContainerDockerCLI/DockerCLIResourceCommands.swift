@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 import DevContainerProcess
 import Foundation
 
@@ -178,20 +179,17 @@ extension DockerCLIApplication {
         local: String,
         remote: (container: String, path: String)
     ) throws {
-        let fileManager = FileManager.default
         let contentsOnly = local.hasSuffix("/.")
         let sourcePath = contentsOnly ? String(local.dropLast(2)) : local
         let source = URL(fileURLWithPath: sourcePath)
-        var sourceIsDirectory = ObjCBool(false)
-        guard fileManager.fileExists(
-            atPath: source.path,
-            isDirectory: &sourceIsDirectory
-        ) else {
+        var sourceStatus = Darwin.stat()
+        guard lstat(source.path, &sourceStatus) == 0 else {
             throw DockerCLIError.invalidArguments("cp source does not exist: \(local)")
         }
+        let sourceIsDirectory = sourceStatus.st_mode & S_IFMT == S_IFDIR
         let destination = try copyDestination(
             remote: remote,
-            sourceIsDirectory: sourceIsDirectory.boolValue
+            sourceIsDirectory: sourceIsDirectory
         )
         let archiveRoot = destination.archiveName == nil && contentsOnly
             ? source
@@ -224,13 +222,19 @@ extension DockerCLIApplication {
         )
     }
 
+    // Docker's destination matrix includes missing paths, links, files, and directories.
+    // swiftlint:disable:next function_body_length
     private func copyDestination(
         remote: (container: String, path: String),
         sourceIsDirectory: Bool
     ) throws -> DockerCopyUploadDestination {
         let requiresExistingDirectory = remote.path.hasSuffix("/")
         let path = URL(fileURLWithPath: remote.path).standardizedFileURL.path
-        if let stat = try containerPathStat(container: remote.container, path: path) {
+        if let destination = try resolvedContainerPathStat(
+            container: remote.container,
+            path: path
+        ) {
+            let stat = destination.stat
             guard !requiresExistingDirectory || stat.isDirectory else {
                 throw DockerCLIError.invalidArguments(
                     "cp destination is not a directory: \(remote.path)"
@@ -238,7 +242,7 @@ extension DockerCLIApplication {
             }
             if stat.isDirectory {
                 return DockerCopyUploadDestination(
-                    extractionPath: path,
+                    extractionPath: destination.path,
                     archiveName: nil
                 )
             }
@@ -248,8 +252,9 @@ extension DockerCLIApplication {
                 )
             }
             return DockerCopyUploadDestination(
-                extractionPath: URL(fileURLWithPath: path).deletingLastPathComponent().path,
-                archiveName: URL(fileURLWithPath: path).lastPathComponent
+                extractionPath: URL(fileURLWithPath: destination.path)
+                    .deletingLastPathComponent().path,
+                archiveName: URL(fileURLWithPath: destination.path).lastPathComponent
             )
         }
         guard !requiresExistingDirectory else {
@@ -261,19 +266,61 @@ extension DockerCLIApplication {
         let parent = destination.deletingLastPathComponent().path
         let name = destination.lastPathComponent
         guard !name.isEmpty,
-              let parentStat = try containerPathStat(
+              let resolvedParent = try resolvedContainerPathStat(
                   container: remote.container,
                   path: parent
               ),
-              parentStat.isDirectory
+              resolvedParent.stat.isDirectory
         else {
             throw DockerCLIError.invalidArguments(
                 "cp destination parent directory does not exist: \(remote.path)"
             )
         }
         return DockerCopyUploadDestination(
-            extractionPath: parent,
+            extractionPath: resolvedParent.path,
             archiveName: name
+        )
+    }
+
+    private func resolvedContainerPathStat(
+        container: String,
+        path: String
+    ) throws -> (path: String, stat: DockerCopyPathStat)? {
+        var current = URL(fileURLWithPath: path).standardizedFileURL.path
+        var visited: Set<String> = []
+        for _ in 0 ..< 40 {
+            guard visited.insert(current).inserted else {
+                throw DockerCLIError.invalidArguments(
+                    "cp destination contains a symbolic-link cycle: \(path)"
+                )
+            }
+            guard let stat = try containerPathStat(container: container, path: current) else {
+                if current == path {
+                    return nil
+                }
+                throw DockerCLIError.invalidArguments(
+                    "cp destination symbolic-link target does not exist: \(path)"
+                )
+            }
+            guard stat.isSymbolicLink else {
+                return (current, stat)
+            }
+            guard let linkTarget = stat.linkTarget, !linkTarget.isEmpty else {
+                throw DockerCLIError.malformedResponse(
+                    "container destination symbolic link has no target"
+                )
+            }
+            if linkTarget.hasPrefix("/") {
+                current = URL(fileURLWithPath: linkTarget).standardizedFileURL.path
+            } else {
+                current = URL(fileURLWithPath: current)
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(linkTarget)
+                    .standardizedFileURL.path
+            }
+        }
+        throw DockerCLIError.invalidArguments(
+            "cp destination exceeds the symbolic-link resolution limit: \(path)"
         )
     }
 
@@ -317,7 +364,8 @@ extension DockerCLIApplication {
         let marker = String(delimiter)
         let escaped = name
             .replacingOccurrences(of: "\\", with: "\\\\")
-        return "\(marker)^[^/]*\(marker)\(escaped)\(marker)"
+            .replacingOccurrences(of: "~", with: "\\~")
+        return "\(marker)^[^/]*\(marker)\(escaped)\(marker)h"
     }
 
     private func copyFromContainer(
@@ -506,9 +554,14 @@ extension DockerCLIApplication {
 private struct DockerCopyPathStat: Decodable {
     let name: String
     let mode: UInt32
+    let linkTarget: String?
 
     var isDirectory: Bool {
         mode & (1 << 31) != 0
+    }
+
+    var isSymbolicLink: Bool {
+        mode & (1 << 27) != 0
     }
 }
 

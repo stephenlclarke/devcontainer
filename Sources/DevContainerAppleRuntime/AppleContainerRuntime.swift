@@ -875,6 +875,62 @@ public extension AppleContainerRuntime {
         }
     }
 
+    func statContainerPath(
+        id: String,
+        path: String,
+        context: RuntimeRequestContext
+    ) async throws -> ArchivePathStat {
+        let mutation = beginContainerLifecycleMutation(id: id)
+        var mutationIdentifiers: Set<String> = [id]
+        defer {
+            finishContainerLifecycleMutation(
+                identifiers: mutationIdentifiers,
+                registration: mutation
+            )
+        }
+        let snapshot = try await inspectContainer(id: id, context: context)
+        let resolved = snapshot.runtimeID.rawValue
+        mutationIdentifiers.formUnion([
+            resolved,
+            snapshot.dockerID.rawValue,
+            snapshot.spec.name
+        ])
+        includeContainerLifecycleMutation(
+            identifiers: mutationIdentifiers,
+            registration: mutation
+        )
+        return try await withContainerRunningForArchiveTransfer(
+            snapshot: snapshot,
+            context: context
+        ) {
+            let result = try await command([
+                "exec",
+                resolved,
+                "sh",
+                "-c",
+                "command -v stat >/dev/null 2>&1 || exit 45; "
+                    + "mode=$(stat -c %f -- \"$1\") || exit 44; "
+                    + "size=$(stat -c %s -- \"$1\") || exit 44; "
+                    + "modified=$(stat -c %Y -- \"$1\") || exit 44; "
+                    + "printf '%s\\n%s\\n%s\\n' \"$mode\" \"$size\" \"$modified\"; "
+                    + "if [ -L \"$1\" ]; then readlink -- \"$1\"; fi",
+                "devcontainer-stat",
+                path
+            ], maximumStandardOutputBytes: 64 * 1024)
+            if result.exitCode == 44 {
+                throw DevContainerError(
+                    .notFound,
+                    message: "container path was not found: \(path)"
+                )
+            }
+            try requireSuccess(result, operation: "container path stat")
+            return try Self.containerPathStat(
+                output: result.standardOutput,
+                requestedName: Self.archiveTransferNames(for: path).requested
+            )
+        }
+    }
+
     // swiftlint:disable:next function_body_length
     func copyArchiveFromContainer(
         id: String,

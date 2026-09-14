@@ -1112,7 +1112,11 @@ struct FakeAppleCLI {
             fi
             ;;
           "exec "*)
-            printf '%s\\n' 'exec-output'
+            if [ "${6-}" = devcontainer-stat ]; then
+              printf '%s\\n' '81a4' '6' '1789380000'
+            else
+              printf '%s\\n' 'exec-output'
+            fi
             ;;
           "image pull")
             printf '%s\\n' 'pull-progress'

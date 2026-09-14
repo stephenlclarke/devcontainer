@@ -69,7 +69,7 @@ private struct DockerIgnoreGlobPattern {
     let containsSeparator: Bool
     private let tokens: [Token]
 
-    init(_ source: String) {
+    init(_ source: String) throws {
         containsSeparator = source.contains("/")
         let scalars = Array(source.unicodeScalars)
         var compiled: [Token] = []
@@ -81,15 +81,13 @@ private struct DockerIgnoreGlobPattern {
             case "?":
                 compiled.append(.anyNonSeparator)
             case "[":
-                if let characterClass = Self.characterClass(
+                let characterClass = try Self.characterClass(
                     scalars,
-                    startingAt: index
-                ) {
-                    compiled.append(.characterClass(characterClass.value))
-                    index = characterClass.endingAt
-                } else {
-                    compiled.append(.literal("["))
-                }
+                    startingAt: index,
+                    source: source
+                )
+                compiled.append(.characterClass(characterClass.value))
+                index = characterClass.endingAt
             case "\\":
                 if index + 1 < scalars.count {
                     index += 1
@@ -172,12 +170,19 @@ private struct DockerIgnoreGlobPattern {
         return .starDirectories
     }
 
+    // Keep Go path.Match character-class validation and compilation together.
+    // swiftlint:disable:next function_body_length
     private static func characterClass(
         _ scalars: [Unicode.Scalar],
-        startingAt start: Int
-    ) -> (value: DockerIgnoreCharacterClass, endingAt: Int)? {
+        startingAt start: Int,
+        source: String
+    ) throws -> (value: DockerIgnoreCharacterClass, endingAt: Int) {
         var index = start + 1
-        guard index < scalars.count else { return nil }
+        guard index < scalars.count else {
+            throw DockerCLIError.invalidArguments(
+                "malformed .dockerignore pattern: \(source)"
+            )
+        }
         // Docker delegates character classes to Go's path.Match grammar,
         // where only ^ negates a class. A leading ! is a literal member.
         let inverted = scalars[index] == "^"
@@ -200,7 +205,15 @@ private struct DockerIgnoreGlobPattern {
             )
             index += 1
         }
-        guard index < scalars.count, !literals.isEmpty else { return nil }
+        guard index < scalars.count,
+              !literals.isEmpty,
+              literals.first.map({ $0.scalar != "-" || $0.escaped }) == true,
+              literals.last.map({ $0.scalar != "-" || $0.escaped }) == true
+        else {
+            throw DockerCLIError.invalidArguments(
+                "malformed .dockerignore pattern: \(source)"
+            )
+        }
 
         var members: [DockerIgnoreCharacterClass.Member] = []
         var literalIndex = 0
@@ -277,7 +290,7 @@ struct DockerIgnoreMatcher {
         guard !pattern.isEmpty, pattern != "." else {
             return nil
         }
-        return DockerIgnoreRule(
+        return try DockerIgnoreRule(
             includes: includes,
             pattern: DockerIgnoreGlobPattern(pattern)
         )

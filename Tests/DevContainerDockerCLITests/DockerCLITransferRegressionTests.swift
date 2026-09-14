@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerDockerCLI
 import DevContainerProcess
 import Foundation
@@ -194,7 +195,7 @@ struct DockerCLITransferRegressionTests {
         ])
 
         #expect(try DockerCLIApplication(transport: transport).run(arguments: [
-            "cp", source.path, "box:/tmp/-T|a&b\\c"
+            "cp", source.path, "box:/tmp/-T|a&b\\c~d"
         ]).exitCode == 0)
 
         let upload = try #require(transport.requests.last)
@@ -211,11 +212,218 @@ struct DockerCLITransferRegressionTests {
         )
         #expect(extraction.exitCode == 0)
         #expect(FileManager.default.fileExists(
-            atPath: extracted.appendingPathComponent("-T|a&b\\c").path
+            atPath: extracted.appendingPathComponent("-T|a&b\\c~d").path
         ))
         #expect(!FileManager.default.fileExists(
             atPath: extracted.appendingPathComponent("source.txt").path
         ))
+    }
+
+    @Test
+    func `copy to container rebases hard link targets`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-hard-link-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = source.appendingPathComponent("first.txt")
+        let second = source.appendingPathComponent("second.txt")
+        try Data("linked\n".utf8).write(to: first)
+        try FileManager.default.linkItem(at: first, to: second)
+        let transport = try StubTransport([
+            .init(status: 404),
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "tmp",
+                        mode: (1 << 31) | 0o755
+                    )
+                ]
+            ),
+            .init(status: 200)
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", source.path, "box:/tmp/renamed"
+        ]).exitCode == 0)
+        let upload = try #require(transport.requests.last)
+        let extracted = root.appendingPathComponent("extracted")
+        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: false)
+        let extraction = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-xf", "-", "-C", extracted.path],
+            environment: ["PATH": "/usr/bin:/bin"],
+            input: upload.body
+        )
+        #expect(extraction.exitCode == 0)
+        let firstAttributes = try FileManager.default.attributesOfItem(
+            atPath: extracted.appendingPathComponent("renamed/first.txt").path
+        )
+        let secondAttributes = try FileManager.default.attributesOfItem(
+            atPath: extracted.appendingPathComponent("renamed/second.txt").path
+        )
+        #expect(firstAttributes[.systemFileNumber] as? UInt64 == secondAttributes[.systemFileNumber] as? UInt64)
+    }
+
+    @Test
+    func `copy to container preserves dangling local symbolic links`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-local-symlink-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(atPath: source.path, withDestinationPath: "missing")
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "tmp",
+                        mode: (1 << 31) | 0o755
+                    )
+                ]
+            ),
+            .init(status: 200)
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", source.path, "box:/tmp"
+        ]).exitCode == 0)
+        let upload = try #require(transport.requests.last)
+        let extracted = root.appendingPathComponent("extracted")
+        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: false)
+        _ = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-xf", "-", "-C", extracted.path],
+            environment: ["PATH": "/usr/bin:/bin"],
+            input: upload.body
+        )
+        var status = Darwin.stat()
+        #expect(lstat(extracted.appendingPathComponent("dangling").path, &status) == 0)
+        #expect(status.st_mode & S_IFMT == S_IFLNK)
+    }
+
+    @Test
+    func `copy to container does not classify a directory symbolic link as a directory`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-local-directory-link-\(UUID().uuidString)")
+        let directory = root.appendingPathComponent("directory")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(
+            atPath: source.path,
+            withDestinationPath: directory.lastPathComponent
+        )
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "target",
+                        mode: 0o644
+                    )
+                ]
+            ),
+            .init(status: 200)
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", source.path, "box:/tmp/target"
+        ]).exitCode == 0)
+        let upload = try #require(transport.requests.last)
+        let extracted = root.appendingPathComponent("extracted-link")
+        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: false)
+        _ = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-xf", "-", "-C", extracted.path],
+            environment: ["PATH": "/usr/bin:/bin"],
+            input: upload.body
+        )
+        var status = Darwin.stat()
+        #expect(lstat(extracted.appendingPathComponent("target").path, &status) == 0)
+        #expect(status.st_mode & S_IFMT == S_IFLNK)
+    }
+
+    @Test
+    func `copy to container resolves existing destination directory symbolic links`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-remote-directory-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.txt")
+        try Data("wanted\n".utf8).write(to: source)
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "alias",
+                        mode: (1 << 27) | 0o777,
+                        linkTarget: "/workspace"
+                    )
+                ]
+            ),
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "workspace",
+                        mode: (1 << 31) | 0o755
+                    )
+                ]
+            ),
+            .init(status: 200)
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", source.path, "box:/alias"
+        ]).exitCode == 0)
+        #expect(transport.requests.map(\.target) == [
+            "/containers/box/archive?path=%2Falias",
+            "/containers/box/archive?path=%2Fworkspace",
+            "/containers/box/archive?path=%2Fworkspace"
+        ])
+    }
+
+    @Test
+    func `copy to container resolves existing destination file symbolic links`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("docker-cp-remote-file-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.txt")
+        try Data("wanted\n".utf8).write(to: source)
+        let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "alias.txt",
+                        mode: (1 << 27) | 0o777,
+                        linkTarget: "real.txt"
+                    )
+                ]
+            ),
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "real.txt",
+                        mode: 0o644
+                    )
+                ]
+            ),
+            .init(status: 200)
+        ])
+
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: [
+            "cp", source.path, "box:/tmp/alias.txt"
+        ]).exitCode == 0)
+        let upload = try #require(transport.requests.last)
+        #expect(transport.requests.map(\.target).last == "/containers/box/archive?path=%2Ftmp")
+        #expect(try archiveEntries(upload.body).contains("real.txt"))
     }
 
     @Test
@@ -319,9 +527,17 @@ struct DockerCLITransferRegressionTests {
         return Set(output.split(whereSeparator: \.isNewline).map(String.init))
     }
 
-    private func archiveStatHeader(name: String, mode: UInt32) throws -> String {
-        try JSONSerialization.data(
-            withJSONObject: ["name": name, "mode": mode],
+    private func archiveStatHeader(
+        name: String,
+        mode: UInt32,
+        linkTarget: String? = nil
+    ) throws -> String {
+        var object: [String: Any] = ["name": name, "mode": mode]
+        if let linkTarget {
+            object["linkTarget"] = linkTarget
+        }
+        return try JSONSerialization.data(
+            withJSONObject: object,
             options: [.sortedKeys]
         ).base64EncodedString()
     }

@@ -368,6 +368,14 @@ extension AppleContainerRuntimeTests {
     ) async throws {
         try await runtime.tagImage(source: "fixture:latest", target: "fixture:tagged", context: context)
         try await runtime.removeImage(reference: "fixture:tagged", force: true, context: context)
+        let stat = try await runtime.statContainerPath(
+            id: "fixture",
+            path: "/workspace/file.txt",
+            context: context
+        )
+        #expect(stat.name == "file.txt")
+        #expect(stat.size == 6)
+        #expect(stat.mode == 0o644)
         let archive = try await runtime.copyArchiveFromContainer(
             id: "fixture",
             path: "/workspace/file.txt",

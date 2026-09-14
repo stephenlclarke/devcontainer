@@ -200,6 +200,11 @@ public protocol ProcessRuntime: Sendable {
 }
 
 public protocol ArchiveRuntime: Sendable {
+    func statContainerPath(
+        id: String,
+        path: String,
+        context: RuntimeRequestContext
+    ) async throws -> ArchivePathStat
     func copyArchiveFromContainer(
         id: String,
         path: String,

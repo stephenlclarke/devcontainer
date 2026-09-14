@@ -32,6 +32,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private var networks: [String: NetworkSnapshot] = [:]
     private var volumes: [String: VolumeSnapshot] = [:]
     private var archives: [String: RuntimeArchiveBody] = [:]
+    private var archiveCopyInvocationCount = 0
     private var eventValues: [RuntimeEvent] = []
     private var nextEventSequence: Int64 = 1
 
@@ -423,19 +424,39 @@ public actor InMemoryRuntime: DevContainerRuntime {
         path: String,
         context _: RuntimeRequestContext
     ) throws -> RuntimeArchive {
+        archiveCopyInvocationCount += 1
         let snapshot = try container(id: id)
-        let stat = ArchivePathStat(
-            name: URL(fileURLWithPath: path).lastPathComponent,
-            size: 0,
-            mode: (1 << 31) | 0o755,
-            modificationTime: snapshot.createdAt
-        )
+        let stat = archivePathStat(snapshot: snapshot, path: path)
         switch archives["\(snapshot.runtimeID):\(path)"] ?? .bytes(Data()) {
         case let .bytes(data):
             return RuntimeArchive(data: data, stat: stat)
         case let .file(file):
             return RuntimeArchive(file: file, stat: stat)
         }
+    }
+
+    public func archiveCopyCount() -> Int {
+        archiveCopyInvocationCount
+    }
+
+    public func statContainerPath(
+        id: String,
+        path: String,
+        context _: RuntimeRequestContext
+    ) throws -> ArchivePathStat {
+        try archivePathStat(snapshot: container(id: id), path: path)
+    }
+
+    private func archivePathStat(
+        snapshot: ContainerSnapshot,
+        path: String
+    ) -> ArchivePathStat {
+        ArchivePathStat(
+            name: URL(fileURLWithPath: path).lastPathComponent,
+            size: 0,
+            mode: (1 << 31) | 0o755,
+            modificationTime: snapshot.createdAt
+        )
     }
 
     public func copyArchiveToContainer(

@@ -22,6 +22,34 @@ import Foundation
 import Testing
 
 @Test
+func `archive HEAD uses metadata without materialising an archive`() async throws {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:head",
+            references: ["head:test"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let container = try await runtime.createContainer(
+        spec: ContainerSpec(name: "archive-head", image: "head:test"),
+        context: RuntimeRequestContext()
+    )
+
+    let response = await DockerRouter(runtime: runtime).respond(
+        to: DockerHTTPRequest(
+            method: .head,
+            target: "/containers/\(container.dockerID.rawValue)/archive?path=%2Fworkspace"
+        )
+    )
+
+    #expect(response.status == 200)
+    #expect(response.headers["X-Docker-Container-Path-Stat"] != nil)
+    #expect(await runtime.archiveCopyCount() == 0)
+}
+
+@Test
 func `file backed archives stream in bounded chunks and remove their spool`() async throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("devcontainer-archive-stream-\(UUID().uuidString)")

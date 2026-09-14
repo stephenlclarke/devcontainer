@@ -630,6 +630,61 @@ extension AppleContainerRuntime {
         )
     }
 
+    static func containerPathStat(
+        output: Data,
+        requestedName: String
+    ) throws -> ArchivePathStat {
+        guard let value = String(data: output, encoding: .utf8) else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container path stat returned non-UTF-8 output"
+            )
+        }
+        let fields = value.split(
+            separator: "\n",
+            maxSplits: 3,
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 4,
+              let linuxMode = UInt32(fields[0], radix: 16),
+              let size = Int64(fields[1]),
+              let modified = Int64(fields[2])
+        else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container path stat returned malformed output"
+            )
+        }
+        var linkTarget = String(fields[3])
+        if linkTarget.hasSuffix("\n") {
+            linkTarget.removeLast()
+        }
+        return ArchivePathStat(
+            name: requestedName,
+            size: size,
+            mode: dockerFileMode(linuxRawMode: linuxMode),
+            modificationTime: Date(timeIntervalSince1970: TimeInterval(modified)),
+            linkTarget: linkTarget
+        )
+    }
+
+    static func dockerFileMode(linuxRawMode mode: UInt32) -> UInt32 {
+        let permissions = mode & 0o777
+        let special: UInt32 = ((mode & 0o4000) == 0 ? 0 : 1 << 23)
+            | ((mode & 0o2000) == 0 ? 0 : 1 << 22)
+            | ((mode & 0o1000) == 0 ? 0 : 1 << 20)
+        let type: UInt32 = switch mode & 0xF000 {
+        case 0x4000: 1 << 31
+        case 0xA000: 1 << 27
+        case 0x6000: 1 << 26
+        case 0x1000: 1 << 25
+        case 0xC000: 1 << 24
+        case 0x2000: (1 << 26) | (1 << 21)
+        default: 0
+        }
+        return permissions | special | type
+    }
+
     static func archiveTransferNames(
         for path: String
     ) -> (requested: String, staging: String) {

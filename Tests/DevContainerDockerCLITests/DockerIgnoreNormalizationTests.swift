@@ -66,6 +66,15 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `unescaped edge hyphens are rejected like Go path match`() {
+        for pattern in ["[-.]env\n", "[.-]env\n"] {
+            #expect(throws: DockerCLIError.self) {
+                _ = try DockerIgnoreMatcher(contents: pattern)
+            }
+        }
+    }
+
+    @Test
     func `escaped class hyphens exclude matching secrets from build archives`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("docker-ignore-hyphen-\(UUID().uuidString)")

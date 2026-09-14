@@ -25,6 +25,23 @@ import Testing
 
 struct AppleContainerRuntimeDirectTests {
     @Test
+    func `container path stat decodes Linux metadata without copying contents`() throws {
+        let output = Data("a1ff\n42\n1789380000\n../workspace\n".utf8)
+
+        let stat = try AppleContainerRuntime.containerPathStat(
+            output: output,
+            requestedName: "alias"
+        )
+
+        #expect(stat.name == "alias")
+        #expect(stat.size == 42)
+        #expect(stat.mode & (1 << 27) != 0)
+        #expect(stat.mode & 0o777 == 0o777)
+        #expect(stat.modificationTime == Date(timeIntervalSince1970: 1_789_380_000))
+        #expect(stat.linkTarget == "../workspace")
+    }
+
+    @Test
     func `framed terminal payload ignores pseudo terminal control output`() throws {
         let start = "__BEGIN__"
         let end = "__END__"
