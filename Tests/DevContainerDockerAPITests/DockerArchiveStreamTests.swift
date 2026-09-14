@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -60,7 +61,9 @@ func `file backed archives stream in bounded chunks and remove their spool`() as
             as? Int == 0o600
     )
     let payload = Data(repeating: 0x5A, count: (64 * 1024 * 2) + 17)
-    try payload.write(to: file.url)
+    let writer = try file.makeWritingHandle()
+    try writer.write(contentsOf: payload)
+    try writer.close()
 
     let runtime = InMemoryRuntime()
     await runtime.seedImage(
@@ -108,11 +111,42 @@ func `cancelling a file backed archive removes its spool`() async throws {
         .appendingPathComponent("devcontainer-archive-cancel-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let file = try RuntimeArchiveFile(baseDirectory: root)
-    try Data(repeating: 0x5A, count: 65 * 1024).write(to: file.url)
+    let writer = try file.makeWritingHandle()
+    try writer.write(contentsOf: Data(repeating: 0x5A, count: 65 * 1024))
+    try writer.close()
     let stream = try DockerArchiveFileStream(archive: file)
 
     #expect(try await stream.nextChunk()?.count == 64 * 1024)
     await stream.cancel()
     #expect(try await stream.nextChunk() == nil)
     #expect(!FileManager.default.fileExists(atPath: file.url.path))
+}
+
+@Test
+func `archive descriptors ignore pathname replacement and preserve foreign cleanup targets`() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("devcontainer-archive-race-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let victim = root.appendingPathComponent("victim")
+    try Data("safe".utf8).write(to: victim)
+    let archive = try RuntimeArchiveFile(baseDirectory: root)
+    let writer = try archive.makeWritingHandle()
+    try FileManager.default.removeItem(at: archive.url)
+    try FileManager.default.createSymbolicLink(
+        at: archive.url,
+        withDestinationURL: victim
+    )
+
+    try writer.write(contentsOf: Data("archive".utf8))
+    try writer.close()
+    let reader = try archive.makeReadingHandle()
+    #expect(try reader.readToEnd() == Data("archive".utf8))
+    try reader.close()
+    #expect(try Data(contentsOf: victim) == Data("safe".utf8))
+
+    archive.remove()
+    var replacementStatus = Darwin.stat()
+    #expect(lstat(archive.url.path, &replacementStatus) == 0)
+    #expect(replacementStatus.st_mode & S_IFMT == S_IFLNK)
 }

@@ -24,14 +24,14 @@ enum AppleCommandRunner {
         var input: Data?
         var maximumStandardOutputBytes: Int?
         var maximumStandardErrorBytes: Int?
-        var standardOutputFile: URL?
+        var standardOutputFile: FileHandle?
 
         init(
             workingDirectory: URL? = nil,
             input: Data? = nil,
             maximumStandardOutputBytes: Int? = nil,
             maximumStandardErrorBytes: Int? = nil,
-            standardOutputFile: URL? = nil
+            standardOutputFile: FileHandle? = nil
         ) {
             self.workingDirectory = workingDirectory
             self.input = input

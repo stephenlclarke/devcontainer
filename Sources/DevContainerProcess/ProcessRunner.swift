@@ -85,7 +85,7 @@ public enum ProcessRunner {
         workingDirectory: URL? = nil,
         input: Data? = nil,
         maximumOutputBytes: Int? = nil,
-        standardOutputFile: URL? = nil
+        standardOutputFile: FileHandle? = nil
     ) async throws -> CapturedProcessResult {
         if let maximumOutputBytes {
             precondition(maximumOutputBytes >= 0)
@@ -94,7 +94,7 @@ public enum ProcessRunner {
         try RuntimeRequestScope.checkActive()
         let standardInput = input.map { _ in Pipe() }
         let standardOutput = standardOutputFile == nil ? Pipe() : nil
-        let outputFile = try standardOutputFile.map(FileHandle.init(forWritingTo:))
+        let outputFile = standardOutputFile
         let standardError = Pipe()
         var command = try configuredCommand(
             executable: executable,

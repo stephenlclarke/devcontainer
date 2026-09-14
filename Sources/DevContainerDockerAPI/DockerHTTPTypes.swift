@@ -144,7 +144,7 @@ actor DockerArchiveFileStream: DockerHTTPStreamSession {
 
     init(archive: RuntimeArchiveFile) throws {
         self.archive = archive
-        handle = try FileHandle(forReadingFrom: archive.url)
+        handle = try archive.makeReadingHandle()
     }
 
     func nextChunk() async throws -> Data? {

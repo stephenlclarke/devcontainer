@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 import Foundation
 
 public enum BackendProvider: String, Codable, CaseIterable, Sendable {
@@ -419,6 +420,9 @@ public final class RuntimeArchiveFile: @unchecked Sendable, Equatable {
     public let url: URL
 
     private let lock = NSLock()
+    private var descriptor: Int32
+    private let device: dev_t
+    private let inode: ino_t
     private var removalPending = true
 
     public init(baseDirectory: URL) throws {
@@ -430,38 +434,101 @@ public final class RuntimeArchiveFile: @unchecked Sendable, Equatable {
         let candidate = baseDirectory.appendingPathComponent(
             "devcontainer-archive-\(UUID().uuidString.lowercased()).tar"
         )
-        do {
-            try Data().write(to: candidate, options: .withoutOverwriting)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: candidate.path
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: candidate)
-            throw error
+        let opened = Darwin.open(
+            candidate.path,
+            O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o600)
+        )
+        guard opened >= 0 else {
+            throw Self.posixError()
+        }
+        var status = Darwin.stat()
+        guard fchmod(opened, mode_t(0o600)) == 0,
+              fstat(opened, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              status.st_mode & 0o777 == 0o600
+        else {
+            let failure = errno
+            Darwin.close(opened)
+            Darwin.unlink(candidate.path)
+            errno = failure == 0 ? EACCES : failure
+            throw Self.posixError()
         }
         url = candidate
+        descriptor = opened
+        device = status.st_dev
+        inode = status.st_ino
     }
 
     public static func == (lhs: RuntimeArchiveFile, rhs: RuntimeArchiveFile) -> Bool {
         lhs === rhs || lhs.url == rhs.url
     }
 
+    public func makeWritingHandle() throws -> FileHandle {
+        try duplicate(resetAndTruncate: true)
+    }
+
+    public func makeReadingHandle() throws -> FileHandle {
+        try duplicate(resetAndTruncate: false)
+    }
+
     public func remove() {
-        let shouldRemove = lock.withLock {
+        let ownedDescriptor = lock.withLock {
             guard removalPending else {
-                return false
+                return Int32(-1)
             }
             removalPending = false
-            return true
+            let value = descriptor
+            descriptor = -1
+            return value
         }
-        if shouldRemove {
-            try? FileManager.default.removeItem(at: url)
+        guard ownedDescriptor >= 0 else {
+            return
         }
+        var status = Darwin.stat()
+        if lstat(url.path, &status) == 0,
+           status.st_dev == device,
+           status.st_ino == inode
+        {
+            Darwin.unlink(url.path)
+        }
+        Darwin.close(ownedDescriptor)
     }
 
     deinit {
         remove()
+    }
+
+    private func duplicate(resetAndTruncate: Bool) throws -> FileHandle {
+        try lock.withLock {
+            guard removalPending, descriptor >= 0 else {
+                errno = EBADF
+                throw Self.posixError()
+            }
+            let copied = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+            guard copied >= 0 else {
+                throw Self.posixError()
+            }
+            if resetAndTruncate, ftruncate(copied, 0) != 0 {
+                let failure = errno
+                Darwin.close(copied)
+                errno = failure
+                throw Self.posixError()
+            }
+            guard lseek(copied, 0, SEEK_SET) == 0 else {
+                let failure = errno
+                Darwin.close(copied)
+                errno = failure
+                throw Self.posixError()
+            }
+            return FileHandle(fileDescriptor: copied, closeOnDealloc: true)
+        }
+    }
+
+    private static func posixError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 }
 

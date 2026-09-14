@@ -48,13 +48,14 @@ struct ProcessRunnerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let output = root.appendingPathComponent("output.bin")
         try Data().write(to: output, options: .withoutOverwriting)
+        let outputHandle = try FileHandle(forWritingTo: output)
 
         let result = try await ProcessRunner.captured(
             executable: URL(fileURLWithPath: "/bin/sh"),
             arguments: ["-c", "yes o | head -c 2097152; printf error >&2"],
             environment: [:],
             maximumOutputBytes: 4096,
-            standardOutputFile: output
+            standardOutputFile: outputHandle
         )
 
         #expect(result.exitCode == 0)

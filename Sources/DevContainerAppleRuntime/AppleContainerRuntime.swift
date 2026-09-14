@@ -993,12 +993,13 @@ public extension AppleContainerRuntime {
             let archiveFile = try RuntimeArchiveFile(
                 baseDirectory: Self.transferDirectory
             )
+            let archiveWriter = try archiveFile.makeWritingHandle()
             let tarResult = try await AppleCommandRunner.run(
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
                 arguments: ["-cf", "-", "-C", temporary.url.path, "--", archiveName],
                 environment: environment,
                 options: AppleCommandRunner.Options(
-                    standardOutputFile: archiveFile.url
+                    standardOutputFile: archiveWriter
                 )
             )
             try requireSuccess(tarResult, operation: "archive creation")
