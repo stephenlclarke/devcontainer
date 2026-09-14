@@ -621,6 +621,15 @@ struct DockerCLIApplicationTests {
             environment: ["PATH": "/usr/bin:/bin"]
         ).standardOutput
         let transport = try StubTransport([
+            .init(
+                status: 200,
+                headers: [
+                    "X-Docker-Container-Path-Stat": archiveStatHeader(
+                        name: "archive",
+                        mode: (1 << 31) | 0o755
+                    )
+                ]
+            ),
             .init(status: 200),
             .init(
                 status: 200,
@@ -644,8 +653,10 @@ struct DockerCLIApplicationTests {
             encoding: .utf8
         ) == "archive-content\n")
         #expect(transport.requests[0].target == "/containers/box/archive?path=%2Farchive")
-        #expect(!transport.requests[0].body.isEmpty)
+        #expect(transport.requests[0].method == "HEAD")
         #expect(transport.requests[1].target == "/containers/box/archive?path=%2Farchive")
+        #expect(!transport.requests[1].body.isEmpty)
+        #expect(transport.requests[2].target == "/containers/box/archive?path=%2Farchive")
     }
 
     @Test

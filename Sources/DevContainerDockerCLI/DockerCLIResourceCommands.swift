@@ -178,20 +178,35 @@ extension DockerCLIApplication {
         local: String,
         remote: (container: String, path: String)
     ) throws {
+        let fileManager = FileManager.default
         let contentsOnly = local.hasSuffix("/.")
         let sourcePath = contentsOnly ? String(local.dropLast(2)) : local
         let source = URL(fileURLWithPath: sourcePath)
-        let archiveRoot = contentsOnly ? source : source.deletingLastPathComponent()
-        let archiveEntry = contentsOnly ? "." : source.lastPathComponent
-        guard FileManager.default.fileExists(atPath: archiveRoot.path) else {
+        var sourceIsDirectory = ObjCBool(false)
+        guard fileManager.fileExists(
+            atPath: source.path,
+            isDirectory: &sourceIsDirectory
+        ) else {
             throw DockerCLIError.invalidArguments("cp source does not exist: \(local)")
         }
+        let destination = try copyDestination(
+            remote: remote,
+            sourceIsDirectory: sourceIsDirectory.boolValue
+        )
+        let archiveRoot = destination.archiveName == nil && contentsOnly
+            ? source
+            : source.deletingLastPathComponent()
+        let archiveEntry = destination.archiveName == nil && contentsOnly
+            ? "."
+            : source.lastPathComponent
+        var tarArguments = ["--no-xattrs", "-cf", "-", "-C", archiveRoot.path]
+        if let archiveName = destination.archiveName {
+            tarArguments += try ["-s", Self.tarRenameExpression(to: archiveName)]
+        }
+        tarArguments += ["--", archiveEntry]
         let archive = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: [
-                "--no-xattrs", "-cf", "-", "-C", archiveRoot.path, "--",
-                archiveEntry
-            ],
+            arguments: tarArguments,
             environment: ["COPYFILE_DISABLE": "1", "PATH": "/usr/bin:/bin"]
         )
         guard archive.exitCode == 0 else {
@@ -203,10 +218,106 @@ extension DockerCLIApplication {
             "PUT",
             Self.target(
                 "/containers/\(Self.path(remote.container))/archive",
-                query: [("path", remote.path)]
+                query: [("path", destination.extractionPath)]
             ),
             body: archive.standardOutput
         )
+    }
+
+    private func copyDestination(
+        remote: (container: String, path: String),
+        sourceIsDirectory: Bool
+    ) throws -> DockerCopyUploadDestination {
+        let requiresExistingDirectory = remote.path.hasSuffix("/")
+        let path = URL(fileURLWithPath: remote.path).standardizedFileURL.path
+        if let stat = try containerPathStat(container: remote.container, path: path) {
+            guard !requiresExistingDirectory || stat.isDirectory else {
+                throw DockerCLIError.invalidArguments(
+                    "cp destination is not a directory: \(remote.path)"
+                )
+            }
+            if stat.isDirectory {
+                return DockerCopyUploadDestination(
+                    extractionPath: path,
+                    archiveName: nil
+                )
+            }
+            guard !sourceIsDirectory else {
+                throw DockerCLIError.invalidArguments(
+                    "cannot copy a directory onto a file: \(remote.path)"
+                )
+            }
+            return DockerCopyUploadDestination(
+                extractionPath: URL(fileURLWithPath: path).deletingLastPathComponent().path,
+                archiveName: URL(fileURLWithPath: path).lastPathComponent
+            )
+        }
+        guard !requiresExistingDirectory else {
+            throw DockerCLIError.invalidArguments(
+                "cp destination directory does not exist: \(remote.path)"
+            )
+        }
+        let destination = URL(fileURLWithPath: path)
+        let parent = destination.deletingLastPathComponent().path
+        let name = destination.lastPathComponent
+        guard !name.isEmpty,
+              let parentStat = try containerPathStat(
+                  container: remote.container,
+                  path: parent
+              ),
+              parentStat.isDirectory
+        else {
+            throw DockerCLIError.invalidArguments(
+                "cp destination parent directory does not exist: \(remote.path)"
+            )
+        }
+        return DockerCopyUploadDestination(
+            extractionPath: parent,
+            archiveName: name
+        )
+    }
+
+    private func containerPathStat(
+        container: String,
+        path: String
+    ) throws -> DockerCopyPathStat? {
+        let target = Self.target(
+            "/containers/\(Self.path(container))/archive",
+            query: [("path", path)]
+        )
+        let response: DockerHTTPResponse
+        do {
+            response = try request("HEAD", target)
+        } catch let error as DockerHTTPClientError {
+            if case .server(status: 404, message: _) = error {
+                return nil
+            }
+            throw error
+        }
+        if response.status == 404 {
+            return nil
+        }
+        guard response.status == 200 else {
+            throw DockerCLIError.malformedResponse(
+                "container destination probe returned HTTP \(response.status)"
+            )
+        }
+        return try Self.copyPathStat(response)
+    }
+
+    private static func tarRenameExpression(to name: String) throws -> String {
+        guard let delimiter = (1 ... 31)
+            .compactMap({ Unicode.Scalar($0) })
+            .first(where: { !name.unicodeScalars.contains($0) })
+        else {
+            throw DockerCLIError.invalidArguments(
+                "cp destination name has no safe tar substitution delimiter"
+            )
+        }
+        let marker = String(delimiter)
+        let escaped = name
+            .replacingOccurrences(of: "\\", with: "\\\\")
+        return "\(marker)^[^/]*\(marker)\(escaped)\(marker)"
     }
 
     private func copyFromContainer(
@@ -399,6 +510,11 @@ private struct DockerCopyPathStat: Decodable {
     var isDirectory: Bool {
         mode & (1 << 31) != 0
     }
+}
+
+private struct DockerCopyUploadDestination {
+    let extractionPath: String
+    let archiveName: String?
 }
 
 private struct DockerResourceListOptions {
