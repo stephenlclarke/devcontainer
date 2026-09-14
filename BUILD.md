@@ -71,7 +71,7 @@ The four executable products are:
 | Product | Purpose |
 | --- | --- |
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
-| `devcontainer-engine` | Translate requests to stock Apple runtime operations; serve the legacy standalone endpoint or only the private provider-session socket selected by `--provider-socket` |
+| `devcontainer-engine` | Translate requests to stock Apple runtime operations; normal mode starts its private provider session behind the embedded shared gateway, while `--provider-socket` exposes only that private session to a separately managed gateway |
 | `devcontainer-docker` | Present the Docker CLI-compatible command surface expected by the official Dev Containers CLI and VS Code while connecting only to the project-owned Apple-backed socket |
 | `devcontainer-compose` | Docker-shaped invocation adapter that selects the bundled stock-profile native `container-compose` executable or an explicit development override |
 

@@ -460,10 +460,7 @@ struct DockerBuildOptions: Equatable {
         }
     }
 
-    private func archiveEntries(
-        contextURL: URL,
-        dockerfileURL: URL
-    ) throws -> [String] {
+    private func archiveEntries(contextURL: URL, dockerfileURL: URL) throws -> [String] {
         let ignoreURL = dockerfileIgnoreURL(
             contextURL: contextURL,
             dockerfileURL: dockerfileURL
@@ -472,7 +469,7 @@ struct DockerBuildOptions: Equatable {
         let dockerfilePath = relativePath(dockerfileURL, within: contextURL)
         let enumerator = FileManager.default.enumerator(
             at: contextURL,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: []
         )
         var entries: [String] = []
@@ -484,9 +481,11 @@ struct DockerBuildOptions: Equatable {
                 entries.append(path)
                 continue
             }
-            if try matcher.includes(path) {
-                entries.append(path)
+            guard try matcher.includes(path) else {
+                DockerBuildContextTraversal.pruneExcludedDirectory(url, in: enumerator)
+                continue
             }
+            entries.append(path)
         }
         return entries.sorted()
     }

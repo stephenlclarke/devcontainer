@@ -105,6 +105,22 @@ struct AppleContainerRuntimeLifecycleRaceTests {
     }
 
     @Test
+    func `automatic removal coalesces native and Docker aliases`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        let runtime = try fixture.runtime()
+
+        async let nativeRemoval: Void = runtime.scheduleAutomaticRemoval(id: "fixture")
+        async let dockerRemoval: Void = runtime.scheduleAutomaticRemoval(id: "docker-fixture")
+        _ = await (nativeRemoval, dockerRemoval)
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+
+        let removals = try fixture.log().split(separator: "\n")
+            .filter { $0 == "delete --force fixture" }
+        #expect(removals.count == 1)
+    }
+
+    @Test
     func `automatic removal waits through an active restart`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setState("stopped")
