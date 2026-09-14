@@ -530,6 +530,10 @@ def verify_archive(
             archive,
             f"{root}/libexec/devcontainer-compose/LICENSE",
         )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/config.toml",
+        )
         native_compose_root = f"{root}/libexec/devcontainer-compose"
         native_resolved = read_json_member(
             archive,
@@ -553,10 +557,18 @@ def verify_archive(
             native_resolved,
             native_go_modules,
         )
-        for legal_file in ("LICENSE.txt", "ThirdPartyNotices.txt"):
+        for support_file in (
+            "CHANGELOG.md",
+            "LICENSE.txt",
+            "README.md",
+            "ThirdPartyNotices.txt",
+            "dist/spec-node/devContainersSpecCLI.js",
+            "package.json",
+            "scripts/updateUID.Dockerfile",
+        ):
             require_nonempty_regular_member(
                 archive,
-                f"{root}/share/devcontainer/reference-cli/{legal_file}",
+                f"{root}/share/devcontainer/reference-cli/{support_file}",
             )
 
         metadata_root = f"{root}/share/devcontainer"

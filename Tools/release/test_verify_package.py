@@ -54,6 +54,8 @@ class PackageVerificationTests(unittest.TestCase):
         legal_files: bool = True,
         valid_notice_metadata: bool = True,
         valid_compose_checksum: bool = True,
+        native_config: bool = True,
+        reference_support: bool = True,
         forbidden_runtime: str | None = None,
         unexpected_executable: bool = False,
         readme: bytes = b"README\n",
@@ -246,12 +248,24 @@ class PackageVerificationTests(unittest.TestCase):
                     b"unexpected runtime",
                     mode=0o755,
                 )
-            for name in ("LICENSE.txt", "ThirdPartyNotices.txt"):
-                self.add_bytes(
-                    archive,
-                    f"{package_root}/share/devcontainer/reference-cli/{name}",
-                    f"Dev Containers {name}\n".encode(),
-                )
+            if reference_support:
+                for name in (
+                    "CHANGELOG.md",
+                    "LICENSE.txt",
+                    "README.md",
+                    "ThirdPartyNotices.txt",
+                    "dist/spec-node/devContainersSpecCLI.js",
+                    "package.json",
+                    "scripts/updateUID.Dockerfile",
+                ):
+                    self.add_bytes(
+                        archive,
+                        (
+                            f"{package_root}/share/devcontainer/"
+                            f"reference-cli/{name}"
+                        ),
+                        f"Dev Containers {name}\n".encode(),
+                    )
             self.add_bytes(
                 archive,
                 f"{package_root}/libexec/container/plugins/devcontainer/config.toml",
@@ -285,6 +299,12 @@ class PackageVerificationTests(unittest.TestCase):
                 f"{package_root}/libexec/devcontainer-compose/LICENSE",
                 b"Apache License, Version 2.0\n",
             )
+            if native_config:
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/libexec/devcontainer-compose/config.toml",
+                    b'schemaVersion = 1\n',
+                )
             native_compose_root = (
                 f"{package_root}/libexec/devcontainer-compose"
             )
@@ -515,6 +535,26 @@ class PackageVerificationTests(unittest.TestCase):
             result = self.run_verifier(archive, checksum)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("archive is missing", result.stderr)
+
+    def test_native_compose_configuration_cannot_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                native_config=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("config.toml", result.stderr)
+
+    def test_reference_cli_support_files_cannot_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                reference_support=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("reference-cli", result.stderr)
 
     def test_third_party_notice_metadata_cannot_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

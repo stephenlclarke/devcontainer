@@ -158,6 +158,8 @@ devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-compose
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-docker
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/LICENSE
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/config.toml
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/bin/compose
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/compose-normalizer
 devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/build-info.json
@@ -178,7 +180,13 @@ devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/README.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/devcontainer.js
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/dist/spec-node/devContainersSpecCLI.js
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/LICENSE.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/package.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/ThirdPartyNotices.txt
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/scripts/updateUID.Dockerfile
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/CHANGELOG.md
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/README.md
 ```
 
 The `reference-cli` directory contains the checksum-pinned official

@@ -171,16 +171,55 @@ class ReleaseDocumentationTests(unittest.TestCase):
         for payload in (
             "compose-volume-initializer-linux-arm64",
             "compose-volume-initializer-linux-amd64",
+            "libexec/devcontainer-compose/LICENSE",
+            "libexec/devcontainer-compose/config.toml",
             "libexec/devcontainer-compose/resources/Package.resolved",
             "libexec/devcontainer-compose/resources/go-modules.txt",
             "libexec/devcontainer-compose/resources/container-compose.spdx.json",
             "libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt",
             "share/devcontainer/notarization.json",
             "share/devcontainer/reference-cli/devcontainer.js",
+            (
+                "share/devcontainer/reference-cli/dist/spec-node/"
+                "devContainersSpecCLI.js"
+            ),
+            "share/devcontainer/reference-cli/LICENSE.txt",
             "share/devcontainer/reference-cli/package.json",
+            "share/devcontainer/reference-cli/ThirdPartyNotices.txt",
+            "share/devcontainer/reference-cli/scripts/updateUID.Dockerfile",
+            "share/devcontainer/reference-cli/CHANGELOG.md",
+            "share/devcontainer/reference-cli/README.md",
         ):
             with self.subTest(payload=payload):
                 self.assertIn(payload, install)
+
+    def test_notice_records_both_legal_inventories(self) -> None:
+        notice = (ROOT / "NOTICE.md").read_text(encoding="utf-8")
+        for payload in (
+            "devcontainer.spdx.json",
+            "libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt",
+            "libexec/devcontainer-compose/resources/container-compose.spdx.json",
+            "vendored Go modules",
+            "share/devcontainer/reference-cli/LICENSE.txt",
+            "share/devcontainer/reference-cli/ThirdPartyNotices.txt",
+        ):
+            with self.subTest(payload=payload):
+                self.assertIn(payload, notice)
+
+    def test_release_guide_uses_published_asset_names(self) -> None:
+        release = (ROOT / "RELEASE.md").read_text(encoding="utf-8")
+        workflow = (
+            ROOT / ".github" / "workflows" / "prebuilt-binaries.yml"
+        ).read_text(encoding="utf-8")
+        for asset in (
+            "build-info.json",
+            "devcontainer.spdx.json",
+            "notarization.json",
+        ):
+            with self.subTest(asset=asset):
+                self.assertIn(f"`{asset}`", release)
+                self.assertIn(f'"${{assets}}/{asset}"', workflow)
+        self.assertNotIn("devcontainer-sbom.spdx.json", release)
 
     def test_quality_and_release_guides_inventory_every_workflow(self) -> None:
         quality = (ROOT / "QUALITY.md").read_text(encoding="utf-8")
@@ -332,6 +371,28 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 with self.subTest(path=relative, version=version):
                     if str(version) not in contents:
                         self.fail(f"{relative} does not document version {version}")
+
+    def test_provider_authority_is_documented_from_the_manifest(self) -> None:
+        provider = json_document("Tests/Parity/manifest.json")["referencePins"][
+            "containerCompose"
+        ]
+        expected = {
+            "README.md": (provider["stableCommit"],),
+            "TESTING.md": (provider["stableCommit"],),
+            "Sources/DevContainerCore/DevContainerCore.docc/Testing.md": (
+                provider["stableCommit"],
+            ),
+            "COMPATIBILITY.md": (
+                provider["stableCommit"],
+                provider["containerCommit"],
+                provider["containerizationCommit"],
+            ),
+        }
+        for relative, revisions in expected.items():
+            contents = (ROOT / relative).read_text(encoding="utf-8")
+            for revision in revisions:
+                with self.subTest(path=relative, revision=revision):
+                    self.assertIn(revision, contents)
 
     def test_compatibility_matrix_matches_runtime_authority(self) -> None:
         native = json_document("Tools/release/native-compose.json")

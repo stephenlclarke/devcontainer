@@ -77,6 +77,7 @@ Tools/release/sign-and-notarize.sh
 Tools/release/update-tap-readme.py
 Tools/release/verify-package.py
 Tools/release/write-build-info.py
+Tools/release/write-native-compose-legal.py
 Tools/release/write-notarization-evidence.py
 ```
 
@@ -460,10 +461,14 @@ After downloading the published asset, validate the signature again and run an a
 
 Every Current and stable package publishes:
 
-- `devcontainer-<lane>-arm64.tar.gz`
+- Stable `devcontainer-release-arm64.tar.gz` or Current
+  `devcontainer-current-<sha12>-arm64.tar.gz`
 - Matching `.sha256`
-- `devcontainer-sbom.spdx.json`
+- Matching `.context.json`
+- Matching `.verification.json`
+- `devcontainer.spdx.json`
 - `build-info.json`
+- `notarization.json`
 - Release notes with exact CI, documentation, parity, signing, and notarization links
 
 The repository-owned deterministic SPDX 2.3 generator records the exact source
