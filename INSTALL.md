@@ -112,7 +112,11 @@ The tap provides two explicit channels:
 | `devcontainer` | Stable | `MAJOR.MINOR.PATCH` | Default immutable release |
 | `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in build from an immutable `current-SHA40` prerelease |
 
-Install the stable release:
+The currently published stable formula is legacy version 1.0.1. It still
+declares Docker dependencies and therefore does **not** satisfy the Docker-free
+installation contract in this document. Do not use 1.0.1 for a Docker-free
+installation. The following stable command becomes the supported path after
+the formula reports 1.0.2:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -123,7 +127,21 @@ brew services start stephenlclarke/tap/devcontainer
 devcontainer doctor --container /usr/local/bin/container
 ```
 
-When a Current candidate is published, install it with:
+Before starting the service, confirm that Homebrew selected the Docker-free
+release:
+
+```sh
+brew info stephenlclarke/tap/devcontainer
+devcontainer version --short
+```
+
+Both outputs must identify 1.0.2 or a later release whose compatibility
+document explicitly retains this contract.
+
+The live Current formula also predates the Docker-free candidate. Install a
+Current build only after `brew info stephenlclarke/tap/devcontainer-current`
+identifies an immutable build from the 1.0.2 source line and lists `node`, but
+no Docker or external Compose dependency:
 
 ```sh
 brew tap stephenlclarke/tap

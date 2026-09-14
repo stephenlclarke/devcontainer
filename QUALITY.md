@@ -410,9 +410,11 @@ Release workflows separate build from publication. Publishing permissions are gr
 
 ## Homebrew quality
 
-The stable formula in `stephenlclarke/homebrew-tap` uses immutable release URLs
-and checksums, declares Apple silicon and macOS Tahoe requirements, and installs
-only this project:
+The Docker-free stable formula design, effective with 1.0.2, uses immutable
+release URLs and checksums, declares Apple silicon and macOS Tahoe requirements,
+and installs only this project. The currently published legacy 1.0.1 formula
+still declares Docker dependencies and is not evidence for this candidate
+contract:
 
 ```ruby
 depends_on arch: :arm64

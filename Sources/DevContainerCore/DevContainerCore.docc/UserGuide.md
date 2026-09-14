@@ -12,13 +12,16 @@ Apple runtime engine and rejects any foreign Docker-compatible endpoint.
 
 ## Install
 
-Install and verify Apple `container` 1.4.1 separately, then install the stable
-formula:
+Install and verify Apple `container` 1.4.1 separately. The currently published
+stable `devcontainer` formula is legacy version 1.0.1 and still declares Docker
+dependencies, so it does not satisfy this candidate's Docker-free contract.
+After the stable formula reports 1.0.2, install and verify it with:
 
 ```console
 brew tap stephenlclarke/tap
 brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer
+devcontainer version --short
 /usr/local/bin/container system start
 brew services start stephenlclarke/tap/devcontainer
 devcontainer doctor --container /usr/local/bin/container

@@ -24,7 +24,10 @@ before using the Apple backend.
 
 ### Stable
 
-The stable formula follows immutable bare semantic releases:
+The Docker-free stable formula follows immutable bare semantic releases
+beginning with 1.0.2. Until 1.0.2 is published, the live 1.0.1 formula remains
+a legacy package that declares Docker dependencies and must not be used as a
+Docker-free installation:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -51,7 +54,10 @@ Homebrew infers the stable formula version from the immutable tag-bearing URL. T
 
 ### Current
 
-The opt-in Current formula follows the newest validated `main` package:
+The opt-in Current formula follows the newest validated `main` package. The
+live formula currently predates the Docker-free candidate; do not install it
+until its Homebrew metadata lists `node` and no Docker or external Compose
+dependency:
 
 ```sh
 brew tap stephenlclarke/tap

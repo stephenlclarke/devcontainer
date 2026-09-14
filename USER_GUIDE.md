@@ -76,12 +76,22 @@ $ /usr/local/bin/container --version
 container CLI version 1.4.1 (build: release, commit: 9a8917c)
 ```
 
-Install the stable formula:
+The currently published stable formula is legacy version 1.0.1 and still
+declares Docker dependencies. It does not satisfy this candidate's Docker-free
+contract. Do not use 1.0.1 for a Docker-free installation. After the stable
+formula reports 1.0.2, install it with:
 
 ```console
 brew tap stephenlclarke/tap
 brew trust --tap stephenlclarke/tap
 brew install --formula stephenlclarke/tap/devcontainer
+```
+
+Confirm the selected release before starting either service:
+
+```console
+$ devcontainer version --short
+1.0.2
 ```
 
 Start Apple’s runtime and this project’s compatibility service:

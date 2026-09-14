@@ -236,7 +236,12 @@ Runtime references are [Apple container](https://github.com/apple/container), [A
 
 Requirements are an Apple-silicon Mac running macOS Tahoe 26 or later and
 Apple [`container` 1.4.1](https://github.com/apple/container/releases/tag/1.4.1).
-Install Apple's signed package first, then install `devcontainer`:
+The commands below are the Docker-free **1.0.2 installation procedure after
+1.0.2 is published**. The currently published 1.0.1 Homebrew formula is a
+legacy package that still declares Docker dependencies and does not satisfy
+this source candidate's installation contract; do not install or upgrade to
+1.0.1 for a Docker-free setup. Install Apple's signed package first, then
+install `devcontainer` once the stable formula reports 1.0.2:
 
 When macOS asks whether the selected runtime's `container-runtime-linux` may
 find and connect to devices on the local network, choose **Allow**. Stock mode
@@ -283,9 +288,10 @@ devcontainer plugin register
 container devcontainer doctor
 ```
 
-The stable formula installs this project, Node.js, and a pinned stock-profile
-native Compose provider in the same archive. It does not install Docker
-software, Colima, an external Compose formula, or a container runtime.
+Beginning with 1.0.2, the stable formula installs this project, Node.js, and a
+pinned stock-profile native Compose provider in the same archive. It does not
+install Docker software, Colima, an external Compose formula, or a container
+runtime. The published legacy 1.0.1 formula is excluded from this statement.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
 See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
