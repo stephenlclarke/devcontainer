@@ -34,6 +34,14 @@ struct DockerIgnoreNormalizationTests {
     }
 
     @Test
+    func `wildcards consume one Unicode scalar like Docker`() throws {
+        let matcher = try DockerIgnoreMatcher(contents: "*\n!?\n")
+
+        #expect(matcher.includes("é"))
+        #expect(!matcher.includes("e\u{301}"))
+    }
+
+    @Test
     func `double stars and escaped character classes preserve ignore semantics`() throws {
         let matcher = try DockerIgnoreMatcher(contents: """
         build/**/secret[0-9].txt

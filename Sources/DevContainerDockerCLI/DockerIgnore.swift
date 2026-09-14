@@ -29,15 +29,15 @@ private struct DockerIgnoreRule {
 
 private struct DockerIgnoreCharacterClass {
     enum Member {
-        case literal(Character)
-        case range(Character, Character)
+        case literal(Unicode.Scalar)
+        case range(Unicode.Scalar, Unicode.Scalar)
 
-        func contains(_ character: Character) -> Bool {
+        func contains(_ scalar: Unicode.Scalar) -> Bool {
             switch self {
             case let .literal(expected):
-                character == expected
+                scalar == expected
             case let .range(lower, upper):
-                lower <= character && character <= upper
+                lower.value <= scalar.value && scalar.value <= upper.value
             }
         }
     }
@@ -45,20 +45,20 @@ private struct DockerIgnoreCharacterClass {
     let inverted: Bool
     let members: [Member]
 
-    func contains(_ character: Character) -> Bool {
-        let found = members.contains { $0.contains(character) }
+    func contains(_ scalar: Unicode.Scalar) -> Bool {
+        let found = members.contains { $0.contains(scalar) }
         return inverted ? !found : found
     }
 }
 
 private struct DockerIgnoreGlobPattern {
     private struct ParsedLiteral {
-        let character: Character
+        let scalar: Unicode.Scalar
         let escaped: Bool
     }
 
     private enum Token {
-        case literal(Character)
+        case literal(Unicode.Scalar)
         case anyNonSeparator
         case starNonSeparator
         case starAny
@@ -71,18 +71,18 @@ private struct DockerIgnoreGlobPattern {
 
     init(_ source: String) {
         containsSeparator = source.contains("/")
-        let characters = Array(source)
+        let scalars = Array(source.unicodeScalars)
         var compiled: [Token] = []
         var index = 0
-        while index < characters.count {
-            switch characters[index] {
+        while index < scalars.count {
+            switch scalars[index] {
             case "*":
-                compiled.append(Self.starToken(characters, index: &index))
+                compiled.append(Self.starToken(scalars, index: &index))
             case "?":
                 compiled.append(.anyNonSeparator)
             case "[":
                 if let characterClass = Self.characterClass(
-                    characters,
+                    scalars,
                     startingAt: index
                 ) {
                     compiled.append(.characterClass(characterClass.value))
@@ -91,14 +91,14 @@ private struct DockerIgnoreGlobPattern {
                     compiled.append(.literal("["))
                 }
             case "\\":
-                if index + 1 < characters.count {
+                if index + 1 < scalars.count {
                     index += 1
-                    compiled.append(.literal(characters[index]))
+                    compiled.append(.literal(scalars[index]))
                 } else {
                     compiled.append(.literal("\\"))
                 }
             default:
-                compiled.append(.literal(characters[index]))
+                compiled.append(.literal(scalars[index]))
             }
             index += 1
         }
@@ -109,44 +109,44 @@ private struct DockerIgnoreGlobPattern {
     /// Unlike a backtracking regular expression, adjacent or interleaved
     /// stars therefore cannot cause exponential work.
     func matches(_ value: String, allowingDescendants: Bool) -> Bool {
-        let characters = Array(value)
-        var following = (0 ... characters.count).map { index in
-            index == characters.count
-                || (allowingDescendants && characters[index] == "/")
+        let scalars = Array(value.unicodeScalars)
+        var following = (0 ... scalars.count).map { index in
+            index == scalars.count
+                || (allowingDescendants && scalars[index] == "/")
         }
         for token in tokens.reversed() {
-            var current = Array(repeating: false, count: characters.count + 1)
+            var current = Array(repeating: false, count: scalars.count + 1)
             var directorySuffixMatches = false
-            for index in stride(from: characters.count, through: 0, by: -1) {
+            for index in stride(from: scalars.count, through: 0, by: -1) {
                 switch token {
                 case let .literal(expected):
-                    current[index] = index < characters.count
-                        && characters[index] == expected
+                    current[index] = index < scalars.count
+                        && scalars[index] == expected
                         && following[index + 1]
                 case .anyNonSeparator:
-                    current[index] = index < characters.count
-                        && characters[index] != "/"
+                    current[index] = index < scalars.count
+                        && scalars[index] != "/"
                         && following[index + 1]
                 case .starNonSeparator:
                     current[index] = following[index]
-                        || (index < characters.count
-                            && characters[index] != "/"
+                        || (index < scalars.count
+                            && scalars[index] != "/"
                             && current[index + 1])
                 case .starAny:
                     current[index] = following[index]
-                        || (index < characters.count && current[index + 1])
+                        || (index < scalars.count && current[index + 1])
                 case .starDirectories:
-                    if index < characters.count,
-                       characters[index] == "/",
+                    if index < scalars.count,
+                       scalars[index] == "/",
                        following[index + 1]
                     {
                         directorySuffixMatches = true
                     }
                     current[index] = following[index] || directorySuffixMatches
                 case let .characterClass(characterClass):
-                    current[index] = index < characters.count
-                        && characters[index] != "/"
-                        && characterClass.contains(characters[index])
+                    current[index] = index < scalars.count
+                        && scalars[index] != "/"
+                        && characterClass.contains(scalars[index])
                         && following[index + 1]
                 }
             }
@@ -156,16 +156,16 @@ private struct DockerIgnoreGlobPattern {
     }
 
     private static func starToken(
-        _ characters: [Character],
+        _ scalars: [Unicode.Scalar],
         index: inout Int
     ) -> Token {
-        guard index + 1 < characters.count, characters[index + 1] == "*" else {
+        guard index + 1 < scalars.count, scalars[index + 1] == "*" else {
             return .starNonSeparator
         }
-        while index + 1 < characters.count, characters[index + 1] == "*" {
+        while index + 1 < scalars.count, scalars[index + 1] == "*" {
             index += 1
         }
-        guard index + 1 < characters.count, characters[index + 1] == "/" else {
+        guard index + 1 < scalars.count, scalars[index + 1] == "/" else {
             return .starAny
         }
         index += 1
@@ -173,49 +173,49 @@ private struct DockerIgnoreGlobPattern {
     }
 
     private static func characterClass(
-        _ characters: [Character],
+        _ scalars: [Unicode.Scalar],
         startingAt start: Int
     ) -> (value: DockerIgnoreCharacterClass, endingAt: Int)? {
         var index = start + 1
-        guard index < characters.count else { return nil }
+        guard index < scalars.count else { return nil }
         // Docker delegates character classes to Go's path.Match grammar,
         // where only ^ negates a class. A leading ! is a literal member.
-        let inverted = characters[index] == "^"
+        let inverted = scalars[index] == "^"
         if inverted {
             index += 1
         }
         var literals: [ParsedLiteral] = []
-        if index < characters.count, characters[index] == "]" {
-            literals.append(ParsedLiteral(character: "]", escaped: false))
+        if index < scalars.count, scalars[index] == "]" {
+            literals.append(ParsedLiteral(scalar: "]", escaped: false))
             index += 1
         }
-        while index < characters.count, characters[index] != "]" {
+        while index < scalars.count, scalars[index] != "]" {
             var escaped = false
-            if characters[index] == "\\", index + 1 < characters.count {
+            if scalars[index] == "\\", index + 1 < scalars.count {
                 index += 1
                 escaped = true
             }
             literals.append(
-                ParsedLiteral(character: characters[index], escaped: escaped)
+                ParsedLiteral(scalar: scalars[index], escaped: escaped)
             )
             index += 1
         }
-        guard index < characters.count, !literals.isEmpty else { return nil }
+        guard index < scalars.count, !literals.isEmpty else { return nil }
 
         var members: [DockerIgnoreCharacterClass.Member] = []
         var literalIndex = 0
         while literalIndex < literals.count {
             if literalIndex + 2 < literals.count,
-               literals[literalIndex + 1].character == "-",
+               literals[literalIndex + 1].scalar == "-",
                !literals[literalIndex + 1].escaped
             {
                 members.append(.range(
-                    literals[literalIndex].character,
-                    literals[literalIndex + 2].character
+                    literals[literalIndex].scalar,
+                    literals[literalIndex + 2].scalar
                 ))
                 literalIndex += 3
             } else {
-                members.append(.literal(literals[literalIndex].character))
+                members.append(.literal(literals[literalIndex].scalar))
                 literalIndex += 1
             }
         }
