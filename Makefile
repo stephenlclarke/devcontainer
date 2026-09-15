@@ -89,6 +89,12 @@ swift-test:
 		$(SWIFT_TEST_RUNNER_FLAGS)
 
 coverage:
+	@worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
+	if [[ -n "$$worktree_changes" ]]; then \
+		printf 'Coverage evidence requires a clean worktree:\n%s\n' \
+			"$$worktree_changes" >&2; \
+		exit 2; \
+	fi
 	@mkdir -p .build
 	@find "$(SWIFT_COVERAGE_SCRATCH_PATH)" -type f \
 		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \
@@ -153,6 +159,7 @@ coverage-check: coverage
 	$(PYTHON) Tools/coverage/check-swift-coverage.py \
 		"$${coverage_args[@]}" \
 		"$$(cat .build/codecov-path)"
+	@git rev-parse --verify HEAD > .build/sonar-coverage-revision
 
 sonar: coverage-check sonar-scan
 
@@ -167,11 +174,50 @@ sonar-scan:
 		exit 2; \
 	fi
 	@sonar_token="$${SONAR_TOKEN:-$${SONAR_TOKEN_PERSONAL:-}}"; \
+	worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
+	if [[ -n "$$worktree_changes" ]]; then \
+		printf 'Sonar analysis requires a clean worktree:\n%s\n' \
+			"$$worktree_changes" >&2; \
+		exit 2; \
+	fi; \
+	head_version="$$(git rev-parse --verify HEAD)"; \
+	coverage_version="$$(cat .build/sonar-coverage-revision 2>/dev/null || true)"; \
+	if [[ "$$coverage_version" != "$$head_version" ]]; then \
+		printf 'coverage.xml is not bound to checked-out HEAD %s; run make coverage-check\n' \
+			"$$head_version" >&2; \
+		exit 2; \
+	fi; \
+	sonar_project_version="$${SONAR_PROJECT_VERSION:-$$head_version}"; \
+	if ! [[ "$$sonar_project_version" =~ ^[0-9a-f]{40}$$ ]]; then \
+		printf 'SONAR_PROJECT_VERSION must be an exact lowercase commit SHA\n' >&2; \
+		exit 2; \
+	fi; \
+	if [[ "$$sonar_project_version" != "$$head_version" ]]; then \
+		printf 'SONAR_PROJECT_VERSION must match checked-out HEAD %s\n' \
+			"$$head_version" >&2; \
+		exit 2; \
+	fi; \
+	sonar_args=( \
+		-Dsonar.projectVersion="$$sonar_project_version" \
+		-Dsonar.qualitygate.wait="$(SONAR_QUALITYGATE_WAIT)" \
+	); \
+	if [[ -n "$${SONAR_PULL_REQUEST_KEY:-}" ]]; then \
+		if ! [[ "$${SONAR_PULL_REQUEST_KEY}" =~ ^[0-9]+$$ ]] \
+			|| [[ -z "$${SONAR_PULL_REQUEST_BRANCH:-}" ]] \
+			|| [[ -z "$${SONAR_PULL_REQUEST_BASE:-}" ]]; then \
+			printf 'complete Sonar pull-request identity is required\n' >&2; \
+			exit 2; \
+		fi; \
+		sonar_args+=( \
+			-Dsonar.pullrequest.key="$${SONAR_PULL_REQUEST_KEY}" \
+			-Dsonar.pullrequest.branch="$${SONAR_PULL_REQUEST_BRANCH}" \
+			-Dsonar.pullrequest.base="$${SONAR_PULL_REQUEST_BASE}" \
+		); \
+	fi; \
 	attempt=1; \
 	while true; do \
 		set +e; \
-		SONAR_TOKEN="$$sonar_token" sonar-scanner \
-			-Dsonar.qualitygate.wait="$(SONAR_QUALITYGATE_WAIT)"; \
+		SONAR_TOKEN="$$sonar_token" sonar-scanner "$${sonar_args[@]}"; \
 		status="$$?"; \
 		set -e; \
 		if [[ "$$status" -eq 0 ]]; then \

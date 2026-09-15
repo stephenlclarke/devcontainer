@@ -10,7 +10,7 @@ deterministic package/SBOM tooling, and Homebrew formula validation described
 below. The executable gate discovers the complete current Swift suite and
 requires at least 90.0% first-party line coverage; the documentation does not
 carry a manually maintained test count. Sonar reports zero bugs, vulnerabilities, code smells, security
-hotspots, and technical debt; 0.4% duplication; and A ratings throughout.
+hotspots, and technical debt; 0.3% duplication; and A ratings throughout.
 CodeQL is temporarily disabled by project decision; its workflow retains a
 ready-for-review gate so draft pull requests stay outside iterative analysis
 when it is re-enabled. Dependency review, AddressSanitizer, and ThreadSanitizer pass. Real
@@ -232,14 +232,27 @@ code requires:
 - at least 90% line coverage;
 - at most 3% duplicated lines;
 - zero unresolved reliability, security, or maintainability issues;
-- zero security hotspots;
+- zero unreviewed security hotspots;
 - no unresolved analysis failure or missing coverage import.
 
-The SonarCloud project uses `main` as its real main branch and a project-level
-30-day new-code definition. The workflow validates both remote invariants
-before scanning so a newly created project cannot silently publish
-`Not Computed` badges. After the quality gate completes, it also queries the
-issues and hotspots APIs and fails unless both totals are zero.
+The SonarCloud project uses `main` as its real main branch and compares new
+code with the previous analysed version. Every scan is labelled with the exact
+40-character commit checked out by the job; the local target rejects a stale
+or mismatched override and refuses a dirty worktree, so the label identifies
+the analysed contents. The workflow validates both remote invariants before
+scanning so a newly created project cannot silently publish `Not Computed`
+badges. After the quality gate completes, it also queries unresolved issues
+and `TO_REVIEW` hotspots and fails unless both totals are zero. It separately
+enforces the complete-project coverage, duplication, rating, bug,
+vulnerability, and code-smell thresholds, so a failed analysis cannot evade a
+later gate merely by becoming the previous-version baseline. Pull requests
+from the repository also run the changed-code Sonar gate before merge, keeping
+failed changed coverage or duplication out of `main`. Coverage export refuses
+to run from a dirty worktree, records its source revision, and a standalone
+scan rejects a report generated from any other commit. A pull request without
+the repository Sonar token fails closed;
+fork changes require validation from a maintainer-owned branch and cannot pass
+by skipping the scanner.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A
 passing Sonar gate cannot override an independent coverage, compiler,
