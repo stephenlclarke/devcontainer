@@ -32,8 +32,8 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > fixture against real Docker, unmodified Apple `container` 1.1.0, and the
 > separately maintained `container-compose` 0.10.1 provider stack with zero
 > normalized semantic differences. [COMPATIBILITY.md](COMPATIBILITY.md)
-> records the newer exact fingerprints required by the current source
-> candidate without rewriting that historical release evidence.
+> records those exact release fingerprints without rewriting the historical
+> evidence as the source dependency graph changes.
 
 The latest source-bearing `main` revision (`1b71fe3ec105`) passes hosted CI,
 the stock Apple compile/test lane, documentation, Homebrew validation,
@@ -45,6 +45,13 @@ yet a replacement for the immutable 1.0.1 runtime-parity baseline. The
 published Current package also still points to July source
 `b31e80b2b9c09`; do not infer a current-source release from the green hosted
 quality badges.
+
+Current source has distinct dependency profiles. The stock profile resolves
+unmodified Apple `container` 1.4.1 and `containerization` 0.45.0; the enhanced
+profile resolves the exact Stephen-owned revisions recorded in
+[COMPATIBILITY.md](COMPATIBILITY.md). Neither profile has replaced the 1.0.1
+runtime-parity baseline because the latest source-bearing runtime workflow did
+not produce complete lane evidence.
 
 ## See it work
 
@@ -135,7 +142,7 @@ advanced mount options.
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting and supported-version policy |
 | [Tests/Parity](Tests/Parity) | Machine-readable parity manifest and executable differential fixtures |
 | [Examples/hello](Examples/hello) | Minimal image-based Dev Container used by the live demonstration |
-| `container-engine-api` 0.3.3 published baseline | Shared executable, generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity. The logging-handoff source requires the coordinated unpublished Engine API/Container stack recorded in the Compose logging design; it is not representable by the published baseline yet. |
+| `container-engine-api` revision `84830606abf9` | Shared executable and libraries pinned by both source profiles, including the generated 107-operation Docker API 1.44 through 1.53 ledger, wire/router/server contracts, schema-2 private provider-session transport, bounded raw/WebSocket streaming, deterministic listener ownership/shutdown, and provider-owned immutable state-root identity. This revision is newer than the published 0.3.5 tag and is not stable-release evidence. |
 | `Sources/DevContainerDockerAPI` | Stock-provider Docker Engine endpoint policy and DTO projection |
 | `Sources/DevContainerAppleRuntime` | Stock Apple runtime adapter and process/port/archive support |
 | `Sources/DevContainerService` | Stock-provider adapter; normal mode starts one internal private provider session behind the shared public gateway, while `--provider-socket` exposes only the private session for an external `container-engine` process |

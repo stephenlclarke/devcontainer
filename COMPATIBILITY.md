@@ -9,9 +9,10 @@
 > the real VS Code end-to-end fixture with zero normalized semantic
 > differences. The largest CLI ratios were 2.876x for stock Apple and 4.509x
 > for `container-compose`; the corresponding VS Code ratios were 1.232x and
-> 1.311x. The current source candidate is bound to the newer exact fingerprints
-> below; they do not retroactively change the 1.0.1 tag evidence. Repeated-run
-> statistics are in [PERFORMANCE.md](PERFORMANCE.md).
+> 1.311x. The release fingerprints below remain the only certified runtime
+> matrix. Current source dependency profiles are recorded separately and do
+> not retroactively change the 1.0.1 tag evidence. Repeated-run statistics are
+> in [PERFORMANCE.md](PERFORMANCE.md).
 
 The project's north-star goal is 100% behavioural parity with Docker-based Development Containers and comparable or better performance. This document remains the narrower current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the work and evidence required to reach the north star.
 
@@ -57,12 +58,12 @@ prerequisite. Its adapter discovers and launches an explicitly configured
 executable using argv-based process creation. It must not import `ComposeCore`
 or another implementation module.
 
-## Pinned candidate provenance
+## Pinned 1.0.1 release provenance
 
-These pins define the current source candidate's compatibility matrix.
-Release-bound evidence also records the signing identity where applicable,
-platform triple, and each component's machine-readable version output. The
-immutable 1.0.1 matrix remains available from that tag.
+These pins define the immutable 1.0.1 compatibility matrix and match
+[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Release-bound
+evidence also records the signing identity where applicable, platform triple,
+and each component's machine-readable version output.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
@@ -79,6 +80,28 @@ immutable 1.0.1 matrix remains available from that tag.
 | VS Code | `1.131.0`, arm64 stable | Commit `e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`; official archive SHA-256 `796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
 | Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
+
+## Current source dependency profiles
+
+Current `main` builds two explicit dependency graphs. These are compile and
+hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
+runtime workflow did not produce complete lane evidence, so the release
+manifest above deliberately remains on the certified 1.0.1 matrix.
+
+| Profile component | Exact current source provenance | Status boundary |
+| --- | --- | --- |
+| Stock `apple/container` | 1.4.1 at `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Unmodified Apple dependency selected by `Package.stock.resolved`; compile/test evidence only |
+| Stock `apple/containerization` | 0.45.0 at `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited official Apple dependency in the stock graph |
+| Stock `apple/swift-nio-ssl` | 2.37.4 at `03827c1a9fdb2b6b00a4e93ede8861520263af8c` | Official dependency in the stock graph |
+| Enhanced `stephenlclarke/container` | `228897171d71975988ccdc690f1982e7433952af` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
+| Enhanced `stephenlclarke/containerization` | `b404e03bb914904107a6a9305ba1f0e44c79a59c` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
+| Enhanced `stephenlclarke/swift-nio-ssl` | `3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
+| Shared `stephenlclarke/container-engine-api` | `84830606abf971110071248e087a80ff4abb86d4` | Selected by both profiles; newer than published tag 0.3.5 and therefore recorded as a revision, not a release version |
+
+`Package.resolved` and `Package.stock.resolved` are authoritative for source
+builds. The parity manifest becomes authoritative for a newer runtime claim
+only when its exact clients, runtimes, host, and fixture evidence are updated
+and the complete release gate succeeds.
 
 Moving branch heads are never stable compatibility claims and are not inputs
 to this release matrix. The machine-readable identities in
