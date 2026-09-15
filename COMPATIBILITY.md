@@ -83,7 +83,7 @@ immutable matrix is also embedded in that tag's parity evidence.
 | Stable provider's `stephenlclarke/containerization` | Revision | `7e066a3101bc84fa0f7231daf6a03aa9ef62a567` | Exact enhanced-runtime dependency declared by `container-compose` 0.15.1 |
 | VS Code | `1.137.0`, arm64 stable | Commit `645f29cc3176500b4b5762ba887cf2a7f0ffdf2c`; official archive SHA-256 `16ee5cddb1ea19234e1f2516da07d57e07d7cab6ab45a5515dab077656cbc65e`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
 | VS Code Dev Containers extension | `0.470.0` | Official Marketplace VSIX SHA-256 `66300dd37ec86e709df46acf4c294821db94248ee89cff7fb32888271b5069a1`; embedded CLI `0.89.0` at `5dc7533314b5ba7ec3875c30143dfe1aec644870`, SHA-256 `e2051ce3598a26b11d29048a6dd3252ae8d3b056b413c0d53ba1fd3a56ec1b74` | End-to-end reference integration |
-| Release host | macOS `26.6.2` (`25G83`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
+| Release host | macOS `26.6.2` (`25G83`), Xcode `27.0` (`27A266a`), Swift `6.4`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
 Moving branch heads are never stable compatibility claims and are not inputs
 to this release matrix. The machine-readable identities in

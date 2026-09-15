@@ -53,9 +53,9 @@
       "architecture": "arm64",
       "macOSProductVersion": "26.6.2",
       "macOSBuildVersion": "25G83",
-      "xcodeVersion": "26.6",
-      "xcodeBuildVersion": "17F113",
-      "swiftVersion": "6.3.3"
+      "xcodeVersion": "27.0",
+      "xcodeBuildVersion": "27A266a",
+      "swiftVersion": "6.4"
     }
   },
   "releasePolicy": {
