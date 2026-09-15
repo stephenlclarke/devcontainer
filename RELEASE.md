@@ -190,7 +190,7 @@ The implemented workflow split is:
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
 | `ci.yml` | `macos-26`, Ubuntu aggregate | Format/lint, unit/contract/integration tests, both coverage gates, build, CLI smoke, and `Validate` aggregation |
-| `codeql.yml` | `macos-26` | Temporarily disabled; ready-pull-request Swift analysis when re-enabled |
+| `codeql.yml` | `macos-26` | Manual-build Swift analysis on protected `main`, schedules, dispatches, and ready pull requests |
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
 | `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |

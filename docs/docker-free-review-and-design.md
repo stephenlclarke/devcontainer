@@ -1,12 +1,14 @@
 # Docker-free Dev Containers: review and implementation design
 
-Review date: 10 September 2026. Status: proposed architecture and remediation plan; no runtime implementation changes are made by this review.
+Review date: 10 September 2026. Status refreshed: 15 September 2026. This is a proposed architecture and remediation plan; the evidence table preserves the original review snapshot, while implementation-status notes describe later merged work.
 
 ## Decision
 
 Build a Docker-free Dev Containers product that uses unmodified, tagged Apple `container` as its baseline and can select Stephen's enhanced Container implementation explicitly. Reuse the Dev Containers reference configuration/lifecycle engine and the useful parts of Container Compose. Replace the remaining Docker CLI and Docker Compose executable dependencies with project-owned frontends. Preserve the existing shared Engine gateway as a compatibility boundary; speaking the Docker protocol does not require installing Docker.
 
-The current repository does not yet meet this goal. It is an Engine compatibility service with a configuration CLI, not a standalone implementation of the `devcontainer up/build/exec` commands. Homebrew installs Docker clients, the default Compose path invokes them, the Swift dependency graph uses Stephen's forks, and the latest main revision has failing build and parity checks.
+The current repository does not yet meet this goal. It is an Engine compatibility service with a configuration CLI, not a standalone implementation of the `devcontainer up/build/exec` commands. Homebrew installs Docker clients and the default Compose path invokes them. The reviewed revision also used Stephen's forks in its only Swift dependency graph and had failing build and parity checks. Current `main` now has separate stock and enhanced dependency profiles and a green hosted build, but the latest live parity workflow failed before producing complete lane evidence.
+
+As of 15 September 2026, source revision `1b71fe3ec105` passes hosted CI, stock-profile tests, documentation, Homebrew validation, AddressSanitizer, ThreadSanitizer, CodeQL, and the SonarQube quality gate. SonarQube reports 95.5% coverage, 0.1% duplicated lines, and zero bugs, vulnerabilities, code smells, or security hotspots. The live parity run [34932143392](https://github.com/stephenlclarke/devcontainer/actions/runs/34932143392) failed because its downloaded artifacts did not contain the expected `results.json` paths; it therefore provides no new runtime or timing certification. The published Current package still targets `b31e80b2b9c09ecc73bb3badf9cd5cf16550a538` from July. Version 1.0.1 remains the latest immutable stable runtime-parity baseline.
 
 "Docker-free" in this design means no Docker Desktop, Docker Engine daemon, Docker CLI, Docker Compose executable, Buildx executable, or Colima installation is required to install or use either candidate runtime. OCI images, Dockerfile syntax, Compose files, Docker-compatible command/protocol contracts, and the BuildKit implementation already used by Apple's builder remain acceptable. The real Docker stack remains an isolated test oracle. This is an installation/runtime independence requirement, not a prohibition on all open-source code originating in Docker or Moby.
 
@@ -30,14 +32,14 @@ The application opened this session in `/Users/sclarke/Documents/devcontainer`, 
 
 The review inspected the dependency graph, CLI configuration and dispatch, runtime inventory/create/build/process/archive/network paths, mutation coordination, shared gateway integration, release formula, conformance ledger, performance reports, parity comparator and workflows, current GitHub issues/checks, and upstream sources. It is not an exhaustive proof that no other defects exist.
 
-Validation performed for this review:
+Validation performed for the original review snapshot:
 
 - All 76 Python parity-harness unit tests passed locally. Their mocked VS Code output is harness evidence, not a fresh VS Code runtime test.
 - The manifest validator passed with `--release`, and the specification-coverage validator passed. These validate declared structure, not actual runtime conformance.
 - In-memory comparator reproductions returned `passed` for identical observations at both 10x and 100x slowdown, for three empty fixture lists, and for lane-level `status: failed` with individually passing fixtures.
-- [Current-head runtime parity](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600302) fails: both candidate builds reject the resolved dependency file; Docker preflight rejects the installed CLI digest. [Current-head CodeQL build](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600347) records the dependency-resolution error and competing `swift-nio-ssl` origins.
-- The public Sonar API reports gate `OK`, 95.5% coverage, and zero bugs, vulnerabilities, code smells, and hotspots. Its latest analysis is **`5d2facc69520cad421a027cd99fa6f0c5beb466d` on 5 September**, not reviewed main `d0d72eb`. These metrics cannot certify the current source.
-- No Swift rebuild, live runtime parity, fresh timing benchmark, packaging, release, service restart, or remote repository mutation was performed for this design review. Current build failures are supported by exact-revision CI logs, not represented as a new local build result.
+- [Reviewed-revision runtime parity](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600302) fails: both candidate builds reject the resolved dependency file; Docker preflight rejects the installed CLI digest. The [reviewed-revision CodeQL build](https://github.com/stephenlclarke/devcontainer/actions/runs/33977600347) records the dependency-resolution error and competing `swift-nio-ssl` origins.
+- At the original 10 September review, the public Sonar API reported gate `OK`, 95.5% coverage, and zero bugs, vulnerabilities, code smells, and hotspots. Its latest analysis was **`5d2facc69520cad421a027cd99fa6f0c5beb466d` on 5 September**, not reviewed main `d0d72eb`; those metrics could not certify that reviewed source. The refreshed status above records the later exact-source analysis.
+- No Swift rebuild, live runtime parity, fresh timing benchmark, packaging, release, service restart, or remote repository mutation was performed for the original design review. Its build-failure findings are supported by exact-revision CI logs, not represented as a new local build result.
 
 ## Findings and repair contracts
 
@@ -165,12 +167,6 @@ duplicate and unexpected fixture records, failed parent lanes and incorrect
 backend identities. Negative tests cover those boundaries. Assertion-level,
 cleanup-proof and complete cross-lane fingerprint binding remain outstanding.
 
-**Implementation status:** the comparator now binds CLI and VS Code runs to
-their exact implemented manifest fixture sets. It rejects empty, missing,
-duplicate and unexpected fixture records, failed parent lanes and incorrect
-backend identities. Negative tests cover those boundaries. Assertion-level,
-cleanup-proof and complete cross-lane fingerprint binding remain outstanding.
-
 **Acceptance:** negative tests cover all-empty lanes, the same missing fixture in every lane, duplicate IDs, missing assertions, a failed parent status, stale fingerprints and missing cleanup. The complete genuine fixture set still passes. Record this as a gate defect, not as proof that a particular earlier release fabricated results.
 
 ### DF-13 - P1: the 10x timing failure rule is absent
@@ -178,10 +174,6 @@ cleanup-proof and complete cross-lane fingerprint binding remain outstanding.
 **Evidence:** [`compare_results.py`](../Tools/parity/compare_results.py), lines 17-18 and 121-155, uses a 1.0x target and 2.5x investigation trigger but never fails a completed slowdown. Identical observations with Docker at one second and each candidate at 10 or 100 seconds returned `passed` in the review reproduction. This conflicts with the user's explicit order-of-magnitude rule and the shared testing guidance.
 
 **Fix design:** keep `functionalParityStatus` separate from `timingStatus`, but make the overall acceptance fail for a timeout, non-completion, missing/invalid timing, or candidate/reference duration **at least 10.0** for the same fixture. Completed ratios below 10.0 are informational for acceptance. The existing 2.5x investigation trigger and 1.0x aspiration may remain advisory. Use unrounded values for the decision and record the threshold in each evidence file.
-
-**Implementation status:** comparison schema 3 now reports functional and
-timing status separately and fails overall acceptance at an unrounded ratio of
-10.0x or greater. Unit tests cover 9.999x, exactly 10x and 100x.
 
 **Implementation status:** comparison schema 3 now reports functional and
 timing status separately and fails overall acceptance at an unrounded ratio of
@@ -199,9 +191,16 @@ timing status separately and fails overall acceptance at an unrounded ratio of
 
 ### DF-15 - P2: quality and release status are not tied consistently to the reviewed revision
 
-**Evidence:** Sonar's green dashboard is for the preceding revision; current main's Sonar job fails. Branch protection requires only `Validate`, whose CI aggregator needs only the test job, not parity or Sonar. Five open code-scanning alerts currently concern Scorecard Best Practices, review, fuzzing, maintenance and SAST; these are governance findings, not five demonstrated code vulnerabilities. The Current release remains on July source. CI and sanitizer YAML still use hosted macOS jobs despite the current Container-family local-MBP workflow. Several documents describe historical baselines as current architecture.
+**Original-review evidence:** Sonar's green dashboard was for the preceding revision and the reviewed main revision's Sonar job failed. Branch protection required only `Validate`, whose CI aggregator needed only the test job, not parity or Sonar. Five open code-scanning alerts concerned Scorecard Best Practices, review, fuzzing, maintenance and SAST; these were governance findings, not five demonstrated code vulnerabilities. The Current release was on July source. CI and sanitizer YAML used hosted macOS jobs despite the Container-family local-MBP workflow. Several documents described historical baselines as current architecture.
 
 **Fix design:** generate quality and compatibility summaries from an evidence manifest keyed to source/dependencies/toolchain. Add an aggregate acceptance check over the required local/self-hosted authorities. Keep CodeQL in the release boundary according to current family policy, with an explicit exception only where hosted execution is technically necessary. Bind Pages, README status and release records to the same evidence. Publish a new Current/stable artifact only after the repaired stack is verified. Do not delete old evidence or widen scan exclusions to make badges green.
+
+**Implementation status:** SonarQube now analyses exact lowercase commit
+versions, verifies the project-level Previous version policy, rejects stale or
+dirty coverage, and passed for source revision `1b71fe3ec105`. CodeQL is
+enabled and passed for the same revision. The live runtime workflow still lacks
+complete lane evidence, and Current publication still points to July source,
+so the release-binding portion of this finding remains open.
 
 **Acceptance:** no green release claim from a prior SHA; failed or missing parity/Sonar blocks the relevant promotion; dependency-only changes invalidate affected evidence. Report source coverage and changed-code coverage of at least approximately 90%, plus actual sanitizer/leaks results, without equating coverage with compatibility.
 
