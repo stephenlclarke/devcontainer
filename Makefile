@@ -89,6 +89,12 @@ swift-test:
 		$(SWIFT_TEST_RUNNER_FLAGS)
 
 coverage:
+	@worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
+	if [[ -n "$$worktree_changes" ]]; then \
+		printf 'Coverage evidence requires a clean worktree:\n%s\n' \
+			"$$worktree_changes" >&2; \
+		exit 2; \
+	fi
 	@mkdir -p .build
 	@find "$(SWIFT_COVERAGE_SCRATCH_PATH)" -type f \
 		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \

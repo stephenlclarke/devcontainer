@@ -46,7 +46,11 @@ class CoveragePipelineTests(unittest.TestCase):
 
     def test_sonar_requires_an_exact_clean_head(self) -> None:
         makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
-        self.assertIn("git status --porcelain --untracked-files=all", makefile)
+        coverage_recipe = makefile.split("coverage:\n", 1)[1].split(
+            "\ncoverage-check:", 1
+        )[0]
+        self.assertIn("git status --porcelain --untracked-files=all", coverage_recipe)
+        self.assertIn("Coverage evidence requires a clean worktree", coverage_recipe)
         self.assertIn(".build/sonar-coverage-revision", makefile)
         self.assertIn('coverage_version" != "$$head_version', makefile)
         self.assertIn("SONAR_PROJECT_VERSION must match checked-out HEAD", makefile)

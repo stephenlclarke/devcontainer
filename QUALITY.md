@@ -247,9 +247,10 @@ enforces the complete-project coverage, duplication, rating, bug,
 vulnerability, and code-smell thresholds, so a failed analysis cannot evade a
 later gate merely by becoming the previous-version baseline. Pull requests
 from the repository also run the changed-code Sonar gate before merge, keeping
-failed changed coverage or duplication out of `main`. Coverage export records
-its source revision and a standalone scan rejects a report generated from any
-other commit. A pull request without the repository Sonar token fails closed;
+failed changed coverage or duplication out of `main`. Coverage export refuses
+to run from a dirty worktree, records its source revision, and a standalone
+scan rejects a report generated from any other commit. A pull request without
+the repository Sonar token fails closed;
 fork changes require validation from a maintainer-owned branch and cannot pass
 by skipping the scanner.
 
