@@ -2,8 +2,8 @@
 # USAGE:
 #   run-swift-testing-bundle.sh BUNDLE_EXECUTABLE [TESTING_ARGUMENT...]
 #
-# Load a prebuilt Swift Testing bundle without asking SwiftPM to plan or launch
-# the already-built test product a second time.
+# Load a prebuilt aggregate Swift Testing bundle on Swift 6.3 and earlier, or
+# ask SwiftPM 6.4+ to launch its already-built per-target bundles.
 
 set -euo pipefail
 
@@ -56,9 +56,26 @@ if [[ "$BUNDLE_EXECUTABLE" != /* ]]; then
   exit 64
 fi
 if [[ ! -f "$BUNDLE_EXECUTABLE" ]]; then
-  printf 'Swift test bundle executable does not exist: %s\n' \
-    "$BUNDLE_EXECUTABLE" >&2
-  exit 66
+  SWIFT_TEST_SCRATCH_PATH="${SWIFT_TEST_SCRATCH_PATH:-}"
+  readonly SWIFT_TEST_SCRATCH_PATH
+  if [[ -z "$SWIFT_TEST_SCRATCH_PATH" ]]; then
+    printf 'Swift test bundle executable does not exist: %s\n' \
+      "$BUNDLE_EXECUTABLE" >&2
+    exit 66
+  fi
+  if [[ "$SWIFT_TEST_SCRATCH_PATH" != /* ]]; then
+    printf 'Swift test scratch path must be absolute: %s\n' \
+      "$SWIFT_TEST_SCRATCH_PATH" >&2
+    exit 64
+  fi
+
+  SWIFT_TEST_SWIFT="${SWIFT_TEST_SWIFT:-swift}"
+  readonly SWIFT_TEST_SWIFT
+  exec "$SWIFT_TEST_SWIFT" test \
+    --scratch-path "$SWIFT_TEST_SCRATCH_PATH" \
+    --skip-build \
+    --disable-automatic-resolution \
+    "$@"
 fi
 
 HELPER="${SWIFT_TEST_HELPER:-}"

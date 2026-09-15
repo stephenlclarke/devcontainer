@@ -143,6 +143,41 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 66)
         self.assertIn("does not exist", result.stderr)
 
+    def test_uses_swiftpm_for_per_target_bundles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            swift = self.make_executable(
+                root / "swift",
+                "printf 'args=%s\\n' \"$*\"\n",
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "SWIFT_TEST_SCRATCH_PATH": str(scratch),
+                    "SWIFT_TEST_SWIFT": str(swift),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    str(RUNNER),
+                    str(root / "missing-PackageTests"),
+                    "--no-parallel",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                f"args=test --scratch-path {scratch} --skip-build "
+                "--disable-automatic-resolution --no-parallel",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

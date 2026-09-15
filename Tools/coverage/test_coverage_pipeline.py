@@ -24,6 +24,12 @@ class CoveragePipelineTests(unittest.TestCase):
         self.assertIn("--product devcontainer-compose\n", makefile)
         self.assertIn("Tools/coverage/run-cli-coverage.sh", makefile)
         self.assertIn("Tools/coverage/export-swift-coverage.sh", makefile)
+        exporter = (
+            REPOSITORY_ROOT / "Tools" / "coverage" / "export-swift-coverage.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("*PackageTests", exporter)
+        self.assertIn("*Tests.xctest/Contents/MacOS/*Tests", exporter)
+        self.assertIn('ADDITIONAL_TEST_OBJECTS+=( -object "$test_binary" )', exporter)
         self.assertIn("--lcov-output coverage.lcov", makefile)
         self.assertIn('--changed-since "$(SWIFT_COVERAGE_BASE)"', makefile)
 

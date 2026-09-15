@@ -24,14 +24,17 @@ readonly LLVM_COV="${SWIFT_LLVM_COV:-$(xcrun --find llvm-cov)}"
 shopt -s nullglob
 RAW_PROFILES=("$PROFILE_DIRECTORY"/*.profraw)
 TEST_BINARIES=("$BIN_DIRECTORY"/*.xctest/Contents/MacOS/*PackageTests)
+if (( ${#TEST_BINARIES[@]} == 0 )); then
+  TEST_BINARIES=("$BIN_DIRECTORY"/*Tests.xctest/Contents/MacOS/*Tests)
+fi
 shopt -u nullglob
 
 if (( ${#RAW_PROFILES[@]} == 0 )); then
   printf 'no Swift coverage profiles found in %s\n' "$PROFILE_DIRECTORY" >&2
   exit 2
 fi
-if (( ${#TEST_BINARIES[@]} != 1 )); then
-  printf 'expected one Swift package test binary, found %d\n' \
+if (( ${#TEST_BINARIES[@]} == 0 )); then
+  printf 'expected at least one Swift test binary, found %d\n' \
     "${#TEST_BINARIES[@]}" >&2
   exit 2
 fi
@@ -43,9 +46,14 @@ for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE" "$DEVCONTAINER_DOCKER"
 done
 
 "$LLVM_PROFDATA" merge -sparse "${RAW_PROFILES[@]}" -o "$PROFILE_DATA"
+ADDITIONAL_TEST_OBJECTS=()
+for test_binary in "${TEST_BINARIES[@]:1}"; do
+  ADDITIONAL_TEST_OBJECTS+=( -object "$test_binary" )
+done
 "$LLVM_COV" export \
   -instr-profile "$PROFILE_DATA" \
   "${TEST_BINARIES[0]}" \
+  "${ADDITIONAL_TEST_OBJECTS[@]}" \
   -object "$DEVCONTAINER" \
   -object "$DEVCONTAINER_COMPOSE" \
   -object "$DEVCONTAINER_DOCKER" \
