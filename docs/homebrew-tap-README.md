@@ -49,7 +49,8 @@ Homebrew infers the stable formula version from the immutable tag-bearing URL. T
 
 ### Current
 
-The opt-in Current formula follows the newest validated `main` package:
+The opt-in Current formula is designed to follow the newest validated `main`
+package:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -62,6 +63,13 @@ Current uses:
 - Mutable GitHub prerelease/tag: `current`
 - Immutable candidate asset: `devcontainer-current-<sha12>-arm64.tar.gz`
 - Monotonic formula version: `current.<github_run_number>.<sha12>`
+
+As of 15 September 2026, automatic Current publication is disabled and the
+published formula remains `current.89.b31e80b2b9c0`, backed by July source
+`b31e80b2b9c09ecc73bb3badf9cd5cf16550a538`. It is not a package of the latest
+source-bearing `main` revision. Stable 1.0.1 remains the immutable supported
+baseline while a fresh Current package awaits complete release and runtime
+evidence.
 
 Stable and Current cannot coexist because they install the same executables. The optional Current formula declares a conflict with `devcontainer`; install one channel at a time and uninstall the active channel before switching.
 

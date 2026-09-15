@@ -446,7 +446,7 @@ A stable tag is prohibited until:
 - Docker oracle, stock Apple 1.1.0, and `container-compose` 0.10.1 recordings pass;
 - real pinned VS Code and Dev Containers extension E2E passes;
 - no functional difference is normalized, waived, retried into success, or marked expected;
-- hosted CI, coverage, Sonar, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit; CodeQL remains excluded while it is explicitly disabled by project decision;
+- hosted CI, coverage, Sonar, CodeQL, dependency review, sanitizers, Docs, package validation, SBOM, attestation, and Homebrew tests are bound to the exact tag commit;
 - the Homebrew-installed artifact passes a physical-runner smoke test;
 - documentation and the compatibility ledger match the evidence.
 

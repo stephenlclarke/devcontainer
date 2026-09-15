@@ -9,14 +9,16 @@ harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
 below. The executable gate discovers the complete current Swift suite and
 requires at least 90.0% first-party line coverage; the documentation does not
-carry a manually maintained test count. Sonar reports zero bugs, vulnerabilities, code smells, security
-hotspots, and technical debt; 0.3% duplication; and A ratings throughout.
-CodeQL is temporarily disabled by project decision; its workflow retains a
-ready-for-review gate so draft pull requests stay outside iterative analysis
-when it is re-enabled. Dependency review, AddressSanitizer, and ThreadSanitizer pass. Real
-Docker, stock Apple, and separately identified `container-compose` lanes pass
-all 18 CLI parity fixtures and the pinned real VS Code fixture with zero
-normalized semantic differences and complete timing evidence. Across the three
+carry a manually maintained test count. The 15 September 2026 SonarQube
+analysis of source revision `1b71fe3ec105` reports 95.5% coverage, 0.1%
+duplicated lines, zero bugs, vulnerabilities, code smells, security hotspots,
+or technical debt, and A ratings throughout. CodeQL is enabled and passed for
+that revision; draft pull requests remain outside iterative analysis until
+they are marked ready for review. Dependency review, AddressSanitizer, and
+ThreadSanitizer also pass. The immutable 1.0.1 release evidence records real
+Docker, stock Apple, and separately identified `container-compose` lanes
+passing all 18 CLI parity fixtures and the pinned real VS Code fixture with
+zero normalized semantic differences and complete timing evidence. Across the three
 audited release-era runs, the largest observed CLI slowdown is 4.509x and the
 largest observed VS Code slowdown is 1.545x. See
 [`PERFORMANCE.md`](PERFORMANCE.md) for the full matrix and variability.
@@ -50,7 +52,7 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
 | Style | SwiftLint strict and SwiftFormat lint | Zero violations | Zero violations |
 | Memory safety | Swift AddressSanitizer | Pass for relevant changes | Pass on exact candidate |
 | Concurrency safety | Swift ThreadSanitizer | Nightly/dispatch | Pass on exact candidate |
-| Static security | CodeQL Swift | Temporarily disabled | Temporarily disabled |
+| Static security | CodeQL Swift | Pass for ready pull requests | Pass on exact candidate |
 | Sonar new code | Reliability, security, maintainability, coverage, duplication | Quality gate passes | Candidate analysis passes |
 | Dependencies | Dependency review and pinned resolution | No disallowed addition | Reviewed lockfile and licenses |
 | Supply chain | SBOM, checksums, signatures/attestations | Build artifacts only | Complete candidate-bound evidence |
@@ -203,12 +205,11 @@ Any sanitizer diagnostic fails the job. Suppressions require a pinned upstream i
 
 ### CodeQL
 
-CodeQL is temporarily disabled until the project owner explicitly re-enables
-it. The retained `.github/workflows/codeql.yml` uses a repository
-`CODEQL_ENABLED` variable and also excludes draft pull requests. On
-`ready_for_review`, it becomes eligible without another source change. The
-workflow remains pinned and configured for Swift manual-build analysis on
-`macos-26`, but it is not a merge or release gate while disabled.
+CodeQL is enabled through the repository `CODEQL_ENABLED` variable. The
+retained `.github/workflows/codeql.yml` excludes draft pull requests; on
+`ready_for_review`, the pull request becomes eligible without another source
+change. The workflow is pinned and configured for Swift manual-build analysis
+on `macos-26`.
 
 The CodeQL job:
 
@@ -219,7 +220,7 @@ The CodeQL job:
 4. runs the security-and-quality query suites;
 5. uploads SARIF and verifies that analysis completed for the candidate commit.
 
-After re-enablement, a new high or critical CodeQL alert is release blocking.
+Any new high or critical CodeQL alert is release blocking.
 Lower-severity findings require disposition before stable release and may not
 be dismissed as “used in tests” when the path is reachable from production.
 
@@ -256,7 +257,7 @@ by skipping the scanner.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A
 passing Sonar gate cannot override an independent coverage, compiler,
-sanitizer, or parity failure, nor a CodeQL failure after CodeQL is re-enabled.
+sanitizer, parity, or CodeQL failure.
 
 ### Dependency and license review
 
@@ -302,7 +303,7 @@ live validation:
 | --- | --- | --- |
 | `ci.yml` | Hosted `macos-26` | Format/lint, unit/contract/integration tests, both 90% coverage gates, build, and CLI smoke |
 | `quality.yml` | Hosted `macos-26` | ASan and TSan on pushes, PRs, schedules, and explicit dispatch |
-| `codeql.yml` | Hosted `macos-26` | Disabled; retained manual-build Swift CodeQL, ready pull requests only when re-enabled |
+| `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL for protected `main`, schedules, dispatches, and ready pull requests |
 | `dependency-review.yml` | Hosted Ubuntu | Vulnerability, scope, license, and dependency Scorecard review |
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
@@ -422,7 +423,7 @@ The repository now implements:
 - the `Tools/ci/run-swift-test.sh` retry/log harness;
 - coverage collection, profile merge, LCOV/generic XML export, and both 90% checks;
 - raw-socket contract and fake-runtime integration infrastructure;
-- hosted ASan, TSan, dependency review, Scorecard, documentation, and package validation workflows; the retained CodeQL workflow remains disabled;
+- hosted ASan, TSan, CodeQL, dependency review, Scorecard, documentation, and package validation workflows;
 - deterministic pin, manifest, normalizer, and evidence schemas;
 - signed/notarized package, SBOM, checksum, formula, and fail-closed publication
   logic;

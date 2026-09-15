@@ -35,9 +35,16 @@ The project's north-star goal is 100% behavioural parity with Docker-based Devel
 > records the newer exact fingerprints required by the current source
 > candidate without rewriting that historical release evidence.
 
-Current main additionally has a clean compile gate against unmodified Apple
-`container` 1.4.1 and `containerization` 0.45.0. That build result is not a
-substitute for the outstanding real-runtime parity rerun.
+The latest source-bearing `main` revision (`1b71fe3ec105`) passes hosted CI,
+the stock Apple compile/test lane, documentation, Homebrew validation,
+AddressSanitizer, ThreadSanitizer, CodeQL, and SonarQube. Its 15 September 2026
+SonarQube analysis reports 95.5% coverage, 0.1% duplicated lines, and zero
+bugs, vulnerabilities, code smells, or security hotspots. The live runtime
+workflow did not produce the expected lane result files, so this source is not
+yet a replacement for the immutable 1.0.1 runtime-parity baseline. The
+published Current package also still points to July source
+`b31e80b2b9c09`; do not infer a current-source release from the green hosted
+quality badges.
 
 ## See it work
 

@@ -140,7 +140,7 @@ identifies the remaining proof or primitive rather than normalising it.
 | TEST-003 | Implemented for checked fixtures: images use digests and Feature tags are bound by a checked integrity lock | Live preflight must continue to verify each resolved payload |
 | TEST-004 | Partial: deterministic malformed-request and generated unknown-field corpora run in the Swift suite | Continuous hosted fuzzing and retained minimised crash reproducers remain |
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
-| GOV-001 | Explicit exception | CodeQL is disabled until the owner requests re-enablement; live `main` protection currently requires `Validate` only |
+| GOV-001 | Implemented for analysis execution | CodeQL is enabled on protected `main`, schedules, dispatches, and ready pull requests; live `main` protection still requires only `Validate`, so candidate-bound release authority must verify CodeQL separately |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
 | DOC-001 | Implemented for the changed production paths, final local CLI and VS Code matrices, and current blockers | Retain the exact-head hosted artefacts with the merge and release evidence |
 
@@ -535,9 +535,9 @@ The runtime-neutral core must remain independent from `ComposeCore`. Cross-repos
 
 | Repository | Current finding | Project action |
 | --- | --- | --- |
-| `devcontainer` | Draft PR 10 contains the main current runtime-round-trip optimisation | Review and certify the exact final head; do not count it as `main` until merged and re-run |
-| `container-compose` | Open PR 173 fixes inherited OCI `VOLUME` metadata for Compose commit | Track as provider quality work; it is not a Dev Containers release blocker unless a certified workflow consumes Compose commit |
-| `container-compose` | Issue 156 documents a proven process-group cancellation design | Reuse the design in this repository through its own narrow process supervisor; do not import `ComposeCore` |
+| `devcontainer` | PR 10 merged on 2 August; its runtime round-trip optimisation is now part of `main` | Preserve its correctness constraints and obtain current-source repeated timing evidence before claiming the speed-up for a release |
+| `container-compose` | PR 173 merged on 30 July and preserves inherited OCI `VOLUME` metadata for Compose commit | Retain it as provider quality evidence when a certified Dev Containers workflow consumes Compose commit |
+| `container-compose` | Issue 156 closed on 1 August after documenting the process-group cancellation boundary | Reuse only the neutral cancellation design through this repository's own process supervisor; do not import `ComposeCore` |
 | `apple/container` | Stock 1.1.0 lacks several primitives needed by NC-002 to NC-009, while later fork/main work contains related capabilities | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
 | `apple/containerization` | Guest/runtime primitives may be needed for archive, device, namespace, and process correctness | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |
 
