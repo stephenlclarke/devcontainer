@@ -147,10 +147,10 @@ jobs:
           jq -e '
             (
               [.settings[] | select(.key == "sonar.leak.period") | .value]
-              == ["30"]
+              == ["previous_version"]
             ) and (
               [.settings[] | select(.key == "sonar.leak.period.type") | .value]
-              == ["days"]
+              == ["previous_version"]
             )
           ' <<< "${new_code}" >/dev/null
 
@@ -181,6 +181,7 @@ jobs:
               --user "${SONAR_TOKEN}:" \
               --get \
               --data-urlencode projectKey=stephenlclarke_devcontainer \
+              --data-urlencode status=TO_REVIEW \
               --data-urlencode ps=100 \
               https://sonarcloud.io/api/hotspots/search
           )"
