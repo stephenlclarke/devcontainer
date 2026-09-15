@@ -3,6 +3,8 @@ name: SonarQube
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -18,12 +20,14 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     env:
+      ANALYSIS_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ env.ANALYSIS_REVISION }}
 
       - name: Resolve exact dependencies
         run: |
@@ -33,7 +37,7 @@ jobs:
 
       - name: Generate and enforce Swift coverage
         env:
-          SWIFT_COVERAGE_BASE: ${{ github.event.before }}
+          SWIFT_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           SWIFT_COVERAGE_SCRATCH_PATH: .build
           SWIFT_TEST_ATTEMPTS: "1"
           SWIFT_TEST_TIMEOUT_SECONDS: "300"
@@ -50,11 +54,12 @@ jobs:
           else
             printf 'configured=false\n' >> "${GITHUB_OUTPUT}"
             {
-              printf '## SonarQube analysis not configured\n\n'
-              printf 'Add the repository secret SONAR_TOKEN to enable the '
-              printf 'quality-gate scan. The repository-owned 90%% coverage '
-              printf 'gate still ran and passed.\n'
+              printf '## SonarQube analysis blocked\n\n'
+              printf 'SONAR_TOKEN is unavailable. The required SonarQube '
+              printf 'analysis cannot be skipped; fork changes must be '
+              printf 'validated from a maintainer-owned branch.\n'
             } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
           fi
 
       - name: Cache SonarQube packages
@@ -159,6 +164,9 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PROJECT_VERSION: ${{ github.sha }}
+          SONAR_PULL_REQUEST_KEY: ${{ github.event.pull_request.number }}
+          SONAR_PULL_REQUEST_BRANCH: ${{ github.head_ref }}
+          SONAR_PULL_REQUEST_BASE: ${{ github.base_ref }}
           SONAR_QUALITYGATE_WAIT: "true"
         run: make sonar-scan
 
@@ -168,12 +176,20 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           set -euo pipefail
+          scope=(--data-urlencode branch=main)
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
+            scope=(
+              --data-urlencode "pullRequest=${{ github.event.pull_request.number }}"
+              --data-urlencode inNewCodePeriod=true
+            )
+          fi
           issues="$(
             curl --fail --silent --show-error \
               --user "${SONAR_TOKEN}:" \
               --get \
               --data-urlencode componentKeys=stephenlclarke_devcontainer \
               --data-urlencode resolved=false \
+              "${scope[@]}" \
               --data-urlencode ps=100 \
               https://sonarcloud.io/api/issues/search
           )"
@@ -182,9 +198,22 @@ jobs:
               --user "${SONAR_TOKEN}:" \
               --get \
               --data-urlencode projectKey=stephenlclarke_devcontainer \
+              --data-urlencode status=TO_REVIEW \
+              "${scope[@]}" \
               --data-urlencode ps=100 \
               https://sonarcloud.io/api/hotspots/search
           )"
+          if [[ "${GITHUB_EVENT_NAME}" != pull_request ]]; then
+            measures="$(
+              curl --fail --silent --show-error \
+                --user "${SONAR_TOKEN}:" \
+                --get \
+                --data-urlencode component=stephenlclarke_devcontainer \
+                --data-urlencode metricKeys=coverage,duplicated_lines_density,reliability_rating,security_rating,sqale_rating,bugs,vulnerabilities,code_smells \
+                --data-urlencode branch=main \
+                https://sonarcloud.io/api/measures/component
+            )"
+          fi
           if ! jq -e '.total == 0' <<<"${issues}" >/dev/null; then
             jq -r '
               .issues[] |
@@ -199,16 +228,31 @@ jobs:
             ' <<<"${hotspots}" >&2
             exit 1
           fi
+          if [[ "${GITHUB_EVENT_NAME}" != pull_request ]]; then
+            jq -e '
+              def metric($name):
+                [.component.measures[] | select(.metric == $name) | .value | tonumber][0];
+              metric("coverage") >= 90
+                and metric("duplicated_lines_density") <= 3
+                and metric("reliability_rating") == 1
+                and metric("security_rating") == 1
+                and metric("sqale_rating") == 1
+                and metric("bugs") == 0
+                and metric("vulnerabilities") == 0
+                and metric("code_smells") == 0
+            ' <<<"${measures}" >/dev/null
+          fi
 
       - name: Upload coverage evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: sonar-coverage-${{ github.sha }}
+          name: sonar-coverage-${{ env.ANALYSIS_REVISION }}
           path: |
             coverage.xml
             coverage.lcov
             .build/codecov-path
+            .build/sonar-coverage-revision
             .build/swift-coverage.log
           include-hidden-files: true
           if-no-files-found: error
