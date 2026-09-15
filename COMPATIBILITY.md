@@ -60,20 +60,19 @@ or another implementation module.
 
 ## Pinned 1.0.1 release provenance
 
-These pins define the immutable 1.0.1 compatibility matrix and match
-[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json). Release-bound
-evidence also records the signing identity where applicable, platform triple,
-and each component's machine-readable version output.
+These pins define the immutable 1.0.1 compatibility matrix and match the
+`Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
+also records the signing identity where applicable, platform triple, and each
+component's machine-readable version output.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
 | `@devcontainers/cli` | `0.88.0` | Official `v0.88.0` tag commit `f683c29f64a20109b4453e5149807e390ff65133`; npm SHA-512 SRI `sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w==` | Unmodified reference client |
 | Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
-| Docker Engine | `29.5.2`, API `1.54`, build `568f755` | Executable SHA-256 `eb4bf018da78f7b9d01d69209d0944d1fe995869ac3caefa5c93e4552e181301` | Behavioral oracle |
+| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
 | Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |
 | `apple/container` stable | `1.1.0` | Annotated tag object `82fc9a5ba73c34c478ce15958bb75dbb45c67e3b`; source commit `5973b9cc626a3e7a499bb316a958237ebe14e2ed` | Initial stable stock lane |
 | `apple/containerization` for `container` 1.1.0 | `0.35.0` | Apple resolution/tag object `44bec8b9933bc491d0cbf44abac90a1f6aaebf6b`; source commit `0334a3e790bbed50420de71cd0d706191bdf84d1` | Must be inherited from the Apple `container` resolution |
-| `stephenlclarke/container-engine-api` | `0.3.0` | Signed annotated tag object `61ed042e7e036fb86b031483dee25efbbe355bb1`; source commit `6dfb568e904797804c8d3bb437f06c247031335d` | Shared executable, generated 107-operation API 1.44 through 1.53 ledger, bounded raw/WebSocket Unix listener, schema-2 private provider session, gateway, terminal-resize contract, and provider-owned state-root identity |
 | `container-compose` stable | `0.10.1` | Annotated tag object `5be84c712176d745b4736e82f97b7458813cb7ec`; source commit `77d2191a75f3a15092bbead1991b0d6a37fafa91` | Optional provider |
 | Stable provider's `stephenlclarke/container` | Revision | `367430446959e3048da37f5f64d3c10e1293d3de` | Exact fork dependency declared by `container-compose` 0.10.1 |
 | Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
@@ -86,7 +85,14 @@ and each component's machine-readable version output.
 Current `main` builds two explicit dependency graphs. These are compile and
 hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
 runtime workflow did not produce complete lane evidence, so the release
-manifest above deliberately remains on the certified 1.0.1 matrix.
+claim deliberately remains on the certified 1.0.1 matrix.
+
+The working [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) is a
+development input. It retains the 1.0.1 Dev Containers, Apple, Compose, VS
+Code, and host pins but now selects Docker Engine 29.5.2, API 1.54, build
+`568f755`, with executable SHA-256
+`eb4bf018da78f7b9d01d69209d0944d1fe995869ac3caefa5c93e4552e181301`.
+That post-release repin is not attributed to the 1.0.1 tag.
 
 | Profile component | Exact current source provenance | Status boundary |
 | --- | --- | --- |
@@ -104,8 +110,9 @@ only when its exact clients, runtimes, host, and fixture evidence are updated
 and the complete release gate succeeds.
 
 Moving branch heads are never stable compatibility claims and are not inputs
-to this release matrix. The machine-readable identities in
-[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) are authoritative.
+to the 1.0.1 release matrix. The machine-readable manifest stored at a release
+tag is authoritative for that release; the working manifest is authoritative
+only for the next candidate gate that consumes it.
 
 The Apple adapter must take `containerization` from the selected
 `apple/container` release resolution. Depending on a second independently
