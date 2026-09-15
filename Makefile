@@ -191,12 +191,27 @@ sonar-scan:
 			"$$head_version" >&2; \
 		exit 2; \
 	fi; \
+	sonar_args=( \
+		-Dsonar.projectVersion="$$sonar_project_version" \
+		-Dsonar.qualitygate.wait="$(SONAR_QUALITYGATE_WAIT)" \
+	); \
+	if [[ -n "$${SONAR_PULL_REQUEST_KEY:-}" ]]; then \
+		if ! [[ "$${SONAR_PULL_REQUEST_KEY}" =~ ^[0-9]+$$ ]] \
+			|| [[ -z "$${SONAR_PULL_REQUEST_BRANCH:-}" ]] \
+			|| [[ -z "$${SONAR_PULL_REQUEST_BASE:-}" ]]; then \
+			printf 'complete Sonar pull-request identity is required\n' >&2; \
+			exit 2; \
+		fi; \
+		sonar_args+=( \
+			-Dsonar.pullrequest.key="$${SONAR_PULL_REQUEST_KEY}" \
+			-Dsonar.pullrequest.branch="$${SONAR_PULL_REQUEST_BRANCH}" \
+			-Dsonar.pullrequest.base="$${SONAR_PULL_REQUEST_BASE}" \
+		); \
+	fi; \
 	attempt=1; \
 	while true; do \
 		set +e; \
-		SONAR_TOKEN="$$sonar_token" sonar-scanner \
-			-Dsonar.projectVersion="$$sonar_project_version" \
-			-Dsonar.qualitygate.wait="$(SONAR_QUALITYGATE_WAIT)"; \
+		SONAR_TOKEN="$$sonar_token" sonar-scanner "$${sonar_args[@]}"; \
 		status="$$?"; \
 		set -e; \
 		if [[ "$$status" -eq 0 ]]; then \

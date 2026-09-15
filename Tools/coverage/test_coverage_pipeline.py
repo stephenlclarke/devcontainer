@@ -51,6 +51,7 @@ class CoveragePipelineTests(unittest.TestCase):
         self.assertIn('coverage_version" != "$$head_version', makefile)
         self.assertIn("SONAR_PROJECT_VERSION must match checked-out HEAD", makefile)
         self.assertIn('-Dsonar.projectVersion="$$sonar_project_version"', makefile)
+        self.assertIn('-Dsonar.pullrequest.key="$${SONAR_PULL_REQUEST_KEY}"', makefile)
 
 
 if __name__ == "__main__":
