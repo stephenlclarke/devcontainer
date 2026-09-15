@@ -185,6 +185,14 @@ jobs:
               --data-urlencode ps=100 \
               https://sonarcloud.io/api/hotspots/search
           )"
+          measures="$(
+            curl --fail --silent --show-error \
+              --user "${SONAR_TOKEN}:" \
+              --get \
+              --data-urlencode component=stephenlclarke_devcontainer \
+              --data-urlencode metricKeys=coverage,duplicated_lines_density,reliability_rating,security_rating,sqale_rating,bugs,vulnerabilities,code_smells \
+              https://sonarcloud.io/api/measures/component
+          )"
           if ! jq -e '.total == 0' <<<"${issues}" >/dev/null; then
             jq -r '
               .issues[] |
@@ -199,6 +207,18 @@ jobs:
             ' <<<"${hotspots}" >&2
             exit 1
           fi
+          jq -e '
+            def metric($name):
+              [.component.measures[] | select(.metric == $name) | .value | tonumber][0];
+            metric("coverage") >= 90
+              and metric("duplicated_lines_density") <= 3
+              and metric("reliability_rating") == 1
+              and metric("security_rating") == 1
+              and metric("sqale_rating") == 1
+              and metric("bugs") == 0
+              and metric("vulnerabilities") == 0
+              and metric("code_smells") == 0
+          ' <<<"${measures}" >/dev/null
 
       - name: Upload coverage evidence
         if: always()
@@ -209,6 +229,7 @@ jobs:
             coverage.xml
             coverage.lcov
             .build/codecov-path
+            .build/sonar-coverage-revision
             .build/swift-coverage.log
           include-hidden-files: true
           if-no-files-found: error

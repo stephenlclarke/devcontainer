@@ -47,6 +47,8 @@ class CoveragePipelineTests(unittest.TestCase):
     def test_sonar_requires_an_exact_clean_head(self) -> None:
         makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("git status --porcelain --untracked-files=all", makefile)
+        self.assertIn(".build/sonar-coverage-revision", makefile)
+        self.assertIn('coverage_version" != "$$head_version', makefile)
         self.assertIn("SONAR_PROJECT_VERSION must match checked-out HEAD", makefile)
         self.assertIn('-Dsonar.projectVersion="$$sonar_project_version"', makefile)
 

@@ -242,7 +242,12 @@ or mismatched override and refuses a dirty worktree, so the label identifies
 the analysed contents. The workflow validates both remote invariants before
 scanning so a newly created project cannot silently publish `Not Computed`
 badges. After the quality gate completes, it also queries unresolved issues
-and `TO_REVIEW` hotspots and fails unless both totals are zero.
+and `TO_REVIEW` hotspots and fails unless both totals are zero. It separately
+enforces the complete-project coverage, duplication, rating, bug,
+vulnerability, and code-smell thresholds, so a failed analysis cannot evade a
+later gate merely by becoming the previous-version baseline. Coverage export
+records its source revision and a standalone scan rejects a report generated
+from any other commit.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A
 passing Sonar gate cannot override an independent coverage, compiler,
