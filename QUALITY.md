@@ -232,7 +232,7 @@ code requires:
 - at least 90% line coverage;
 - at most 3% duplicated lines;
 - zero unresolved reliability, security, or maintainability issues;
-- zero security hotspots;
+- zero unreviewed security hotspots;
 - no unresolved analysis failure or missing coverage import.
 
 The SonarCloud project uses `main` as its real main branch and compares new
