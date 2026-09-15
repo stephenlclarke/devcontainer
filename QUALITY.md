@@ -323,8 +323,10 @@ processes to use the shared runner, whose launch-time policy rejects
 Docker-family executable names and resolved symlink targets.
 
 Swift build and test jobs on hosted `macos-26` explicitly select Xcode 26.6,
-matching the development and live-parity host instead of inheriting a moving
-runner-image default. All workflows use explicit least-privilege `permissions`,
+providing a fixed compatibility toolchain instead of inheriting a moving
+runner-image default. Release-bound live parity is separately pinned to the
+physical host's Xcode 27.0 and Swift 6.4 toolchain in the parity manifest. All
+workflows use explicit least-privilege `permissions`,
 pinned action SHAs, concurrency groups, timeouts, deterministic tool pins,
 dependency caching keyed by lockfiles/toolchains, and artifact names containing
 the candidate SHA. Scripts contain the substantial logic so it can be run and
