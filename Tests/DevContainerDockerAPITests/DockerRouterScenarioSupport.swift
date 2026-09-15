@@ -109,7 +109,15 @@ func createMountSnapshot(
             "Volumes": ["/declared": [:]],
             "HostConfig": [
                 "Binds": ["/tmp/source:/bind:ro", "named-cache:/named"],
-                "Mounts": [["Type": "volume", "Target": "/structured"]]
+                "Mounts": [
+                    ["Type": "volume", "Target": "/structured"],
+                    [
+                        "Type": "bind",
+                        "Source": "/tmp/cached",
+                        "Target": "/cached",
+                        "Consistency": "cached"
+                    ]
+                ]
             ]
         ]
     )
@@ -142,6 +150,15 @@ func assertMountTypes(_ snapshot: ContainerSnapshot) throws {
     #expect(
         snapshot.spec.mounts.first { $0.destination == "/named" }
             == RuntimeMount(type: .volume, source: "named-cache", destination: "/named")
+    )
+    #expect(
+        snapshot.spec.mounts.first { $0.destination == "/cached" }
+            == RuntimeMount(
+                type: .bind,
+                source: "/tmp/cached",
+                destination: "/cached",
+                anonymous: false
+            )
     )
     for destination in ["/structured", "/declared"] {
         let mount = try #require(

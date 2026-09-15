@@ -2,9 +2,18 @@
 
 ## Decision
 
-The project's north-star goal is 100% behavioural parity with Docker-based Development Containers on Apple silicon, with comparable or better user-visible performance.
+The project's north-star goal is 100% behavioural parity across the audited,
+Docker-independent Development Containers surface on Apple silicon, with
+comparable or better user-visible performance than the Docker oracle.
 
-This goal applies to the complete Development Containers surface, not to unrelated Docker Engine workloads. It includes the current Development Containers specification, the official CLI and VS Code extension, image and Dockerfile configurations, Features, lifecycle commands, users, mounts, ports, supported Compose configurations, failure behaviour, cancellation, cleanup, and the Docker API observations those clients consume.
+This goal applies to the complete Docker-independent Development Containers
+surface, not to unrelated Docker Engine workloads or configurations that
+require a host Docker daemon or mount its socket. It includes the current
+Development Containers specification, the official CLI and VS Code extension,
+image and Dockerfile configurations, Features, lifecycle commands, users,
+mounts, ports, supported Compose configurations, failure behaviour,
+cancellation, cleanup, and the compatibility-protocol observations those
+clients consume.
 
 Until that goal is proved, releases must continue to make bounded compatibility claims. A passing subset is useful evidence, but it is not 100% parity.
 
@@ -36,11 +45,11 @@ Performance certification should use paired runs on the same host, with at least
 | Candidate regression against the previous certified Apple result | No regression |
 | Peak resident memory and CPU time | At or below Docker |
 
-Any completed candidate result above `2.50x` Docker requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A timeout, other non-completion, or missing or invalid timing evidence remains a hard evidence failure.
+Any completed candidate result above `2.50x` Docker requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A candidate result at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence is a hard acceptance failure without changing the separately reported functional result.
 
 Cold-start and warm-reuse results must be reported separately. An optimisation is accepted only when its median improvement exceeds baseline variation, its p90 does not worsen materially, resource use remains bounded, and semantic observations remain identical.
 
-## Review basis
+## Historical review basis
 
 This review was completed on 30 July 2026 against `main` commit `b31e80b2b9c09ecc73bb3badf9cd5cf16550a538`.
 
@@ -48,7 +57,7 @@ The evidence included:
 
 - the complete source, tests, documentation, package, workflows, release tooling, and parity fixtures in this repository;
 - the pinned stock `apple/container` 1.1.0 and `apple/containerization` 0.35.0 sources;
-- the separately installed `container-compose` 0.10.1 boundary and its current open work;
+- the separately installed `container-compose` 0.10.1 boundary used by that historical run and its then-current open work;
 - `make check`, which passed 148 Swift tests, all Python harness tests, formatting, lint, documentation generation, parity-manifest validation, and above 91% first-party line coverage;
 - successful hosted CI, AddressSanitizer, ThreadSanitizer, CodeQL, SonarCloud, documentation, Homebrew, dependency-review, and live runtime workflows on the exact reviewed commit;
 - [live three-lane parity run 30522304399](https://github.com/stephenlclarke/devcontainer/actions/runs/30522304399), which recorded zero semantic differences across all 18 CLI fixtures and the real VS Code fixture;
@@ -57,13 +66,17 @@ The evidence included:
 
 SonarCloud reported 91.2% coverage, zero bugs, zero vulnerabilities, zero code smells, and 0.4% duplication. These automated results are valuable but do not disprove the behavioural and architectural findings below.
 
-## Current baseline
+## Baseline at the reviewed commit
 
 ### Functional
 
-The current release evidence is strong within its declared boundary: 18 CLI fixtures and one real VS Code fixture pass with zero recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) still records nine confirmed non-conformances and several partial or unverified Development Containers properties. The project therefore has bounded parity, not full parity.
+The reviewed baseline's release evidence was strong within its declared
+boundary: 18 CLI fixtures and one real VS Code fixture passed with zero
+recorded semantic differences. [`CONFORMANCE.md`](CONFORMANCE.md) records the
+current non-conformances and partial or unverified Development Containers
+properties. The project therefore has bounded parity, not full parity.
 
-### Current performance
+### Performance at the reviewed commit
 
 The exact reviewed `main` run produced:
 
@@ -74,7 +87,11 @@ The exact reviewed `main` run produced:
 
 The C01 Compose service fixture was `4.350x` Docker on stock Apple and `2.704x` on the provider. Both results exceed the current `2.50x` investigation trigger. The aggregate CLI and VS Code results do not cross that trigger, but all four candidate ratios above `1.00x` miss the comparable-or-better objective.
 
-The largest current stock-Apple absolute overheads were C01 Compose service (+5.383s), D05 Features (+5.037s), D07 reuse and cleanup (+3.691s), C04 Compose lifecycle (+3.525s), and E06 network and volume handling (+2.907s). The provider's largest overheads were D05 (+6.708s), C04 (+3.717s), D07 (+3.577s), C02 Compose dependencies (+3.382s), and E06 (+3.055s).
+The reviewed baseline's largest stock-Apple absolute overheads were C01 Compose
+service (+5.383s), D05 Features (+5.037s), D07 reuse and cleanup (+3.691s), C04
+Compose lifecycle (+3.525s), and E06 network and volume handling (+2.907s).
+The provider's largest baseline overheads were D05 (+6.708s), C04 (+3.717s),
+D07 (+3.577s), C02 Compose dependencies (+3.382s), and E06 (+3.055s).
 
 The PR 10 performance work is integrated in the current candidate with two
 correctness constraints added during review: enhanced distributions retain
@@ -112,11 +129,12 @@ duplex stress runs and the complete matrix passed after this change.
 
 ## Implementation status
 
-The implementation work below was applied to the current worktree on 30 July
-2026. “Implemented” means production wiring, focused regression tests, and the
-local three-lane CLI matrix exist. It does not replace exact-head hosted CLI
-and VS Code evidence or the repeated performance protocol. “Partial”
-identifies the remaining proof or primitive rather than normalising it.
+The implementation record was first produced on 30 July 2026 and was updated
+on 14 September 2026 for the current PR 75 candidate. “Implemented” means
+production wiring, focused regression tests, and the local three-lane CLI
+matrix exist. It does not replace exact-head hosted CLI and VS Code evidence
+or the repeated performance protocol. “Partial” identifies the remaining
+proof or primitive rather than normalising it.
 
 | Programme item | Current status | Remaining boundary |
 | --- | --- | --- |
@@ -124,7 +142,7 @@ identifies the remaining proof or primitive rather than normalising it.
 | PAR-002 | Implemented fail-closed stock behaviour | A future tagged Apple API must preserve legal embedded `=` labels before stock support can be advertised |
 | ARC-001 | Partial: production Docker and Compose mutations use keyed coordination, ownership labels, intent records, and explicit unfinished-operation recovery state | Deterministic phase-by-phase runtime reconciliation and safe automatic resume remain required |
 | ARC-002 | Partial: correlation, deadline propagation, disconnect cancellation, hashed idempotency keys, request conflict detection, and replay are wired | Replay results must persist across service restart and be reconciled with native runtime state |
-| ENG-001 | Partial: connection, pending-request, 512 MiB per-request, 1 GiB process-wide body, and write-buffer bounds are enforced; completed hijacks release the shared 64-connection budget | Build, image, and archive uploads still need private-file or byte-stream transfer and the 1 GiB streamed-context/RSS acceptance test |
+| ENG-001 | Partial: connection, pending-request, 512 MiB per-request, 1 GiB process-wide body, and write-buffer bounds are enforced; Dockerfile build archives stream from a mode-0700 temporary directory to the client socket without a second in-memory copy; completed hijacks release the shared 64-connection budget | Engine ingress plus image and archive uploads still need private-file or byte-stream transfer and the 1 GiB streamed-context/RSS acceptance test |
 | ENG-002 | Implemented with exactly-once direct session cancellation | Full live runtime process-tree evidence remains part of release certification |
 | PROC-001 | Implemented through the shared `DevContainerProcess` supervisor | None locally; live provider and runtime certification remains |
 | ENG-003 and ENG-004 | Implemented with awaited streamed writes, cancellation, byte accounting, and encoded Docker error envelopes | Slow-reader live evidence remains |
@@ -134,13 +152,13 @@ identifies the remaining proof or primitive rather than normalising it.
 | OPT-001 | Partial: reusable stock inventory, distribution-safe file and network clients, archive transfer, immediate event wakeups, restart-safe managed-host caching, and PTY-backed interactive exec passed the final local three-lane CLI and real VS Code matrices | The hosted workflow must retain exact-head evidence; the repeated performance protocol remains |
 | OPT-002 | Blocked in this repository | Compose model caching belongs in `container-compose`, preserving the provider boundary |
 | OPT-003 | Implemented with immediate owned-mutation wakeups plus bounded external-writer polling | Native runtime events should replace the residual poll when a tagged stable API exists |
-| OPT-004 and OPT-005 | Partial | End-to-end upload streaming and parity-artifact resource measurements remain |
+| OPT-004 and OPT-005 | Partial: Dockerfile build uploads are file-backed from the project CLI to the engine socket | Engine-side upload streaming, image/archive streaming, bounded diagnostic tails, and parity-artifact resource measurements remain |
 | TEST-001 | Implemented through `spec-coverage.json`, fail-closed validation, and scheduled upstream schema drift detection | Blocked rows must be closed before a full-parity claim |
 | TEST-002 | Blocked | The real VS Code matrix still contains one representative workspace |
 | TEST-003 | Implemented for checked fixtures: images use digests and Feature tags are bound by a checked integrity lock | Live preflight must continue to verify each resolved payload |
 | TEST-004 | Partial: deterministic malformed-request and generated unknown-field corpora run in the Swift suite | Continuous hosted fuzzing and retained minimised crash reproducers remain |
 | TEST-005 | Partial: exact wire/default/unknown/malformed DTO tests were broadened | Endpoint files should be split and behavioural DTO coverage must be measured above 80% |
-| GOV-001 | Implemented for analysis execution | CodeQL is enabled on protected `main`, schedules, dispatches, and ready pull requests; live `main` protection still requires only `Validate`, so candidate-bound release authority must verify CodeQL separately |
+| GOV-001 | Partial: the exact-commit stable release authority requires the complete named check set, and the documented merge policy now matches live protection | Branch protection currently requires only the aggregate `Validate` context; the other pull-request checks remain visible but are not protected contexts |
 | GOV-002 | Partial | Independent release review, project-age evidence, and Best Practices badge decision remain governance work |
 | DOC-001 | Implemented for the changed production paths, final local CLI and VS Code matrices, and current blockers | Retain the exact-head hosted artefacts with the merge and release evidence |
 
@@ -154,6 +172,11 @@ identifies the remaining proof or primitive rather than normalising it.
 | P3 | Useful hardening or optimisation after the higher-priority contract is sound |
 
 ## P0 correctness and reliability findings
+
+The detailed evidence below records the original 30 July review baseline so
+that each finding remains auditable. The implementation-status table above is
+the authority for the current disposition; a closed or partial row must not be
+read as an assertion that the original source evidence still exists.
 
 ### PAR-001: Unknown Docker request members fail open
 
@@ -222,13 +245,9 @@ identifies the remaining proof or primitive rather than normalising it.
 
 ### ENG-001: Request buffering permits excessive process-wide memory use
 
-**Evidence:** production limits allow a 512 MiB request, 512 MiB retained body
-per connection, a 1 GiB process-wide retained-body budget, and 64 active
-connections. Each body is accumulated in a `ByteBuffer`, converted to `Data`,
-and passed through the router. Buildx exported a 100,132,864-byte Feature image
-through `/images/load`; the previous 64 MiB limit rejected that valid request.
+**Evidence:** production limits allow a 512 MiB request, 512 MiB retained body per connection, a 1 GiB process-wide retained-body budget, and 64 active connections. The project Docker CLI now creates a build archive inside a mode-0700 temporary directory and streams that file to the engine socket without materialising it as `Data`. Engine ingress still accumulates each body in a `ByteBuffer`, transfers it into `Data`, and passes it through the router. Buildx exported a 100,132,864-byte Feature image through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
-**Impact:** Concurrent build contexts or image loads can exhaust memory. Large contexts incur extra copies and delay processing until the entire body arrives. A local user process can use the user-owned socket to create severe memory pressure.
+**Impact:** Concurrent engine-side build contexts or image loads can exhaust memory. Large contexts still delay engine processing until the entire body arrives, even though the project CLI no longer retains its own archive-sized `Data` copy. A local user process can use the user-owned socket to create severe memory pressure.
 
 **Solution design:**
 
@@ -374,9 +393,14 @@ through `/images/load`; the previous 64 MiB limit rejected that valid request.
 
 **Acceptance:** End-to-end tests join one request across layers, verify required fields, and prove that home paths, credential-shaped values, environment secrets, and raw command arguments are absent.
 
-### GOV-001: Live branch protection does not require all gates claimed by `QUALITY.md`
+### GOV-001: Live branch protection does not require every release gate
 
-**Evidence:** live `main` protection requires `Validate` and `CodeQL`. `QUALITY.md` describes ASan, TSan, Sonar, dependency review, documentation, and package/Homebrew validation as merge requirements. Those workflows run, but they are not all branch-protection requirements.
+**Evidence:** live `main` protection requires the aggregate `Validate` context.
+CodeQL, ASan, TSan, dependency review, documentation, and Homebrew validation
+run as separate pull-request checks but are not protected contexts; Sonar runs
+after merge or explicit dispatch. `QUALITY.md` now distinguishes those visible
+checks from the complete exact-commit set enforced by the stable release
+authority.
 
 **Impact:** A maintainer or automation path can merge while a documented gate is failing or absent.
 
@@ -457,9 +481,9 @@ guest filesystem state.
 
 ### OPT-004: Stream build, image, archive, and log data end to end
 
-**Evidence:** HTTP requests are fully buffered, build contexts are passed as `Data`, command output is often accumulated in `Data`, and generic HTTP streams do not apply backpressure.
+**Evidence:** Dockerfile build archives now stream from a private file into the project-owned Unix socket, eliminating the previous client-side archive-sized `Data` copy. Engine request ingress, image and archive uploads, and some command output remain buffered; generic HTTP streams do not apply backpressure.
 
-**Design:** use bounded asynchronous byte streams or private file descriptors from NIO through validation and native transfer; validate tar metadata incrementally; retain bounded diagnostic tails rather than entire output where the Docker protocol permits streaming.
+**Design:** extend the file-backed build path through engine ingress, validation, and native transfer, and apply bounded asynchronous byte streams or private file descriptors to image and archive uploads. Validate tar metadata incrementally and retain bounded diagnostic tails rather than entire output where the Docker protocol permits streaming.
 
 **Acceptance:** large Feature and Dockerfile builds reduce copies and peak RSS, slow readers remain bounded, and byte-exact archive and progress fixtures remain equal.
 
@@ -477,7 +501,10 @@ Engine negotiation and several build/resource scenarios are already close to or 
 
 ### TEST-001: Fixture coverage is not derived from the specification
 
-**Evidence:** the manifest has 18 CLI fixtures and one VS Code fixture, while the conformance ledger contains multiple partial and unverified properties. There is no scheduled schema-drift comparison.
+**Historical evidence:** the reviewed manifest had 18 CLI fixtures and one VS
+Code fixture, while the conformance ledger contained multiple partial and
+unverified properties. The current implementation status above records the
+subsequent schema-derived coverage map and scheduled drift detection.
 
 **Solution design:** generate a versioned coverage map from the pinned Dev Containers schema, reference documentation, CLI-emitted Docker requests, and Compose property surface. Fail validation if any property lacks a certified fixture, an explicit blocker, and an owner. A scheduled job should report upstream additions without changing pins automatically.
 
@@ -535,11 +562,11 @@ The runtime-neutral core must remain independent from `ComposeCore`. Cross-repos
 
 | Repository | Current finding | Project action |
 | --- | --- | --- |
-| `devcontainer` | PR 10 merged on 2 August; its runtime round-trip optimisation is now part of `main` | Preserve its correctness constraints and obtain current-source repeated timing evidence before claiming the speed-up for a release |
-| `container-compose` | PR 173 merged on 30 July and preserves inherited OCI `VOLUME` metadata for Compose commit | Retain it as provider quality evidence when a certified Dev Containers workflow consumes Compose commit |
-| `container-compose` | Issue 156 closed on 1 August after documenting the process-group cancellation boundary | Reuse only the neutral cancellation design through this repository's own process supervisor; do not import `ComposeCore` |
-| `apple/container` | Stock 1.1.0 lacks several primitives needed by NC-002 to NC-009, while later fork/main work contains related capabilities | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
-| `apple/containerization` | Guest/runtime primitives may be needed for archive, device, namespace, and process correctness | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |
+| `devcontainer` | PR 75 contains the Docker-less adapter, stock/enhanced runtime profiles, and the previously reviewed runtime-round-trip optimisation | Certify the exact final head through the release-bound Docker, stock Apple, enhanced provider, and real VS Code lanes before merge |
+| `container-compose` | The verified 0.15.1 provider supplies the bundled stock adapter package and enhanced orchestration boundary required by the release matrix | Consume only its immutable stable release fingerprint; keep `ComposeCore` out of the runtime-neutral Devcontainer core |
+| `stephenlclarke/container` | The enhanced distribution advertises additive hostname, security, privileged, inventory, health, and logging capabilities | Fingerprint every enhanced-only behavior, retain stock rejection paths, and land any further generic runtime correction through its own pull request |
+| `apple/container` | Stock 1.4.1 still lacks several primitives needed by NC-002 to NC-009 | Produce small upstream-ready changes, consume only tagged upstream releases in the stock lane, and keep enhanced provider provenance separate |
+| `apple/containerization` | Stock 0.45.0 provides useful OCI/runtime primitives, but some require a supported `apple/container` management surface before this bridge can claim them | Keep each generic correction independently testable and upstream-shaped; never hide a missing primitive in the bridge |
 
 ## Delivery sequence
 
@@ -557,7 +584,9 @@ No phase may trade away functional parity for speed. A performance change that a
 
 - [ ] Every pinned Development Containers property and lifecycle rule is certified in the machine-readable coverage map.
 - [ ] Every Docker request member emitted by the official client is translated or explicitly rejected before side effects.
-- [ ] NC-001 to NC-009 are closed with real Docker and Apple evidence.
+- [ ] NC-001 to NC-009 are closed with real Docker and Apple evidence; NC-010
+  remains the explicit Docker-socket exclusion outside the Docker-independent
+  north-star scope.
 - [ ] All partial and unverified conformance rows are certified or remain explicit blockers to a full-parity release.
 - [ ] Multiple real VS Code journeys pass in all three lanes.
 - [ ] Crash, cancellation, restart, concurrent mutation, and cleanup tests prove no leaked work or resources.

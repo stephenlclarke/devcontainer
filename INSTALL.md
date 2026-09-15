@@ -2,10 +2,10 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.1 is the stable release. Its immutable GitHub archive is
-> Developer ID-signed, notarized, parity-certified, checksummed, and published
-> through the stable Homebrew formula. The Apple runtime remains a separate
-> installation.
+> Version 1.0.2 is the current release candidate. The latest published stable
+> release remains 1.0.1 until the 1.0.2 archive has passed signing,
+> notarization, parity, checksum, and Homebrew publication gates. The Apple
+> runtime remains a separate installation.
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock
 `container` runtime on Apple-silicon Macs running macOS Tahoe. It installs as a
@@ -24,18 +24,40 @@ The supported installation preserves these boundaries:
 
 - Apple's stock `container` runtime is installed separately from Apple.
 - `devcontainer` uses the `container` executable selected by explicit configuration or `PATH`.
-- The Docker CLI and upstream Docker Compose client are protocol clients for
-  VS Code and the stock multi-service path; they do not install or select a
-  Docker engine.
-- `container-compose` is optional and used only when the user explicitly selects or enables its provider.
+- The selected runtime path and its resolved symlink target must both be named
+  `container`; other runtime CLIs are rejected before launch.
+- The runtime version probe must identify stock `apple/container` or the
+  explicit `stephenlclarke/container` distribution. Other custom distributions
+  and Docker-named provider configuration are rejected before project work.
+- The packaged `devcontainer-docker` compatibility adapter is the only
+  Docker-shaped client used by VS Code and the official Dev Containers CLI.
+  It is project-owned software and is not the Docker CLI.
+- Compatibility fields named `DOCKER_HOST`, `dockerPath`, and
+  `dockerComposePath` resolve only to the package-owned `engine.sock` and
+  adapters. They never select, proxy, or mount a Docker daemon socket.
+- Explicit engine-socket configuration rejects `docker.sock` and
+  `docker.raw.sock`, including symlink aliases, before any connection attempt.
+- The packaged adapter performs a cached, side-effect-free identity probe before
+  its first workload request and rejects any endpoint that is not the
+  Apple-container-backed `devcontainer-engine`.
+- The release bundles an exact stock-profile build of the native
+  `container-compose` executable as its process-isolated multi-service
+  implementation.
 - Installing `devcontainer` never installs `stephenlclarke/container`.
 - Installing `devcontainer` never removes or replaces Apple's `container`.
-- Installing `devcontainer` never installs `container-compose`.
+- Homebrew and archive installs use that private bundled copy by default; no
+  external Compose formula is required.
 - Installing `devcontainer` never links a Compose plugin into Apple's install root.
 - The formula does not register itself under Apple's install root. An explicit
   `devcontainer plugin register` command owns one reversible symlink and refuses
   to replace a foreign registration.
-- Missing optional providers produce an actionable capability error, not an automatic installation or runtime replacement.
+- A missing or invalid bundled native Compose executable produces an actionable
+  capability error, never a fallback to Docker software or an automatic
+  runtime replacement.
+- Compatibility-adapter environment overrides are ignored. An explicitly
+  selected external Compose executable must report a semantic version, an
+  exact 40-character commit, and the source `stephenlclarke/container-compose`
+  before it receives a project command.
 
 ## Requirements
 
@@ -43,18 +65,17 @@ The prebuilt and Homebrew packages require:
 
 - Apple silicon (`arm64`).
 - macOS Tahoe 26 or later.
-- Apple's stock `container` 1.1.0 runtime for the stock Apple backend.
+- Apple's stock `container` 1.4.1 runtime for the stock Apple backend.
 - Local Network permission for the selected runtime's
   `container-runtime-linux` helper so published host ports can reach the
   container VM.
-- The Docker CLI and upstream Docker Compose client used by VS Code.
+- Node.js. The native `container-compose` executable and normalizer are already
+  contained in the release archive.
 - A supported Xcode or Command Line Tools installation when required by Apple's runtime.
 
-Optional integrations:
-
-- A Docker engine for Docker-oracle comparison or separately selected
-  Docker-backed execution.
-- An explicitly installed `container-compose` executable for multi-service provider experiments.
+Real Docker may be installed only on a parity-test host as an isolated reference
+oracle. Docker, Colima, Podman, and nerdctl are not supported product backends or
+installation dependencies.
 
 The release notes and `devcontainer version --format json` identify the exact
 versions used for release validation.
@@ -62,7 +83,7 @@ versions used for release validation.
 ## Verify The Runtime Before Installation
 
 The supported installer does not change runtime state. Install Apple's signed
-[`container` 1.1.0 package](https://github.com/apple/container/releases/tag/1.1.0),
+[`container` 1.4.1 package](https://github.com/apple/container/releases/tag/1.4.1),
 then verify it before installing this project:
 
 ```sh
@@ -89,9 +110,13 @@ The tap provides two explicit channels:
 | Formula | Channel | Version form | Intended use |
 | --- | --- | --- | --- |
 | `devcontainer` | Stable | `MAJOR.MINOR.PATCH` | Default immutable release |
-| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in release-candidate build, when published |
+| `devcontainer-current` | Current | `current.RUN.SHA12` | Opt-in build from an immutable `current-SHA40` prerelease |
 
-Install the stable release:
+The currently published stable formula is legacy version 1.0.1. It still
+declares Docker dependencies and therefore does **not** satisfy the Docker-free
+installation contract in this document. Do not use 1.0.1 for a Docker-free
+installation. The following stable command becomes the supported path after
+the formula reports 1.0.2:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -102,7 +127,21 @@ brew services start stephenlclarke/tap/devcontainer
 devcontainer doctor --container /usr/local/bin/container
 ```
 
-When a Current candidate is published, install it with:
+Before starting the service, confirm that Homebrew selected the Docker-free
+release:
+
+```sh
+brew info stephenlclarke/tap/devcontainer
+devcontainer version --short
+```
+
+Both outputs must identify 1.0.2 or a later release whose compatibility
+document explicitly retains this contract.
+
+The live Current formula also predates the Docker-free candidate. Install a
+Current build only after `brew info stephenlclarke/tap/devcontainer-current`
+identifies an immutable build from the 1.0.2 source line and lists `node`, but
+no Docker or external Compose dependency:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -124,7 +163,8 @@ brew uninstall --formula stephenlclarke/tap/devcontainer
 brew install --formula stephenlclarke/tap/devcontainer-current
 ```
 
-Neither formula may declare a dependency on a custom `container` runtime or `container-compose`.
+Neither formula may declare a dependency on a custom `container` runtime, an
+external Compose formula, Docker, Colima, Podman, or nerdctl.
 
 ## Package Layout
 
@@ -135,16 +175,44 @@ devcontainer-MAJOR.MINOR.PATCH/
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-compose
 devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-engine
+devcontainer-MAJOR.MINOR.PATCH/bin/devcontainer-docker
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/LICENSE
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/config.toml
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/bin/compose
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/compose-normalizer
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/build-info.json
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/Package.resolved
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/go-modules.txt
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/container-compose.spdx.json
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64
+devcontainer-MAJOR.MINOR.PATCH/libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/config.toml
 devcontainer-MAJOR.MINOR.PATCH/libexec/container/plugins/devcontainer/bin/devcontainer
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/build-info.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/devcontainer.spdx.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/notarization.json
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/LICENSE
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/NOTICE.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/README.md
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/THIRD-PARTY-NOTICES.txt
 devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/com.github.stephenlclarke.devcontainer.plist.in
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/devcontainer.js
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/dist/spec-node/devContainersSpecCLI.js
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/LICENSE.txt
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/package.json
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/ThirdPartyNotices.txt
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/scripts/updateUID.Dockerfile
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/CHANGELOG.md
+devcontainer-MAJOR.MINOR.PATCH/share/devcontainer/reference-cli/README.md
 ```
+
+The `reference-cli` directory contains the checksum-pinned official
+`@devcontainers/cli` distribution, including its license and third-party
+notices. The bundled Compose directory contains a separate SPDX inventory and
+complete legal texts for its exact SwiftPM graph, vendored Go build graph, and
+Go standard library. The notarization record contains only the accepted submission ID,
+status, and archive digest; it contains no credential material.
 
 The packaged `README.md` points repository files, directories, and images at
 the archive's exact source commit. Package verification rejects relative or
@@ -152,7 +220,9 @@ mismatched source links, so installed documentation cannot silently drift with
 `main`.
 
 Homebrew installs only the package payload under its own prefix and exposes
-`bin/devcontainer`. It does not write under Apple's package prefix or
+`devcontainer`, `devcontainer-engine`, `devcontainer-docker`, and
+`devcontainer-compose` from that prefix's `bin` directory. It does not write
+under Apple's package prefix or
 `/usr/local/libexec/container-plugins`. Register the packaged Apple CLI plug-in
 only after selecting and starting the intended runtime:
 
@@ -174,32 +244,26 @@ devcontainer plugin unregister
 
 ## Use With The Official CLI And VS Code
 
-The compatibility engine listens only on its user-owned Unix socket. Select it
-for the current shell without changing Docker's default context:
+The compatibility engine listens only on its user-owned Unix socket. The
+packaged command injects the two project-owned adapter paths automatically:
 
 ```sh
-eval "$(devcontainer context)"
-npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/project
+devcontainer up --workspace-folder /path/to/project
 ```
 
-For VS Code, set the Compose wrapper and launch the workspace from the same
-configured shell:
+For VS Code, set both adapter paths:
 
 ```json
 {
+  "dev.containers.dockerPath": "/opt/homebrew/bin/devcontainer-docker",
   "dev.containers.dockerComposePath": "/opt/homebrew/bin/devcontainer-compose"
 }
 ```
 
-```sh
-eval "$(devcontainer context)"
-code /path/to/project
-```
+Open the workspace and choose **Dev Containers: Reopen in Container**.
 
-The wrapper selects upstream Docker Compose over the same socket by default.
-Users who intentionally select `container-compose` configure that independent
-provider as described below.
+The two paths are project-owned adapters. The Compose wrapper always selects
+native `container-compose`; there is no Docker Compose fallback.
 
 ## Verify The Installation
 
@@ -288,19 +352,19 @@ The implemented user configuration uses explicit provider identities:
 ```sh
 devcontainer configure \
   --backend stock \
-  --compose-provider docker \
-  --socket "$HOME/.local/state/devcontainer/docker.sock"
+  --compose-provider container-compose \
+  --socket "$HOME/.local/state/devcontainer/engine.sock"
 
 devcontainer configure \
   --backend container-compose \
   --compose-provider container-compose
 ```
 
-`stock` selects this project's Apple runtime adapter. `container-compose`
-identifies a project whose Compose lifecycle is owned by the separately
-installed provider; it is never described as stock provenance. Docker Compose
-is selected with `--compose-provider docker` and talks to this project's Unix
-socket.
+`stock` selects this project's Apple runtime adapter. The
+`container-compose` backend identity records enhanced-runtime ownership when
+that runtime is selected explicitly. Both modes use the native
+`container-compose` executable for multi-service planning and lifecycle; the
+provider name does not imply Apple authorship.
 
 Executable paths are explicit command or environment inputs:
 
@@ -312,35 +376,33 @@ devcontainer doctor \
 
 DEVCONTAINER_COMPOSE_BIN=/absolute/path/to/container-compose \
   devcontainer-compose up
-
-DEVCONTAINER_DOCKER_COMPOSE_BIN=/absolute/path/to/docker-compose \
-  devcontainer-compose up
 ```
 
 The Compose dispatcher applies this implemented precedence:
 
-1. `DEVCONTAINER_COMPOSE_PROVIDER`.
-2. User configuration written by `devcontainer configure`.
-3. The safe default, upstream Docker Compose over the compatibility socket.
+1. `DEVCONTAINER_COMPOSE_BIN`.
+2. The private stock-profile executable bundled beside the release commands.
+3. A development-only `container-compose` executable at one of the explicit
+   Homebrew or `/usr/local` paths.
 
-For that default, the dispatcher prefers the standalone `docker-compose`
-executable so it does not depend on per-user Docker CLI plug-in discovery. It
-falls back to `docker compose` when no standalone executable is installed.
+Failure to resolve that native executable stops before side effects. The
+dispatcher never searches for or launches `docker`, `docker-compose`, Docker
+Desktop, or Colima.
 
 Project ownership is then recorded in the state database. `devcontainer
 backend set`, `show`, and `reset` provide explicit project-scoped control and
 prevent a provider change while owned resources remain.
 
-## Optional container-compose Provider
+## Native container-compose Provider
 
-`container-compose` is not part of the base install. To use it, install and
-configure it separately and accept its runtime compatibility.
+`container-compose` remains independently maintained, but every release archive
+contains an exact stock-profile build and its exact provenance. Homebrew and
+archive users do not install another Compose component for stock Apple mode.
 
-The supported `stephenlclarke/tap/container-compose` 0.10.1 formula depends on
-a matched custom runtime. Installing that formula can add a custom
-`/opt/homebrew/bin/container` alongside Apple's `/usr/local/bin/container`.
-`devcontainer` continues to prefer Apple's executable by default and never
-suggests or performs that installation as an automatic fix.
+The optional `stephenlclarke/tap/container-compose` installation is used only
+when a user explicitly selects the separately fingerprinted enhanced stack.
+It is never installed by this formula and is not needed for stock mode. An
+enhanced Container installation remains an independent, explicit user choice.
 
 Stop the compatibility service and switch the separately installed Apple
 runtime distribution before running against the Compose stack:
@@ -353,14 +415,13 @@ DEVCONTAINER_CONTAINER_BIN=/opt/homebrew/bin/container \
   /opt/homebrew/bin/devcontainer-engine
 ```
 
-In another shell, select its socket and the Compose provider:
+In another shell, select the Compose provider and enhanced runtime explicitly:
 
 ```sh
-eval "$(devcontainer context)"
 DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
 DEVCONTAINER_COMPOSE_BIN=/opt/homebrew/bin/container-compose \
-  npx --yes @devcontainers/cli@0.88.0 up \
-  --workspace-folder /path/to/project
+DEVCONTAINER_CONTAINER_BIN=/opt/homebrew/bin/container \
+  devcontainer up --workspace-folder /path/to/project
 ```
 
 This foreground form makes the non-stock runtime choice visible. Stop it with

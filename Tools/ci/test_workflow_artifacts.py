@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 STEP_BOUNDARY = re.compile(r"^ {6}- name:", re.MULTILINE)
-SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "docker-compose-smoke-fixture.sh"
+SMOKE_FIXTURE = ROOT / "Tools" / "ci" / "compose-cli-smoke-fixture.sh"
+LIVE_PARITY_LANE = ROOT / "Tools" / "parity" / "run-live-lane.sh"
 GITHUB_HOSTED_RUNNER_LABELS = frozenset(
     {
         "macos-26",
@@ -219,6 +220,33 @@ class WorkflowArtifactTests(unittest.TestCase):
             lane,
         )
         self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
+        self.assertIn("Tools/release/build-native-compose.sh", lane)
+        self.assertIn("GOTOOLCHAIN=go1.26.3", lane)
+        self.assertIn("DEVCONTAINER_COMPOSE_BIN=%s", lane)
+        self.assertIn("cp Package.stock.resolved Package.resolved", lane)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", lane)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=enhanced", lane)
+        self.assertIn("Tools/parity/run-live-lane.sh", lane)
+        self.assertIn('CONTAINER_RUNTIME_LOCK_TIMEOUT_SECONDS: "10800"', lane)
+        live_lane = LIVE_PARITY_LANE.read_text(encoding="utf-8")
+        self.assertIn(
+            'source "${REPOSITORY}/Tools/ci/container-runtime-lock.sh"',
+            live_lane,
+        )
+        self.assertIn("acquire_container_runtime_lock", live_lane)
+        self.assertIn("release_container_runtime_lock", live_lane)
+        self.assertEqual(
+            live_lane.count("Tools/parity/require-quiet-host.sh"),
+            2,
+        )
+        self.assertIn(
+            '".build/parity/host-quiet/${lane}/cli"',
+            live_lane,
+        )
+        self.assertIn(
+            '".build/parity/host-quiet/${lane}/vscode"',
+            live_lane,
+        )
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
         checked = 0
@@ -234,7 +262,7 @@ class WorkflowArtifactTests(unittest.TestCase):
             )
             self.assertNotIn("devcontainer-ultuk2m30000", labels)
 
-        self.assertEqual(checked, 2)
+        self.assertEqual(checked, 3)
 
     def test_runner_specification_parser_covers_yaml_forms(self) -> None:
         contents = """
@@ -400,12 +428,27 @@ jobs:
             self.assertIn("\nconcurrency:\n", contents, name)
             self.assertIn("  cancel-in-progress: true\n", contents, name)
 
+    def test_sonar_compares_each_analysis_with_the_previous_commit(self) -> None:
+        workflow = (WORKFLOWS / "sonar.yml").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        quality = (ROOT / "QUALITY.md").read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count('== ["previous_version"]'), 2)
+        self.assertIn("SONAR_PROJECT_VERSION: ${{ github.sha }}", workflow)
+        self.assertIn(
+            '-Dsonar.projectVersion="$$sonar_project_version"',
+            makefile,
+        )
+        self.assertIn("Previous version new-code definition", quality)
+        self.assertIn("previous analyzed\ncommit becomes the baseline", quality)
+
     def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
         for name in ("ci.yml", "quality.yml", "sonar.yml"):
             contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            expected_count = 2 if name == "ci.yml" else 1
             self.assertEqual(
                 contents.count('SWIFT_TEST_ATTEMPTS: "1"'),
-                1,
+                expected_count,
                 name,
             )
             self.assertEqual(
@@ -413,6 +456,10 @@ jobs:
                 1,
                 name,
             )
+        self.assertIn(
+            'SWIFT_TEST_TIMEOUT_SECONDS: "900"',
+            (WORKFLOWS / "ci.yml").read_text(encoding="utf-8"),
+        )
 
     def test_hosted_swift_tests_reuse_the_resolved_default_scratch(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -459,10 +506,14 @@ jobs:
             4,
         )
         self.assertEqual(
+            makefile.count("Tools/ci/run-swift-test-shards.sh"),
+            1,
+        )
+        self.assertEqual(
             makefile.count("devcontainerPackageTests.xctest/Contents/MacOS"),
             4,
         )
-        self.assertEqual(makefile.count("--enable-code-coverage"), 5)
+        self.assertEqual(makefile.count("--enable-code-coverage"), 6)
         self.assertEqual(makefile.count("--sanitize=address"), 3)
         self.assertEqual(makefile.count("--sanitize=thread"), 3)
 
@@ -472,10 +523,11 @@ jobs:
         self.assertIn("  stock-test:\n", ci)
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", ci)
         self.assertIn("cp Package.stock.resolved Package.resolved", ci)
-        self.assertIn(
-            "swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors",
-            ci,
-        )
+        self.assertIn("timeout-minutes: 90", ci)
+        self.assertIn('SWIFT_TEST_ATTEMPTS: "1"', ci)
+        self.assertIn('SWIFT_TEST_TIMEOUT_SECONDS: "900"', ci)
+        self.assertIn("run: make swift-test", ci)
+        self.assertNotIn("run: swift test", ci)
         self.assertIn("needs: [test, stock-test]", ci)
 
         resolved = json.loads(
@@ -585,6 +637,8 @@ jobs:
             "candidateSha: $candidate_sha",
             "workflow: \"Stable Release Gate\"",
             "retention-days: 90",
+            'repos/${GITHUB_REPOSITORY}/immutable-releases',
+            ".immutable == true",
         ):
             self.assertIn(marker, stable)
         for marker in (
@@ -596,6 +650,12 @@ jobs:
             '.runId == $run_id',
         ):
             self.assertIn(marker, prebuilt)
+        stable_resolution = prebuilt[
+            prebuilt.index('elif [[ "${DISPATCH_REF}" =~'):
+            prebuilt.index('else\n            printf \'unsupported package ref')
+        ]
+        self.assertNotIn('"${sha}" != "${current_main}"', stable_resolution)
+        self.assertNotIn('"${sha}" != "${GITHUB_SHA}"', stable_resolution)
 
     def test_parity_container_images_are_digest_pinned(self) -> None:
         fixtures = ROOT / "Tests" / "Parity" / "fixtures"
@@ -630,6 +690,77 @@ jobs:
             dependabot,
         )
 
+    def test_release_copy_describes_an_apple_backed_engine(self) -> None:
+        contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Apple-backed Engine API adapter", contents)
+        self.assertNotIn("Docker-compatible engine adapter", contents)
+
+    def test_release_credentials_are_operation_scoped_and_unattended(self) -> None:
+        contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        package = contents[contents.index("  package:\n") :]
+
+        for secret in (
+            "DEVELOPER_ID_APPLICATION_P12_BASE64",
+            "DEVELOPER_ID_APPLICATION_P12_PASSWORD",
+            "DEVCONTAINER_NOTARY_APPLE_ID",
+            "DEVCONTAINER_NOTARY_TEAM_ID",
+            "DEVCONTAINER_NOTARY_PASSWORD",
+        ):
+            self.assertIn(f"secrets.{secret}", package)
+        self.assertIn("temporary-release-keychain.sh install", package)
+        self.assertIn("stable source tag does not name a commit", contents)
+        self.assertIn('"${helper}" cleanup', package)
+        cleanup = package[package.index("Remove operation-scoped release") :]
+        self.assertIn("if: always()", cleanup)
+        self.assertIn('! -e "${DEVELOPER_ID_KEYCHAIN}"', cleanup)
+        self.assertIn('if [[ ! -x "${helper}" ]]', cleanup)
+        self.assertIn("vars.DEVCONTAINER_NOTARY_PROFILE", package)
+        self.assertNotIn("vars.DEVCONTAINER_SIGNING_IDENTITY", package)
+        self.assertNotIn("read -p", package)
+        self.assertNotIn("read -s", package)
+
+    def test_stable_release_has_one_unattended_controller(self) -> None:
+        contents = (WORKFLOWS / "stable-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Exact checked-in MAJOR.MINOR.PATCH version", contents)
+        self.assertIn("Create or verify the signed stable tag", contents)
+        self.assertIn("dispatch_and_wait", contents)
+        self.assertIn("X-GitHub-Api-Version: 2026-03-10", contents)
+        self.assertIn(".workflow_run_id", contents)
+        self.assertIn("stable-release-gate.yml", contents)
+        self.assertIn("prebuilt-binaries.yml", contents)
+        self.assertIn(".immutable == true", contents)
+        self.assertIn("releases/latest", contents)
+        self.assertIn("Formula/devcontainer.rb?ref=main", contents)
+        self.assertIn('GH_PROMPT_DISABLED: "1"', contents)
+        self.assertIn('GIT_TERMINAL_PROMPT: "0"', contents)
+        self.assertIn("test \"$(jq -r '.object.type'", contents)
+        self.assertNotIn("gh run list", contents)
+        self.assertNotIn("read -p", contents)
+        self.assertNotIn("read -s", contents)
+
+    def test_cli_smoke_uses_a_policy_valid_native_compose_fixture(self) -> None:
+        contents = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'install -m 0755 Tools/ci/compose-cli-smoke-fixture.sh \\\n'
+            '            "${RUNNER_TEMP}/container-compose"',
+            contents,
+        )
+        self.assertIn(
+            'DEVCONTAINER_COMPOSE_BIN="${RUNNER_TEMP}/container-compose"',
+            contents,
+        )
+        self.assertNotIn(
+            'DEVCONTAINER_COMPOSE_BIN="$PWD/Tools/ci/compose-cli-smoke-fixture.sh"',
+            contents,
+        )
+
     def test_parity_comparison_survives_failed_lanes(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
         compare = contents[contents.index("  compare:\n"):]
@@ -648,6 +779,11 @@ jobs:
             "validate_manifest.py --release || status=1",
             compare,
         )
+        self.assertIn(
+            'receipt=".build/parity/host-quiet/${lane}/${suite}/quiet-host.tsv"',
+            compare,
+        )
+        self.assertIn("grep -Fx $'result\\tquiet'", compare)
         self.assertIn('          exit "${status}"\n', compare)
 
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
@@ -655,21 +791,75 @@ jobs:
             encoding="utf-8"
         )
         stage = contents.index("- name: Stage GitHub release assets")
+        attest = contents.index(
+            "- name: Attest exact staged or recovered release assets"
+        )
+        upload = contents.index("- name: Upload exact signed package evidence")
+        publish = contents.index("- name: Publish and verify immutable release")
         render = contents.index("- name: Render and validate tap formula")
         commit = contents.index("- name: Commit candidate tap state locally")
         install = contents.index("- name: Install and test tap formula")
         push = contents.index("- name: Push tested tap state")
-        finalize = contents.index("- name: Finalize release after tap promotion")
+        promote = contents.index(
+            "- name: Promote tested stable release as latest"
+        )
 
-        self.assertLess(stage, render)
+        self.assertLess(stage, attest)
+        self.assertLess(attest, upload)
+        self.assertLess(upload, publish)
+        self.assertLess(publish, render)
         self.assertLess(render, commit)
         self.assertLess(commit, install)
         self.assertLess(install, push)
-        self.assertLess(push, finalize)
+        self.assertLess(push, promote)
         self.assertIn("mode=stable-stage", contents)
         self.assertIn("mode=stable-finalize", contents)
         self.assertIn(
+            "Tools/release/publish-github-release.sh stable-promote",
+            contents,
+        )
+        self.assertEqual(
+            contents.count(
+                "RELEASE_TITLE: ${{ needs.resolve.outputs.lane == "
+                "'current' && 'Current build' || "
+                "steps.package.outputs.release_tag }}"
+            ),
+            2,
+        )
+        self.assertIn(
+            'Tools/release/publish-github-release.sh "${mode}"',
+            contents,
+        )
+        self.assertEqual(
+            contents.count(
+                "RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/"
+                ".github/workflows/prebuilt-binaries.yml"
+            ),
+            3,
+        )
+        self.assertEqual(
+            contents.count("RELEASE_SOURCE_REF: refs/heads/main"),
+            3,
+        )
+        self.assertIn(
             'formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"',
+            contents,
+        )
+        self.assertIn(
+            'authority_archive="${{ steps.package.outputs.assets }}/${ASSET}"',
+            contents,
+        )
+        self.assertIn(
+            'authority_context="${authority_archive}.context.json"',
+            contents,
+        )
+        self.assertIn(
+            "published package context does not match the release authority",
+            contents,
+        )
+        self.assertIn('--archive "${authority_archive}"', contents)
+        self.assertNotIn(
+            '--archive "${{ steps.package.outputs.archive }}"',
             contents,
         )
         self.assertIn(
@@ -681,6 +871,35 @@ jobs:
         self.assertIn('brew install --formula "${test_tap}/${formula}"', contents)
         self.assertNotIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
         self.assertNotIn('brew untap "stephenlclarke/tap"', contents)
+
+    def test_published_recovery_reauthenticates_every_distribution_boundary(
+        self,
+    ) -> None:
+        publisher = (
+            ROOT / "Tools" / "release" / "publish-github-release.sh"
+        ).read_text(encoding="utf-8")
+        verifier = (
+            ROOT / "Tools" / "release" / "verify-recovered-assets.sh"
+        ).read_text(encoding="utf-8")
+
+        for marker in (
+            '"$GH" attestation verify "$downloaded"',
+            '--signer-workflow "$RECOVERY_SIGNER_WORKFLOW"',
+            '--source-digest "$PUBLISH_SHA"',
+            '--source-ref "$RECOVERY_SOURCE_REF"',
+            '"$RECOVERY_VERIFIER" "$temporary" "$PUBLISH_SHA"',
+        ):
+            self.assertIn(marker, publisher)
+        for marker in (
+            'python3 "$PACKAGE_VERIFIER"',
+            '--require-notarization',
+            '"$CODESIGN" --verify --strict --verbose=2',
+            '--extract-certificates',
+            "flags=.*\\(runtime\\)",
+            'notarytool info "$notary_id"',
+            '.status == "Accepted"',
+        ):
+            self.assertIn(marker, verifier)
 
     def test_every_swift_build_lane_treats_warnings_as_errors(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -704,14 +923,18 @@ jobs:
                 f"{name} build permits compiler warnings",
             )
 
-    def test_docker_compose_smoke_fixture_is_strict(self) -> None:
+        self.assertIn("Package.stock.resolved", docs)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock swift package", docs)
+        self.assertIn("trap restore_resolved EXIT", docs)
+
+    def test_compose_cli_smoke_fixture_is_strict(self) -> None:
         success = subprocess.run(
-            [SMOKE_FIXTURE, "compose", "version"],
+            [SMOKE_FIXTURE, "version"],
             capture_output=True,
             text=True,
         )
         invalid = subprocess.run(
-            [SMOKE_FIXTURE, "version"],
+            [SMOKE_FIXTURE, "compose", "version"],
             capture_output=True,
             text=True,
         )
@@ -719,7 +942,7 @@ jobs:
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertEqual(success.stdout, '{"Version":"fixture"}\n')
         self.assertEqual(invalid.returncode, 64)
-        self.assertIn("expected: compose version", invalid.stderr)
+        self.assertIn("expected: version", invalid.stderr)
 
 
 if __name__ == "__main__":

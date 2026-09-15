@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := workflow
 
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.0.2
 SWIFT ?= swift
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
@@ -25,7 +25,9 @@ DOCS_HOSTING_BASE_PATH ?= devcontainer
 SWIFT_RESOLVED_FLAGS ?= --disable-automatic-resolution
 DIST_DIR ?= dist
 PARITY_EVIDENCE_DIR ?= .build/parity
-DEVCONTAINER_CLI_VERSION ?= 0.88.0
+DEVCONTAINER_CLI_VERSION ?= 0.89.0
+DEVCONTAINER_CLI_REVISION ?= 5dc7533314b5ba7ec3875c30143dfe1aec644870
+DEVCONTAINER_CLI_SHA256 ?= 49c7d71d40058f89e1fd8b019a193ed4215b7fc773c0f6273f7032a46cd33f4b
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 DEVCONTAINER_SIGNING_REQUIRED ?= 0
@@ -82,6 +84,8 @@ swift-test:
 		--show-bin-path)"; \
 		SWIFT_TEST_RESULT_LOG="$(SWIFT_TEST_RESULT_LOG)" \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
+		SWIFT_TEST_SCRATCH_PATH="$(abspath .build)" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
 		Tools/ci/run-swift-testing-bundle.sh \
@@ -115,6 +119,8 @@ coverage:
 		SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
+		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_COVERAGE_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		LLVM_PROFILE_FILE="$$TEST_BIN_PATH/codecov/devcontainer-tests-%m-%p.profraw" \
 		Tools/ci/run-swift-test.sh \
@@ -131,6 +137,11 @@ coverage:
 		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
 		--enable-code-coverage \
 		--product devcontainer-compose
+	@$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		$(SWIFT_STRICT_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--enable-code-coverage \
+		--product devcontainer-docker
 	@Tools/coverage/run-cli-coverage.sh \
 		"$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 			--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
@@ -245,7 +256,10 @@ asan:
 		SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
+		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_ASAN_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
+		Tools/ci/run-swift-test-shards.sh \
 		Tools/ci/run-swift-test.sh \
 		Tools/ci/run-swift-testing-bundle.sh \
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
@@ -264,6 +278,8 @@ tsan:
 		SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
+		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_TSAN_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
 		Tools/ci/run-swift-testing-bundle.sh \
@@ -277,6 +293,7 @@ test-tsan: tsan
 check: format-check lint test coverage-check docs parity-manifest
 
 lint:
+	$(PYTHON) Tools/ci/check-dockerless-product.py
 	$(PYTHON) -m unittest discover Tools/coverage
 	$(PYTHON) -m unittest discover Tools/parity
 	$(PYTHON) -m unittest discover Tools/release
@@ -396,11 +413,19 @@ homebrew-formula-current: package
 			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
 			--field asset \
 	)"; \
+	release_tag="$$( \
+		$(PYTHON) Tools/release/package-context.py \
+			--product-version "$(DEVCONTAINER_VERSION)" \
+			--lane current \
+			--commit "$$(git rev-parse --verify HEAD)" \
+			--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
+			--field releaseTag \
+	)"; \
 	$(PYTHON) Tools/release/render-homebrew-formula.py \
 		--product-version "$(DEVCONTAINER_VERSION)" \
 		--formula-version "$$formula_version" \
 		--formula-class DevcontainerCurrent \
-		--url "https://github.com/stephenlclarke/devcontainer/releases/download/current/$$asset" \
+		--url "https://github.com/stephenlclarke/devcontainer/releases/download/$$release_tag/$$asset" \
 		--conflicts-with devcontainer \
 		--archive "$(DIST_DIR)/$$asset" \
 		--template Tools/release/devcontainer.rb.in \

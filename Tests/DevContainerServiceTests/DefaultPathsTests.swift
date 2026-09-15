@@ -21,7 +21,7 @@ import Testing
 
 @Test
 func `default paths are user scoped and executable selection is absolute`() {
-    #expect(DefaultPaths.socket.hasSuffix("/devcontainer/docker.sock"))
+    #expect(DefaultPaths.socket.hasSuffix("/devcontainer/engine.sock"))
     #expect(DefaultPaths.stateDatabase.hasSuffix("/devcontainer/state.sqlite"))
     #expect(DefaultPaths.containerExecutable.hasPrefix("/"))
     if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/container") {

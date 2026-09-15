@@ -22,13 +22,13 @@ import Foundation
 struct ConfigureCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "configure",
-        abstract: "Write the user configuration without changing Docker's default context"
+        abstract: "Write the Apple container runtime configuration"
     )
 
     @Option(name: .long, help: "Backend: stock or container-compose.")
     var backend: String?
 
-    @Option(name: .long, help: "Compose provider: docker or container-compose.")
+    @Option(name: .long, help: "Native Compose provider (container-compose).")
     var composeProvider: String?
 
     @Option(name: .long, help: "Engine Unix socket.")
@@ -60,7 +60,7 @@ struct ConfigureCommand: ParsableCommand {
         }
         if let composeProvider {
             guard let parsed = ComposeProviderKind(rawValue: composeProvider) else {
-                throw ValidationError("compose provider must be docker or container-compose")
+                throw ValidationError("compose provider must be container-compose")
             }
             value.composeProvider = parsed
         }
@@ -68,6 +68,10 @@ struct ConfigureCommand: ParsableCommand {
             value.socket = socket
         }
         if let container {
+            try DevContainerExecutablePolicy.requireAppleContainer(
+                container,
+                name: "runtime executable"
+            )
             value.containerExecutable = container
         }
         if let state {

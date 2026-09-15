@@ -19,6 +19,55 @@ import Foundation
 import Testing
 
 @Test
+func `executable policy permits adapters and rejects non Apple runtimes`() throws {
+    try DevContainerExecutablePolicy.requireDockerless(
+        "/opt/homebrew/bin/devcontainer-docker",
+        name: "compatibility adapter"
+    )
+    try DevContainerExecutablePolicy.requireDockerless(
+        "/opt/homebrew/bin/container-compose",
+        name: "Compose provider"
+    )
+    try DevContainerExecutablePolicy.requireAppleContainer(
+        "/usr/local/bin/container",
+        name: "runtime"
+    )
+    try DevContainerExecutablePolicy.requireNativeCompose(
+        "/opt/homebrew/bin/container-compose",
+        name: "Compose provider"
+    )
+
+    for executable in [
+        "docker", "docker-compose", "docker-buildx", "dockerd", "com.docker.cli",
+        "colima", "podman", "nerdctl"
+    ] {
+        do {
+            try DevContainerExecutablePolicy.requireDockerless(
+                "/usr/local/bin/\(executable)",
+                name: "runtime"
+            )
+            Issue.record("accepted forbidden executable \(executable)")
+        } catch let error as DevContainerError {
+            #expect(error.code == .invalidRequest)
+            #expect(error.message.contains("Docker-less product"))
+        }
+    }
+
+    #expect(throws: DevContainerError.self) {
+        try DevContainerExecutablePolicy.requireAppleContainer(
+            "/opt/homebrew/bin/podman",
+            name: "runtime"
+        )
+    }
+    #expect(throws: DevContainerError.self) {
+        try DevContainerExecutablePolicy.requireNativeCompose(
+            "/opt/homebrew/bin/renamed-compose-provider",
+            name: "Compose provider"
+        )
+    }
+}
+
+@Test
 func `diagnostic redaction covers paths and credential shaped values`() {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let source = """
@@ -106,6 +155,19 @@ func `runtime models round trip through JSON`() throws {
     )
     let data = try JSONEncoder().encode(snapshot)
     #expect(try JSONDecoder().decode(ContainerSnapshot.self, from: data) == snapshot)
+}
+
+@Test
+func `image build request decodes payloads from before build controls were added`() throws {
+    let legacy = Data(
+        #"{"context":"Y29udGV4dA==","dockerfile":"Dockerfile","tags":[],"buildArguments":{},"labels":{}}"#.utf8
+    )
+    let request = try JSONDecoder().decode(ImageBuildRequest.self, from: legacy)
+
+    #expect(request.context == Data("context".utf8))
+    #expect(!request.noCache)
+    #expect(!request.pull)
+    #expect(request.platform == nil)
 }
 
 @Test

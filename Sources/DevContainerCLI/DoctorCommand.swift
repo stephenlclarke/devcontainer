@@ -36,7 +36,7 @@ struct DoctorCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Configuration file path.")
     var config: String?
 
-    @Option(name: .long, help: "Optional container-compose executable.")
+    @Option(name: .long, help: "Native container-compose executable.")
     var compose: String?
 
     @Option(name: .long, help: "Output format: pretty or json.")
@@ -48,6 +48,12 @@ struct DoctorCommand: AsyncParsableCommand {
             containerExecutable: container,
             socket: socket
         )
+        if let compose {
+            try DevContainerExecutablePolicy.requireNativeCompose(
+                compose,
+                name: "doctor Compose provider"
+            )
+        }
         let checks = await checks(
             container: selection.containerExecutable,
             socket: selection.socket

@@ -89,6 +89,10 @@ jobs:
               printf 'stable source tag is not GitHub-verified\n' >&2
               exit 1
             fi
+            if [[ "$(jq -r '.object.type' <<<"${tag_document}")" != "commit" ]]; then
+              printf 'stable source tag does not name a commit\n' >&2
+              exit 1
+            fi
             sha="$(jq -r '.object.sha' <<<"${tag_document}")"
             authority=""
             authority_name="stable-authority-${ref_name}-${sha}"
@@ -254,20 +258,36 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.resolve.outputs.sha }}
           path: devcontainer
-      - name: Require isolated ARM64 release identity
+      - name: Set up Go for bundled native Compose
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.3"
+      - name: Require exact isolated ARM64 release source
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
-          SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
           test -n "${HOMEBREW_TAP_TOKEN}"
-          test -n "${SIGNING_IDENTITY}"
-          test -n "${NOTARY_PROFILE}"
           test "$(git -C devcontainer rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           test -z "$(git -C devcontainer status --short)"
+      - name: Provision unattended signing and notarization authority
+        env:
+          DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          DEVELOPER_ID_EXPECTED_IDENTITY: ${{ vars.DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY }}
+          DEVELOPER_ID_TEMPORARY_ROOT: ${{ runner.temp }}
+          DEVELOPER_ID_KEYCHAIN: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychain-db
+          DEVELOPER_ID_ORIGINAL_KEYCHAINS: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychains
+          DEVELOPER_ID_ENVIRONMENT_FILE: ${{ github.env }}
+          DEVCONTAINER_NOTARY_APPLE_ID: ${{ secrets.DEVCONTAINER_NOTARY_APPLE_ID }}
+          DEVCONTAINER_NOTARY_TEAM_ID: ${{ secrets.DEVCONTAINER_NOTARY_TEAM_ID }}
+          DEVCONTAINER_NOTARY_PASSWORD: ${{ secrets.DEVCONTAINER_NOTARY_PASSWORD }}
+          DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
+        working-directory: devcontainer
+        shell: bash
+        run: Tools/release/temporary-release-keychain.sh install
       - name: Check out Homebrew tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -282,8 +302,6 @@ jobs:
       - name: Build signed and notarized package
         id: package
         env:
-          DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
-          DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
           LANE: ${{ needs.resolve.outputs.lane }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
         working-directory: devcontainer
@@ -319,11 +337,6 @@ jobs:
             python3 Tools/release/package-context.py \
               "${context_args[@]}" \
               --field releaseTag
-          )"
-          formula_version="$(
-            python3 Tools/release/package-context.py \
-              "${context_args[@]}" \
-              --field formulaVersion
           )"
           archive="${PWD}/dist/${asset}"
           test -s "${archive}"
@@ -379,9 +392,9 @@ jobs:
             printf 'devcontainer version --format json\n'
             printf '```\n\n'
             printf "The formula installs the standalone \`devcontainer\` service, "
-            printf 'Docker-compatible engine adapter, and Compose adapter. '
+            printf 'Apple-backed Engine API adapter, and Compose adapter. '
             printf "Stock Apple \`container\` is selected by default; "
-            printf "\`container-compose\` remains an optional provider.\\n\\n"
+            printf "A pinned stock-profile native \`container-compose\` build is bundled in the signed archive.\\n\\n"
             printf '## Certified compatibility\n\n'
             printf -- "- Apple \`container\` \`%s\`\\n" "${apple_version}"
             printf -- "- \`container-compose\` \`%s\`\\n" "${compose_version}"
@@ -410,20 +423,10 @@ jobs:
             printf 'assets=%s\n' "${assets}"
             printf 'assets_manifest=%s\n' "${RUNNER_TEMP}/release-assets.txt"
             printf 'asset=%s\n' "${asset}"
-            printf 'formula_version=%s\n' "${formula_version}"
             printf 'notes=%s\n' "${notes}"
             printf 'release_tag=%s\n' "${release_tag}"
             printf 'version=%s\n' "${version}"
           } >>"${GITHUB_OUTPUT}"
-      - name: Attest release assets
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ steps.package.outputs.assets }}/*
-      - name: Upload signed package evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: devcontainer-${{ needs.resolve.outputs.lane }}-${{ needs.resolve.outputs.sha }}
-          path: ${{ steps.package.outputs.assets }}
       - name: Stage GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -431,6 +434,8 @@ jobs:
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
         working-directory: devcontainer
@@ -441,19 +446,71 @@ jobs:
             mode=current-stage
           fi
           Tools/release/publish-github-release.sh "${mode}"
+      - name: Attest exact staged or recovered release assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.assets }}/*
+      - name: Upload exact signed package evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: devcontainer-${{ needs.resolve.outputs.lane }}-${{ needs.resolve.outputs.sha }}
+          path: ${{ steps.package.outputs.assets }}
+      - name: Publish and verify immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
+          RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
+          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
+        working-directory: devcontainer
+        run: |
+          set -euo pipefail
+          mode=stable-finalize
+          if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
+            mode=current-finalize
+          fi
+          Tools/release/publish-github-release.sh "${mode}"
       - name: Render and validate tap formula
         env:
           ASSET: ${{ steps.package.outputs.asset }}
-          FORMULA_VERSION: ${{ steps.package.outputs.formula_version }}
+          EXPECTED_PRODUCT_VERSION: ${{ steps.package.outputs.version }}
+          EXPECTED_RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
           LANE: ${{ needs.resolve.outputs.lane }}
-          PRODUCT_VERSION: ${{ steps.package.outputs.version }}
+          PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
+          authority_archive="${{ steps.package.outputs.assets }}/${ASSET}"
+          authority_context="${authority_archive}.context.json"
+          test -s "${authority_archive}"
+          test -s "${authority_context}"
+          if ! jq -e \
+            --arg asset "${ASSET}" \
+            --arg commit "${PUBLISH_SHA}" \
+            --arg lane "${LANE}" \
+            --arg product_version "${EXPECTED_PRODUCT_VERSION}" \
+            --arg release_tag "${EXPECTED_RELEASE_TAG}" \
+            '(
+              .asset == $asset and
+              .commit == $commit and
+              .lane == $lane and
+              .productVersion == $product_version and
+              .releaseTag == $release_tag and
+              (.formulaVersion | type == "string" and length > 0)
+            )' "${authority_context}" >/dev/null; then
+            printf 'published package context does not match the release authority\n' >&2
+            exit 1
+          fi
+          formula_version="$(jq -er '.formulaVersion' "${authority_context}")"
+          product_version="$(jq -er '.productVersion' "${authority_context}")"
+          tag="$(jq -er '.releaseTag' "${authority_context}")"
           class=Devcontainer
           conflict_args=()
           formula=devcontainer.rb
-          tag="${{ steps.package.outputs.release_tag }}"
           if [[ "${LANE}" == current ]]; then
             class=DevcontainerCurrent
             conflict_args=(--conflicts-with devcontainer)
@@ -461,12 +518,12 @@ jobs:
           fi
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${ASSET}"
           python3 devcontainer/Tools/release/render-homebrew-formula.py \
-            --product-version "${PRODUCT_VERSION}" \
-            --formula-version "${FORMULA_VERSION}" \
+            --product-version "${product_version}" \
+            --formula-version "${formula_version}" \
             --formula-class "${class}" \
             --url "${url}" \
             "${conflict_args[@]}" \
-            --archive "${{ steps.package.outputs.archive }}" \
+            --archive "${authority_archive}" \
             --template devcontainer/Tools/release/devcontainer.rb.in \
             --output "homebrew-tap/Formula/${formula}"
           python3 devcontainer/Tools/release/update-tap-readme.py \
@@ -549,20 +606,39 @@ jobs:
           set -euo pipefail
           test -z "$(git -C homebrew-tap status --short)"
           git -C homebrew-tap push origin main
-      - name: Finalize release after tap promotion
+      - name: Promote tested stable release as latest
+        if: needs.resolve.outputs.lane == 'stable'
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
           RELEASE_ASSETS_FILE: ${{ steps.package.outputs.assets_manifest }}
           RELEASE_NOTES_FILE: ${{ steps.package.outputs.notes }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/prebuilt-binaries.yml
+          RELEASE_SOURCE_REF: refs/heads/main
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
-          RELEASE_TITLE: ${{ needs.resolve.outputs.lane == 'current' && 'Current build' || steps.package.outputs.release_tag }}
+          RELEASE_TITLE: ${{ steps.package.outputs.release_tag }}
         working-directory: devcontainer
         run: |
           set -euo pipefail
-          mode=stable-finalize
-          if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
-            mode=current-finalize
+          Tools/release/publish-github-release.sh stable-promote
+      - name: Remove operation-scoped release keychain
+        if: always()
+        env:
+          DEVELOPER_ID_TEMPORARY_ROOT: ${{ runner.temp }}
+          DEVELOPER_ID_KEYCHAIN: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychain-db
+          DEVELOPER_ID_ORIGINAL_KEYCHAINS: ${{ runner.temp }}/devcontainer-release-${{ github.run_id }}-${{ github.run_attempt }}.keychains
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper=devcontainer/Tools/release/temporary-release-keychain.sh
+          if [[ ! -e "${DEVELOPER_ID_KEYCHAIN}" &&
+            ! -e "${DEVELOPER_ID_ORIGINAL_KEYCHAINS}" ]]; then
+            exit 0
           fi
-          Tools/release/publish-github-release.sh "${mode}"
+          if [[ ! -x "${helper}" ]]; then
+            printf 'cannot safely restore the release keychain search list: %s is unavailable\n' \
+              "${helper}" >&2
+            exit 1
+          fi
+          "${helper}" cleanup

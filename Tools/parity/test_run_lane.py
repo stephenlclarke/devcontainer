@@ -22,7 +22,6 @@ from run_lane import (
     LaneRunner,
     create_socket_root,
     install_cancellation_handlers,
-    resolver_nameservers,
     run_checked,
     safe_environment,
 )
@@ -79,14 +78,14 @@ class RuntimePathTests(unittest.TestCase):
                 return_value={
                     "referencePins": {
                         "devcontainersCli": {
-                            "version": "0.88.0",
+                            "version": "0.89.0",
                         },
                     },
                 },
             ),
             mock.patch(
                 "run_lane.shutil.which",
-                side_effect=["/current/bin/docker", "/current/bin/npx"],
+                return_value="/current/bin/npx",
             ),
         ):
             runner = LaneRunner(
@@ -106,6 +105,56 @@ class RuntimePathTests(unittest.TestCase):
             runner.environment["CONTAINER_COMPOSE_CONTAINER"],
             "/stable/container/bin/container",
         )
+        self.assertEqual(
+            runner.docker,
+            "/repository/.build/debug/devcontainer-docker",
+        )
+
+    def test_enhanced_devcontainer_invocation_selects_enhanced_backend(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.node_package_runner = "/usr/bin/npx"
+        runner.cli_version = "0.89.0"
+        runner.devcontainer_docker = "/repository/.build/debug/devcontainer-docker"
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+
+        with (
+            mock.patch.dict("run_lane.os.environ", {}, clear=True),
+            mock.patch(
+                "run_lane.shutil.which",
+                return_value="/project/bin/container-compose",
+            ),
+            mock.patch(
+                "run_lane.subprocess.run",
+                return_value=completed,
+            ) as run,
+        ):
+            result = runner.devcontainer(
+                ["exec", "--workspace-folder", "/workspace", "--", "/bin/true"],
+                timeout=120,
+            )
+
+        self.assertIs(result, completed)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["DEVCONTAINER_BACKEND"], "container-compose")
+        self.assertEqual(
+            environment["DEVCONTAINER_COMPOSE_PROVIDER"],
+            "container-compose",
+        )
+        command = run.call_args.args[0]
+        separator = command.index("--")
+        self.assertEqual(
+            command[separator - 4 : separator],
+            [
+                "--docker-path",
+                "/repository/.build/debug/devcontainer-docker",
+                "--docker-compose-path",
+                "/repository/.build/debug/devcontainer-compose",
+            ],
+        )
+        self.assertEqual(command[separator:], ["--", "/bin/true"])
 
 
 class CancellationHandlerTests(unittest.TestCase):
@@ -151,7 +200,7 @@ class BoundedCommandTests(unittest.TestCase):
             root = create_socket_root()
 
         self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
-        self.assertLess(len(str(root / "docker.sock").encode()), 104)
+        self.assertLess(len(str(root / "engine.sock").encode()), 104)
         make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
 
 
@@ -161,9 +210,9 @@ class FingerprintTests(unittest.TestCase):
         runner.lane = "docker"
         runner.docker = "/usr/bin/docker"
         runner.node_package_runner = "/usr/bin/npx"
-        runner.cli_version = "0.88.0"
+        runner.cli_version = "0.89.0"
         runner.cli_reference = {
-            "version": "0.88.0",
+            "version": "0.89.0",
             "source": "https://github.com/devcontainers/cli",
             "commit": "a" * 40,
             "npmIntegrity": "sha512-" + "b" * 86 + "==",
@@ -172,7 +221,7 @@ class FingerprintTests(unittest.TestCase):
         runner.environment = {"PATH": "/usr/bin:/bin"}
         completed = [
             mock.Mock(returncode=0, stdout='{"Client":{}}', stderr=""),
-            mock.Mock(returncode=0, stdout="0.88.0\n", stderr=""),
+            mock.Mock(returncode=0, stdout="0.89.0\n", stderr=""),
         ]
 
         with (
@@ -193,9 +242,64 @@ class FingerprintTests(unittest.TestCase):
             runner.cli_reference,
         )
         self.assertEqual(
-            run.call_args_list[1].args[0],
-            ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.88.0", "--version"],
+            run.call_args_list[0].args[0],
+            ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.89.0", "--version"],
         )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            ["/usr/bin/docker", "version", "--format", "{{json .}}"],
+        )
+
+    def test_candidate_fingerprint_uses_only_project_owned_clients(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.docker = "/repository/.build/debug/devcontainer-client"
+        runner.node_package_runner = "/usr/bin/npx"
+        runner.cli_version = "0.89.0"
+        runner.cli_reference = {"version": "0.89.0"}
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        completed = [
+            mock.Mock(returncode=0, stdout="0.89.0\n", stderr=""),
+            mock.Mock(returncode=0, stdout='{"ServerVersion":"1.0"}', stderr=""),
+            mock.Mock(returncode=0, stdout="devcontainer Apple compatibility\n", stderr=""),
+            mock.Mock(
+                returncode=0,
+                stdout='[{"appName":"container","distribution":"apple"}]',
+                stderr="",
+            ),
+            mock.Mock(returncode=0, stdout='{"version":"0.14.3"}', stderr=""),
+        ]
+
+        with (
+            mock.patch.dict(
+                "run_lane.os.environ",
+                {
+                    "DEVCONTAINER_CONTAINER_BIN": "/opt/apple/bin/container",
+                    "DEVCONTAINER_COMPOSE_BIN": "/opt/project/bin/container-compose",
+                },
+                clear=True,
+            ),
+            mock.patch("run_lane.platform.machine", return_value="arm64"),
+            mock.patch("run_lane.platform.platform", return_value="macOS-26-arm64"),
+            mock.patch("run_lane.subprocess.run", side_effect=completed) as run,
+        ):
+            fingerprint = runner.fingerprint()
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertNotIn("/usr/bin/docker", {command[0] for command in commands})
+        self.assertEqual(
+            commands[1:3],
+            [
+                [runner.docker, "info"],
+                [runner.docker, "--version"],
+            ],
+        )
+        self.assertEqual(
+            commands[-1],
+            ["/opt/project/bin/container-compose", "version", "--format", "json"],
+        )
+        self.assertEqual(fingerprint["containerDistribution"], "apple")
 
 
 class FixtureProbeTests(unittest.TestCase):
@@ -324,6 +428,181 @@ class FixtureProbeTests(unittest.TestCase):
 
         self.assertIs(result, expected)
         runner.run_engine_fixture.assert_called_once()
+
+    def test_feature_test_fixture_uses_the_upstream_cli_for_docker(self) -> None:
+        result, command = self.run_feature_test_fixture("docker")
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            command[:4],
+            [
+                "/usr/bin/npx",
+                "--yes",
+                "@devcontainers/cli@0.89.0",
+                "features",
+            ],
+        )
+        self.assertIn("--project-folder", command)
+
+    def test_feature_test_fixture_uses_the_product_for_apple(self) -> None:
+        result, command = self.run_feature_test_fixture("apple-stock")
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(command[:3], [command[0], "features", "test"])
+        self.assertTrue(command[0].endswith("/.build/debug/devcontainer"))
+
+    def run_feature_test_fixture(
+        self,
+        lane: str,
+    ) -> tuple[dict[str, object], list[str]]:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            source = root / "source"
+            (source / "src" / "hello").mkdir(parents=True)
+            (source / "test" / "hello").mkdir(parents=True)
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = lane
+            runner.output = root / "evidence"
+            runner.repository = repository
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.node_package_runner = "/usr/bin/npx"
+            runner.cli_version = "0.89.0"
+            runner.docker = "/usr/bin/docker"
+            runner.feature_test_container_ids = mock.Mock(return_value=[])
+            runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+            runner.cleanup_feature_test_containers = mock.Mock(return_value="")
+            fixture = Fixture(
+                directory=source,
+                identifier="D08-feature-test-command",
+                expected={
+                    "automatic_cleanup": "true",
+                    "feature_test": "true",
+                },
+                backends=(lane,),
+                runner="feature-test",
+            )
+            completed = mock.Mock(returncode=0, stdout="passed\n", stderr="")
+            with mock.patch(
+                "run_lane.subprocess.run",
+                return_value=completed,
+            ) as run:
+                result = runner.run_fixture(fixture)
+            return result, run.call_args.args[0]
+
+
+class FeatureTestRuntimeTests(unittest.TestCase):
+    def test_candidate_reference_cli_is_checksum_staged(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.repository = repository
+            runner.output = root / "evidence"
+            runner.output.mkdir()
+            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.cli_version = "0.89.0"
+            runner.cli_reference = {"tarballSHA256": "a" * 64}
+
+            def stage(command: list[str], **_: object) -> mock.Mock:
+                destination = Path(command[-1])
+                destination.mkdir(parents=True)
+                (destination / "devcontainer.js").write_text(
+                    "#!/usr/bin/env node\n",
+                    encoding="utf-8",
+                )
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch("run_lane.subprocess.run", side_effect=stage) as run:
+                runner.prepare_candidate_reference_cli()
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[-2], "a" * 64)
+            self.assertTrue(Path(command[-1], "devcontainer.js").is_file())
+
+    def test_feature_test_container_ids_are_strictly_parsed(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        completed = mock.Mock(returncode=0, stdout="one\n\ntwo\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            identifiers = runner.feature_test_container_ids()
+
+        self.assertEqual(identifiers, ["one", "two"])
+        self.assertEqual(
+            run.call_args.args[0][-2:],
+            ["--filter", "label=devcontainer.is_test_run=true"],
+        )
+
+    def test_feature_test_cleanup_removes_only_returned_identifiers(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        runner.feature_test_container_ids = mock.Mock(return_value=["one", "two"])
+        runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+        completed = mock.Mock(returncode=0, stdout="removed\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            output = runner.cleanup_feature_test_containers()
+
+        self.assertEqual(output, "removed\nremoved\n")
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["/project/devcontainer-docker", "rm", "-f", "one"],
+                ["/project/devcontainer-docker", "rm", "-f", "two"],
+            ],
+        )
+
+    def test_feature_test_cleanup_preserves_preexisting_test_containers(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.docker = "/project/devcontainer-docker"
+        runner.feature_test_container_ids = mock.Mock(return_value=["new"])
+        runner.wait_for_feature_test_cleanup = mock.Mock(return_value=True)
+        completed = mock.Mock(returncode=0, stdout="removed\n", stderr="")
+
+        with mock.patch(
+            "run_lane.subprocess.run",
+            return_value=completed,
+        ) as run:
+            output = runner.cleanup_feature_test_containers({"existing"})
+
+        self.assertEqual(output, "removed\n")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/project/devcontainer-docker", "rm", "-f", "new"],
+        )
+        runner.feature_test_container_ids.assert_called_once_with({"existing"})
+        runner.wait_for_feature_test_cleanup.assert_called_once_with({"existing"})
+
+    def test_feature_test_cleanup_waits_for_asynchronous_removal(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.feature_test_container_ids = mock.Mock(
+            side_effect=[["removing"], []]
+        )
+
+        with mock.patch("run_lane.time.sleep") as sleep:
+            cleaned = runner.wait_for_feature_test_cleanup()
+
+        self.assertTrue(cleaned)
+        sleep.assert_called_once_with(0.1)
+        self.assertEqual(
+            runner.feature_test_container_ids.call_args_list,
+            [mock.call(None), mock.call(None)],
+        )
 
 
 class FixtureWorkspaceTests(unittest.TestCase):
@@ -582,7 +861,7 @@ class CleanupFixtureTests(unittest.TestCase):
 
 
 class BuilderCleanupTests(unittest.TestCase):
-    def test_container_compose_client_routes_compose_subcommand_to_wrapper(
+    def test_enhanced_client_uses_native_compose_and_legacy_build(
         self,
     ) -> None:
         with TemporaryDirectory() as temporary:
@@ -622,6 +901,24 @@ class BuilderCleanupTests(unittest.TestCase):
                 check=False,
                 text=True,
             )
+            buildx = subprocess.run(
+                [runner.devcontainer_docker, "buildx", "version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            legacy_build = subprocess.run(
+                [
+                    runner.devcontainer_docker,
+                    "build",
+                    "--progress=plain",
+                    "--load",
+                    ".",
+                ],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
             wrapper_source = Path(runner.devcontainer_docker).read_text(
                 encoding="utf-8"
             )
@@ -630,7 +927,15 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(compose_version.stdout.strip(), "compose:version --short")
         self.assertEqual(docker_version.returncode, 0)
         self.assertEqual(docker_version.stdout.strip(), "docker:version")
+        self.assertNotEqual(buildx.returncode, 0)
+        self.assertIn("unknown command", buildx.stderr)
+        self.assertEqual(legacy_build.returncode, 0)
+        self.assertEqual(
+            legacy_build.stdout.strip(),
+            "docker:build --progress=plain --load .",
+        )
         self.assertIn('exec "$compose" "$@"', wrapper_source)
+        self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
         self.assertEqual(
             runner.environment["DEVCONTAINER_DOCKER_BIN"],
             runner.devcontainer_docker,
@@ -647,6 +952,13 @@ class BuilderCleanupTests(unittest.TestCase):
             docker.chmod(0o700)
             runner = LaneRunner.__new__(LaneRunner)
             runner.lane = "apple-stock"
+            runner.repository = root / "repository"
+            compose = (
+                runner.repository / ".build" / "debug" / "devcontainer-compose"
+            )
+            compose.parent.mkdir(parents=True)
+            compose.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            compose.chmod(0o700)
             runner.docker = str(docker)
             runner.devcontainer_docker = runner.docker
             runner.socket_root = root
@@ -685,7 +997,10 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(forwarded.returncode, 0)
         self.assertEqual(forwarded.stdout.strip(), "forwarded:version")
         self.assertEqual(legacy_build.returncode, 0)
-        self.assertEqual(legacy_build.stdout.strip(), "forwarded:build .")
+        self.assertEqual(
+            legacy_build.stdout.strip(),
+            "forwarded:build --progress plain --load .",
+        )
         self.assertTrue(wrapper_source.startswith("#!/bin/sh\n"))
         self.assertTrue(wrapper_source.endswith('exec "$docker" "$@"\n'))
         self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
@@ -695,78 +1010,15 @@ class BuilderCleanupTests(unittest.TestCase):
         )
         self.assertEqual(runner.docker, runner.devcontainer_docker)
 
-    def test_resolver_nameservers_rejects_invalid_and_duplicate_entries(
-        self,
-    ) -> None:
-        self.assertEqual(
-            resolver_nameservers(
-                """
-                nameserver 192.0.2.53
-                nameserver 2001:db8::53
-                nameserver fe80::1%en0
-                nameserver 192.0.2.53
-                nameserver invalid.example
-                search example.test
-                """
-            ),
-            ["192.0.2.53", "2001:db8::53", "fe80::1%en0"],
-        )
+    def test_candidate_builder_is_rejected_without_invoking_buildx(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
 
-    def test_provider_builder_disables_restart_and_uses_host_dns(self) -> None:
-        with TemporaryDirectory() as temporary:
-            runner = LaneRunner.__new__(LaneRunner)
-            runner.lane = "container-compose"
-            runner.repository = Path("/repository")
-            runner.environment = {"PATH": "/usr/bin:/bin"}
-            runner.docker = "/usr/bin/docker"
-            runner.output = Path(temporary)
-            completed = [
-                mock.Mock(returncode=0, stdout="", stderr=""),
-                mock.Mock(returncode=0, stdout="", stderr=""),
-            ]
-
-            with (
-                mock.patch.object(
-                    runner,
-                    "docker_container_inventory",
-                    side_effect=[set(), {"builder-container-id"}],
-                ),
-                mock.patch(
-                    "run_lane.subprocess.run",
-                    side_effect=completed,
-                ) as run,
-                mock.patch(
-                    "run_lane.Path.read_text",
-                    return_value="nameserver 192.0.2.53\n",
-                ),
-                mock.patch("run_lane.os.getpid", return_value=123),
-            ):
-                runner.prepare_builder()
-
-        self.assertEqual(
-            run.call_args_list[0].args[0],
-            [
-                "/usr/bin/docker",
-                "buildx",
-                "create",
-                "--name",
-                "devcontainer-parity-container-compose-123",
-                "--driver",
-                "docker-container",
-                "--driver-opt",
-                "restart-policy=no",
-                "--buildkitd-config",
-                str(Path(temporary) / "buildkitd.toml"),
-            ],
-        )
-        self.assertEqual(
-            runner.environment["BUILDX_BUILDER"],
-            "devcontainer-parity-container-compose-123",
-        )
-        self.assertEqual(
-            runner.builder_container_ids,
-            {"builder-container-id"},
-        )
+        with self.assertRaisesRegex(
+            ParityError,
+            "Buildx is restricted to the Docker oracle lane",
+        ):
+            runner.prepare_builder()
 
     def test_docker_builder_uses_daemon_integrated_buildkit(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -776,7 +1028,6 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.environment = {"PATH": "/usr/bin:/bin"}
             runner.docker = "/usr/bin/docker"
             runner.output = Path(temporary)
-            runner.builder_name = None
 
             with mock.patch(
                 "run_lane.subprocess.run",
@@ -795,54 +1046,6 @@ class BuilderCleanupTests(unittest.TestCase):
             ],
         )
         self.assertEqual(runner.environment["BUILDX_BUILDER"], "default")
-        self.assertIsNone(runner.builder_name)
-
-    def test_builder_cleanup_reports_and_removes_exact_leaked_container(
-        self,
-    ) -> None:
-        with TemporaryDirectory() as temporary:
-            runner = LaneRunner.__new__(LaneRunner)
-            runner.repository = Path("/repository")
-            runner.environment = {"PATH": "/usr/bin:/bin"}
-            runner.docker = "/usr/bin/docker"
-            runner.builder_name = "devcontainer-parity-fixture"
-            runner.builder_container_ids = {"builder-container-id"}
-            runner.cleanup_differences = []
-            runner.output = Path(temporary)
-            completed = [
-                mock.Mock(returncode=0, stdout="", stderr=""),
-                mock.Mock(
-                    returncode=0,
-                    stdout="builder-container-id\n",
-                    stderr="",
-                ),
-            ]
-
-            with (
-                mock.patch(
-                    "run_lane.subprocess.run",
-                    side_effect=completed,
-                ) as run,
-                mock.patch(
-                    "run_lane.time.monotonic",
-                    side_effect=[0.0, 16.0],
-                ),
-            ):
-                runner.stop_builder()
-
-        self.assertEqual(
-            run.call_args_list[-1].args[0],
-            ["/usr/bin/docker", "rm", "-f", "builder-container-id"],
-        )
-        self.assertEqual(
-            runner.cleanup_differences,
-            [
-                "isolated buildx builder leaked container(s): "
-                "builder-container-id"
-            ],
-        )
-        self.assertIsNone(runner.builder_name)
-        self.assertEqual(runner.builder_container_ids, set())
 
     def test_runtime_state_cleanup_reports_durable_leaks(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -852,7 +1055,7 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.cleanup_differences = []
             state = runner.runtime_root / "state.sqlite"
             with closing(sqlite3.connect(state)) as database, database:
-                database.execute("CREATE TABLE projects (key TEXT)")
+                database.execute("CREATE TABLE projects (project_key TEXT)")
                 database.execute(
                     "CREATE TABLE runtime_containers (runtime_id TEXT)"
                 )
@@ -870,6 +1073,28 @@ class BuilderCleanupTests(unittest.TestCase):
                 "1 runtime container record(s)"
             ],
         )
+
+    def test_runtime_state_cleanup_ignores_preexisting_records(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.runtime_root = Path(temporary)
+            runner.cleanup_differences = []
+            state = runner.runtime_root / "state.sqlite"
+            with closing(sqlite3.connect(state)) as database, database:
+                database.execute("CREATE TABLE projects (project_key TEXT)")
+                database.execute(
+                    "CREATE TABLE runtime_containers (runtime_id TEXT)"
+                )
+                database.execute("INSERT INTO projects VALUES ('preexisting')")
+                database.execute(
+                    "INSERT INTO runtime_containers VALUES ('preexisting')"
+                )
+
+            runner.capture_runtime_state_baseline()
+            runner.check_runtime_state_cleanup()
+
+        self.assertEqual(runner.cleanup_differences, [])
 
 
 if __name__ == "__main__":

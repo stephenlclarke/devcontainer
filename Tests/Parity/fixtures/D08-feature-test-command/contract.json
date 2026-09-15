@@ -1,0 +1,6 @@
+{
+  "expected": {
+    "automatic_cleanup": true,
+    "feature_test": true
+  }
+}

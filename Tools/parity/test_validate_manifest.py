@@ -86,6 +86,23 @@ class ValidateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "npmIntegrity"):
             validate_manifest(payload)
 
+    def test_devcontainers_cli_tarball_digest_is_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["devcontainersCli"]["tarballSHA256"] = "invalid"
+
+        with self.assertRaisesRegex(ManifestError, "tarballSHA256"):
+            validate_manifest(payload)
+
+    def test_enhanced_runtime_commits_are_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["containerCompose"]["containerCommit"] = "main"
+
+        with self.assertRaisesRegex(
+            ManifestError,
+            "containerCompose.containerCommit",
+        ):
+            validate_manifest(payload)
+
     def test_release_host_identity_is_required(self) -> None:
         payload = copy.deepcopy(self.payload)
         payload["referencePins"]["releaseHost"]["macOSBuildVersion"] = ""

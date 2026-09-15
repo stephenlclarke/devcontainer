@@ -1,0 +1,6 @@
+{
+  "id": "hello",
+  "version": "1.0.0",
+  "name": "Parity Feature",
+  "description": "Installs a deterministic marker for runtime parity testing."
+}

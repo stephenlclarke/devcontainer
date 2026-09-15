@@ -3,18 +3,20 @@
 ## Current status
 
 > [!IMPORTANT]
-> Version 1.0.1 remains the latest immutable stable compatibility baseline. In
-> its exact tag run, real Docker, stock Apple `container` 1.1.0, and the
-> separate `container-compose` 0.10.1 provider passed all 18 CLI fixtures and
-> the real VS Code end-to-end fixture with zero normalized semantic
-> differences. The largest CLI ratios were 2.876x for stock Apple and 4.509x
-> for `container-compose`; the corresponding VS Code ratios were 1.232x and
-> 1.311x. The release fingerprints below remain the only certified runtime
-> matrix. Current source dependency profiles are recorded separately and do
-> not retroactively change the 1.0.1 tag evidence. Repeated-run statistics are
-> in [PERFORMANCE.md](PERFORMANCE.md).
+> Version 1.0.2 is the current source candidate, not an immutable stable
+> compatibility baseline. The latest published stable release remains 1.0.1.
+> The candidate must pass its release-bound real Docker, stock Apple
+> `container` 1.4.1, separate `container-compose` 0.15.1, and real VS Code
+> gates before this section may state a 1.0.2 release result. Historical
+> measurements and the required new-run protocol are in
+> [PERFORMANCE.md](PERFORMANCE.md).
 
-The project's north-star goal is 100% behavioural parity with Docker-based Development Containers and comparable or better performance. This document remains the narrower current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the work and evidence required to reach the north star.
+The project's north-star goal is 100% behavioural parity across the audited,
+Docker-independent Development Containers surface and comparable or better
+performance than the Docker oracle. Host-daemon and daemon-socket-dependent
+configurations are intentionally excluded. This document remains the narrower
+current compatibility contract; [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md)
+defines the work and evidence required to reach the north star.
 
 This document is the support and claim ledger for `devcontainer`. A stable
 release may claim only the exact combinations and behaviors that have passed
@@ -44,8 +46,8 @@ audit also uses `delegated`, `partial`, and `unverified`; see
 | Lane | Runtime and Compose path | Installation boundary | Status |
 | --- | --- | --- | --- |
 | `docker` | Official `@devcontainers/cli` and Docker Compose against a real Docker Engine | Independent behavioral oracle | `supported` |
-| `apple-stock` | Official `@devcontainers/cli` and upstream Docker Compose against this project's Docker Engine bridge, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen fork or `container-compose` package dependency | `supported` |
-| `container-compose` | The same Docker inspection, exec, copy, attach, and event bridge, with Stephen Clarke's `container compose` selected for Compose planning and lifecycle | Optional external executable; separately installed and provenance-checked; not supplied by Apple | `supported` |
+| `apple-stock` | Official `@devcontainers/cli` through this project's adapters, native `container-compose`, then an unmodified tagged `apple/container` runtime | Required runtime lane; no Stephen Container fork and no Docker software dependency | `supported` |
+| `container-compose` | The same inspection, exec, copy, attach, and event bridge, with the exact native Compose provider selected for planning and lifecycle | Stock-profile provider is bundled; an enhanced external provider is optional, explicit, and separately provenance-checked; neither is supplied by Apple | `supported` |
 
 The stock lane must remain fully functional when `container compose` is not
 installed. The optional provider is nevertheless a first-class release lane:
@@ -53,66 +55,39 @@ all Compose-backed Dev Container fixtures must pass through both
 `apple-stock` and `container-compose` before a stable release.
 
 `container-compose` is not a Swift package dependency of the runtime-neutral
-core, is not copied into this product, and is not a service startup
-prerequisite. Its adapter discovers and launches an explicitly configured
-executable using argv-based process creation. It must not import `ComposeCore`
-or another implementation module.
+core. Packaging builds its exact stock profile as a private process-isolated
+artifact, records its provenance and SBOM entry, and launches it with argv-based
+process creation. Its payload also contains the exact provider SwiftPM and
+vendored Go inventories, full third-party legal texts, and a provider SPDX
+document. An external enhanced build requires an explicit override. The
+core must not import `ComposeCore` or another implementation module.
 
-## Pinned 1.0.1 release provenance
+## Pinned candidate provenance
 
-These pins define the immutable 1.0.1 compatibility matrix and match the
-`Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
-also records the signing identity where applicable, platform triple, and each
-component's machine-readable version output.
+These pins define the current source candidate's compatibility matrix.
+Release-bound evidence also records the signing identity where applicable,
+platform triple, and each component's machine-readable version output. The
+immutable matrix is also embedded in that tag's parity evidence.
 
 | Component | Version or ref | Exact source provenance | Role |
 | --- | --- | --- | --- |
-| `@devcontainers/cli` | `0.88.0` | Official `v0.88.0` tag commit `f683c29f64a20109b4453e5149807e390ff65133`; npm SHA-512 SRI `sha512-sMkruPy/icfov20mdQh2EjFYZogxvMEZptDEvg5/eMBIUOr2xr+8wlsI7nvDR6EJxoBjqoasXqgRGbiMqbaJ1w==` | Unmodified reference client |
-| Docker CLI | `29.6.2` | Executable SHA-256 `eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a`; Homebrew bottle SHA-256 `b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821` | Unmodified client used by the reference CLI |
-| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Behavioral oracle |
-| Docker Compose | `5.3.1` | Executable SHA-256 `6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3`; Homebrew bottle SHA-256 `9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608` | Oracle and stock Compose client |
-| `apple/container` stable | `1.1.0` | Annotated tag object `82fc9a5ba73c34c478ce15958bb75dbb45c67e3b`; source commit `5973b9cc626a3e7a499bb316a958237ebe14e2ed` | Initial stable stock lane |
-| `apple/containerization` for `container` 1.1.0 | `0.35.0` | Apple resolution/tag object `44bec8b9933bc491d0cbf44abac90a1f6aaebf6b`; source commit `0334a3e790bbed50420de71cd0d706191bdf84d1` | Must be inherited from the Apple `container` resolution |
-| `container-compose` stable | `0.10.1` | Annotated tag object `5be84c712176d745b4736e82f97b7458813cb7ec`; source commit `77d2191a75f3a15092bbead1991b0d6a37fafa91` | Optional provider |
-| Stable provider's `stephenlclarke/container` | Revision | `367430446959e3048da37f5f64d3c10e1293d3de` | Exact fork dependency declared by `container-compose` 0.10.1 |
-| Stable provider's `stephenlclarke/containerization` | Revision | `043193efa5f1a2e21a240041d6edd71d7673739e` | Exact fork dependency declared by `container-compose` 0.10.1 |
-| VS Code | `1.131.0`, arm64 stable | Commit `e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`; official archive SHA-256 `796c3ae1cd28d45b3fb8450c0f8661cf2f43632e3a0f38f5025f0c49675bcf99`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
-| VS Code Dev Containers extension | `0.467.0` | Official Marketplace VSIX SHA-256 `b3bd40702da5dd7d1a99aac697da5c437f28deeec899d0bb6e78dd76a5c1b012`; embedded CLI `0.88.0` at `f683c29f64a20109b4453e5149807e390ff65133`, SHA-256 `ff3934cb098a78e2ed59a2199c225be2f79a8c79636d45682685e85fb3d6e5ca` | End-to-end reference integration |
-| Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
-
-## Current source dependency profiles
-
-Current `main` builds two explicit dependency graphs. These are compile and
-hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
-runtime workflow did not produce complete lane evidence, so the release
-claim deliberately remains on the certified 1.0.1 matrix.
-
-The working [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) is a
-development input. It retains the 1.0.1 Dev Containers, Apple, Compose, VS
-Code, and host pins but now selects Docker Engine 29.5.2, API 1.54, build
-`568f755`, with executable SHA-256
-`eb4bf018da78f7b9d01d69209d0944d1fe995869ac3caefa5c93e4552e181301`.
-That post-release repin is not attributed to the 1.0.1 tag.
-
-| Profile component | Exact current source provenance | Status boundary |
-| --- | --- | --- |
-| Stock `apple/container` | 1.4.1 at `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Unmodified Apple dependency selected by `Package.stock.resolved`; compile/test evidence only |
-| Stock `apple/containerization` | 0.45.0 at `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited official Apple dependency in the stock graph |
-| Stock `apple/swift-nio-ssl` | 2.37.4 at `03827c1a9fdb2b6b00a4e93ede8861520263af8c` | Official dependency in the stock graph |
-| Enhanced `stephenlclarke/container` | `228897171d71975988ccdc690f1982e7433952af` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/containerization` | `b404e03bb914904107a6a9305ba1f0e44c79a59c` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/swift-nio-ssl` | `3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Shared `stephenlclarke/container-engine-api` | `84830606abf971110071248e087a80ff4abb86d4` | Selected by both profiles; newer than published tag 0.3.5 and therefore recorded as a revision, not a release version |
-
-`Package.resolved` and `Package.stock.resolved` are authoritative for source
-builds. The parity manifest becomes authoritative for a newer runtime claim
-only when its exact clients, runtimes, host, and fixture evidence are updated
-and the complete release gate succeeds.
+| `@devcontainers/cli` | `0.89.0` | Official `v0.89.0` tag commit `5dc7533314b5ba7ec3875c30143dfe1aec644870`; npm SHA-512 SRI `sha512-LzaoOGKQ/Zql6PsiZ4hVIYVZagzWkD65aG/1ou5/Kly5Y1PtjLg1yn7qu+LZCzVoAl6DZZ/pbz8qOO4RLNlqMg==` | Unmodified reference client |
+| Docker CLI | `29.8.0` | Executable SHA-256 `b1ca8cf8e294fd128ef4a5f5fb2531a059dd981548dfa810fe19d5d6c695e486`; Homebrew bottle SHA-256 `998293c4bd31551c89a433e216ae890e4e93c9835b5ac6a822455655367bef89` | Quarantined reference-oracle client; never packaged or installed |
+| Docker Engine | `29.2.1`, API `1.53`, build `6bc6209` | Executable SHA-256 `e70ffe2700ffeffa099decd1111816c475e59972945ac0a48b508b3ee306bad2` | Quarantined behavioral oracle; never a product backend |
+| Docker Compose | `5.5.1` | Executable SHA-256 `120182a4826df10312a47f18407a843f55494c2606126376bfacff0f47f75028`; Homebrew bottle SHA-256 `e0a4eb648b704910aaf8cb2239a6337aa74ef598aa3bc7274be3b6328be8e41e` | Quarantined reference-oracle client; never packaged or installed |
+| `apple/container` stable | `1.4.1` | Source commit `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Required unmodified stock runtime lane |
+| `apple/containerization` for `container` 1.4.1 | `0.45.0` | Source commit `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited from the Apple `container` resolution |
+| `stephenlclarke/container-engine-api` | Exact revision | Source commit `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Shared executable, generated 107-operation API 1.44 through 1.53 ledger, bounded raw/WebSocket Unix listener, schema-2 private provider session, gateway, terminal-resize contract, and provider-owned state-root identity |
+| `container-compose` stable | `0.15.1` | Verified annotated tag object `4aca8f6ab4174522af294051a02b22c9dd86b3d9`; source commit `81a2263adf30127a3cf774ffdaf56bd23e2f81c1` | Optional native provider; bundled in the Docker-less package using its stock Apple profile |
+| Stable provider's `stephenlclarke/container` | Revision | `780a86b995ac4cb0985db97f38875fdc6e33d16b` | Exact enhanced-runtime dependency declared by `container-compose` 0.15.1 |
+| Stable provider's `stephenlclarke/containerization` | Revision | `7e066a3101bc84fa0f7231daf6a03aa9ef62a567` | Exact enhanced-runtime dependency declared by `container-compose` 0.15.1 |
+| VS Code | `1.137.0`, arm64 stable | Commit `645f29cc3176500b4b5762ba887cf2a7f0ffdf2c`; official archive SHA-256 `16ee5cddb1ea19234e1f2516da07d57e07d7cab6ab45a5515dab077656cbc65e`; application identifier `com.microsoft.VSCode`; Microsoft team `UBF8T346G9` | End-to-end client |
+| VS Code Dev Containers extension | `0.470.0` | Official Marketplace VSIX SHA-256 `66300dd37ec86e709df46acf4c294821db94248ee89cff7fb32888271b5069a1`; embedded CLI `0.89.0` at `5dc7533314b5ba7ec3875c30143dfe1aec644870`, SHA-256 `e2051ce3598a26b11d29048a6dd3252ae8d3b056b413c0d53ba1fd3a56ec1b74` | End-to-end reference integration |
+| Release host | macOS `26.6.2` (`25G83`), Xcode `27.0` (`27A266a`), Swift `6.4`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
 Moving branch heads are never stable compatibility claims and are not inputs
-to the 1.0.1 release matrix. The machine-readable manifest stored at a release
-tag is authoritative for that release; the working manifest is authoritative
-only for the next candidate gate that consumes it.
+to this release matrix. The machine-readable identities in
+[`Tests/Parity/manifest.json`](Tests/Parity/manifest.json) are authoritative.
 
 The Apple adapter must take `containerization` from the selected
 `apple/container` release resolution. Depending on a second independently
@@ -138,11 +113,11 @@ The service advertises the bounded API envelope:
 
 - minimum implemented version: `1.44`;
 - maximum implemented version: `1.53`;
-- pinned oracle version: `1.54`, from Docker Engine `29.5.2`;
+- pinned oracle version: `1.53`, from Docker Engine `29.2.1`;
 - versions above `1.53`: out of scope until separately pinned and tested;
 - versions below `1.44`: out of scope for the initial release.
 
-Version 1.0.1 advertises the contiguous, tested subset `1.44...1.53`.
+Version 1.0.2 advertises the contiguous, tested subset `1.44...1.53`.
 Unversioned routes and every advertised version prefix must negotiate and
 return Docker-compatible status codes, JSON fields, headers, event ordering,
 and stream framing. Advertising a version means every endpoint needed by the
@@ -174,9 +149,9 @@ and its remediation priority are recorded in [CONFORMANCE.md](CONFORMANCE.md).
 Buildx is reported only after its session and stream behavior passes the
 Feature and build-context fixtures.
 
-### Stock Apple 1.1.0 create-time boundary
+### Stock Apple 1.4.1 create-time boundary
 
-The unmodified Apple 1.1.0 `container create` command does not expose `--hostname`, `--security-opt`, or `--privileged`. Its public `ContainerConfiguration` also has no hostname or security-option transport field. The stock adapter therefore:
+The unmodified Apple 1.4.1 `container create` command does not expose `--hostname`, `--security-opt`, or `--privileged`. Its public `ContainerConfiguration` also has no hostname or security-option transport field. The stock adapter therefore:
 
 - accepts the normal Dev Containers path where Docker sends an empty hostname and no security options;
 - treats `seccomp=unconfined` as the already-native state because Apple containers do not install Docker’s default seccomp profile;
@@ -186,7 +161,7 @@ The unmodified Apple 1.1.0 `container create` command does not expose `--hostnam
 
 The complete implementation design for these and every other current `501` capability path is in [`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md). It identifies which gaps can use an existing tagged Apple API, which require a new upstream runtime primitive, and the Docker/stock/provider evidence required before the compatibility claim expands.
 
-The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.1.0/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.1.0/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
+The separately fingerprinted enhanced runtime used by the optional Compose lane exposes native `--hostname`, `--security-opt`, and `--privileged` flags. The adapter probes the selected executable’s actual `create --help` surface and uses those flags only when advertised. These enhanced semantics are not attributed to stock Apple. The exact stock boundary follows Apple’s pinned [`Flags.Management`](https://github.com/apple/container/blob/1.4.1/Sources/Services/ContainerAPIService/Client/Flags.swift) and [`ContainerConfiguration`](https://github.com/apple/container/blob/1.4.1/Sources/ContainerResource/Container/ContainerConfiguration.swift) sources.
 
 ## Certified fixture ledger
 
@@ -225,7 +200,7 @@ every required release-bound parity and release gate has passed.
 ## Standards claim
 
 The fixture ledger is not a full Development Containers Specification claim.
-Version 1.0.1 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
+Version 1.0.2 has confirmed gaps in arbitrary `runArgs`, GPU requests, exact
 Docker privileged behavior, stock security options and hostname, advanced
 mount fields, image-anonymous volume semantics, and post-create network
 changes. It also has properties delegated to the official CLI or VS Code that
@@ -239,7 +214,7 @@ The `docker` lane is the behavioral oracle. For a fixture to pass,
 `apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
 
-Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed result above `2.50x` Docker requires further investigation but does not, by itself, alter functional parity. A timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
+Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed result above `2.50x` Docker requires further investigation but does not, by itself, alter functional parity. A candidate at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
 The harness may normalize only:
 
@@ -296,7 +271,7 @@ preserved. Running containers, active execs, starts, and concurrent lifecycle
 mutations reject the export. The stock poller cannot prove historical events,
 so the handoff reports no event history instead of manufacturing it.
 
-The optional `container-compose` provider's compatibility labels happen to use
+The native `container-compose` provider's compatibility labels happen to use
 the `com.apple.container.compose.*` namespace; they do not identify an
 Apple-authored Compose product. They are projected to the
 `com.docker.compose.*` labels consumed by Dev Containers. Docker label filters

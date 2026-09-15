@@ -14,8 +14,10 @@ evidence for all 18 CLI fixtures and the real VS Code fixture.
 Every run has zero semantic differences and complete timing evidence.
 Comparable or better performance (`<=1.00x` Docker) is the objective. A
 completed result above `2.50x` Docker requires further investigation but does
-not, by itself, change functional parity. A timeout, other non-completion, or
-missing or invalid timing evidence fails the gate.
+not, by itself, change functional parity. A candidate at or above `10.00x` its
+matching Docker fixture, a timeout, other non-completion, or missing or invalid
+timing evidence fails the gate without changing the separately reported
+functional result.
 
 ## Measured hotspots
 
@@ -34,13 +36,13 @@ No timing change between the release and post-release runs is attributed to an
 optimization because the runtime source did not change.
 
 After this analysis, a provider E03 duplex-transfer timeout exposed a
-readiness-edge race in the direct process output monitor. Main replaces that
-monitor with independent blocking stdout/stderr drains. Ten repeated provider
-E03 sequences and a complete local provider lane passed. Fix commit `74566c2`
-also passed the full hosted Docker, stock Apple, provider, comparison, and real
-VS Code workflow. Provider E03 completed in 2.030s versus Docker's 1.776s, and
-the complete provider CLI lane took 117.155s versus Docker's 81.104s. The
-change does not alter the historical matrix above.
+readiness-edge race in the direct process output monitor. The current source
+candidate replaces that monitor with independent blocking stdout/stderr
+drains. Ten repeated provider E03 sequences and a complete local provider lane
+passed. Fix commit `74566c2` also passed the full hosted Docker, stock Apple,
+provider, comparison, and real VS Code workflow. Provider E03 completed in
+2.030s versus Docker's 1.776s, and the complete provider CLI lane took 117.155s
+versus Docker's 81.104s. The change does not alter the historical matrix above.
 
 The complete 19-row timing matrix, variability analysis, phase breakdown,
 artifact links, and measurement protocol is maintained in

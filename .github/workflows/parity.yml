@@ -52,27 +52,32 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
           git -C "${GITHUB_WORKSPACE}" clean -ffdx
           test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
-      - name: Build compatibility bridge
-        if: matrix.lane != 'docker'
-        run: swift build --disable-automatic-resolution
-      - name: Prepare isolated runtime
-        run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
-      - name: Validate runner provenance
-        run: Tools/parity/runner-preflight.sh "${{ matrix.lane }}"
-      - name: Run Dev Containers CLI parity
-        run: make "parity-${{ matrix.lane }}"
-      - name: Run real VS Code parity
-        env:
-          DEVCONTAINER_VSCODE_LIVE: "1"
-        run: make "parity-vscode-${{ matrix.lane }}"
-      - name: Scrub and validate VS Code evidence
-        if: always()
+      - name: Build the stock compatibility bridge
+        if: matrix.lane == 'apple-stock'
+        run: |
+          cp Package.stock.resolved Package.resolved
+          DEVCONTAINER_RUNTIME_PROFILE=stock \
+            swift build --disable-automatic-resolution
+      - name: Build the enhanced compatibility bridge
+        if: matrix.lane == 'container-compose'
         run: >-
-          python3 Tools/parity/scrub_vscode_evidence.py
-          ".build/parity/vscode/${{ matrix.lane }}"
-      - name: Stop isolated runtime
-        if: always()
-        run: Tools/parity/runner-runtime.sh stop "${{ matrix.lane }}"
+          DEVCONTAINER_RUNTIME_PROFILE=enhanced
+          swift build --disable-automatic-resolution
+      - name: Build the pinned stock Compose provider
+        if: matrix.lane == 'apple-stock'
+        run: |
+          compose_root="${RUNNER_TEMP}/devcontainer-stock-compose"
+          GOTOOLCHAIN=go1.26.3 \
+            Tools/release/build-native-compose.sh "${compose_root}"
+          printf 'DEVCONTAINER_COMPOSE_BIN=%s\n' \
+            "${compose_root}/bin/compose" >>"${GITHUB_ENV}"
+      - name: Configure isolated Apple runtime
+        if: matrix.lane != 'docker'
+        run: Tools/parity/configure-runtime-environment.sh "${{ matrix.lane }}"
+      - name: Run host-serialized CLI and VS Code parity
+        env:
+          CONTAINER_RUNTIME_LOCK_TIMEOUT_SECONDS: "10800"
+        run: Tools/parity/run-live-lane.sh "${{ matrix.lane }}"
       - name: Upload lane evidence
         if: always()
         uses: ./Tools/ci/upload-artifact-action
@@ -81,6 +86,7 @@ jobs:
           path: |
             .build/parity/${{ matrix.lane }}
             .build/parity/vscode/${{ matrix.lane }}
+            .build/parity/host-quiet/${{ matrix.lane }}
 
   compare:
     if: ${{ always() }}
@@ -101,6 +107,13 @@ jobs:
       - name: Require exact CLI and VS Code equivalence
         run: |
           status=0
+          for lane in docker apple-stock container-compose; do
+            for suite in cli vscode; do
+              receipt=".build/parity/host-quiet/${lane}/${suite}/quiet-host.tsv"
+              test -s "${receipt}" && grep -Fx $'result\tquiet' "${receipt}" \
+                || status=1
+            done
+          done
           python3 Tools/parity/compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1
           python3 Tools/parity/compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1
           python3 Tools/parity/validate_manifest.py --release || status=1

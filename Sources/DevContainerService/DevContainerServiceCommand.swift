@@ -34,7 +34,7 @@ import Logging
 struct DevContainerServiceCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "devcontainer-engine",
-        abstract: "Docker Engine compatibility service for Apple container"
+        abstract: "Dev Containers Engine API adapter for Apple container"
     )
 
     @Option(name: .long, help: "User-owned Unix socket path.")
@@ -108,6 +108,10 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             context: RuntimeRequestContext(
                 deadline: Date().addingTimeInterval(5 * 60)
             )
+        )
+        try Self.requireMatchingProvider(
+            selected: selectedProvider,
+            observed: runtimeDescriptor.provider
         )
         let routeCapabilities = try Self.stockRouteIdentifiers.map { identifier in
             try ContainerEngineProviderCapability(
@@ -231,9 +235,11 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                     stateRootUUID: stateRootUUID
                 ),
                 publicServer: ContainerUnixHTTPServer(
-                    responder: ContainerEngineGatewayResponder(
-                        providerSocketPath: internalProviderSocket,
-                        fingerprint: providerFingerprint
+                    responder: DevContainerIdentityResponder(
+                        responder: ContainerEngineGatewayResponder(
+                            providerSocketPath: internalProviderSocket,
+                            fingerprint: providerFingerprint
+                        )
                     ),
                     socketPath: socket,
                     logger: logger
@@ -292,6 +298,18 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
         return try store.load()
     }
 
+    static func requireMatchingProvider(
+        selected: BackendProvider,
+        observed: BackendProvider
+    ) throws {
+        guard selected == observed else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "selected backend \(selected.rawValue) does not match runtime provider \(observed.rawValue)"
+            )
+        }
+    }
+
     private static func terminationSignals() -> AsyncStream<Int32> {
         Darwin.signal(SIGINT, SIG_IGN)
         Darwin.signal(SIGTERM, SIG_IGN)
@@ -326,6 +344,17 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
 private enum ServiceCompletion: Sendable {
     case serverClosed
     case signal(Int32)
+}
+
+private struct DevContainerIdentityResponder: DockerHTTPResponder, Sendable {
+    let responder: any DockerHTTPResponder
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        var response = await responder.respond(to: request)
+        response.headers[DevContainerEngineIdentity.header] =
+            DevContainerEngineIdentity.value
+        return response
+    }
 }
 
 private enum ServiceServer: Sendable {

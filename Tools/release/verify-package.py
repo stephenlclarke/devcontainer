@@ -27,6 +27,17 @@ IMMUTABLE_SOURCE_PATTERN = re.compile(
     r"|raw\.githubusercontent\.com/stephenlclarke/devcontainer)"
     r"/(?P<revision>[0-9a-f]{40})/"
 )
+NATIVE_COMPOSE_METADATA = Path(__file__).with_name("native-compose.json")
+FORBIDDEN_RUNTIME_EXECUTABLE_NAMES = {
+    "colima",
+    "com.docker.cli",
+    "docker",
+    "docker-buildx",
+    "docker-compose",
+    "dockerd",
+    "nerdctl",
+    "podman",
+}
 
 
 @dataclass(frozen=True)
@@ -159,6 +170,7 @@ def require_sbom(
     commit: str,
     source_date_epoch: int,
     dependencies: list[Dependency],
+    bundled_file_checksums: dict[str, str],
 ) -> None:
     """Require SPDX metadata for the root and every exact resolved dependency."""
 
@@ -170,9 +182,15 @@ def require_sbom(
     if not all(isinstance(package, dict) for package in packages):
         raise ValueError("package SBOM contains a non-object package")
     by_name = {package.get("name"): package for package in packages}
-    expected_names = {"devcontainer", *(dependency.identity for dependency in dependencies)}
+    resolved_names = {dependency.identity for dependency in dependencies}
+    expected_names = {
+        "devcontainer",
+        *resolved_names,
+        "devcontainers-cli",
+        "container-compose",
+    }
     if set(by_name) != expected_names or len(packages) != len(expected_names):
-        raise ValueError("package SBOM dependency set does not match Package.resolved")
+        raise ValueError("package SBOM dependency set is incomplete")
     root = by_name["devcontainer"]
     namespace_hash = hashlib.sha256(
         f"devcontainer:{version}:{commit}".encode()
@@ -217,6 +235,31 @@ def require_sbom(
             raise ValueError(
                 f"package SBOM metadata is invalid for {dependency.identity}"
             )
+    for name, license_name in (
+        ("devcontainers-cli", "MIT"),
+        ("container-compose", "Apache-2.0"),
+    ):
+        package = by_name[name]
+        checksums = package.get("checksums")
+        if (
+            not isinstance(package.get("versionInfo"), str)
+            or not package["versionInfo"]
+            or not str(package.get("downloadLocation", "")).startswith("https://")
+            or package.get("licenseDeclared") != license_name
+            or package.get("licenseConcluded") != license_name
+            or not str(package.get("sourceInfo", "")).startswith("Exact Git revision ")
+            or not isinstance(checksums, list)
+            or len(checksums) != 1
+            or checksums[0].get("algorithm") != "SHA256"
+            or len(str(checksums[0].get("checksumValue", ""))) != 64
+        ):
+            raise ValueError(f"package SBOM metadata is invalid for {name}")
+        expected_checksum = bundled_file_checksums.get(name)
+        if (
+            expected_checksum is not None
+            and checksums[0]["checksumValue"] != expected_checksum
+        ):
+            raise ValueError(f"package SBOM checksum does not match bundled {name}")
     relationships = value.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError("package SBOM is missing dependency relationships")
@@ -229,14 +272,122 @@ def require_sbom(
     }
     expected_related = {
         "SPDXRef-"
-        + "".join(
-            character if character.isalnum() else "-"
-            for character in dependency.identity
-        )
-        for dependency in dependencies
+        + "".join(character if character.isalnum() else "-" for character in name)
+        for name in expected_names
+        if name != "devcontainer"
     }
     if related != expected_related or len(relationships) != len(expected_related):
         raise ValueError("package SBOM dependency relationships are incomplete")
+
+
+def require_native_compose_build_info(value: object) -> None:
+    """Require the bundled Compose executable to prove its stock Apple graph."""
+
+    if not isinstance(value, dict):
+        raise ValueError("native Compose build-info.json must be a JSON object")
+    metadata = json.loads(NATIVE_COMPOSE_METADATA.read_text(encoding="utf-8"))
+    expected = {
+        "version": metadata["version"],
+        "source": "stephenlclarke/container-compose",
+        "lane": "bundled-stock",
+        "commit": metadata["commit"],
+        "buildType": "release",
+        "containerSource": "apple/container",
+        "containerRef": metadata["appleContainerRevision"],
+        "containerizationSource": "apple/containerization",
+        "containerizationRef": metadata["appleContainerizationRevision"],
+        "runtimeCapabilitySchemaVersion": 1,
+        "runtimeCapabilities": [],
+    }
+    if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+        raise ValueError("bundled native Compose does not match its stock Apple pin")
+
+
+def native_compose_dependency_names(
+    resolved: object,
+    go_modules: str,
+) -> list[str]:
+    """Return the exact packaged Swift and Go provider dependency names."""
+
+    if not isinstance(resolved, dict) or not isinstance(resolved.get("pins"), list):
+        raise ValueError("bundled native Compose Package.resolved is invalid")
+    swift_names = []
+    for pin in resolved["pins"]:
+        if not isinstance(pin, dict) or not isinstance(pin.get("identity"), str):
+            raise ValueError("bundled native Compose Swift pin is invalid")
+        swift_names.append(f"container-compose-swift:{pin['identity']}")
+    module_pattern = re.compile(r"^# (?P<module>\S+) (?P<version>\S+)$")
+    go_names = [
+        f"container-compose-go:{match.group('module')}"
+        for line in go_modules.splitlines()
+        if " => " not in line and (match := module_pattern.fullmatch(line)) is not None
+    ]
+    if not swift_names or not go_names:
+        raise ValueError("bundled native Compose dependency inventory is empty")
+    names = [*swift_names, *go_names, "container-compose-go:standard-library"]
+    if len(names) != len(set(names)):
+        raise ValueError("bundled native Compose dependency inventory is duplicated")
+    return names
+
+
+def require_native_compose_legal_inventory(
+    sbom: object,
+    notices: str,
+    resolved: object,
+    go_modules: str,
+) -> None:
+    """Require complete provider SBOM and legal text coverage."""
+
+    metadata = json.loads(NATIVE_COMPOSE_METADATA.read_text(encoding="utf-8"))
+    dependency_names = native_compose_dependency_names(resolved, go_modules)
+    expected_names = {"container-compose", *dependency_names}
+    if not isinstance(sbom, dict) or sbom.get("spdxVersion") != "SPDX-2.3":
+        raise ValueError("bundled native Compose SBOM is invalid")
+    packages = sbom.get("packages")
+    if not isinstance(packages, list) or not all(
+        isinstance(package, dict) for package in packages
+    ):
+        raise ValueError("bundled native Compose SBOM packages are invalid")
+    by_name = {package.get("name"): package for package in packages}
+    if set(by_name) != expected_names or len(packages) != len(expected_names):
+        raise ValueError("bundled native Compose SBOM dependency set is incomplete")
+    root = by_name["container-compose"]
+    if (
+        root.get("versionInfo") != metadata["version"]
+        or root.get("sourceInfo") != f"Exact Git revision {metadata['commit']}"
+        or root.get("licenseDeclared") != "Apache-2.0"
+    ):
+        raise ValueError("bundled native Compose SBOM root metadata is invalid")
+    if any(
+        not package.get("licenseDeclared")
+        or package.get("licenseDeclared") == "NOASSERTION"
+        or package.get("licenseConcluded") != package.get("licenseDeclared")
+        for package in packages
+    ):
+        raise ValueError("bundled native Compose SBOM license metadata is invalid")
+    relationships = sbom.get("relationships")
+    if not isinstance(relationships, list):
+        raise ValueError("bundled native Compose SBOM relationships are missing")
+    root_identifier = root.get("SPDXID")
+    related = {
+        relationship.get("relatedSpdxElement")
+        for relationship in relationships
+        if isinstance(relationship, dict)
+        and relationship.get("spdxElementId") == root_identifier
+        and relationship.get("relationshipType") == "DEPENDS_ON"
+    }
+    expected_related = {by_name[name].get("SPDXID") for name in dependency_names}
+    if related != expected_related or len(relationships) != len(dependency_names):
+        raise ValueError("bundled native Compose SBOM relationships are incomplete")
+    headers = [
+        line.removeprefix("Dependency: ")
+        for line in notices.splitlines()
+        if line.startswith("Dependency: ")
+    ]
+    if headers != dependency_names:
+        raise ValueError("bundled native Compose legal notice set is incomplete")
+    if len(notices.encode("utf-8")) < 1_024:
+        raise ValueError("bundled native Compose legal notices are unexpectedly small")
 
 
 def require_third_party_notices(
@@ -302,9 +453,15 @@ def verify_archive(
     root = f"devcontainer-{version}"
     required_executables = {
         f"{root}/bin/devcontainer",
+        f"{root}/bin/devcontainer-docker",
         f"{root}/bin/devcontainer-compose",
         f"{root}/bin/devcontainer-engine",
         f"{root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+        f"{root}/libexec/devcontainer-compose/bin/compose",
+        f"{root}/libexec/devcontainer-compose/resources/compose-normalizer",
+        f"{root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64",
+        f"{root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
+        f"{root}/share/devcontainer/reference-cli/devcontainer.js",
     }
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
@@ -312,6 +469,28 @@ def verify_archive(
             raise ValueError("package archive is empty")
         for member in members:
             require_safe_member(member, root)
+            if (
+                member.isfile()
+                and member.mode & 0o111
+                and PurePosixPath(member.name).name.lower()
+                in FORBIDDEN_RUNTIME_EXECUTABLE_NAMES
+            ):
+                raise ValueError(
+                    "package contains a forbidden non-Apple runtime executable: "
+                    f"{member.name}"
+                )
+        executable_members = {
+            member.name
+            for member in members
+            if member.isfile() and member.mode & 0o111
+        }
+        if executable_members != required_executables:
+            unexpected = sorted(executable_members - required_executables)
+            missing = sorted(required_executables - executable_members)
+            raise ValueError(
+                "package executable inventory is not exact: "
+                f"unexpected={unexpected}, missing={missing}"
+            )
         source_date_epochs = {member.mtime for member in members}
         if len(source_date_epochs) != 1:
             raise ValueError("archive timestamps are not normalized")
@@ -337,6 +516,60 @@ def verify_archive(
             archive,
             f"{root}/libexec/container/plugins/devcontainer/config.toml",
         )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/resources/build-info.json",
+        )
+        require_native_compose_build_info(
+            read_json_member(
+                archive,
+                f"{root}/libexec/devcontainer-compose/resources/build-info.json",
+            )
+        )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/LICENSE",
+        )
+        require_nonempty_regular_member(
+            archive,
+            f"{root}/libexec/devcontainer-compose/config.toml",
+        )
+        native_compose_root = f"{root}/libexec/devcontainer-compose"
+        native_resolved = read_json_member(
+            archive,
+            f"{native_compose_root}/resources/Package.resolved",
+        )
+        native_go_modules = read_text_member(
+            archive,
+            f"{native_compose_root}/resources/go-modules.txt",
+        )
+        native_notices = read_text_member(
+            archive,
+            f"{native_compose_root}/THIRD-PARTY-NOTICES.txt",
+        )
+        native_sbom = read_json_member(
+            archive,
+            f"{native_compose_root}/resources/container-compose.spdx.json",
+        )
+        require_native_compose_legal_inventory(
+            native_sbom,
+            native_notices,
+            native_resolved,
+            native_go_modules,
+        )
+        for support_file in (
+            "CHANGELOG.md",
+            "LICENSE.txt",
+            "README.md",
+            "ThirdPartyNotices.txt",
+            "dist/spec-node/devContainersSpecCLI.js",
+            "package.json",
+            "scripts/updateUID.Dockerfile",
+        ):
+            require_nonempty_regular_member(
+                archive,
+                f"{root}/share/devcontainer/reference-cli/{support_file}",
+            )
 
         metadata_root = f"{root}/share/devcontainer"
         for legal_file in (
@@ -353,7 +586,19 @@ def verify_archive(
         build_info = read_json_member(archive, f"{metadata_root}/build-info.json")
         require_build_info(build_info, version, lane, commit)
         sbom = read_json_member(archive, f"{metadata_root}/devcontainer.spdx.json")
-        require_sbom(sbom, version, commit, source_date_epoch, dependencies)
+        compose_member = archive.extractfile(
+            f"{root}/libexec/devcontainer-compose/bin/compose"
+        )
+        if compose_member is None:
+            raise ValueError("bundled container-compose executable cannot be read")
+        require_sbom(
+            sbom,
+            version,
+            commit,
+            source_date_epoch,
+            dependencies,
+            {"container-compose": hashlib.sha256(compose_member.read()).hexdigest()},
+        )
         notices = read_text_member(
             archive,
             f"{metadata_root}/THIRD-PARTY-NOTICES.txt",

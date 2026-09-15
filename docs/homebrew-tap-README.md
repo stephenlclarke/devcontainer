@@ -10,19 +10,24 @@
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe.
 
-The formula installs only this project's `devcontainer`, compatibility-engine, and Compose-dispatch commands. It does not install, remove, replace, relink, start, or stop:
+The formula installs this project's commands, its pinned Dev Containers CLI,
+and a pinned stock-profile native `container-compose` build in the same signed
+archive. It does
+not install, remove, replace, relink, start, or stop:
 
 - Apple's `container` package.
 - A custom `container` runtime.
-- `container-compose`.
 
-The formula depends on the upstream Docker CLI and Docker Compose protocol
-client. It does not install or start a Docker engine. Install Apple's stock
-runtime separately from Apple before using the Apple backend.
+It does not depend on or launch Docker CLI, Docker Compose, Docker Desktop,
+Docker Engine, or Colima. Install Apple's stock runtime separately from Apple
+before using the Apple backend.
 
 ### Stable
 
-The stable formula follows immutable bare semantic releases:
+The Docker-free stable formula follows immutable bare semantic releases
+beginning with 1.0.2. Until 1.0.2 is published, the live 1.0.1 formula remains
+a legacy package that declares Docker dependencies and must not be used as a
+Docker-free installation:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -49,8 +54,10 @@ Homebrew infers the stable formula version from the immutable tag-bearing URL. T
 
 ### Current
 
-The opt-in Current formula is designed to follow the newest validated `main`
-package:
+The opt-in Current formula follows the newest validated `main` package. The
+live formula currently predates the Docker-free candidate; do not install it
+until its Homebrew metadata lists `node` and no Docker or external Compose
+dependency:
 
 ```sh
 brew tap stephenlclarke/tap
@@ -60,16 +67,9 @@ brew install --formula stephenlclarke/tap/devcontainer-current
 
 Current uses:
 
-- Mutable GitHub prerelease/tag: `current`
+- Immutable GitHub prerelease/tag: `current-<sha40>`
 - Immutable candidate asset: `devcontainer-current-<sha12>-arm64.tar.gz`
 - Monotonic formula version: `current.<github_run_number>.<sha12>`
-
-As of 15 September 2026, automatic Current publication is disabled and the
-published formula remains `current.89.b31e80b2b9c0`, backed by July source
-`b31e80b2b9c09ecc73bb3badf9cd5cf16550a538`. It is not a package of the latest
-source-bearing `main` revision. Stable 1.0.1 remains the immutable supported
-baseline while a fresh Current package awaits complete release and runtime
-evidence.
 
 Stable and Current cannot coexist because they install the same executables. The optional Current formula declares a conflict with `devcontainer`; install one channel at a time and uninstall the active channel before switching.
 
@@ -79,9 +79,8 @@ Both formulae declare:
 
 ```ruby
 depends_on arch: :arm64
-depends_on "docker"
-depends_on "docker-compose"
 depends_on macos: :tahoe
+depends_on "node"
 ```
 
 Published ports require Local Network access for the selected runtime's
@@ -99,9 +98,9 @@ Neither formula declares a dependency on:
 ```
 
 This separation is intentional. `devcontainer`'s supported core compatibility
-boundary is Apple's stock runtime. The upstream Docker CLI and Docker Compose
-are required protocol clients; a Docker engine and `container-compose` are
-optional backends/providers.
+boundary is Apple's stock runtime. The bundled `container-compose` executable
+supplies the native multi-service implementation without installing or
+selecting a custom runtime.
 
 ### Verify
 
@@ -116,15 +115,13 @@ container system version --format json
 
 The `devcontainer` output reports its source commit and release lane. The `container` output independently confirms which runtime the user selected.
 
-### Optional Compose Provider
+### Native Compose Provider
 
-The tap does not install `container-compose` for `devcontainer`.
-
-Current supported `stephenlclarke/tap/container-compose` formulae depend on a
-matched custom runtime. They must not be installed automatically or described
-as Compose support supplied by Apple. Users who deliberately configure a
-provider are responsible for its installation and runtime compatibility;
-`devcontainer` will report a custom runtime as a separate provider lane.
+The archive contains an exact `container-compose` source revision compiled
+against its stock Apple lock. The dispatcher launches this private executable
+for multi-service configurations. It talks to the project-owned Engine socket,
+which can be backed by stock Apple `container` or the optional enhanced
+Container runtime. Apple does not supply this Compose implementation.
 
 ## Formula Publication Contract
 
@@ -151,21 +148,21 @@ Stable and Current tap updates share one non-cancelling concurrency group so the
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.2/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
   depends_on macos: :tahoe
+  depends_on "node"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
+    libexec.install Dir["libexec/*"]
+    pkgshare.install Dir["share/devcontainer/*"]
   end
 
   service do
@@ -191,11 +188,12 @@ class Devcontainer < Formula
       Start the compatibility engine:
         brew services start #{name}
 
-      Use it without changing your default Docker context:
-        eval "$(devcontainer context)"
+      Create a development container without Docker software:
+        devcontainer up --workspace-folder "$PWD"
 
-      Configure VS Code's Dev Containers extension to use:
-        #{opt_bin}/devcontainer-compose
+      Configure VS Code's Dev Containers extension to use both:
+        "dev.containers.dockerPath": "#{opt_bin}/devcontainer-docker"
+        "dev.containers.dockerComposePath": "#{opt_bin}/devcontainer-compose"
 
       Register the optional Apple container CLI plug-in explicitly:
         devcontainer plugin register
@@ -203,7 +201,7 @@ class Devcontainer < Formula
   end
 
   test do
-    assert_match "1.0.1", shell_output("#{bin}/devcontainer version --short")
+    assert_match "1.0.2", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?

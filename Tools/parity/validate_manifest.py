@@ -52,6 +52,10 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         SHA512_SRI.fullmatch(str(devcontainers.get("npmIntegrity", ""))) is not None,
         "referencePins.devcontainersCli.npmIntegrity must be a SHA-512 SRI digest",
     )
+    _require(
+        SHA256.fullmatch(str(devcontainers.get("tarballSHA256", ""))) is not None,
+        "referencePins.devcontainersCli.tarballSHA256 must be a SHA-256 digest",
+    )
     docker = references.get("docker")
     _require(isinstance(docker, dict), "referencePins.docker must be an object")
     for field in (
@@ -64,6 +68,17 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         _require(
             SHA256.fullmatch(str(docker.get(field, ""))) is not None,
             f"referencePins.docker.{field} must be a SHA-256 digest",
+        )
+
+    compose = references.get("containerCompose")
+    _require(
+        isinstance(compose, dict),
+        "referencePins.containerCompose must be an object",
+    )
+    for field in ("stableCommit", "containerCommit", "containerizationCommit"):
+        _require(
+            GIT_COMMIT.fullmatch(str(compose.get(field, ""))) is not None,
+            f"referencePins.containerCompose.{field} must be a full Git commit",
         )
 
     release_host = references.get("releaseHost")

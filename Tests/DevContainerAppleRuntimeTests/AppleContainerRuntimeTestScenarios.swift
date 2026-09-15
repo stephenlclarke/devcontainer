@@ -368,12 +368,26 @@ extension AppleContainerRuntimeTests {
     ) async throws {
         try await runtime.tagImage(source: "fixture:latest", target: "fixture:tagged", context: context)
         try await runtime.removeImage(reference: "fixture:tagged", force: true, context: context)
+        let stat = try await runtime.statContainerPath(
+            id: "fixture",
+            path: "/workspace/file.txt",
+            context: context
+        )
+        #expect(stat.name == "file.txt")
+        #expect(stat.size == 6)
+        #expect(stat.mode == 0o644)
         let archive = try await runtime.copyArchiveFromContainer(
             id: "fixture",
             path: "/workspace/file.txt",
             context: context
         )
-        #expect(!archive.data.isEmpty)
+        guard case let .file(file) = archive.body else {
+            Issue.record("Apple runtime copy-out should return a file-backed archive")
+            return
+        }
+        let archiveReader = try file.makeReadingHandle()
+        #expect(try !(archiveReader.readToEnd() ?? Data()).isEmpty)
+        try archiveReader.close()
         #expect(archive.stat.mode & (1 << 31) == 0)
         #expect(archive.stat.mode & 0o777 == 0o644)
         try await runtime.copyArchiveToContainer(

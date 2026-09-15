@@ -44,7 +44,10 @@ class PackageContextTests(unittest.TestCase):
             "devcontainer-current-0123456789ab-arm64.tar.gz",
         )
         self.assertEqual(context.formulaVersion, "current.418.0123456789ab")
-        self.assertEqual(context.releaseTag, "current")
+        self.assertEqual(
+            context.releaseTag,
+            "current-0123456789abcdef0123456789abcdef01234567",
+        )
 
     def test_development_identity_supports_an_uncommitted_source_tree(self) -> None:
         context = self.module.package_context(

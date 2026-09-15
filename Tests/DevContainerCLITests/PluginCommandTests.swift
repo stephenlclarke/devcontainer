@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 @testable import DevContainerCLI
+import DevContainerModel
 import Foundation
 import Testing
 
@@ -111,6 +112,11 @@ struct PluginCommandTests {
         #expect(throws: (any Error).self) {
             try ContainerInstallRootResolver.installRoot(
                 from: Data("not-json".utf8)
+            )
+        }
+        #expect(throws: DevContainerError.self) {
+            try ContainerInstallRootResolver.resolve(
+                container: URL(fileURLWithPath: "/usr/local/bin/docker")
             )
         }
     }

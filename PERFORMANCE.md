@@ -6,7 +6,7 @@ This report analyzes three complete, successful parity runs surrounding the 1.0.
 
 ## Objective
 
-The project's performance goal is user-visible performance comparable to or better than Docker while preserving exact functional parity. The target is at most `1.00x` the matching Docker oracle. Any completed result above `2.50x` requires further investigation; that trigger is not a performance pass criterion and does not, by itself, change functional parity. A timeout, other non-completion, or missing or invalid timing evidence remains a hard evidence failure. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the aggregate, VS Code, per-fixture, tail-latency, resource-use, and regression objectives.
+The project's performance goal is user-visible performance comparable to or better than Docker while preserving exact functional parity. The target is at most `1.00x` the matching Docker oracle. Any completed result above `2.50x` requires further investigation; that trigger is not a performance pass criterion and does not, by itself, change functional parity. A candidate at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence is a hard acceptance failure without changing the separately reported functional result. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) defines the aggregate, VS Code, per-fixture, tail-latency, resource-use, and regression objectives.
 
 ## Result
 
@@ -341,18 +341,22 @@ warm samples remain below the five-cold/ten-warm repetition requirement.
 
 For each candidate change:
 
-1. keep the Docker oracle, runtime versions, fixture sources, runner, power state, and cleanup policy fixed;
+1. keep the Docker oracle, runtime versions, fixture sources, runner, power state, and cleanup policy fixed, and require a successful `Tools/parity/require-quiet-host.sh` receipt immediately before timed work;
 2. run at least five cold iterations and ten warm iterations per affected fixture and lane;
 3. retain raw monotonic durations, candidate/Docker ratios, fingerprints, and phase spans;
 4. report median, minimum, maximum, p90, and median absolute overhead;
 5. compare the candidate with a same-host baseline interleaved closely enough to limit thermal/background drift;
 6. require zero semantic differences and zero cleanup differences;
 7. treat a timeout, other non-completion, or missing or invalid timing evidence as a hard failure;
-8. mark every completed candidate above `2.50x` Docker for further investigation and every result above `1.00x` as missing the performance objective;
+8. mark every completed candidate above `2.50x` Docker for further investigation, fail timing acceptance at or above `10.00x` the matching Docker fixture, and mark every result above `1.00x` as missing the performance objective;
 9. accept an optimization only when the median improvement exceeds ordinary baseline variation and does not worsen the p90 materially;
 10. rerun the complete three-lane CLI and VS Code matrix before publication.
 
-The repository already records durations in machine-readable JSON, JUnit, and the human comparison matrix. Future phase instrumentation should supplement those artifacts rather than replace the end-to-end metric.
+The repository records durations in machine-readable JSON, JUnit, and the
+human comparison matrix. Every current parity lane also retains the host load,
+thermal state, process inventory, and quiet-host receipt. Future phase
+instrumentation should supplement those artifacts rather than replace the
+end-to-end metric.
 
 ## Priority order before the July 2026 E06 work
 

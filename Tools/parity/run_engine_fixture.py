@@ -148,7 +148,24 @@ class Probe:
         self.command("rm", created)
         self.containers.remove(created)
         repeated = self.command("rm", created, check=False)
+        automatic_name = self.name + "-automatic-remove"
+        automatic = self.command(
+            "run",
+            "--rm",
+            "--name",
+            automatic_name,
+            "alpine:latest",
+            "sh",
+            "-c",
+            "exit 7",
+            check=False,
+        )
+        automatic_inspect = self.command(
+            "inspect", automatic_name, check=False
+        )
         self.emit(
+            automatic_remove_cleanup=automatic_inspect.returncode != 0,
+            automatic_remove_exit=automatic.returncode == 7,
             create_state=created_state,
             exit_status=inspect_code,
             idempotent_cleanup=repeated.returncode != 0,
@@ -259,10 +276,45 @@ class Probe:
                 check=False,
                 timeout=900,
             )
+            ignored_tag = self.name + "-ignored:latest"
+            self.images.append(ignored_tag)
+            (root / ".env").write_text("local-secret\n", encoding="utf-8")
+            (root / ".dockerignore").write_text(
+                "decoy/../.env\n", encoding="utf-8"
+            )
+            (root / "Dockerfile").write_text(
+                "FROM alpine:latest\nCOPY .env /should-not-exist\n",
+                encoding="utf-8",
+            )
+            ignored = self.command(
+                "build",
+                "--progress",
+                "plain",
+                "--tag",
+                ignored_tag,
+                str(root),
+                check=False,
+                timeout=900,
+            )
+            class_tag = self.name + "-class-ignored:latest"
+            self.images.append(class_tag)
+            (root / ".dockerignore").write_text("[!.]env\n", encoding="utf-8")
+            class_ignored = self.command(
+                "build",
+                "--progress",
+                "plain",
+                "--tag",
+                class_tag,
+                str(root),
+                check=False,
+                timeout=900,
+            )
         self.emit(
             build_progress=bool(built.stdout or built.stderr),
+            cleaned_ignore_path=ignored.returncode != 0,
             failed_build=failed.returncode != 0,
             inspect_label=label == "true",
+            literal_bang_class=class_ignored.returncode != 0,
         )
 
     def archive_copy(self) -> None:

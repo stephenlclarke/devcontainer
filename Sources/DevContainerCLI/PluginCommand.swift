@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import ArgumentParser
+import DevContainerCore
 import DevContainerModel
 import DevContainerProcess
 import Foundation
@@ -151,6 +152,10 @@ struct PluginRegistration {
 
 enum ContainerInstallRootResolver {
     static func resolve(container: URL) throws -> URL {
+        try DevContainerExecutablePolicy.requireAppleContainer(
+            container.path,
+            name: "plug-in runtime executable"
+        )
         let result = try ProcessRunner.capturedSync(
             executable: container,
             arguments: ["system", "status", "--format", "json"],

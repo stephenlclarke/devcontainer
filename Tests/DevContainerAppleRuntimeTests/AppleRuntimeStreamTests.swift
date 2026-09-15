@@ -17,11 +17,185 @@
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
 @Suite(.serialized)
 struct AppleRuntimeStreamTests {
+    @Test
+    func `attached start carries stdin through the stock Apple CLI`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+
+        try await session.write(Data("attached-input".utf8))
+        try await session.closeStandardInput()
+        var output = Data()
+        for try await frame in session.frames where frame.channel == .standardOutput {
+            output.append(frame.data)
+        }
+
+        #expect(try await session.wait() == 0)
+        #expect(output == Data("attached-input".utf8))
+        #expect(try fixture.log().contains("start --attach --interactive fixture"))
+    }
+
+    @Test
+    func `attached start waits for running state before returning`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        try fixture.setMode("attached-delayed-running")
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext(deadline: Date().addingTimeInterval(5))
+        )
+
+        #expect(
+            try await runtime.inspectContainer(
+                id: "fixture",
+                context: RuntimeRequestContext()
+            ).state == .running
+        )
+        try await session.closeStandardInput()
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 0)
+    }
+
+    @Test
+    func `fast attached failure is recorded before wait observes stopped state`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("attached-fast-failure")
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 7)
+        #expect(
+            try await runtime.waitContainer(
+                id: "fixture",
+                context: RuntimeRequestContext(deadline: Date().addingTimeInterval(1))
+            ) == 7
+        )
+    }
+
+    @Test
+    func `superseded attached exits cannot overwrite the replacement generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let session = try await runtime.startAttachedContainer(
+            id: "fixture",
+            terminal: false,
+            context: RuntimeRequestContext()
+        )
+        let attachedRegistration = try #require(await runtime.testExitRegistration(id: "fixture"))
+        let replacementRegistration = await runtime.replaceTestExitRegistration(id: "fixture")
+        #expect(attachedRegistration != replacementRegistration)
+
+        try await session.closeStandardInput()
+        for try await _ in session.frames {}
+        #expect(try await session.wait() == 0)
+
+        #expect(await runtime.testExitRegistration(id: "fixture") == replacementRegistration)
+        #expect(await runtime.testExit(id: "fixture") == nil)
+    }
+
+    @Test
+    func `failed attached startup tears down its forwarding generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let generation = UUID()
+        await runtime.installTestExitRegistration(id: "fixture", registration: generation)
+        _ = try await runtime.portForwarding.start(
+            containerID: "fixture",
+            bindings: [
+                PortBinding(
+                    containerPort: 65000,
+                    hostPort: nil,
+                    protocolName: "tcp",
+                    hostAddress: "127.0.0.1"
+                )
+            ],
+            networkAddresses: ["bridge": "127.0.0.1/8"],
+            generation: generation
+        )
+        #expect(await runtime.portForwarding.hasListeners(containerID: "fixture"))
+
+        await runtime.cleanupAttachedContainerStartFailure(
+            runtimeID: "fixture",
+            exitRegistration: generation
+        )
+
+        #expect(await !(runtime.portForwarding.hasListeners(containerID: "fixture")))
+        #expect(await runtime.testExitRegistration(id: "fixture") == nil)
+    }
+
+    @Test
+    func `failed attached startup keeps its operation fenced until session cancellation`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("missing")
+        let runtime = try fixture.runtime()
+        let session = BlockingCancellationSession()
+        let generation = UUID()
+        let startup = Task {
+            try await runtime.performAttachedContainerStart(
+                requestedID: "fixture",
+                runtimeID: "fixture",
+                context: RuntimeRequestContext(),
+                exitRegistration: generation,
+                session: session
+            )
+        }
+
+        await session.waitUntilCancellationStarts()
+        #expect(await runtime.hasTestStartOperation(id: "fixture"))
+        await session.finishCancellation()
+        await #expect(throws: DevContainerError.self) {
+            try await startup.value
+        }
+        #expect(await !runtime.hasTestStartOperation(id: "fixture"))
+    }
+
+    @Test
+    func `cancelling a followed log stream terminates its owned process`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setMode("follow-logs")
+        let runtime = try fixture.runtime()
+        var stream: AsyncThrowingStream<RuntimeIOFrame, any Error>? = try await runtime.containerLogs(
+            id: "fixture",
+            follow: true,
+            standardOutput: true,
+            standardError: true,
+            context: RuntimeRequestContext()
+        )
+        let consumer = Task { [stream] in
+            for try await _ in try #require(stream) {}
+        }
+        for _ in 0 ..< 100 where try !(fixture.log()).contains("logs-follow-ready") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(try fixture.log().contains("logs-follow-ready"))
+
+        consumer.cancel()
+        _ = try? await consumer.value
+        stream = nil
+        for _ in 0 ..< 200 where try !(fixture.log()).contains("logs-terminated") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(try fixture.log().contains("logs-terminated"))
+    }
+
     @Test
     func `stream failures and invalid requests surface typed errors`() async throws {
         let fixture = try FakeAppleCLI()
@@ -235,5 +409,75 @@ struct AppleRuntimeStreamTests {
     private static func processExists(_ identifier: pid_t) -> Bool {
         errno = 0
         return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
+    }
+}
+
+private extension AppleContainerRuntime {
+    func installTestExitRegistration(id: String, registration: UUID) {
+        containerExitRegistrations[id] = registration
+    }
+
+    func testExitRegistration(id: String) -> UUID? {
+        containerExitRegistrations[id]
+    }
+
+    func replaceTestExitRegistration(id: String) -> UUID {
+        let registration = UUID()
+        containerExitRegistrations[id] = registration
+        return registration
+    }
+
+    func testExit(id: String) -> ContainerExit? {
+        containerExits[id]
+    }
+
+    func hasTestStartOperation(id: String) -> Bool {
+        containerStartOperations[id] != nil
+    }
+}
+
+private actor BlockingCancellationSession: RuntimeProcessSession {
+    nonisolated let frames = AsyncThrowingStream<RuntimeIOFrame, any Error> { continuation in
+        continuation.finish()
+    }
+
+    private var cancellationStarted = false
+    private var cancellationStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellationCompletion: CheckedContinuation<Void, Never>?
+
+    func write(_: Data) async throws {}
+
+    func closeStandardInput() async throws {}
+
+    func resize(width _: UInt16, height _: UInt16) async throws {}
+
+    func wait() async throws -> Int32 {
+        0
+    }
+
+    func cancel() async {
+        cancellationStarted = true
+        let waiters = cancellationStartWaiters
+        cancellationStartWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            cancellationCompletion = continuation
+        }
+    }
+
+    func waitUntilCancellationStarts() async {
+        if cancellationStarted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            cancellationStartWaiters.append(continuation)
+        }
+    }
+
+    func finishCancellation() {
+        cancellationCompletion?.resume()
+        cancellationCompletion = nil
     }
 }

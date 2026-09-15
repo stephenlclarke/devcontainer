@@ -84,7 +84,8 @@ public enum ProcessRunner {
         environment: [String: String],
         workingDirectory: URL? = nil,
         input: Data? = nil,
-        maximumOutputBytes: Int? = nil
+        maximumOutputBytes: Int? = nil,
+        standardOutputFile: FileHandle? = nil
     ) async throws -> CapturedProcessResult {
         if let maximumOutputBytes {
             precondition(maximumOutputBytes >= 0)
@@ -92,22 +93,25 @@ public enum ProcessRunner {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
         let standardInput = input.map { _ in Pipe() }
-        let standardOutput = Pipe()
+        let standardOutput = standardOutputFile == nil ? Pipe() : nil
+        let outputFile = standardOutputFile
         let standardError = Pipe()
-        var command = configuredCommand(
+        var command = try configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
             workingDirectory: workingDirectory
         )
         command.stdin = standardInput?.fileHandleForReading
-        command.stdout = standardOutput.fileHandleForWriting
+        command.stdout = outputFile ?? standardOutput?.fileHandleForWriting
         command.stderr = standardError.fileHandleForWriting
         let termination = OwnedProcessTermination()
-        let outputTask = drain(
-            standardOutput.fileHandleForReading,
-            maximumBytes: maximumOutputBytes
-        )
+        let outputTask = standardOutput.map {
+            drain(
+                $0.fileHandleForReading,
+                maximumBytes: maximumOutputBytes
+            )
+        }
         let errorTask = drain(
             standardError.fileHandleForReading,
             maximumBytes: maximumOutputBytes
@@ -116,14 +120,16 @@ public enum ProcessRunner {
             try command.start()
             termination.didLaunch(processGroup: command.pid)
             try? standardInput?.fileHandleForReading.close()
-            try? standardOutput.fileHandleForWriting.close()
+            try? standardOutput?.fileHandleForWriting.close()
+            try? outputFile?.close()
             try? standardError.fileHandleForWriting.close()
         } catch {
             try? standardInput?.fileHandleForReading.close()
             try? standardInput?.fileHandleForWriting.close()
-            try? standardOutput.fileHandleForWriting.close()
+            try? standardOutput?.fileHandleForWriting.close()
+            try? outputFile?.close()
             try? standardError.fileHandleForWriting.close()
-            _ = await outputTask.value
+            _ = await outputTask?.value
             _ = await errorTask.value
             throw error
         }
@@ -147,7 +153,7 @@ public enum ProcessRunner {
                 try await inputTask.value
                 let exitCode = try await waitTask.value
                 termination.didExit()
-                let output = await outputTask.value
+                let output = await outputTask?.value ?? (data: Data(), omitted: 0)
                 let error = await errorTask.value
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
@@ -162,7 +168,7 @@ public enum ProcessRunner {
                 termination.cancel()
                 _ = try? await waitTask.value
                 termination.didExit()
-                _ = await outputTask.value
+                _ = await outputTask?.value
                 _ = await errorTask.value
                 throw error
             }
@@ -179,7 +185,7 @@ public enum ProcessRunner {
     ) async throws -> Int32 {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
-        var command = configuredCommand(
+        var command = try configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -226,7 +232,11 @@ public enum ProcessRunner {
         arguments: [String],
         environment: [String: String],
         workingDirectory: URL?
-    ) -> Command {
+    ) throws -> Command {
+        try DevContainerExecutablePolicy.requireDockerless(
+            executable.path,
+            name: "child process"
+        )
         var command = Command(
             executable.path,
             arguments: arguments,
@@ -336,13 +346,28 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     private static let gracePeriod = DispatchTimeInterval.milliseconds(500)
 
     private let lock = NSLock()
+    private let gracePeriod: DispatchTimeInterval
+    private let signalProcessGroup: @Sendable (pid_t, Int32) -> Void
     private var processGroup: pid_t?
     private var running = false
     private var cancellationRequested = false
     private var escalation: DispatchWorkItem?
 
-    public init() {
-        // Mutable termination state is initialized by the property defaults.
+    public convenience init() {
+        self.init(
+            gracePeriod: Self.gracePeriod,
+            signalProcessGroup: { processGroup, signal in
+                _ = Darwin.kill(-processGroup, signal)
+            }
+        )
+    }
+
+    init(
+        gracePeriod: DispatchTimeInterval,
+        signalProcessGroup: @escaping @Sendable (pid_t, Int32) -> Void
+    ) {
+        self.gracePeriod = gracePeriod
+        self.signalProcessGroup = signalProcessGroup
     }
 
     public var isRunning: Bool {
@@ -383,7 +408,7 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     }
 
     private func beginTermination(_ processGroup: pid_t) {
-        _ = Darwin.kill(-processGroup, SIGTERM)
+        signalProcessGroup(processGroup, SIGTERM)
         let work = DispatchWorkItem { [weak self] in
             self?.forceTerminate(processGroup)
         }
@@ -396,19 +421,21 @@ public final class OwnedProcessTermination: @unchecked Sendable {
         }
         if shouldSchedule {
             DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.gracePeriod,
+                deadline: .now() + gracePeriod,
                 execute: work
             )
         }
     }
 
     private func forceTerminate(_ processGroup: pid_t) {
-        let stillOwned = lock.withLock {
-            running && self.processGroup == processGroup
+        lock.withLock {
+            guard running, self.processGroup == processGroup else {
+                return
+            }
+            // Keep the ownership check and signal in one critical section.
+            // didExit cannot publish completion and allow a later command to
+            // reuse this process-group identifier before escalation finishes.
+            signalProcessGroup(processGroup, SIGKILL)
         }
-        guard stillOwned else {
-            return
-        }
-        _ = Darwin.kill(-processGroup, SIGKILL)
     }
 }

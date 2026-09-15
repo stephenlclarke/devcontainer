@@ -21,6 +21,9 @@ REPOSITORY_ROOT = TOOLS.parents[1]
 VERIFIER = TOOLS / "verify-package.py"
 VERSION = "1.2.3"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+NATIVE_COMPOSE = json.loads(
+    (TOOLS / "native-compose.json").read_text(encoding="utf-8")
+)
 
 
 class PackageVerificationTests(unittest.TestCase):
@@ -50,6 +53,11 @@ class PackageVerificationTests(unittest.TestCase):
         notarized: bool = True,
         legal_files: bool = True,
         valid_notice_metadata: bool = True,
+        valid_compose_checksum: bool = True,
+        native_config: bool = True,
+        reference_support: bool = True,
+        forbidden_runtime: str | None = None,
+        unexpected_executable: bool = False,
         readme: bytes = b"README\n",
     ) -> tuple[Path, Path]:
         archive_path = root / "devcontainer-release-arm64.tar.gz"
@@ -95,6 +103,51 @@ class PackageVerificationTests(unittest.TestCase):
             ],
             "relationships": [],
         }
+        native_dependency_names = [
+            "container-compose-swift:fixture",
+            "container-compose-go:example.com/fixture",
+            "container-compose-go:standard-library",
+        ]
+
+        def native_spdx_id(name: str) -> str:
+            readable = "".join(
+                character if character.isalnum() else "-" for character in name
+            )
+            digest = hashlib.sha256(name.encode()).hexdigest()[:12]
+            return f"SPDXRef-{readable}-{digest}"
+
+        native_root_identifier = native_spdx_id("container-compose")
+        native_sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [
+                {
+                    "SPDXID": native_root_identifier,
+                    "name": "container-compose",
+                    "versionInfo": NATIVE_COMPOSE["version"],
+                    "licenseDeclared": "Apache-2.0",
+                    "licenseConcluded": "Apache-2.0",
+                    "sourceInfo": f"Exact Git revision {NATIVE_COMPOSE['commit']}",
+                },
+                *[
+                    {
+                        "SPDXID": native_spdx_id(name),
+                        "name": name,
+                        "versionInfo": "1.2.3",
+                        "licenseDeclared": "MIT",
+                        "licenseConcluded": "MIT",
+                    }
+                    for name in native_dependency_names
+                ],
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": native_root_identifier,
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": native_spdx_id(name),
+                }
+                for name in native_dependency_names
+            ],
+        }
         dependencies = load_dependencies(
             REPOSITORY_ROOT / "Package.resolved",
             TOOLS / "dependency-licenses.json",
@@ -121,18 +174,172 @@ class PackageVerificationTests(unittest.TestCase):
                     "relatedSpdxElement": identifier,
                 }
             )
+        for name, version, revision, location, license_name in (
+            (
+                "devcontainers-cli",
+                "0.89.0",
+                "5dc7533314b5ba7ec3875c30143dfe1aec644870",
+                "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.89.0.tgz",
+                "MIT",
+            ),
+            (
+                "container-compose",
+                NATIVE_COMPOSE["version"],
+                NATIVE_COMPOSE["commit"],
+                NATIVE_COMPOSE["repository"],
+                "Apache-2.0",
+            ),
+        ):
+            identifier = "SPDXRef-" + name
+            sbom["packages"].append(
+                {
+                    "SPDXID": identifier,
+                    "name": name,
+                    "versionInfo": version,
+                    "downloadLocation": location,
+                    "licenseDeclared": license_name,
+                    "licenseConcluded": license_name,
+                    "filesAnalyzed": False,
+                    "checksums": [
+                        {
+                            "algorithm": "SHA256",
+                            "checksumValue": (
+                                hashlib.sha256(b"binary").hexdigest()
+                                if name == "container-compose" and valid_compose_checksum
+                                else "a" * 64
+                            ),
+                        }
+                    ],
+                    "sourceInfo": f"Exact Git revision {revision}",
+                }
+            )
+            sbom["relationships"].append(
+                {
+                    "spdxElementId": "SPDXRef-Package-devcontainer",
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": identifier,
+                }
+            )
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
                 f"{package_root}/bin/devcontainer",
+                f"{package_root}/bin/devcontainer-docker",
                 f"{package_root}/bin/devcontainer-compose",
                 f"{package_root}/bin/devcontainer-engine",
                 f"{package_root}/libexec/container/plugins/devcontainer/bin/devcontainer",
+                f"{package_root}/libexec/devcontainer-compose/bin/compose",
+                f"{package_root}/libexec/devcontainer-compose/resources/compose-normalizer",
+                f"{package_root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-arm64",
+                f"{package_root}/libexec/devcontainer-compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
+                f"{package_root}/share/devcontainer/reference-cli/devcontainer.js",
             ):
                 self.add_bytes(archive, name, b"binary", mode=0o755)
+            if forbidden_runtime:
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/bin/{forbidden_runtime}",
+                    b"forbidden runtime",
+                    mode=0o755,
+                )
+            if unexpected_executable:
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/libexec/renamed-runtime",
+                    b"unexpected runtime",
+                    mode=0o755,
+                )
+            if reference_support:
+                for name in (
+                    "CHANGELOG.md",
+                    "LICENSE.txt",
+                    "README.md",
+                    "ThirdPartyNotices.txt",
+                    "dist/spec-node/devContainersSpecCLI.js",
+                    "package.json",
+                    "scripts/updateUID.Dockerfile",
+                ):
+                    self.add_bytes(
+                        archive,
+                        (
+                            f"{package_root}/share/devcontainer/"
+                            f"reference-cli/{name}"
+                        ),
+                        f"Dev Containers {name}\n".encode(),
+                    )
             self.add_bytes(
                 archive,
                 f"{package_root}/libexec/container/plugins/devcontainer/config.toml",
                 b'abstract = "fixture"\n',
+            )
+            self.add_bytes(
+                archive,
+                f"{package_root}/libexec/devcontainer-compose/resources/build-info.json",
+                json.dumps(
+                    {
+                        "version": NATIVE_COMPOSE["version"],
+                        "source": "stephenlclarke/container-compose",
+                        "branch": "detached",
+                        "lane": "bundled-stock",
+                        "commit": NATIVE_COMPOSE["commit"],
+                        "buildType": "release",
+                        "containerSource": "apple/container",
+                        "containerRef": NATIVE_COMPOSE["appleContainerRevision"],
+                        "containerizationSource": "apple/containerization",
+                        "containerizationRef": NATIVE_COMPOSE[
+                            "appleContainerizationRevision"
+                        ],
+                        "composeGoVersion": "v2.12.1",
+                        "runtimeCapabilitySchemaVersion": 1,
+                        "runtimeCapabilities": [],
+                    }
+                ).encode(),
+            )
+            self.add_bytes(
+                archive,
+                f"{package_root}/libexec/devcontainer-compose/LICENSE",
+                b"Apache License, Version 2.0\n",
+            )
+            if native_config:
+                self.add_bytes(
+                    archive,
+                    f"{package_root}/libexec/devcontainer-compose/config.toml",
+                    b'schemaVersion = 1\n',
+                )
+            native_compose_root = (
+                f"{package_root}/libexec/devcontainer-compose"
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/Package.resolved",
+                json.dumps({"pins": [{"identity": "fixture"}]}).encode(),
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/go-modules.txt",
+                b"# example.com/fixture v1.2.3\n## explicit; go 1.26\n",
+            )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/resources/container-compose.spdx.json",
+                json.dumps(native_sbom).encode(),
+            )
+            native_notices = [
+                "container-compose bundled provider third-party notices",
+                "=" * 78,
+                "",
+            ]
+            for name in native_dependency_names:
+                native_notices.extend(
+                    [
+                        f"Dependency: {name}",
+                        "Declared license: MIT",
+                        "x" * 400,
+                    ]
+                )
+            self.add_bytes(
+                archive,
+                f"{native_compose_root}/THIRD-PARTY-NOTICES.txt",
+                ("\n".join(native_notices) + "\n").encode(),
             )
             self.add_bytes(
                 archive,
@@ -258,6 +465,30 @@ class PackageVerificationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe path", result.stderr)
 
+    def test_non_apple_runtime_executables_are_rejected(self) -> None:
+        for runtime in ("docker", "docker-compose", "colima", "podman", "nerdctl"):
+            with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temporary_directory:
+                archive, checksum = self.write_fixture(
+                    Path(temporary_directory),
+                    forbidden_runtime=runtime,
+                )
+                result = self.run_verifier(archive, checksum)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "forbidden non-Apple runtime executable",
+                    result.stderr,
+                )
+
+    def test_unexpected_renamed_runtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                unexpected_executable=True,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("package executable inventory is not exact", result.stderr)
+
     def test_provenance_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             archive, checksum = self.write_fixture(
@@ -305,6 +536,26 @@ class PackageVerificationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("archive is missing", result.stderr)
 
+    def test_native_compose_configuration_cannot_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                native_config=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("config.toml", result.stderr)
+
+    def test_reference_cli_support_files_cannot_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                reference_support=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("reference-cli", result.stderr)
+
     def test_third_party_notice_metadata_cannot_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             archive, checksum = self.write_fixture(
@@ -314,6 +565,16 @@ class PackageVerificationTests(unittest.TestCase):
             result = self.run_verifier(archive, checksum)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("third-party notice metadata", result.stderr)
+
+    def test_bundled_compose_checksum_cannot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive, checksum = self.write_fixture(
+                Path(temporary_directory),
+                valid_compose_checksum=False,
+            )
+            result = self.run_verifier(archive, checksum)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("checksum does not match bundled container-compose", result.stderr)
 
     def test_package_readme_relative_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

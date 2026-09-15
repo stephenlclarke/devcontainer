@@ -22,13 +22,23 @@ import Foundation
 
     struct LiveAppleContainerLoggingRecordClient: AppleContainerLoggingRecordClient {
         let client: ContainerClient
+        let responseTimeout: Duration?
+
+        init(
+            client: ContainerClient,
+            responseTimeout: Duration? = .seconds(10)
+        ) {
+            self.client = client
+            self.responseTimeout = responseTimeout
+        }
 
         func loggingRecords(
             id: String
         ) async throws -> [ContainerLogRecord] {
             try await client.logRecords(
                 id: id,
-                replay: ContainerLogReplayOptions(includeRotated: true)
+                replay: ContainerLogReplayOptions(includeRotated: true),
+                responseTimeout: responseTimeout
             )
         }
 
@@ -37,7 +47,8 @@ import Foundation
         ) async throws -> AsyncThrowingStream<ContainerLogRecord, any Error> {
             try await client.logRecordStream(
                 id: id,
-                replay: ContainerLogReplayOptions(includeRotated: true)
+                replay: ContainerLogReplayOptions(includeRotated: true),
+                responseTimeout: responseTimeout
             )
         }
     }
@@ -319,7 +330,9 @@ import Foundation
     protocol AppleContainerLoggingRecordClient: Sendable {}
 
     struct LiveAppleContainerLoggingRecordClient: AppleContainerLoggingRecordClient {
-        init(client _: ContainerClient) {}
+        init(client _: ContainerClient) {
+            // Stock Apple builds deliberately expose no portable logging-handoff API.
+        }
     }
 
     protocol AppleContainerLoggingHandoffClient: Sendable {}

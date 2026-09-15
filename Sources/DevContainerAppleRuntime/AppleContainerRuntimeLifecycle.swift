@@ -110,22 +110,48 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws {
         let processGeneration = try await launchContainerProcess(id: resolved)
+        try await finishContainerStart(
+            requestedID: requestedID,
+            runtimeID: resolved,
+            context: context,
+            processGeneration: processGeneration
+        )
+    }
+
+    internal func finishContainerStart(
+        requestedID: String,
+        runtimeID resolved: String,
+        context: RuntimeRequestContext,
+        processGeneration: UUID?,
+        recordBeforeWait: Bool = true
+    ) async throws {
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)
         await signalEventPollers()
         let startedAt = Date()
-        try await recordStartedContainer(
-            requestedID: requestedID,
-            runtimeID: resolved,
-            startedAt: startedAt
-        )
-        let inventory = try await listContainers(
-            all: true,
-            labels: [:],
+        if recordBeforeWait {
+            try await recordStartedContainer(
+                requestedID: requestedID,
+                runtimeID: resolved,
+                startedAt: startedAt
+            )
+        }
+        let (snapshot, inventory) = try await waitForStartedContainer(
+            id: resolved,
             context: context
         )
-        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
+        if !recordBeforeWait {
+            try await recordStartedContainer(
+                requestedID: requestedID,
+                runtimeID: resolved,
+                startedAt: startedAt
+            )
+        }
+        guard snapshot.state == .running else {
+            await signalEventPollers()
+            return
+        }
         try await startPortForwarding(
             snapshot: snapshot,
             startedAt: startedAt,
@@ -135,7 +161,42 @@ public extension AppleContainerRuntime {
         await signalEventPollers()
     }
 
-    private func finishStartOperation(id: String, registration: UUID) {
+    private func waitForStartedContainer(
+        id: String,
+        context: RuntimeRequestContext
+    ) async throws -> (
+        snapshot: DevContainerModel.ContainerSnapshot,
+        inventory: [DevContainerModel.ContainerSnapshot]
+    ) {
+        let maximumDeadline = Date().addingTimeInterval(30)
+        let deadline = min(context.deadline ?? maximumDeadline, maximumDeadline)
+        while true {
+            try context.checkActive()
+            let inventory = try await listContainers(
+                all: true,
+                labels: [:],
+                context: context
+            )
+            var snapshot = try resolvedContainerSnapshot(id: id, in: inventory)
+            if snapshot.state == .created, let exit = containerExits[id] {
+                snapshot.state = .stopped
+                snapshot.exitCode = exit.code
+                snapshot.finishedAt = exit.finishedAt
+            }
+            if snapshot.state == .running || snapshot.state == .stopped {
+                return (snapshot, inventory)
+            }
+            guard Date() < deadline else {
+                throw DevContainerError(
+                    .deadlineExceeded,
+                    message: "container \(id) did not leave created state after start"
+                )
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    internal func finishStartOperation(id: String, registration: UUID) {
         guard containerStartOperations[id]?.registration == registration else {
             return
         }
@@ -207,14 +268,19 @@ public extension AppleContainerRuntime {
         try? await synchronizeNetworkHosts(context: RuntimeRequestContext())
 
         var autoRemove = requestedContainers[id]?.spec.autoRemove ?? false
+        var autoRemoveCreatedAt = requestedContainers[id]?.createdAt
         if !autoRemove,
            let metadataStore,
            let metadata = try? await metadataStore.containerMetadata(id: id)
         {
             autoRemove = metadata.spec.autoRemove
+            autoRemoveCreatedAt = metadata.createdAt
         }
         if autoRemove {
-            scheduleAutomaticRemoval(id: id)
+            scheduleAutomaticRemoval(
+                id: id,
+                expectedCreatedAt: autoRemoveCreatedAt
+            )
         }
         await signalEventPollers()
     }
@@ -645,7 +711,10 @@ public extension AppleContainerRuntime {
                     )
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                        scheduleAutomaticRemoval(
+                            id: id,
+                            expectedCreatedAt: snapshot.createdAt
+                        )
                     }
                     return exit.code
                 }
@@ -663,7 +732,10 @@ public extension AppleContainerRuntime {
                     let exitCode = snapshot.exitCode ?? 0
                     try await synchronizeNetworkHosts(context: context)
                     if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                        scheduleAutomaticRemoval(
+                            id: id,
+                            expectedCreatedAt: snapshot.createdAt
+                        )
                     }
                     return exitCode
                 }
@@ -731,7 +803,26 @@ public extension AppleContainerRuntime {
             arguments.append("--follow")
         }
         arguments.append(resolved)
-        return try process(arguments).frames
+        let session = try process(arguments)
+        return AsyncThrowingStream { continuation in
+            let relay = Task {
+                do {
+                    for try await frame in session.frames {
+                        try Task.checkCancellation()
+                        continuation.yield(frame)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                relay.cancel()
+                session.cancel()
+            }
+        }
     }
 
     func attachContainer(

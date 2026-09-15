@@ -13,6 +13,7 @@ fi
 
 readonly BIN_DIRECTORY="$1"
 readonly DEVCONTAINER="$BIN_DIRECTORY/devcontainer"
+readonly DEVCONTAINER_DOCKER="$BIN_DIRECTORY/devcontainer-docker"
 readonly DEVCONTAINER_COMPOSE="$BIN_DIRECTORY/devcontainer-compose"
 readonly PROFILE_DIRECTORY="$BIN_DIRECTORY/codecov"
 TEMPORARY_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/devcontainer-cli-coverage.XXXXXX")"
@@ -28,7 +29,7 @@ readonly CONTAINER_INSTALL_ROOT="$TEMPORARY_DIRECTORY/container-root"
 readonly DIAGNOSTIC_LOG="$TEMPORARY_DIRECTORY/devcontainer.log"
 readonly DIAGNOSTIC_ARCHIVE="$TEMPORARY_DIRECTORY/diagnostics.tar.gz"
 
-for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
+for executable in "$DEVCONTAINER" "$DEVCONTAINER_DOCKER" "$DEVCONTAINER_COMPOSE"; do
   if [[ ! -x "$executable" ]]; then
     printf 'instrumented executable is missing: %s\n' "$executable" >&2
     exit 2
@@ -90,7 +91,7 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'if [[ "${1-}" == "version" ]]; then' \
-  '  printf "%s\n" '\''{"version":"0.1.0","source":"stephenlclarke/container-compose"}'\''' \
+  '  printf "%s\n" '\''{"version":"0.1.0","source":"stephenlclarke/container-compose","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'\''' \
   'else' \
   '  printf "%s\n" "compose-fixture"' \
   'fi' >"$FAKE_COMPOSE"
@@ -118,14 +119,15 @@ readonly COMMON_ENV=(
 )
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --short
+run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER_DOCKER" --version
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format pretty
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format json
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" version --format invalid
 
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" --format shell
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" --format shell
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" --format value
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" --format value
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" context \
   --config "$CONFIGURATION" --format value
 run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" context --format invalid
@@ -133,10 +135,10 @@ run_failure env "${COMMON_ENV[@]}" "$DEVCONTAINER" context --format invalid
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --config "$CONFIGURATION" \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --container "$FAKE_CONTAINER" \
   --state "$STATE_DATABASE" \
-  --socket "$TEMPORARY_DIRECTORY/docker.sock" \
+  --socket "$TEMPORARY_DIRECTORY/engine.sock" \
   --strict
 run_success env "${COMMON_ENV[@]}" "$DEVCONTAINER" configure \
   --config "$CONFIGURATION" --no-strict
@@ -204,16 +206,6 @@ run_failure env "${COMMON_ENV[@]}" \
   "$DEVCONTAINER" doctor \
   --container "$FAKE_CONTAINER"
 
-run_success env "${COMMON_ENV[@]}" \
-  DEVCONTAINER_COMPOSE_PROVIDER=docker \
-  DEVCONTAINER_DOCKER_BIN="$FAKE_DOCKER" \
-  DEVCONTAINER_DOCKER_COMPOSE_BIN="$FAKE_COMPOSE" \
-  "$DEVCONTAINER_COMPOSE" version
-run_success env "${COMMON_ENV[@]}" \
-  DEVCONTAINER_COMPOSE_PROVIDER=docker \
-  DEVCONTAINER_DOCKER_BIN="$FAKE_DOCKER" \
-  DEVCONTAINER_DOCKER_COMPOSE_BIN= \
-  "$DEVCONTAINER_COMPOSE" version
 run_success env "${COMMON_ENV[@]}" \
   DEVCONTAINER_COMPOSE_PROVIDER=container-compose \
   DEVCONTAINER_COMPOSE_BIN="$FAKE_COMPOSE" \

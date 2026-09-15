@@ -107,6 +107,30 @@ struct CoreBehaviorTests {
     }
 
     @Test
+    func `legacy compose provider configuration migrates to native compose`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.toml")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        try Data("[compose]\nprovider = \"docker\"\n".utf8).write(to: path)
+
+        let configuration = try DevContainerConfigurationStore.load(
+            from: path,
+            defaultSocket: "unused"
+        )
+        #expect(configuration.composeProvider == .containerCompose)
+        try DevContainerConfigurationStore.save(configuration, to: path)
+        #expect(
+            try String(contentsOf: path, encoding: .utf8).contains(
+                "provider = \"container-compose\""
+            )
+        )
+    }
+
+    @Test
     // The single scenario makes all four precedence levels directly comparable.
     // swiftlint:disable:next function_body_length
     func `runtime selection uses override environment configuration default precedence`() throws {
@@ -116,9 +140,9 @@ struct CoreBehaviorTests {
         try DevContainerConfigurationStore.save(
             DevContainerConfiguration(
                 backend: .stock,
-                composeProvider: .docker,
+                composeProvider: .containerCompose,
                 containerExecutable: "/config/container",
-                socket: "/config/docker.sock",
+                socket: "/config/engine.sock",
                 stateDatabase: "/config/state.sqlite",
                 strictCompatibility: false
             ),
@@ -129,23 +153,23 @@ struct CoreBehaviorTests {
             "DEVCONTAINER_BACKEND": "container-compose",
             "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
             "DEVCONTAINER_CONTAINER_BIN": "/environment/container",
-            "DEVCONTAINER_SOCKET": "/environment/docker.sock",
+            "DEVCONTAINER_SOCKET": "/environment/engine.sock",
             "DEVCONTAINER_STATE": "/environment/state.sqlite"
         ]
         let selected = try DevContainerRuntimeSelectionResolver.resolve(
             environment: environment,
             configuration: path.path,
             backend: "stock",
-            composeProvider: "docker",
+            composeProvider: "container-compose",
             containerExecutable: "/override/container",
-            socket: "/override/docker.sock",
+            socket: "/override/engine.sock",
             stateDatabase: "/override/state.sqlite"
         )
         #expect(selected.configuration == path)
         #expect(selected.backend == .stock)
-        #expect(selected.composeProvider == .docker)
+        #expect(selected.composeProvider == .containerCompose)
         #expect(selected.containerExecutable == "/override/container")
-        #expect(selected.socket == "/override/docker.sock")
+        #expect(selected.socket == "/override/engine.sock")
         #expect(selected.stateDatabase == "/override/state.sqlite")
         #expect(!selected.strictCompatibility)
 
@@ -156,7 +180,7 @@ struct CoreBehaviorTests {
         #expect(fromEnvironment.backend == .containerCompose)
         #expect(fromEnvironment.composeProvider == .containerCompose)
         #expect(fromEnvironment.containerExecutable == "/environment/container")
-        #expect(fromEnvironment.socket == "/environment/docker.sock")
+        #expect(fromEnvironment.socket == "/environment/engine.sock")
         #expect(fromEnvironment.stateDatabase == "/environment/state.sqlite")
 
         let fromConfiguration = try DevContainerRuntimeSelectionResolver.resolve(
@@ -164,9 +188,9 @@ struct CoreBehaviorTests {
             configuration: path.path
         )
         #expect(fromConfiguration.backend == .stock)
-        #expect(fromConfiguration.composeProvider == .docker)
+        #expect(fromConfiguration.composeProvider == .containerCompose)
         #expect(fromConfiguration.containerExecutable == "/config/container")
-        #expect(fromConfiguration.socket == "/config/docker.sock")
+        #expect(fromConfiguration.socket == "/config/engine.sock")
         #expect(fromConfiguration.stateDatabase == "/config/state.sqlite")
     }
 
@@ -180,7 +204,7 @@ struct CoreBehaviorTests {
             environment: ["DOCKER_HOST": "unix:///tmp/from-docker-host.sock"],
             configuration: path.path
         )
-        #expect(dockerHost.socket == "/tmp/from-docker-host.sock")
+        #expect(dockerHost.socket == DevContainerPathDefaults.socket)
 
         #expect(throws: DevContainerError.self) {
             try DevContainerRuntimeSelectionResolver.resolve(
@@ -188,17 +212,96 @@ struct CoreBehaviorTests {
                 configuration: path.path
             )
         }
-        #expect(throws: DevContainerError.self) {
-            try DevContainerRuntimeSelectionResolver.resolve(
-                environment: ["DOCKER_HOST": "tcp://127.0.0.1:2375"],
-                configuration: path.path
-            )
-        }
+        let remoteDockerHost = try DevContainerRuntimeSelectionResolver.resolve(
+            environment: ["DOCKER_HOST": "tcp://127.0.0.1:2375"],
+            configuration: path.path
+        )
+        #expect(remoteDockerHost.socket == DevContainerPathDefaults.socket)
         #expect(throws: DevContainerError.self) {
             try DevContainerRuntimeSelectionResolver.resolve(
                 environment: [:],
                 configuration: path.path,
                 containerExecutable: "relative-container"
+            )
+        }
+    }
+
+    @Test
+    func `runtime selection rejects Docker runtime socket paths`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("missing.toml")
+
+        for socket in [
+            "/var/run/docker.sock",
+            "/Users/example/.docker/run/docker.raw.sock"
+        ] {
+            #expect(throws: DevContainerError.self) {
+                try DevContainerRuntimeSelectionResolver.resolve(
+                    environment: ["DEVCONTAINER_SOCKET": socket],
+                    configuration: path.path
+                )
+            }
+        }
+
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        let dockerSocket = directory.appendingPathComponent("docker.sock")
+        let projectSocket = directory.appendingPathComponent("engine.sock")
+        try Data().write(to: dockerSocket)
+        try FileManager.default.createSymbolicLink(
+            at: projectSocket,
+            withDestinationURL: dockerSocket
+        )
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: ["DEVCONTAINER_SOCKET": projectSocket.path],
+                configuration: path.path
+            )
+        }
+    }
+
+    @Test
+    func `runtime selection rejects non Apple executable paths`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = directory.appendingPathComponent("missing.toml")
+
+        for executable in [
+            "docker", "docker-compose", "docker-buildx", "colima", "podman", "nerdctl"
+        ] {
+            #expect(throws: DevContainerError.self) {
+                try DevContainerRuntimeSelectionResolver.resolve(
+                    environment: [:],
+                    configuration: configuration.path,
+                    containerExecutable: "/usr/local/bin/\(executable)"
+                )
+            }
+        }
+
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        let target = directory.appendingPathComponent("docker")
+        let alias = directory.appendingPathComponent("container")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: [:],
+                configuration: configuration.path,
+                containerExecutable: alias.path
+            )
+        }
+
+        #expect(throws: DevContainerError.self) {
+            try DevContainerRuntimeSelectionResolver.resolve(
+                environment: [:],
+                configuration: configuration.path,
+                containerExecutable: "/opt/homebrew/bin/podman"
             )
         }
     }

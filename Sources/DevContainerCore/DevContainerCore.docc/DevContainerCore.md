@@ -4,10 +4,10 @@ Run unmodified VS Code Dev Containers tooling on Apple container.
 
 ## Overview
 
-The package supplies a Docker Engine API compatibility boundary backed by
-Apple's native container runtime. The runtime-neutral core owns project
+The package supplies a project-owned, Apple-backed Engine API adapter that
+implements the required Docker-shaped protocol without Docker software. The runtime-neutral core owns project
 identity, provider selection, labels, durable state, and capability checks.
-The optional `container-compose` provider remains process-isolated.
+The required native `container-compose` provider remains process-isolated.
 
 The implementation follows the
 [Development Containers Specification](https://github.com/devcontainers/spec)
@@ -17,11 +17,12 @@ reference consumer.
 
 ### Runtime lanes
 
-- Stock Apple: Docker CLI and Docker Compose use the local compatibility
-  socket backed by a tagged `apple/container` runtime.
-- `container-compose` provider: the configured Compose wrapper invokes Stephen
-  Clarke's separately maintained executable while inspection and exec continue
-  through the compatibility socket. Apple does not supply this provider.
+- Stock Apple: the project-owned compatibility adapter uses the local socket
+  backed by a tagged `apple/container` runtime; multi-service operations use
+  native `container-compose`.
+- Enhanced Container: the same adapters invoke Stephen Clarke's separately
+  maintained runtime and Compose executable when explicitly selected. Apple
+  does not supply a Compose provider.
 - Docker oracle: the same fixtures run against a pinned real Docker Engine and
   establish expected behavior.
 

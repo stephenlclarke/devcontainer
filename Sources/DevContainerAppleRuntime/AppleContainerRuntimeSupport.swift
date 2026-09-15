@@ -22,6 +22,18 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
+private struct RequestedImagePlatform: Decodable {
+    let operatingSystem: String
+    let architecture: String
+    let variant: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case operatingSystem = "os"
+        case architecture
+        case variant
+    }
+}
+
 extension AppleContainerRuntime {
     func containerRecord(
         _ value: ContainerResource.ContainerSnapshot
@@ -329,7 +341,10 @@ extension AppleContainerRuntime {
         return snapshot
     }
 
-    func imageSnapshot(_ value: [String: Any]) -> ImageSnapshot? {
+    func imageSnapshot(
+        _ value: [String: Any],
+        requestedPlatform: String? = nil
+    ) -> ImageSnapshot? {
         guard
             let id = value["id"] as? String,
             let configuration = value["configuration"] as? [String: Any]
@@ -338,24 +353,89 @@ extension AppleContainerRuntime {
         }
         let name = configuration["name"] as? String
         let variants = value["variants"] as? [[String: Any]] ?? []
-        let arm =
-            variants.first(where: {
-                (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
-            }) ?? variants.first
-        let platform = arm?["platform"] as? [String: Any]
-        let imageConfiguration = (arm?["config"] as? [String: Any])?["config"] as? [String: Any] ?? [:]
+        guard let selected = Self.imageVariant(
+            variants,
+            requestedPlatform: requestedPlatform
+        ) else {
+            return nil
+        }
+        let platform = selected["platform"] as? [String: Any]
+        let imageConfiguration = (selected["config"] as? [String: Any])?["config"] as? [String: Any] ?? [:]
         return ImageSnapshot(
             id: "sha256:\(id)",
             references: name.map { [$0] } ?? [],
             createdAt: Self.date(configuration["creationDate"]) ?? Date(timeIntervalSince1970: 0),
-            size: Self.number(arm?["size"]).flatMap(UInt64.init(exactly:)) ?? 0,
+            size: Self.number(selected["size"]).flatMap(UInt64.init(exactly:)) ?? 0,
             architecture: platform?["architecture"] as? String ?? "arm64",
+            variant: platform?["variant"] as? String,
             operatingSystem: platform?["os"] as? String ?? "linux",
             user: imageConfiguration["User"] as? String ?? "",
             environment: imageConfiguration["Env"] as? [String] ?? [],
             entrypoint: imageConfiguration["Entrypoint"] as? [String] ?? [],
             command: imageConfiguration["Cmd"] as? [String] ?? [],
             labels: imageConfiguration["Labels"] as? [String: String] ?? [:]
+        )
+    }
+
+    private static func imageVariant(
+        _ variants: [[String: Any]],
+        requestedPlatform: String?
+    ) -> [String: Any]? {
+        if let requestedPlatform, !requestedPlatform.isEmpty {
+            guard let requested = parseRequestedImagePlatform(requestedPlatform) else {
+                return nil
+            }
+            return variants.first { variant in
+                guard let platform = variant["platform"] as? [String: Any],
+                      platform["os"] as? String == requested.operatingSystem,
+                      platform["architecture"] as? String == requested.architecture
+                else {
+                    return false
+                }
+                return requested.variant == nil
+                    || platform["variant"] as? String == requested.variant
+            }
+        }
+        return variants.first(where: {
+            (($0["platform"] as? [String: Any])?["architecture"] as? String) == "arm64"
+        }) ?? variants.first
+    }
+
+    private static func parseRequestedImagePlatform(
+        _ value: String
+    ) -> RequestedImagePlatform? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.first == "{" {
+            guard let data = trimmed.data(using: .utf8),
+                  let platform = try? JSONDecoder().decode(
+                      RequestedImagePlatform.self,
+                      from: data
+                  ),
+                  !platform.operatingSystem.isEmpty,
+                  !platform.architecture.isEmpty,
+                  platform.variant?.isEmpty != true
+            else {
+                return nil
+            }
+            return platform
+        }
+
+        let components = trimmed.split(
+            separator: "/",
+            maxSplits: 2,
+            omittingEmptySubsequences: false
+        )
+        guard (2 ... 3).contains(components.count),
+              !components[0].isEmpty,
+              !components[1].isEmpty,
+              components.count < 3 || !components[2].isEmpty
+        else {
+            return nil
+        }
+        return RequestedImagePlatform(
+            operatingSystem: String(components[0]),
+            architecture: String(components[1]),
+            variant: components.count == 3 ? String(components[2]) : nil
         )
     }
 
@@ -550,6 +630,73 @@ extension AppleContainerRuntime {
         )
     }
 
+    static func containerPathStat(
+        output: Data,
+        requestedName: String
+    ) throws -> ArchivePathStat {
+        guard let value = String(data: output, encoding: .utf8) else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container path stat returned non-UTF-8 output"
+            )
+        }
+        let fields = value.split(
+            separator: "\n",
+            maxSplits: 3,
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 4,
+              let linuxMode = UInt32(fields[0], radix: 16),
+              let size = Int64(fields[1]),
+              let modified = Int64(fields[2])
+        else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "container path stat returned malformed output"
+            )
+        }
+        var linkTarget = String(fields[3])
+        if linkTarget.hasSuffix("\n") {
+            linkTarget.removeLast()
+        }
+        return ArchivePathStat(
+            name: requestedName,
+            size: size,
+            mode: dockerFileMode(linuxRawMode: linuxMode),
+            modificationTime: Date(timeIntervalSince1970: TimeInterval(modified)),
+            linkTarget: linkTarget
+        )
+    }
+
+    static func dockerFileMode(linuxRawMode mode: UInt32) -> UInt32 {
+        let permissions = mode & 0o777
+        let special: UInt32 = ((mode & 0o4000) == 0 ? 0 : 1 << 23)
+            | ((mode & 0o2000) == 0 ? 0 : 1 << 22)
+            | ((mode & 0o1000) == 0 ? 0 : 1 << 20)
+        let type: UInt32 = switch mode & 0xF000 {
+        case 0x4000: 1 << 31
+        case 0xA000: 1 << 27
+        case 0x6000: 1 << 26
+        case 0x1000: 1 << 25
+        case 0xC000: 1 << 24
+        case 0x2000: (1 << 26) | (1 << 21)
+        default: 0
+        }
+        return permissions | special | type
+    }
+
+    static func archiveTransferNames(
+        for path: String
+    ) -> (requested: String, staging: String) {
+        let component = URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .lastPathComponent
+        if component.isEmpty || component == "/" || component == "." || component == ".." {
+            return (requested: "/", staging: "root")
+        }
+        return (requested: component, staging: component)
+    }
+
     static func dockerFileMode(_ mode: mode_t) -> UInt32 {
         UInt32(mode & (S_IRWXU | S_IRWXG | S_IRWXO))
             | dockerFileTypeMode(mode)
@@ -644,11 +791,16 @@ extension AppleContainerRuntime {
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME"
         ]
-        return Dictionary(
+        var environment = Dictionary(
             uniqueKeysWithValues: allowed.compactMap { key in
                 values[key].map { (key, $0) }
             }
         )
+        // Stock Apple's builder transports the context through a POSIX archive.
+        // Finder provenance is binary metadata and is not a valid UTF-8 PAX
+        // value, so it must never enter that portable archive.
+        environment["COPYFILE_DISABLE"] = "1"
+        return environment
     }
 
     static func dataStream(
@@ -792,57 +944,6 @@ extension AppleContainerRuntime {
                     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                 }
             }
-        }
-    }
-
-    func scheduleAutomaticRemoval(id: String) {
-        guard automaticRemovalRegistrations[id] == nil else {
-            return
-        }
-        let registration = UUID()
-        automaticRemovalRegistrations[id] = registration
-        Task {
-            var identifiers: Set<String> = [id]
-            defer {
-                for identifier in identifiers
-                    where automaticRemovalRegistrations[identifier] == registration
-                {
-                    automaticRemovalRegistrations.removeValue(forKey: identifier)
-                }
-            }
-            try? await Task.sleep(for: .seconds(1))
-            guard automaticRemovalRegistrations[id] == registration,
-                  containerStartOperations[id] == nil,
-                  containerExitRegistrations[id] == nil,
-                  let snapshot = try? await inspectContainer(
-                      id: id,
-                      context: RuntimeRequestContext()
-                  ),
-                  snapshot.state == .stopped
-            else {
-                return
-            }
-            identifiers.formUnion([
-                id,
-                snapshot.runtimeID.rawValue,
-                snapshot.dockerID.rawValue,
-                snapshot.spec.name
-            ])
-            guard identifiers.allSatisfy({
-                containerStartOperations[$0] == nil
-                    && (automaticRemovalRegistrations[$0] == nil
-                        || automaticRemovalRegistrations[$0] == registration)
-            }) else {
-                return
-            }
-            for identifier in identifiers {
-                automaticRemovalRegistrations[identifier] = registration
-            }
-            try? await self.removeContainer(
-                id: id,
-                force: true,
-                context: RuntimeRequestContext()
-            )
         }
     }
 

@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 import Foundation
 
 public enum BackendProvider: String, Codable, CaseIterable, Sendable {
@@ -415,13 +416,158 @@ public struct ArchivePathStat: Codable, Equatable, Sendable {
     }
 }
 
+public final class RuntimeArchiveFile: @unchecked Sendable, Equatable {
+    public let url: URL
+
+    private let lock = NSLock()
+    private var descriptor: Int32
+    private let device: dev_t
+    private let inode: ino_t
+    private var removalPending = true
+
+    public init(baseDirectory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: baseDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        let candidate = baseDirectory.appendingPathComponent(
+            "devcontainer-archive-\(UUID().uuidString.lowercased()).tar"
+        )
+        let opened = Darwin.open(
+            candidate.path,
+            O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o600)
+        )
+        guard opened >= 0 else {
+            throw Self.posixError()
+        }
+        var status = Darwin.stat()
+        guard Darwin.unlink(candidate.path) == 0 else {
+            let failure = errno
+            Darwin.close(opened)
+            errno = failure
+            throw Self.posixError()
+        }
+        guard fchmod(opened, mode_t(0o600)) == 0,
+              fstat(opened, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == geteuid(),
+              status.st_nlink == 0,
+              status.st_mode & 0o777 == 0o600
+        else {
+            let failure = errno
+            Darwin.close(opened)
+            errno = failure == 0 ? EACCES : failure
+            throw Self.posixError()
+        }
+        url = candidate
+        descriptor = opened
+        device = status.st_dev
+        inode = status.st_ino
+    }
+
+    public static func == (lhs: RuntimeArchiveFile, rhs: RuntimeArchiveFile) -> Bool {
+        lhs === rhs || lhs.url == rhs.url
+    }
+
+    public func makeWritingHandle() throws -> FileHandle {
+        try duplicate(resetAndTruncate: true)
+    }
+
+    public func makeReadingHandle() throws -> FileHandle {
+        try duplicate(resetAndTruncate: false)
+    }
+
+    public func remove() {
+        let ownedDescriptor = lock.withLock {
+            guard removalPending else {
+                return Int32(-1)
+            }
+            removalPending = false
+            let value = descriptor
+            descriptor = -1
+            return value
+        }
+        guard ownedDescriptor >= 0 else {
+            return
+        }
+        var status = Darwin.stat()
+        if lstat(url.path, &status) == 0,
+           status.st_dev == device,
+           status.st_ino == inode
+        {
+            Darwin.unlink(url.path)
+        }
+        Darwin.close(ownedDescriptor)
+    }
+
+    deinit {
+        remove()
+    }
+
+    private func duplicate(resetAndTruncate: Bool) throws -> FileHandle {
+        try lock.withLock {
+            guard removalPending, descriptor >= 0 else {
+                errno = EBADF
+                throw Self.posixError()
+            }
+            let copied = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+            guard copied >= 0 else {
+                throw Self.posixError()
+            }
+            if resetAndTruncate, ftruncate(copied, 0) != 0 {
+                let failure = errno
+                Darwin.close(copied)
+                errno = failure
+                throw Self.posixError()
+            }
+            guard lseek(copied, 0, SEEK_SET) == 0 else {
+                let failure = errno
+                Darwin.close(copied)
+                errno = failure
+                throw Self.posixError()
+            }
+            return FileHandle(fileDescriptor: copied, closeOnDealloc: true)
+        }
+    }
+
+    private static func posixError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
+public enum RuntimeArchiveBody: Equatable, Sendable {
+    case bytes(Data)
+    case file(RuntimeArchiveFile)
+}
+
 public struct RuntimeArchive: Equatable, Sendable {
-    public var data: Data
+    public var body: RuntimeArchiveBody
     public var stat: ArchivePathStat
 
     public init(data: Data, stat: ArchivePathStat) {
-        self.data = data
+        body = .bytes(data)
         self.stat = stat
+    }
+
+    public init(file: RuntimeArchiveFile, stat: ArchivePathStat) {
+        body = .file(file)
+        self.stat = stat
+    }
+
+    @available(*, deprecated, message: "Use body so file-backed archives remain streaming")
+    public var data: Data {
+        switch body {
+        case let .bytes(data):
+            return data
+        case let .file(file):
+            guard let handle = try? file.makeReadingHandle() else {
+                return Data()
+            }
+            defer { try? handle.close() }
+            return (try? handle.readToEnd()) ?? Data()
+        }
     }
 }
 
@@ -431,6 +577,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
     public var createdAt: Date
     public var size: UInt64
     public var architecture: String
+    public var variant: String?
     public var operatingSystem: String
     public var user: String
     public var environment: [String]
@@ -444,6 +591,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         createdAt: Date,
         size: UInt64,
         architecture: String = "arm64",
+        variant: String? = nil,
         operatingSystem: String = "linux",
         user: String = "",
         environment: [String] = [],
@@ -456,6 +604,7 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.size = size
         self.architecture = architecture
+        self.variant = variant
         self.operatingSystem = operatingSystem
         self.user = user
         self.environment = environment
@@ -472,6 +621,9 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
     public var buildArguments: [String: String]
     public var target: String?
     public var labels: [String: String]
+    public var noCache: Bool
+    public var pull: Bool
+    public var platform: String?
 
     public init(
         context: Data,
@@ -479,7 +631,10 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
         tags: [String] = [],
         buildArguments: [String: String] = [:],
         target: String? = nil,
-        labels: [String: String] = [:]
+        labels: [String: String] = [:],
+        noCache: Bool = false,
+        pull: Bool = false,
+        platform: String? = nil
     ) {
         self.context = context
         self.dockerfile = dockerfile
@@ -487,6 +642,37 @@ public struct ImageBuildRequest: Codable, Equatable, Sendable {
         self.buildArguments = buildArguments
         self.target = target
         self.labels = labels
+        self.noCache = noCache
+        self.pull = pull
+        self.platform = platform
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case context
+        case dockerfile
+        case tags
+        case buildArguments
+        case target
+        case labels
+        case noCache
+        case pull
+        case platform
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        context = try values.decode(Data.self, forKey: .context)
+        dockerfile = try values.decodeIfPresent(String.self, forKey: .dockerfile) ?? "Dockerfile"
+        tags = try values.decodeIfPresent([String].self, forKey: .tags) ?? []
+        buildArguments = try values.decodeIfPresent(
+            [String: String].self,
+            forKey: .buildArguments
+        ) ?? [:]
+        target = try values.decodeIfPresent(String.self, forKey: .target)
+        labels = try values.decodeIfPresent([String: String].self, forKey: .labels) ?? [:]
+        noCache = try values.decodeIfPresent(Bool.self, forKey: .noCache) ?? false
+        pull = try values.decodeIfPresent(Bool.self, forKey: .pull) ?? false
+        platform = try values.decodeIfPresent(String.self, forKey: .platform)
     }
 }
 

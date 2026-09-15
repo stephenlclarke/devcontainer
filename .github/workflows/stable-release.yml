@@ -1,0 +1,203 @@
+#===----------------------------------------------------------------------===#
+# Copyright © 2026 devcontainer project authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#===----------------------------------------------------------------------===#
+
+name: Stable Release
+run-name: Stable Release · ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact checked-in MAJOR.MINOR.PATCH version"
+        required: true
+        type: string
+
+permissions: read-all
+
+env:
+  GH_PROMPT_DISABLED: "1"
+  GIT_TERMINAL_PROMPT: "0"
+
+concurrency:
+  group: devcontainer-stable-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve exact reviewed candidate
+    if: github.repository == 'stephenlclarke/devcontainer' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - name: Check out protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require exact checked-in release version
+        id: candidate
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            printf 'stable version must be MAJOR.MINOR.PATCH: %s\n' "${VERSION}" >&2
+            exit 2
+          fi
+          checked_in="$(
+            awk '$1 == "DEVCONTAINER_VERSION" && $2 == "?=" { print $3; exit }' \
+              Makefile
+          )"
+          if [[ "${checked_in}" != "${VERSION}" ]]; then
+            printf 'requested version %s differs from reviewed Makefile version %s\n' \
+              "${VERSION}" "${checked_in:-missing}" >&2
+            exit 1
+          fi
+          sha="$(git rev-parse HEAD)"
+          remote_sha="$(
+            git ls-remote --heads origin refs/heads/main | awk '{print $1}' | tail -n 1
+          )"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ || "${sha}" != "${remote_sha}" ]]; then
+            printf 'release source is not exact remote main\n' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --short)" ]]; then
+            printf 'release source checkout is dirty\n' >&2
+            exit 1
+          fi
+          printf 'sha=%s\nversion=%s\n' "${sha}" "${VERSION}" >>"${GITHUB_OUTPUT}"
+
+  tag:
+    name: Sign exact stable tag
+    needs: resolve
+    runs-on: [self-hosted, macOS, ARM64, devcontainer-release, devcontainer-designated-mbp]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact reviewed candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Create or verify the signed stable tag
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          test -z "$(git status --short)"
+          remote_main="$(
+            git ls-remote --heads origin refs/heads/main | awk '{print $1}' | tail -n 1
+          )"
+          test "${remote_main}" = "${CANDIDATE_SHA}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" \
+            >/dev/null 2>&1; then
+            tag_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+            test "$(jq -r '.object.type' <<<"${tag_ref}")" = tag
+            tag_object="$(jq -r '.object.sha' <<<"${tag_ref}")"
+            tag_document="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}"
+            )"
+            test "$(jq -r '.verification.verified' <<<"${tag_document}")" = true
+            test "$(jq -r '.object.type' <<<"${tag_document}")" = commit
+            test "$(jq -r '.object.sha' <<<"${tag_document}")" = "${CANDIDATE_SHA}"
+            exit 0
+          fi
+          test "$(git config --global --get gpg.format)" = ssh
+          test "$(git config --global --get commit.gpgsign)" = true
+          signing_key="$(git config --global --get user.signingkey)"
+          test -n "${signing_key}"
+          test -r "${signing_key}"
+          private_key="${signing_key%.pub}"
+          ssh-keygen -y -P '' -f "${private_key}" >/dev/null
+          git tag -s "${RELEASE_TAG}" \
+            -m "Release ${RELEASE_TAG}" "${CANDIDATE_SHA}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
+  publish:
+    name: Validate and publish stable release
+    needs: [resolve, tag]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: Dispatch, wait for, and verify the complete release transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dispatch_and_wait() {
+            local input_name="$1" workflow="$2" run_id
+            run_id="$(
+              gh api --method POST \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches" \
+                -f ref=main \
+                -f "inputs[${input_name}]=${RELEASE_TAG}" \
+                --jq '.workflow_run_id'
+            )"
+            if [[ ! "${run_id}" =~ ^[0-9]+$ ]]; then
+              printf 'GitHub did not return a run ID for %s\n' "${workflow}" >&2
+              exit 1
+            fi
+            gh run watch "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --exit-status \
+              --interval 30
+          }
+
+          dispatch_and_wait ref stable-release-gate.yml
+          dispatch_and_wait ref prebuilt-binaries.yml
+
+          release="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          )"
+          if ! jq -e \
+            --arg tag "${RELEASE_TAG}" \
+            '(
+              .tag_name == $tag and
+              .draft == false and
+              .prerelease == false and
+              .immutable == true
+            )' <<<"${release}" >/dev/null; then
+            printf 'published release authority is incomplete\n' >&2
+            exit 1
+          fi
+          latest="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name'
+          )"
+          test "${latest}" = "${RELEASE_TAG}"
+          formula="$(
+            gh api \
+              -H 'Accept: application/vnd.github.raw+json' \
+              'repos/stephenlclarke/homebrew-tap/contents/Formula/devcontainer.rb?ref=main'
+          )"
+          grep -F "/releases/download/${RELEASE_TAG}/devcontainer-release-arm64.tar.gz" \
+            <<<"${formula}" >/dev/null
+          printf 'Published and verified devcontainer %s.\n' "${RELEASE_TAG}" \
+            >>"${GITHUB_STEP_SUMMARY}"

@@ -19,7 +19,6 @@ import DevContainerModel
 import Foundation
 
 public enum ComposeProviderKind: String, Codable, CaseIterable, Sendable {
-    case docker
     case containerCompose = "container-compose"
 }
 
@@ -33,7 +32,7 @@ public struct DevContainerConfiguration: Codable, Equatable, Sendable {
 
     public init(
         backend: BackendProvider = .stock,
-        composeProvider: ComposeProviderKind = .docker,
+        composeProvider: ComposeProviderKind = .containerCompose,
         containerExecutable: String = DevContainerPathDefaults.containerExecutable,
         socket: String,
         stateDatabase: String = DevContainerPathDefaults.stateDatabase,
@@ -63,7 +62,7 @@ public enum DevContainerPathDefaults {
     public static var socket: String {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer", isDirectory: true)
-            .appendingPathComponent("docker.sock")
+            .appendingPathComponent("engine.sock")
             .path
     }
 
@@ -129,8 +128,8 @@ public enum DevContainerRuntimeSelectionResolver {
             environment: environment,
             stored: stored.composeProvider
         )
-        let selectedSocket = try nonempty(socket)
-            ?? socketFromEnvironment(environment)
+        let selectedSocket = nonempty(socket)
+            ?? nonempty(environment["DEVCONTAINER_SOCKET"])
             ?? stored.socket
         guard selectedSocket.hasPrefix("/") else {
             throw DevContainerError(
@@ -138,7 +137,8 @@ public enum DevContainerRuntimeSelectionResolver {
                 message: "engine socket must be an absolute local path"
             )
         }
-        let selectedContainer = try absolutePath(
+        let safeSocket = try dockerlessSocketPath(selectedSocket)
+        let selectedContainer = try absoluteExecutablePath(
             nonempty(containerExecutable)
                 ?? nonempty(environment["DEVCONTAINER_CONTAINER_BIN"])
                 ?? stored.containerExecutable,
@@ -155,7 +155,7 @@ public enum DevContainerRuntimeSelectionResolver {
             backend: selectedBackend,
             composeProvider: selectedCompose,
             containerExecutable: selectedContainer,
-            socket: expandHome(selectedSocket),
+            socket: safeSocket,
             stateDatabase: selectedState,
             strictCompatibility: stored.strictCompatibility
         )
@@ -203,25 +203,23 @@ public enum DevContainerRuntimeSelectionResolver {
         return expanded
     }
 
-    private static func socketFromEnvironment(
-        _ environment: [String: String]
-    ) throws -> String? {
-        if let socket = nonempty(environment["DEVCONTAINER_SOCKET"]) {
-            return socket
-        }
-        guard let endpoint = nonempty(environment["DOCKER_HOST"]) else {
-            return nil
-        }
-        guard
-            endpoint.hasPrefix("unix://"),
-            let socket = nonempty(String(endpoint.dropFirst("unix://".count)))
-        else {
+    private static func absoluteExecutablePath(_ value: String, name: String) throws -> String {
+        let path = try absolutePath(value, name: name)
+        try DevContainerExecutablePolicy.requireAppleContainer(path, name: name)
+        return path
+    }
+
+    private static func dockerlessSocketPath(_ value: String) throws -> String {
+        let socket = URL(fileURLWithPath: expandHome(value)).standardizedFileURL
+        let names = [socket, socket.resolvingSymlinksInPath()]
+            .map { $0.lastPathComponent.lowercased() }
+        guard names.allSatisfy({ $0 != "docker.sock" && $0 != "docker.raw.sock" }) else {
             throw DevContainerError(
                 .invalidRequest,
-                message: "DOCKER_HOST must select an absolute local Unix socket"
+                message: "engine socket cannot select a Docker runtime socket"
             )
         }
-        return socket
+        return socket.path
     }
 
     private static func defaultConfiguration(
@@ -328,7 +326,14 @@ public enum DevContainerConfigurationStore {
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
-        let composeText = values["compose.provider"] ?? ComposeProviderKind.docker.rawValue
+        let storedCompose = values["compose.provider"]
+            ?? ComposeProviderKind.containerCompose.rawValue
+        // Versions before 1.0.2 used this legacy spelling for the native
+        // provider. Preserve upgrade access while always saving the canonical
+        // Docker-free provider identity.
+        let composeText = storedCompose == "docker"
+            ? ComposeProviderKind.containerCompose.rawValue
+            : storedCompose
         guard let compose = ComposeProviderKind(rawValue: composeText) else {
             throw DevContainerError(
                 .invalidRequest,

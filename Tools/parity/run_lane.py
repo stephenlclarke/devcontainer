@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import json
 import os
 import platform
@@ -43,25 +42,6 @@ FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
 
 
-def resolver_nameservers(configuration: str) -> list[str]:
-    """Return unique, valid nameservers from a resolver configuration."""
-
-    nameservers: list[str] = []
-    for line in configuration.splitlines():
-        fields = line.split()
-        if len(fields) < 2 or fields[0] != "nameserver":
-            continue
-        candidate = fields[1]
-        address = candidate.split("%", maxsplit=1)[0]
-        try:
-            ipaddress.ip_address(address)
-        except ValueError:
-            continue
-        if candidate not in nameservers:
-            nameservers.append(candidate)
-    return nameservers
-
-
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
@@ -75,16 +55,21 @@ class LaneRunner:
         )
         self.cli_reference = self.manifest["referencePins"]["devcontainersCli"]
         self.cli_version = self.cli_reference["version"]
-        self.docker = os.environ.get("DEVCONTAINER_DOCKER_BIN") or shutil.which(
-            "docker"
-        )
+        if lane == "docker":
+            self.docker = os.environ.get(
+                "DEVCONTAINER_DOCKER_BIN"
+            ) or shutil.which("docker")
+        else:
+            self.docker = os.environ.get(
+                "DEVCONTAINER_CANDIDATE_DOCKER_BIN"
+            ) or str(repository / ".build" / "debug" / "devcontainer-docker")
         self.devcontainer_docker = self.docker
         self.node_package_runner = shutil.which("npx")
         self.engine: subprocess.Popen[bytes] | None = None
         self.engine_log: Any | None = None
-        self.builder_name: str | None = None
-        self.builder_container_ids: set[str] = set()
         self.cleanup_differences: list[str] = []
+        self.baseline_projects: set[str] = set()
+        self.baseline_runtime_containers: set[str] = set()
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
         self.configure_runtime_path()
@@ -113,8 +98,12 @@ class LaneRunner:
     def run(self) -> int:
         if self.lane not in LANES:
             raise ParityError(f"unknown lane {self.lane!r}")
-        if not self.docker:
-            raise ParityError("docker CLI is required")
+        if not self.docker or not os.access(self.docker, os.X_OK):
+            if self.lane == "docker":
+                raise ParityError("Docker oracle CLI is required")
+            raise ParityError(
+                "project-owned devcontainer-docker adapter is required"
+            )
         if not self.node_package_runner:
             raise ParityError("npx is required for the pinned @devcontainers/cli")
 
@@ -156,14 +145,18 @@ class LaneRunner:
         results: list[dict[str, Any]] = []
         try:
             self.configure_devcontainer_client()
-            if self.lane != "apple-stock":
+            if self.lane != "docker" and any(
+                fixture.runner == "feature-test" for fixture in fixtures
+            ):
+                self.prepare_candidate_reference_cli()
+            if self.lane == "docker":
                 self.prepare_builder()
             atomic_json(self.output / "fingerprint.json", self.fingerprint())
+            self.capture_runtime_state_baseline()
             for fixture in fixtures:
                 results.append(self.run_fixture(fixture))
         finally:
             try:
-                self.stop_builder()
                 self.check_runtime_state_cleanup()
             finally:
                 self.stop_engine()
@@ -203,7 +196,7 @@ class LaneRunner:
             shutil.rmtree(self.runtime_root)
         self.runtime_root.mkdir(parents=True)
         self.socket_root = create_socket_root()
-        socket_path = self.socket_root / "docker.sock"
+        socket_path = self.socket_root / "engine.sock"
         state_path = self.runtime_root / "state.sqlite"
         container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
             "container"
@@ -276,77 +269,34 @@ class LaneRunner:
         """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
-        if self.lane == "container-compose":
-            if self.socket_root is None or not self.docker:
-                raise ParityError(
-                    "container-compose Docker client wrapper requires a live engine"
-                )
-            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
-            if not compose.is_file() or not os.access(compose, os.X_OK):
-                raise ParityError(
-                    f"container-compose wrapper is not executable at {compose}"
-                )
-            wrapper = self.socket_root / "docker-container-compose"
-            docker = self.docker
-            wrapper.write_text(
-                "#!/bin/sh\n"
-                "set -eu\n"
-                f"docker={shlex.quote(docker)}\n"
-                f"compose={shlex.quote(str(compose))}\n"
-                'if [ "${1-}" = "compose" ]; then\n'
-                "    shift\n"
-                '    exec "$compose" "$@"\n'
-                "fi\n"
-                'exec "$docker" "$@"\n',
-                encoding="utf-8",
-            )
-            wrapper.chmod(0o700)
-            self.devcontainer_docker = str(wrapper)
-            self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
-            return
-        if self.lane != "apple-stock":
+        if self.lane == "docker":
             return
         if self.socket_root is None or not self.docker:
-            raise ParityError("stock Docker client wrapper requires a live engine")
+            raise ParityError(
+                "candidate compatibility wrapper requires a live engine"
+            )
         self.environment["DOCKER_BUILDKIT"] = "0"
-        wrapper = self.socket_root / "docker-no-buildx"
+        wrapper = self.socket_root / "devcontainer-client"
         if self.docker == str(wrapper):
             return
         docker = self.docker
-        build_filter = (
-            "import os\n"
-            "import sys\n"
-            "docker = sys.argv[1]\n"
-            "arguments = sys.argv[2:]\n"
-            "filtered = []\n"
-            "index = 0\n"
-            "while index < len(arguments):\n"
-            "    argument = arguments[index]\n"
-            '    if argument == "--load":\n'
-            "        index += 1\n"
-            "        continue\n"
-            '    if argument == "--progress":\n'
-            "        index += 2\n"
-            "        continue\n"
-            '    if argument.startswith("--progress="):\n'
-            "        index += 1\n"
-            "        continue\n"
-            "    filtered.append(argument)\n"
-            "    index += 1\n"
-            'os.environ["DOCKER_BUILDKIT"] = "0"\n'
-            "os.execv(docker, [docker, *filtered])\n"
-        )
+        compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+        if not compose.is_file() or not os.access(compose, os.X_OK):
+            raise ParityError(
+                f"native Compose wrapper is not executable at {compose}"
+            )
         wrapper.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
             f"docker={shlex.quote(docker)}\n"
+            f"compose={shlex.quote(str(compose))}\n"
+            'if [ "${1-}" = "compose" ]; then\n'
+            "    shift\n"
+            '    exec "$compose" "$@"\n'
+            "fi\n"
             'if [ "${1-}" = "buildx" ]; then\n'
             '    printf "%s\\n" "docker: unknown command: docker buildx" >&2\n'
             "    exit 1\n"
-            "fi\n"
-            'if [ "${1-}" = "build" ]; then\n'
-            "    exec /usr/bin/env python3 -c "
-            f"{shlex.quote(build_filter)} \"$docker\" \"$@\"\n"
             "fi\n"
             'exec "$docker" "$@"\n',
             encoding="utf-8",
@@ -356,79 +306,46 @@ class LaneRunner:
         self.docker = str(wrapper)
         self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
 
-    def prepare_builder(self) -> None:
-        if self.lane == "docker":
-            self.environment["BUILDX_BUILDER"] = "default"
-            bootstrap = subprocess.run(
-                [self.docker, "buildx", "inspect", "--bootstrap", "default"],
-                cwd=self.repository,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=300,
-            )
-            (self.output / "buildx-bootstrap.log").write_text(
-                bootstrap.stdout + bootstrap.stderr,
-                encoding="utf-8",
-            )
-            if bootstrap.returncode != 0:
-                raise ParityError(
-                    "Docker daemon-integrated BuildKit did not become ready: "
-                    f"{bootstrap.stderr.strip()}"
-                )
-            return
+    def prepare_candidate_reference_cli(self) -> None:
+        """Install the checksum-pinned upstream CLI beside debug candidates."""
 
-        before = self.docker_container_inventory()
-        self.builder_name = f"devcontainer-parity-{self.lane}-{os.getpid()}"
-        arguments = [
-            self.docker,
-            "buildx",
-            "create",
-            "--name",
-            self.builder_name,
-            "--driver",
-            "docker-container",
-            "--driver-opt",
-            "restart-policy=no",
-        ]
-        if self.lane == "container-compose":
-            try:
-                resolver_configuration = Path("/etc/resolv.conf").read_text(
-                    encoding="utf-8"
-                )
-            except OSError as error:
-                raise ParityError(
-                    "cannot read host resolver configuration for the provider builder"
-                ) from error
-            nameservers = resolver_nameservers(resolver_configuration)
-            if not nameservers:
-                raise ParityError(
-                    "host resolver configuration has no usable nameservers"
-                )
-            buildkitd_config = self.output / "buildkitd.toml"
-            encoded = ", ".join(json.dumps(value) for value in nameservers)
-            buildkitd_config.write_text(
-                f"[dns]\n  nameservers = [{encoded}]\n",
-                encoding="utf-8",
-            )
-            arguments += ["--buildkitd-config", str(buildkitd_config)]
+        executable = (self.repository / ".build/debug/devcontainer").resolve()
+        destination = (
+            executable.parent.parent
+            / "share"
+            / "devcontainer"
+            / "reference-cli"
+        )
+        if destination.exists():
+            shutil.rmtree(destination)
         result = subprocess.run(
-            arguments,
+            [
+                str(self.repository / "Tools/release/fetch-reference-cli.sh"),
+                self.cli_version,
+                str(self.cli_reference["tarballSHA256"]),
+                str(destination),
+            ],
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=300,
         )
-        if result.returncode != 0:
-            raise ParityError(
-                f"cannot create isolated buildx builder: {result.stderr.strip()}"
-            )
-        self.environment["BUILDX_BUILDER"] = self.builder_name
+        (self.output / "reference-cli-fetch.log").write_text(
+            result.stdout + result.stderr,
+            encoding="utf-8",
+        )
+        script = destination / "devcontainer.js"
+        if result.returncode != 0 or not script.is_file():
+            raise ParityError("checksum-pinned reference CLI could not be staged")
+
+    def prepare_builder(self) -> None:
+        if self.lane != "docker":
+            raise ParityError("Buildx is restricted to the Docker oracle lane")
+        self.environment["BUILDX_BUILDER"] = "default"
         bootstrap = subprocess.run(
-            [self.docker, "buildx", "inspect", "--bootstrap", self.builder_name],
+            [self.docker, "buildx", "inspect", "--bootstrap", "default"],
             cwd=self.repository,
             env=self.environment,
             capture_output=True,
@@ -442,93 +359,9 @@ class LaneRunner:
         )
         if bootstrap.returncode != 0:
             raise ParityError(
-                f"isolated buildx builder did not become ready: {bootstrap.stderr.strip()}"
+                "Docker daemon-integrated BuildKit did not become ready: "
+                f"{bootstrap.stderr.strip()}"
             )
-        self.builder_container_ids = self.docker_container_inventory() - before
-        if not self.builder_container_ids:
-            raise ParityError(
-                "isolated buildx builder did not expose a dedicated container"
-            )
-
-    def stop_builder(self) -> None:
-        if self.builder_name is None or not self.docker:
-            return
-        builder_name = self.builder_name
-        result = subprocess.run(
-            [self.docker, "buildx", "rm", "--force", self.builder_name],
-            cwd=self.repository,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        (self.output / "buildx-remove.log").write_text(
-            result.stdout + result.stderr,
-            encoding="utf-8",
-        )
-        if result.returncode != 0:
-            self.cleanup_differences.append(
-                f"buildx rm for {builder_name} exited {result.returncode}: "
-                f"{result.stderr.strip()}"
-            )
-
-        remaining = set(self.builder_container_ids)
-        deadline = time.monotonic() + 15
-        while remaining and time.monotonic() < deadline:
-            try:
-                remaining &= self.docker_container_inventory()
-            except ParityError as error:
-                self.cleanup_differences.append(str(error))
-                break
-            if remaining:
-                time.sleep(0.2)
-        if remaining:
-            identifiers = sorted(remaining)
-            cleanup = subprocess.run(
-                [self.docker, "rm", "-f", *identifiers],
-                cwd=self.repository,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-            )
-            diagnostic = (
-                "isolated buildx builder leaked container(s): "
-                + ", ".join(identifiers)
-            )
-            if cleanup.returncode != 0:
-                diagnostic += (
-                    f"; exact cleanup exited {cleanup.returncode}: "
-                    f"{cleanup.stderr.strip()}"
-                )
-            self.cleanup_differences.append(diagnostic)
-        self.builder_name = None
-        self.builder_container_ids = set()
-
-    def docker_container_inventory(self) -> set[str]:
-        """Return the exact container IDs visible through the selected lane."""
-
-        result = subprocess.run(
-            [self.docker, "ps", "-aq"],
-            cwd=self.repository,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            raise ParityError(
-                "cannot inventory parity containers: "
-                f"{result.stderr.strip()}"
-            )
-        return {
-            value.strip()
-            for value in result.stdout.splitlines()
-            if value.strip()
-        }
 
     def check_runtime_state_cleanup(self) -> None:
         """Require Apple lanes to leave no durable project/container ownership."""
@@ -545,25 +378,56 @@ class LaneRunner:
             with closing(
                 sqlite3.connect(f"file:{state}?mode=ro", uri=True)
             ) as database:
-                projects = int(
-                    database.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
-                )
-                containers = int(
-                    database.execute(
-                        "SELECT COUNT(*) FROM runtime_containers"
-                    ).fetchone()[0]
-                )
+                projects = {
+                    str(row[0])
+                    for row in database.execute("SELECT project_key FROM projects")
+                }
+                containers = {
+                    str(row[0])
+                    for row in database.execute(
+                        "SELECT runtime_id FROM runtime_containers"
+                    )
+                }
         except sqlite3.Error as error:
             self.cleanup_differences.append(
                 f"cannot inspect lane state cleanup: {error}"
             )
             return
-        if projects or containers:
+        leaked_projects = projects - getattr(self, "baseline_projects", set())
+        leaked_containers = containers - getattr(
+            self,
+            "baseline_runtime_containers",
+            set(),
+        )
+        if leaked_projects or leaked_containers:
             self.cleanup_differences.append(
                 "lane state leaked "
-                f"{projects} project claim(s) and "
-                f"{containers} runtime container record(s)"
+                f"{len(leaked_projects)} project claim(s) and "
+                f"{len(leaked_containers)} runtime container record(s)"
             )
+
+    def capture_runtime_state_baseline(self) -> None:
+        """Exclude runtime records that predate this isolated parity run."""
+
+        if self.lane == "docker":
+            return
+        state = self.runtime_root / "state.sqlite"
+        try:
+            with closing(
+                sqlite3.connect(f"file:{state}?mode=ro", uri=True)
+            ) as database:
+                self.baseline_projects = {
+                    str(row[0])
+                    for row in database.execute("SELECT project_key FROM projects")
+                }
+                self.baseline_runtime_containers = {
+                    str(row[0])
+                    for row in database.execute(
+                        "SELECT runtime_id FROM runtime_containers"
+                    )
+                }
+        except sqlite3.Error as error:
+            raise ParityError(f"cannot capture lane state baseline: {error}") from error
 
     def require_docker_oracle(self) -> None:
         result = run_checked(
@@ -612,7 +476,6 @@ class LaneRunner:
 
     def fingerprint(self) -> dict[str, Any]:
         commands: dict[str, Sequence[str]] = {
-            "docker": [self.docker, "version", "--format", "{{json .}}"],
             "devcontainers": [
                 self.node_package_runner,
                 "--yes",
@@ -620,6 +483,22 @@ class LaneRunner:
                 "--version",
             ],
         }
+        if self.lane == "docker":
+            commands["docker"] = [
+                self.docker,
+                "version",
+                "--format",
+                "{{json .}}",
+            ]
+        else:
+            commands["compatibilityAdapter"] = [
+                self.docker,
+                "info",
+            ]
+            commands["compatibilityAdapterVersion"] = [
+                self.docker,
+                "--version",
+            ]
         if self.lane != "docker":
             container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or "container"
             commands["container"] = [
@@ -629,7 +508,7 @@ class LaneRunner:
                 "--format",
                 "json",
             ]
-        if self.lane == "container-compose":
+        if self.lane != "docker":
             commands["containerCompose"] = [
                 os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",
@@ -692,6 +571,8 @@ class LaneRunner:
         raw.mkdir(parents=True)
         if fixture.runner == "engine":
             return self.run_engine_fixture(fixture, raw)
+        if fixture.runner == "feature-test":
+            return self.run_feature_test_fixture(fixture, raw)
         workspace_root, workspace = self.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
         started = time.monotonic()
@@ -769,6 +650,187 @@ class LaneRunner:
             "differences": differences,
             "diagnostic": diagnostic,
         }
+
+    def run_feature_test_fixture(
+        self,
+        fixture: Any,
+        raw: Path,
+    ) -> dict[str, Any]:
+        """Run the upstream Feature author test through the selected product."""
+
+        workspace_root, workspace = self.create_fixture_workspace(fixture)
+        started = time.monotonic()
+        status = "failed"
+        observations: dict[str, str] = {}
+        differences: list[str] = []
+        diagnostic = ""
+        cleanup = ""
+        command_temporary_root: Path | None = None
+        baseline_container_ids: set[str] | None = None
+        try:
+            build_root = self.repository / ".build"
+            build_root.mkdir(parents=True, exist_ok=True)
+            command_temporary_root = Path(
+                tempfile.mkdtemp(
+                    prefix=f"feature-test-{self.lane}-",
+                    dir=build_root,
+                )
+            )
+            command_environment = dict(self.environment)
+            command_environment["TMPDIR"] = str(command_temporary_root)
+            baseline_container_ids = set(self.feature_test_container_ids())
+            arguments = [
+                "features",
+                "test",
+                "--project-folder",
+                str(workspace),
+                "--features",
+                "hello",
+                "--skip-scenarios",
+                "--skip-duplicated",
+                "--base-image",
+                (
+                    "ubuntu:24.04@sha256:"
+                    "4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90"
+                ),
+                "--remote-user",
+                "root",
+                "--quiet",
+            ]
+            if self.lane == "docker":
+                command = [
+                    self.node_package_runner,
+                    "--yes",
+                    f"@devcontainers/cli@{self.cli_version}",
+                    *arguments,
+                ]
+            else:
+                command = [
+                    str(self.repository / ".build/debug/devcontainer"),
+                    *arguments,
+                ]
+            result = subprocess.run(
+                command,
+                cwd=self.repository,
+                env=command_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1800,
+            )
+            (raw / "test.stdout").write_text(result.stdout, encoding="utf-8")
+            (raw / "test.stderr").write_text(result.stderr, encoding="utf-8")
+            observations["feature_test"] = (
+                "true" if result.returncode == 0 else "false"
+            )
+            observations["automatic_cleanup"] = (
+                "true"
+                if self.wait_for_feature_test_cleanup(baseline_container_ids)
+                else "false"
+            )
+            differences = assert_contract(fixture, observations)
+            if differences:
+                raise ParityError("; ".join(differences))
+            status = "passed"
+        except (OSError, ParityError, subprocess.TimeoutExpired) as error:
+            diagnostic = str(error)
+        finally:
+            if baseline_container_ids is not None:
+                cleanup = self.cleanup_feature_test_containers(
+                    baseline_container_ids
+                )
+            if command_temporary_root is not None:
+                shutil.rmtree(command_temporary_root, ignore_errors=True)
+            workspace_cleanup = self.cleanup_fixture_workspace(workspace_root)
+            cleanup += workspace_cleanup
+            (raw / "cleanup.log").write_text(cleanup, encoding="utf-8")
+            if "ERROR:" in cleanup:
+                status = "failed"
+                diagnostic = f"{diagnostic}; {cleanup}".strip("; ")
+        return {
+            "id": fixture.identifier,
+            "status": status,
+            "durationSeconds": round(time.monotonic() - started, 3),
+            "observations": observations,
+            "differences": differences,
+            "diagnostic": diagnostic,
+        }
+
+    def feature_test_container_ids(
+        self,
+        excluding: set[str] | None = None,
+    ) -> list[str]:
+        """Return Feature-test containers without accepting free-form filters."""
+
+        result = subprocess.run(
+            [
+                self.docker,
+                "ps",
+                "-aq",
+                "--filter",
+                "label=devcontainer.is_test_run=true",
+            ],
+            cwd=self.repository,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise ParityError("could not inspect Feature-test cleanup state")
+        ignored = excluding or set()
+        return [
+            value
+            for value in (
+                line.strip() for line in result.stdout.splitlines()
+            )
+            if value and value not in ignored
+        ]
+
+    def wait_for_feature_test_cleanup(
+        self,
+        baseline_container_ids: set[str] | None = None,
+    ) -> bool:
+        """Allow asynchronous runtime removal to reach its terminal state."""
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if not self.feature_test_container_ids(baseline_container_ids):
+                return True
+            time.sleep(0.1)
+        return not self.feature_test_container_ids(baseline_container_ids)
+
+    def cleanup_feature_test_containers(
+        self,
+        baseline_container_ids: set[str] | None = None,
+    ) -> str:
+        """Remove only Feature-test containers created by this fixture."""
+
+        try:
+            identifiers = self.feature_test_container_ids(baseline_container_ids)
+        except (OSError, ParityError, subprocess.TimeoutExpired) as error:
+            return f"ERROR: {error}\n"
+        output = ""
+        for identifier in identifiers:
+            result = subprocess.run(
+                [self.docker, "rm", "-f", identifier],
+                cwd=self.repository,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            output += result.stdout + result.stderr
+            removal_in_progress = "removal of container" in result.stderr and (
+                "already in progress" in result.stderr
+            )
+            if result.returncode != 0 and not removal_in_progress:
+                return f"{output}ERROR: could not remove Feature-test container\n"
+        if not self.wait_for_feature_test_cleanup(baseline_container_ids):
+            return f"{output}ERROR: Feature-test container cleanup timed out\n"
+        return output
 
     def fixture_workspace_parent(self) -> Path:
         """Return the Docker-visible parent for copied fixture workspaces."""
@@ -1310,6 +1372,7 @@ class LaneRunner:
     def compose_environment(self) -> dict[str, str]:
         environment = dict(self.environment)
         if self.lane == "container-compose":
+            environment["DEVCONTAINER_BACKEND"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1381,6 +1444,7 @@ class LaneRunner:
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(self.environment)
         if self.lane == "container-compose":
+            environment["DEVCONTAINER_BACKEND"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
                 "DEVCONTAINER_COMPOSE_BIN",
@@ -1391,7 +1455,18 @@ class LaneRunner:
             compose_wrapper = (
                 self.repository / ".build" / "debug" / "devcontainer-compose"
             )
-            command_arguments += ["--docker-compose-path", str(compose_wrapper)]
+            separator = (
+                command_arguments.index("--")
+                if "--" in command_arguments
+                else len(command_arguments)
+            )
+            cli_arguments = command_arguments[:separator]
+            payload_arguments = command_arguments[separator:]
+            if "--docker-path" not in cli_arguments:
+                cli_arguments += ["--docker-path", self.devcontainer_docker]
+            if "--docker-compose-path" not in cli_arguments:
+                cli_arguments += ["--docker-compose-path", str(compose_wrapper)]
+            command_arguments = cli_arguments + payload_arguments
         return subprocess.run(
             [
                 self.node_package_runner,
@@ -1589,10 +1664,10 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
 
 
 def create_socket_root() -> Path:
-    """Create a private root whose Docker socket fits Darwin's path limit."""
+    """Create a private root whose candidate engine socket fits Darwin's limit."""
 
     root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
-    socket_path = root / "docker.sock"
+    socket_path = root / "engine.sock"
     if len(os.fsencode(socket_path)) >= 104:
         shutil.rmtree(root)
         raise ParityError(

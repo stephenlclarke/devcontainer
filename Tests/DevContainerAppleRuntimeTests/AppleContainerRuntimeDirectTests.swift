@@ -25,6 +25,44 @@ import Testing
 
 struct AppleContainerRuntimeDirectTests {
     @Test
+    func `container path stat decodes Linux metadata without copying contents`() throws {
+        let output = Data("a1ff\n42\n1789380000\n../workspace\n".utf8)
+
+        let stat = try AppleContainerRuntime.containerPathStat(
+            output: output,
+            requestedName: "alias"
+        )
+
+        #expect(stat.name == "alias")
+        #expect(stat.size == 42)
+        #expect(stat.mode & (1 << 27) != 0)
+        #expect(stat.mode & 0o777 == 0o777)
+        #expect(stat.modificationTime == Date(timeIntervalSince1970: 1_789_380_000))
+        #expect(stat.linkTarget == "../workspace")
+    }
+
+    @Test
+    func `framed terminal payload ignores pseudo terminal control output`() throws {
+        let start = "__BEGIN__"
+        let end = "__END__"
+        let payload = Data("127.0.0.1 localhost\n".utf8).base64EncodedData()
+        let transcript = Data("^D\u{08}\u{08}\u{1B}[?25l".utf8)
+            + Data(start.utf8)
+            + payload
+            + Data(end.utf8)
+            + Data("\u{1B}[?25h".utf8)
+
+        let encoded = try #require(
+            AppleContainerRuntime.framedPayload(
+                in: transcript,
+                startMarker: start,
+                endMarker: end
+            )
+        )
+        #expect(Data(base64Encoded: encoded) == Data("127.0.0.1 localhost\n".utf8))
+    }
+
+    @Test
     func `direct inventory filters state labels and internal builders`() async throws {
         let fixture = try FakeAppleCLI()
         let inventory = FakeContainerInventory(
@@ -135,7 +173,7 @@ struct AppleContainerRuntimeDirectTests {
 
     @Test
     func `custom distributions retain enhanced inventory through the CLI schema`() async throws {
-        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        let fixture = try FakeAppleCLI(distribution: "custom")
         try fixture.setState("stopped")
         let inventory = FakeContainerInventory(
             snapshots: [
@@ -157,7 +195,7 @@ struct AppleContainerRuntimeDirectTests {
             context: RuntimeRequestContext()
         )
         #expect(descriptor.provider == .containerCompose)
-        #expect(descriptor.distribution == "container-compose")
+        #expect(descriptor.distribution == "custom")
 
         let snapshots = try await runtime.listContainers(
             all: true,
@@ -184,7 +222,7 @@ struct AppleContainerRuntimeDirectTests {
     // The full restart sequence is kept together as one regression scenario.
     // swiftlint:disable:next function_body_length
     func `managed hosts cache is invalidated after container bootstrap`() async throws {
-        let fixture = try FakeAppleCLI()
+        let fixture = try FakeAppleCLI(distribution: "custom")
         let inventory = FakeContainerInventory(
             snapshots: [
                 nativeSnapshot(
@@ -262,6 +300,97 @@ struct AppleContainerRuntimeDirectTests {
                 "# BEGIN devcontainer managed network hosts"
             )
         )
+    }
+
+    @Test
+    func `managed hosts falls back when Apple cannot copy its generated file`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "custom")
+        let inventory = FakeContainerInventory(
+            snapshots: [
+                nativeSnapshot(
+                    id: "fixture",
+                    labels: [:],
+                    status: .running
+                )
+            ]
+        )
+        let files = FakeContainerFileClient(copyOutFailuresRemaining: 1)
+        let runtime = try directRuntime(
+            fixture: fixture,
+            inventory: inventory,
+            files: files
+        )
+        let target = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "fixture"),
+            dockerID: DockerID(rawValue: "fixture"),
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                networks: [NetworkAttachment(name: "direct-network")]
+            ),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 1),
+            networkAddresses: ["direct-network": "192.0.2.2"]
+        )
+
+        try await runtime.synchronizeNetworkHosts(
+            target: target,
+            containers: [target],
+            context: RuntimeRequestContext()
+        )
+
+        #expect(await files.copyOutCallCount() == 1)
+        #expect(await files.copyInCallCount() == 1)
+        #expect(
+            await files.hosts().contains(
+                "# BEGIN devcontainer managed network hosts"
+            )
+        )
+    }
+
+    @Test
+    func `stock managed hosts bypasses the unsupported direct copy path`() async throws {
+        let fixture = try FakeAppleCLI()
+        let inventory = FakeContainerInventory(
+            snapshots: [
+                nativeSnapshot(
+                    id: "fixture",
+                    labels: [:],
+                    status: .running
+                )
+            ]
+        )
+        let files = FakeContainerFileClient()
+        let runtime = try directRuntime(
+            fixture: fixture,
+            inventory: inventory,
+            files: files
+        )
+        _ = try await runtime.descriptor(context: RuntimeRequestContext())
+        let target = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "fixture"),
+            dockerID: DockerID(rawValue: "fixture"),
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                networks: [NetworkAttachment(name: "direct-network")]
+            ),
+            state: .running,
+            createdAt: Date(timeIntervalSince1970: 1),
+            networkAddresses: ["direct-network": "192.0.2.2"]
+        )
+
+        try await runtime.synchronizeNetworkHosts(
+            target: target,
+            containers: [target],
+            context: RuntimeRequestContext()
+        )
+
+        #expect(await files.copyOutCallCount() == 0)
+        #expect(await files.copyInCallCount() == 0)
+        let log = try fixture.log()
+        #expect(log.contains("exec fixture cat /etc/hosts"))
+        #expect(log.contains("exec --interactive fixture /bin/sh -c cat > /etc/hosts"))
     }
 
     @Test
@@ -500,8 +629,14 @@ struct AppleContainerRuntimeDirectTests {
             ]) == [
                 "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
+                "COPYFILE_DISABLE": "1",
                 "HOME": "/fixture"
             ]
+        )
+        #expect(
+            AppleContainerRuntime.filteredEnvironment([
+                "COPYFILE_DISABLE": "0"
+            ])["COPYFILE_DISABLE"] == "1"
         )
         #expect(
             AppleContainerRuntime.containerState(
@@ -727,6 +862,11 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
     private var currentHosts = "127.0.0.1 localhost\n"
     private var copyOutCalls = 0
     private var copyInCalls = 0
+    private var copyOutFailuresRemaining: Int
+
+    init(copyOutFailuresRemaining: Int = 0) {
+        self.copyOutFailuresRemaining = copyOutFailuresRemaining
+    }
 
     func copyIn(
         id _: String,
@@ -743,6 +883,13 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
         destination: String
     ) throws {
         copyOutCalls += 1
+        if copyOutFailuresRemaining > 0 {
+            copyOutFailuresRemaining -= 1
+            throw ContainerizationError(
+                .notFound,
+                message: "copy: path not found '/etc/hosts'"
+            )
+        }
         try Data(currentHosts.utf8).write(
             to: URL(fileURLWithPath: destination)
         )

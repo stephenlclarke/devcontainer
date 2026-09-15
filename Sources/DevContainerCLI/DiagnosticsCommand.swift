@@ -32,7 +32,7 @@ struct DiagnosticsCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Apple container executable.")
     var container: String?
 
-    @Option(name: .long, help: "Optional container-compose executable.")
+    @Option(name: .long, help: "Native container-compose executable.")
     var compose: String?
 
     @Option(name: .long, help: "Devcontainer configuration file.")
@@ -60,6 +60,12 @@ struct DiagnosticsCommand: AsyncParsableCommand {
             socket: socket,
             stateDatabase: state
         )
+        if let compose {
+            try DevContainerExecutablePolicy.requireNativeCompose(
+                compose,
+                name: "diagnostics Compose provider"
+            )
+        }
         let outputURL = try DiagnosticsPaths.outputURL(output)
         let requestedLogs = log.isEmpty
             ? DiagnosticsPaths.defaultLogs().filter {
