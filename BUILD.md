@@ -140,10 +140,12 @@ make check
 unrelated Apple containers. It uses in-memory or process fakes and temporary,
 user-owned sockets; it does not invoke a live `container system` operation.
 
-The Swift test harness prebuilds the tests and service executable. With Xcode
-26.6 it loads the aggregate bundle through Xcode's Swift Testing helper,
-avoiding a reproducible hosted-runner launch stall. With Xcode 27 it asks
-SwiftPM to launch the already-built per-target bundles using `--skip-build`.
+The Swift test harness prebuilds the tests and service executable. With Swift
+6.3 from Xcode 26.6 it loads the aggregate bundle through Xcode's Swift Testing
+helper, avoiding a reproducible hosted-runner launch stall. With Swift 6.4 from
+Xcode 27 it asks the same selected Swift executable to launch the already-built
+per-target bundles using `--skip-build`; this version-based selection also
+prevents a stale aggregate bundle from an older toolchain from being executed.
 Both paths retain the supported Swift Testing runtime, explicit serial
 execution, and exact service executable. The
 harness writes complete output to `.build/swift-test.log`, bounds execution,

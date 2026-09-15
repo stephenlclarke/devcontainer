@@ -84,6 +84,7 @@ swift-test:
 		--show-bin-path)"; \
 		SWIFT_TEST_RESULT_LOG="$(SWIFT_TEST_RESULT_LOG)" \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
 		SWIFT_TEST_SCRATCH_PATH="$(abspath .build)" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
@@ -118,6 +119,7 @@ coverage:
 		SWIFT_TEST_RESULT_LOG=.build/swift-coverage.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
 		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_COVERAGE_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		LLVM_PROFILE_FILE="$$TEST_BIN_PATH/codecov/devcontainer-tests-%m-%p.profraw" \
@@ -254,6 +256,7 @@ asan:
 		SWIFT_TEST_RESULT_LOG=.build/swift-asan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
 		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_ASAN_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		Tools/ci/run-swift-test-shards.sh \
@@ -275,6 +278,7 @@ tsan:
 		SWIFT_TEST_RESULT_LOG=.build/swift-tsan.log \
 		SWIFT_TEST_ATTEMPTS="$(SWIFT_TEST_ATTEMPTS)" \
 		SWIFT_TEST_ACCEPT_SIGNAL_13=0 \
+		SWIFT_TEST_SWIFT="$(SWIFT)" \
 		SWIFT_TEST_SCRATCH_PATH="$(abspath $(SWIFT_TSAN_SCRATCH_PATH))" \
 		DEVCONTAINER_ENGINE_TEST_EXECUTABLE="$$TEST_BIN_PATH/devcontainer-engine" \
 		Tools/ci/run-swift-test.sh \
