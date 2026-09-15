@@ -46,17 +46,19 @@ for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE" "$DEVCONTAINER_DOCKER"
 done
 
 "$LLVM_PROFDATA" merge -sparse "${RAW_PROFILES[@]}" -o "$PROFILE_DATA"
-ADDITIONAL_TEST_OBJECTS=()
+LLVM_COV_COMMAND=(
+  "$LLVM_COV" export
+  -instr-profile "$PROFILE_DATA"
+  "${TEST_BINARIES[0]}"
+)
 for test_binary in "${TEST_BINARIES[@]:1}"; do
-  ADDITIONAL_TEST_OBJECTS+=( -object "$test_binary" )
+  LLVM_COV_COMMAND+=( -object "$test_binary" )
 done
-"$LLVM_COV" export \
-  -instr-profile "$PROFILE_DATA" \
-  "${TEST_BINARIES[0]}" \
-  "${ADDITIONAL_TEST_OBJECTS[@]}" \
-  -object "$DEVCONTAINER" \
-  -object "$DEVCONTAINER_COMPOSE" \
-  -object "$DEVCONTAINER_DOCKER" \
-  >"$OUTPUT"
+LLVM_COV_COMMAND+=(
+  -object "$DEVCONTAINER"
+  -object "$DEVCONTAINER_COMPOSE"
+  -object "$DEVCONTAINER_DOCKER"
+)
+"${LLVM_COV_COMMAND[@]}" >"$OUTPUT"
 
 printf '%s\n' "$OUTPUT"
