@@ -53,11 +53,12 @@ jobs:
           else
             printf 'configured=false\n' >> "${GITHUB_OUTPUT}"
             {
-              printf '## SonarQube analysis not configured\n\n'
-              printf 'Add the repository secret SONAR_TOKEN to enable the '
-              printf 'quality-gate scan. The repository-owned 90%% coverage '
-              printf 'gate still ran and passed.\n'
+              printf '## SonarQube analysis blocked\n\n'
+              printf 'SONAR_TOKEN is unavailable. The required SonarQube '
+              printf 'analysis cannot be skipped; fork changes must be '
+              printf 'validated from a maintainer-owned branch.\n'
             } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
           fi
 
       - name: Cache SonarQube packages
