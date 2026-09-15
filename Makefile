@@ -167,6 +167,12 @@ sonar-scan:
 		exit 2; \
 	fi
 	@sonar_token="$${SONAR_TOKEN:-$${SONAR_TOKEN_PERSONAL:-}}"; \
+	worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
+	if [[ -n "$$worktree_changes" ]]; then \
+		printf 'Sonar analysis requires a clean worktree:\n%s\n' \
+			"$$worktree_changes" >&2; \
+		exit 2; \
+	fi; \
 	head_version="$$(git rev-parse --verify HEAD)"; \
 	sonar_project_version="$${SONAR_PROJECT_VERSION:-$$head_version}"; \
 	if ! [[ "$$sonar_project_version" =~ ^[0-9a-f]{40}$$ ]]; then \

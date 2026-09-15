@@ -238,7 +238,8 @@ code requires:
 The SonarCloud project uses `main` as its real main branch and compares new
 code with the previous analysed version. Every scan is labelled with the exact
 40-character commit checked out by the job; the local target rejects a stale
-or mismatched override. The workflow validates both remote invariants before
+or mismatched override and refuses a dirty worktree, so the label identifies
+the analysed contents. The workflow validates both remote invariants before
 scanning so a newly created project cannot silently publish `Not Computed`
 badges. After the quality gate completes, it also queries unresolved issues
 and `TO_REVIEW` hotspots and fails unless both totals are zero.
