@@ -3,10 +3,23 @@
 import unittest
 from pathlib import Path
 
-from check_evidence import case_count, coverage_counts, validate, validate_report
+from check_evidence import case_count, coverage_counts, expected_tests, require_source_hits, validate, validate_report
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_profile_discovery_inventory(self) -> None:
+        stock = expected_tests("source", "stock")
+        enhanced = expected_tests("source", "enhanced")
+        self.assertEqual(sum(stock.values()), 221)
+        self.assertEqual(sum(enhanced.values()), 232)
+        self.assertEqual(set(stock), set(enhanced))
+
+    def test_required_sources_each_have_hits(self) -> None:
+        require_source_hits("SF:first\nLF:2\nLH:1\nend_of_record\nSF:second\nLF:3\nLH:1\nend_of_record", {"first", "second"})
+        for record in ["SF:second\nLF:2\nLH:0\nend_of_record", "SF:third\nLF:2\nLH:1\nend_of_record"]:
+            with self.subTest(record=record), self.assertRaises(ValueError):
+                require_source_hits("SF:first\nLF:10\nLH:10\nend_of_record\n" + record, {"first", "second"})
+
     def test_nonempty_coverage(self) -> None:
         self.assertEqual(coverage_counts("LF:10\nLH:7\nLF:3\nLH:2\n"), (9, 13))
 

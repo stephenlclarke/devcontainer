@@ -18,6 +18,7 @@
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -392,7 +393,7 @@ private final class DiagnosticsFixture {
     let compose: URL
 
     init() throws {
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-diagnostics-tests-\(UUID().uuidString)",
                 isDirectory: true

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh configure|test-tools | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -21,7 +21,8 @@ error() {
 
 # Explain the intentionally limited migration interface.
 usage() {
-    printf 'Usage: %s configure|test-tools | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
+    printf 'Usage: %s configure|test-tools|restore-candidate ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
+    printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
 }
@@ -60,10 +61,124 @@ validate_arguments() {
     local argument
     for argument in "$@"; do
         case "$argument" in
-            --output_user_root*|--output_base*|--install_base*|--bazelrc*|--host_jvm_args*|--disk_cache*|--repository_cache*|--repo_contents_cache*|--test_tmpdir*|--sandbox_base*|--sandbox_writable_path*|--build_event_*|--profile*|--execution_log_*|--experimental_execution_log*|--remote_cache*|--remote_executor*|--symlink_prefix*|--action_env*|--test_env*|--host_action_env*|--repo_env*|--run_under*)
+            --define=runtime_profile*|runtime_profile=*)
+                error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
+            --override_module*|--override_repository*|--inject_repository*|--lockfile_mode*|--registry*|--module_mirrors*|--experimental_downloader_config*|--enable_bzlmod*|--noenable_bzlmod*|--enable_workspace*|--noenable_workspace*)
+                error "Dependency override is not supported: ${argument%%=*}"; return 2 ;;
+            --client_env*|--output_user_root*|--output_base*|--install_base*|--bazelrc*|--host_jvm_args*|--disk_cache*|--repository_cache*|--repo_contents_cache*|--test_tmpdir*|--sandbox_base*|--sandbox_writable_path*|--build_event_*|--profile*|--execution_log_*|--experimental_execution_log*|--remote_cache*|--remote_executor*|--symlink_prefix*|--action_env*|--test_env*|--host_action_env*|--repo_env*|--run_under*)
                 error "Storage/environment override is not supported: ${argument%%=*}"; return 2 ;;
+            *) : ;; # Other target and diagnostic options remain Bazel's responsibility.
         esac
     done
+}
+
+# Resolve only the two coherent dependency profiles, rejecting ambiguous requests.
+runtime_profile() {
+    local argument profile=enhanced selected=""
+    for argument in "$@"; do
+        case "$argument" in
+            --config=stock|--config=enhanced)
+                profile="${argument#--config=}"
+                [[ -z "$selected" || "$selected" == "$profile" ]] || {
+                    error 'Select one runtime profile per invocation.'; return 2;
+                }
+                selected="$profile" ;;
+            --config) error 'Use --config=NAME, not split config arguments.'; return 2 ;;
+            *) : ;; # Non-profile options do not affect this selection.
+        esac
+    done
+    printf '%s\n' "$profile"
+}
+
+# Emit non-profile arguments losslessly; the selected profile is added once.
+execution_arguments() {
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            --config=stock|--config=enhanced) : ;; # Normalized by runtime_profile.
+            *) printf '%s\0' "$argument" ;;
+        esac
+    done
+}
+
+# Bazel accepts all three spellings for a root-package target.
+is_qualification_label() {
+    case "$1" in
+        bazel_qualification|:bazel_qualification|//:bazel_qualification) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Never let shell credentials/startup hooks enter Bazel or its event stream.
+clean_environment() {
+    local host_integration="${DEVCONTAINER_HOST_INTEGRATION:-0}"
+    [[ "$host_integration" == 0 || "$host_integration" == 1 ]] || { error 'Host integration opt-in must be 0 or 1.'; return 2; }
+    /usr/bin/env -i HOME="$HOME" USER="$(/usr/bin/id -un)" LOGNAME="$(/usr/bin/id -un)" \
+        PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+        TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" \
+        DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+        PYTHONDONTWRITEBYTECODE=1 DEVCONTAINER_HOST_INTEGRATION="$host_integration" "$@"
+}
+
+# Assemble a nonempty argument array, including on macOS Bash 3.2 query paths.
+run_bazel() {
+    local repo="$1" command="$2" invocation="$3" executable="$4" profile="$5"
+    shift 5
+    local part bazel_args=()
+    bazel_args=(--nosystem_rc --nohome_rc --noworkspace_rc "--bazelrc=$repo/.bazelrc"
+        "--output_user_root=$SSD_ROOT/output" "--host_jvm_args=-Djava.io.tmpdir=$TMPDIR"
+        "$command" "--config=$profile")
+    while IFS= read -r -d '' part; do bazel_args+=("$part"); done < <(execution_arguments "$@")
+    case "$command" in
+        build|test|coverage) bazel_args+=("--disk_cache=$SSD_ROOT/cache") ;;
+        *) : ;; # Query commands have no action cache.
+    esac
+    case "$command" in
+        test|coverage) bazel_args+=("--test_tmpdir=$SSD_ROOT/t") ;;
+        *) : ;; # Only test executions need test scratch.
+    esac
+    clean_environment "$executable" "${bazel_args[@]}" \
+        "--repository_cache=$SSD_ROOT/repository" "--build_event_json_file=$invocation/events.json"
+}
+
+# Run Bazel once and seal reports while the workspace output lease is held.
+execute_invocation() {
+    local repo="$1" command="$2" invocation="$3" executable="$4" profile="$5"
+    shift 5
+    local part suite="" status=0 validation=0
+    # Bazel info emits no BEP. It is a leased diagnostic, not retained build proof.
+    if [[ "$command" == info ]]; then
+        run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@"
+        return
+    fi
+    /usr/bin/python3 "$repo/Tools/bazel/input_identity.py" "$repo" > "$invocation/inputs-before.json" || return
+    run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@" || status=$?
+    /usr/bin/python3 "$repo/Tools/bazel/input_identity.py" "$repo" \
+        --verify "$invocation/inputs-before.json" > "$invocation/inputs-after.json" || validation=$?
+    if [[ "$command" == coverage && "$status" == 0 && "$validation" == 0 ]]; then
+        for part in "$@"; do
+            if is_qualification_label "$part"; then suite=qualification; fi
+            case "$part" in
+                source_tests|:source_tests|//:source_tests|unit|:unit|//:unit) suite=source ;;
+                *) : ;; # Focused targets retain raw evidence without a whole-suite claim.
+            esac
+        done
+        if [[ -n "$suite" ]]; then
+            local report=qualification.json
+            [[ "$suite" != source ]] || report=source-tests.json
+            /usr/bin/python3 "$repo/Tools/bazel/check_evidence.py" --suite "$suite" --profile "$profile" \
+                "$invocation/events.json" > "$invocation/$report" || validation=$?
+        fi
+    fi
+    printf '{"bazel_exit_code":%d,"validation_exit_code":%d,"suite":"%s"}\n' \
+        "$status" "$validation" "$suite" > "$invocation/outcome.json"
+    # Failed completed runs are retained too; an interrupted/incomplete BEP is
+    # deliberately not sealed as a result. Nothing schedules a retry here.
+    /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" "$invocation/events.json" || {
+        error "Evidence retention failed; preserve $invocation before another invocation."; return 2;
+    }
+    [[ "$status" == 0 ]] || return "$status"
+    return "$validation"
 }
 
 # Authenticate bytes before running downloaded tooling, including cache hits.
@@ -77,15 +192,16 @@ verify_digest() {
 # Resolve and enrol storage before allowing build or test tooling to start.
 main() {
     local command="${1:---help}" repo config_root config metadata expected actual mount internal
-    local executable partial invocation bazel_args=() command_args=() pinned_version part
+    local executable partial invocation bazel_args=() pinned_version part profile workspace_key
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|cleanup|restore-candidate|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
     validate_arguments "$@" || return
+    profile="$(runtime_profile "$@")" || return
     repo="$(cd "$(dirname "$SELF_PATH")/../.." && pwd -P)"
     read -r pinned_version < "$repo/.bazelversion"
     [[ "$pinned_version" == "$BAZEL_VERSION" ]] || { error 'Bazel version and verified bootstrap checksum disagree.'; return 2; }
@@ -116,10 +232,26 @@ main() {
     validate_volume "$expected" "$actual" "$mount" "$internal" || return
     umask 077
     ensure_directory "$SSD_ROOT" || return
-    for part in bootstrap tmp output cache repository invocations; do
+    for part in bootstrap tmp t output cache repository invocations locks; do
         ensure_directory "$SSD_ROOT/$part" || return
     done
-    export TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp"
+    export TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" PYTHONDONTWRITEBYTECODE=1
+    ensure_directory "$config_root" || return
+    if [[ "$command" == cleanup ]]; then
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/hygiene.py" cleanup "$@"
+        return
+    fi
+    if [[ "$command" == acquire-releases ]]; then
+        [[ $# == 1 || ( $# == 2 && "$2" == --offline ) ]] || { error 'acquire-releases requires LOCK [--offline].'; return 2; }
+        clean_environment /usr/bin/lockf -k -t 300 "$SSD_ROOT/locks/reference-store.lock" \
+            /usr/bin/python3 "$repo/Tools/bazel/release_inputs.py" "$@"
+        return
+    fi
+    if [[ "$command" == restore-candidate ]]; then
+        [[ $# == 1 ]] || { error 'restore-candidate requires one retained invocation ID.'; return 2; }
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" --restore-candidate "$1"
+        return
+    fi
     if [[ "$command" == test-tools ]]; then
         [[ $# == 0 ]] || { error 'test-tools accepts no arguments.'; return 2; }
         export PYTHONDONTWRITEBYTECODE=1
@@ -147,27 +279,21 @@ main() {
     cd "$repo"
     case "$command" in
         shutdown) [[ $# == 0 ]] || { error 'shutdown accepts no arguments.'; return 2; }
-            exec "$executable" "${bazel_args[@]}" shutdown ;;
-        *) invocation="$(mktemp -d "$SSD_ROOT/invocations/run.XXXXXX")"
-            printf 'Bazel evidence: %s\n' "$invocation" >&2
-            case "$command" in
-                build|test|coverage) command_args+=("--disk_cache=$SSD_ROOT/cache") ;;
-            esac
-            case "$command" in
-                test|coverage) command_args+=("--test_tmpdir=$SSD_ROOT/tmp/tests") ;;
-            esac
-            "$executable" "${bazel_args[@]}" "$command" "$@" \
-                "${command_args[@]}" "--repository_cache=$SSD_ROOT/repository" \
-                "--build_event_json_file=$invocation/events.json" || return
-            if [[ "$command" == coverage ]]; then
-                for part in "$@"; do
-                    if [[ "$part" == //:bazel_qualification ]]; then
-                        PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$repo/Tools/bazel/check_evidence.py" \
-                            "$invocation/events.json" > "$invocation/qualification.json" || return
-                        printf 'Validated qualification evidence: %s/qualification.json\n' "$invocation"
-                    fi
-                done
-            fi ;;
+            clean_environment "$executable" "${bazel_args[@]}" shutdown ;;
+        *) if [[ "$command" == info ]]; then
+                # info writes no BEP, so do not leave an empty run directory.
+                invocation="$SSD_ROOT/invocations/diagnostic-info"
+            else
+                invocation="$(mktemp -d "$SSD_ROOT/invocations/run.XXXXXX")"
+                clean_environment /usr/bin/python3 "$repo/Tools/bazel/hygiene.py" register "$invocation" "$repo" || return
+                printf 'Bazel evidence: %s\n' "$invocation" >&2
+            fi
+            workspace_key="$(printf '%s' "$repo" | /usr/bin/shasum -a 256)"
+            # The child expands its own positional arguments under the lease.
+            # shellcheck disable=SC2016
+            clean_environment /usr/bin/lockf -k -t 300 "$SSD_ROOT/locks/${workspace_key%% *}.lock" \
+                /bin/bash -c 'source "$1"; shift; execute_invocation "$@"' _ "$SELF_PATH" \
+                "$repo" "$command" "$invocation" "$executable" "$profile" "$@" ;;
     esac
 }
 

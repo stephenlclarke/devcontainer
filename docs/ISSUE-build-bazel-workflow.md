@@ -1,4 +1,4 @@
-# Issue: qualify native Bazel workflow
+# Issue: implement the native Bazel workflow
 
 ## Problem description
 
@@ -6,8 +6,8 @@ The existing family workflow repeatedly rebuilds/retests work and couples recove
 
 ## Scope and acceptance
 
-First prove native Swift/SQLite targets, version generation, real XCTest/Swift Testing discovery, meaningful coverage, sanitizer configurations and unchanged-input cache reuse. Preserve existing release transactions and unrelated adapter work. This initial slice must not be presented as a full migration.
+Implement the complete native stock/enhanced product and test graph, version generation, real XCTest/Swift Testing discovery, meaningful coverage and unchanged-input cache reuse. Retain evidence before output reuse, reject mixed-source receipts and keep scratch on the enrolled SSD. Continue to artifact-only parity, recovery/publication, family adoption and ownership-based hygiene before replacing production workflows. Preserve existing release transactions and unrelated adapter work; native compilation alone is not the full migration.
 
 ## Resolution and remaining risk
 
-See [qualification implementation](bazel-workflow.md) and [matching change record](PR-build-bazel-workflow.md). The full external dependency graph, parity downloads, durable release journal, retention/cleanup and CI cutover remain explicit gates.
+See [implementation status](bazel-workflow.md) and [PR 83](PR-83.md). The complete native graph, transactional evidence/candidate retention, archive restore, pinned GitHub binary acquisition and owned invocation cleanup are implemented. Host and quality qualification, complete artifact-only parity, durable release effects, family adoption, broader cleanup and CI cutover remain explicit gates.

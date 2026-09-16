@@ -605,7 +605,7 @@ extension AppleContainerRuntime {
         guard managedHostsState[targetID] != nextState else {
             return
         }
-        let temporary = try TemporaryDirectory(base: Self.transferDirectory)
+        let temporary = try TemporaryDirectory(base: transferRoot)
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
         if useDirectContainerAPI {
@@ -649,7 +649,9 @@ extension AppleContainerRuntime {
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
         if current != updated {
-            try Data(updated.utf8).write(to: localHosts, options: .atomic)
+            // This private staging copy needs no atomic publication. Keep its
+            // downloaded permissions rather than changing transfer metadata.
+            try Data(updated.utf8).write(to: localHosts)
             if useDirectContainerAPI {
                 do {
                     try context.checkActive()

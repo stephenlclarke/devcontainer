@@ -17,6 +17,7 @@
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -118,7 +119,7 @@ struct AppleRuntimeStreamTests {
 
     @Test
     func `process cancellation escalates across the complete owned process group`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
+        let pidFile = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-process-group-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: pidFile) }
         let session = try AppleProcessSession(

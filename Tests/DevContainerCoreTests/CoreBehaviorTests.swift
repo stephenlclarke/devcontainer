@@ -17,6 +17,7 @@
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -385,7 +386,7 @@ struct CoreBehaviorTests {
     }
 
     private func temporaryDirectory() -> URL {
-        FileManager.default.temporaryDirectory
+        TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-core-\(UUID().uuidString)", isDirectory: true)
     }
 }

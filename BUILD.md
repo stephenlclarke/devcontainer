@@ -74,6 +74,8 @@ git diff --exit-code -- Package.resolved
 
 ## Build commands
 
+The [opt-in native Bazel workflow](docs/bazel-workflow.md) builds all three project executables with exact stock or enhanced pins. Run `make bazel-configure`, then `make bazel-build` and `make bazel-unit`; select stock with `BAZEL_PROFILE=stock`. `make bazel-package` creates and retains an unsigned candidate; `Tools/bazel/run.sh restore-candidate INVOCATION-ID` restores its verified bytes without rebuilding. Bazel scratch/cache storage is restricted to the enrolled external SSD, with completed evidence retained internally. This path does not yet replace signing, release publication or runtime parity.
+
 ```console
 make build
 make build-release

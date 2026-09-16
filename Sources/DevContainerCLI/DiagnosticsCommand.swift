@@ -255,7 +255,10 @@ struct DiagnosticsBundleBuilder {
     }
 
     private func makeStagingDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
+        let temporaryRoot = ProcessInfo.processInfo.environment["TMPDIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory
+        let directory = temporaryRoot
             .appendingPathComponent(
                 "devcontainer-diagnostics-\(UUID().uuidString)",
                 isDirectory: true
@@ -686,7 +689,7 @@ struct DiagnosticsBundleBuilder {
     }
 
     private func write(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .atomic)
+        try AtomicFile.write(data, to: url)
         guard chmod(url.path, S_IRUSR | S_IWUSR) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }

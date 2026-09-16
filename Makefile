@@ -43,7 +43,9 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: release-version
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
-.PHONY: bazel-configure bazel-qualify bazel-test-tools
+.PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
+BAZEL_PROFILE ?= enhanced
+RELEASE_SET ?= Tools/bazel/releases.lock.json
 
 # Opt-in native qualification; existing product/release entry points are unchanged.
 bazel-configure:
@@ -54,6 +56,31 @@ bazel-qualify:
 
 bazel-test-tools:
 	Tools/bazel/run.sh test-tools
+
+bazel-build:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
+
+bazel-unit:
+	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //:unit
+
+bazel-package:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) --config=release //:candidate_archive
+
+bazel-acquire-releases:
+	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
+
+bazel-cleanup:
+	Tools/bazel/run.sh cleanup
+
+# Explicit coherent checkpoint, not the per-edit loop. Profile-specific actions
+# are distinct; each invocation shares its native product/test dependency graph.
+bazel-checkpoint:
+	Tools/bazel/run.sh test-tools
+	Tools/bazel/run.sh coverage --config=stock //:unit //:product
+	Tools/bazel/run.sh build --config=stock --config=release //:candidate_archive
+	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product
+	Tools/bazel/run.sh build --config=release //:candidate_archive
+	Tools/bazel/run.sh cleanup --apply
 
 all: workflow
 

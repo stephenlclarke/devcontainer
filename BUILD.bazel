@@ -1,12 +1,37 @@
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_swift//swift:swift_binary.bzl", "swift_binary")
-load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
-load("@rules_swift//swift:swift_library.bzl", "swift_library")
-load("@rules_swift//swift:swift_test.bzl", "swift_test")
+load("@build_bazel_rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("//Tools/bazel:swift_rules.bzl", "swift_binary", "swift_library", "swift_test")
 load("//Tools/bazel:build_identity.bzl", "build_identity")
+load("//Tools/bazel:candidate_archive.bzl", "candidate_archive")
 
 package(default_visibility = ["//visibility:public"])
+
+candidate_archive(
+    name = "candidate_archive",
+    binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine"],
+    makefile = "Makefile",
+    resolved = select({":stock_runtime": "Package.stock.resolved", "//conditions:default": "Package.resolved"}),
+    profile = select({":stock_runtime": "stock", "//conditions:default": "enhanced"}),
+    resources = ["LICENSE", "NOTICE.md", "Packaging/devcontainer-plugin-config.toml", "Packaging/com.github.stephenlclarke.devcontainer.plist.in"],
+)
+
+config_setting(
+    name = "stock_runtime",
+    define_values = {"runtime_profile": "stock"},
+)
+
+RUNTIME_COPTS = select({
+    ":stock_runtime": [],
+    "//conditions:default": ["-DDEVCONTAINER_ENHANCED_RUNTIME"],
+})
+
+swift_library(
+    name = "DevContainerTestStorage",
+    srcs = glob(["Sources/DevContainerTestStorage/*.swift"]),
+    module_name = "DevContainerTestStorage",
+    testonly = True,
+)
 
 swift_binary(
     name = "DevContainerVersionGenerator",
@@ -59,12 +84,241 @@ swift_library(
     deps = [":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState"],
 )
 
+swift_library(
+    name = "DevContainerProcess",
+    srcs = glob(["Sources/DevContainerProcess/*.swift"]),
+    module_name = "DevContainerProcess",
+    deps = [":DevContainerModel", "@swiftpkg_containerization//:ContainerizationOS"],
+)
+
+swift_library(
+    name = "DevContainerComposeProvider",
+    srcs = glob(["Sources/DevContainerComposeProvider/*.swift"]),
+    module_name = "DevContainerComposeProvider",
+    deps = [":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI"],
+)
+
+# Name the entry point once so tests import the same compiled CLI module.
+swift_library(
+    name = "DevContainerCLI",
+    srcs = glob(["Sources/DevContainerCLI/*.swift"]),
+    module_name = "DevContainerCLI",
+    copts = ["-parse-as-library", "-Xfrontend", "-entry-point-function-name", "-Xfrontend", "DevContainerCLI_main"],
+    deps = [
+        ":DevContainerComposeProvider",
+        ":DevContainerCore",
+        ":DevContainerModel",
+        ":DevContainerProcess",
+        ":DevContainerState",
+        "@swiftpkg_swift_argument_parser//:ArgumentParser",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_binary(
+    name = "devcontainer",
+    linkopts = ["-Wl,-alias,_DevContainerCLI_main,_main", "-Wl,-u,_DevContainerCLI_main"],
+    deps = [":DevContainerCLI"],
+)
+
+swift_library(
+    name = "DevContainerDockerAPI",
+    srcs = glob(["Sources/DevContainerDockerAPI/*.swift"]),
+    module_name = "DevContainerDockerAPI",
+    deps = [
+        ":DevContainerCore", ":DevContainerModel", ":DevContainerRuntimeSPI",
+        "@swiftpkg_container_engine_api//:ContainerEngineRouter",
+        "@swiftpkg_container_engine_api//:ContainerEngineWire",
+        "@swiftpkg_swift_nio//:NIOCore", "@swiftpkg_swift_nio//:NIOHTTP1",
+    ],
+)
+
+swift_library(
+    name = "DevContainerAppleRuntime",
+    srcs = glob(["Sources/DevContainerAppleRuntime/*.swift"]),
+    module_name = "DevContainerAppleRuntime",
+    copts = RUNTIME_COPTS,
+    deps = [
+        ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI",
+        "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
+        "@swiftpkg_container//:ContainerAPIClient", "@swiftpkg_container//:ContainerBuild",
+        "@swiftpkg_container//:ContainerResource", "@swiftpkg_container//:SocketForwarder",
+        "@swiftpkg_containerization//:ContainerizationOS",
+        "@swiftpkg_swift_nio//:NIOCore", "@swiftpkg_swift_nio//:NIOPosix",
+    ],
+)
+
+swift_library(
+    name = "DevContainerTestSupport",
+    srcs = glob(["Sources/DevContainerTestSupport/*.swift"]),
+    module_name = "DevContainerTestSupport",
+    deps = [":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerRuntimeSPI"],
+)
+
+swift_library(
+    name = "DevContainerService",
+    srcs = glob(["Sources/DevContainerService/*.swift"]),
+    module_name = "DevContainerService",
+    copts = ["-parse-as-library", "-Xfrontend", "-entry-point-function-name", "-Xfrontend", "DevContainerService_main"] + RUNTIME_COPTS,
+    deps = [
+        ":DevContainerAppleRuntime", ":DevContainerCore", ":DevContainerDockerAPI",
+        ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState",
+        "@swiftpkg_container_engine_api//:ContainerEngineGateway",
+        "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
+        "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
+        "@swiftpkg_container_engine_api//:ContainerUnixHTTPServer",
+        "@swiftpkg_swift_argument_parser//:ArgumentParser", "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_binary(
+    name = "devcontainer-engine",
+    linkopts = ["-Wl,-alias,_DevContainerService_main,_main", "-Wl,-u,_DevContainerService_main"],
+    deps = [":DevContainerService"],
+)
+
+swift_library(
+    name = "DevContainerComposeCLI",
+    srcs = glob(["Sources/DevContainerComposeCLI/*.swift"]),
+    module_name = "DevContainerComposeCLI",
+    copts = ["-parse-as-library", "-Xfrontend", "-entry-point-function-name", "-Xfrontend", "DevContainerComposeCLI_main"],
+    deps = [":DevContainerComposeProvider", ":DevContainerCore", ":DevContainerModel", ":DevContainerProcess", ":DevContainerState"],
+)
+
+swift_binary(
+    name = "devcontainer-compose",
+    linkopts = ["-Wl,-alias,_DevContainerComposeCLI_main,_main", "-Wl,-u,_DevContainerComposeCLI_main"],
+    deps = [":DevContainerComposeCLI"],
+)
+
+filegroup(
+    name = "products",
+    srcs = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine"],
+)
+
 swift_test(
     name = "DevContainerModelTests",
     srcs = glob(["Tests/DevContainerModelTests/*.swift"]),
     data = ["Makefile"],
     module_name = "DevContainerModelTests",
     deps = [":DevContainerModel"],
+)
+
+swift_test(
+    name = "DevContainerCLITests",
+    srcs = glob(["Tests/DevContainerCLITests/*.swift"]),
+    module_name = "DevContainerCLITests",
+    deps = [":DevContainerCLI", ":DevContainerCore", ":DevContainerModel", ":DevContainerState"],
+)
+
+swift_test(
+    name = "DevContainerProcessTests",
+    srcs = glob(["Tests/DevContainerProcessTests/*.swift"]),
+    module_name = "DevContainerProcessTests",
+    deps = [":DevContainerProcess"],
+)
+
+swift_test(
+    name = "DevContainerCoreTests",
+    srcs = glob(["Tests/DevContainerCoreTests/*.swift"]),
+    module_name = "DevContainerCoreTests",
+    deps = [":DevContainerCore", ":DevContainerModel", ":DevContainerState", ":DevContainerTestSupport"],
+)
+
+swift_test(
+    name = "DevContainerDockerAPITests",
+    srcs = glob(["Tests/DevContainerDockerAPITests/*.swift"]),
+    module_name = "DevContainerDockerAPITests",
+    deps = [":DevContainerCore", ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerState", ":DevContainerTestSupport"],
+)
+
+swift_test(
+    name = "DevContainerComposeProviderTests",
+    srcs = glob(["Tests/DevContainerComposeProviderTests/*.swift"]),
+    module_name = "DevContainerComposeProviderTests",
+    deps = [":DevContainerComposeProvider", ":DevContainerModel", ":DevContainerRuntimeSPI"],
+)
+
+swift_test(
+    name = "DevContainerComposeCLITests",
+    srcs = glob(["Tests/DevContainerComposeCLITests/*.swift"]),
+    module_name = "DevContainerComposeCLITests",
+    deps = [":DevContainerComposeCLI", ":DevContainerModel", ":DevContainerState"],
+)
+
+swift_test(
+    name = "DevContainerAppleRuntimeTests",
+    srcs = glob(["Tests/DevContainerAppleRuntimeTests/*.swift"], exclude = ["Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeLoggingHandoffTests.swift"]) + select({
+        ":stock_runtime": [],
+        "//conditions:default": ["Tests/DevContainerAppleRuntimeTests/AppleContainerRuntimeLoggingHandoffTests.swift"],
+    }),
+    module_name = "DevContainerAppleRuntimeTests",
+    copts = RUNTIME_COPTS,
+    deps = [
+        ":DevContainerAppleRuntime", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState",
+        "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
+        "@swiftpkg_container//:ContainerAPIClient", "@swiftpkg_container//:ContainerResource",
+        "@swiftpkg_containerization//:Containerization", "@swiftpkg_containerization//:ContainerizationOS",
+        "@swiftpkg_swift_nio//:NIOCore", "@swiftpkg_swift_nio//:NIOPosix",
+    ],
+)
+
+swift_test(
+    name = "DevContainerServiceTests",
+    srcs = ["Tests/DevContainerServiceTests/DefaultPathsTests.swift"],
+    module_name = "DevContainerServiceTests",
+    copts = RUNTIME_COPTS,
+    deps = [
+        ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerTestSupport",
+        "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
+        "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
+        "@swiftpkg_container_engine_api//:ContainerEngineWire",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_test(
+    name = "DevContainerServiceIntegrationTests",
+    srcs = ["Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift"],
+    module_name = "DevContainerServiceIntegrationTests",
+    copts = RUNTIME_COPTS,
+    data = [":devcontainer-engine"],
+    env = {"DEVCONTAINER_ENGINE_TEST_RUNFILE": "$(rootpath :devcontainer-engine)"},
+    env_inherit = ["DEVCONTAINER_HOST_INTEGRATION"],
+    # These process-level tests exercise the real macOS Keychain.
+    tags = ["manual", "local", "no-cache", "external", "integration"],
+    timeout = "short",
+    deps = [
+        ":DevContainerService", "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
+        "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI", "@swiftpkg_container_engine_api//:ContainerEngineWire",
+    ],
+)
+
+test_suite(
+    name = "source_tests",
+    tests = [
+        ":DevContainerCLITests", ":DevContainerProcessTests", ":DevContainerCoreTests",
+        ":DevContainerDockerAPITests", ":DevContainerComposeProviderTests", ":DevContainerComposeCLITests",
+        ":DevContainerAppleRuntimeTests", ":DevContainerServiceTests", ":DevContainerModelTests", ":DevContainerStateTests",
+    ],
+)
+
+test_suite(name = "unit", tests = [":source_tests"])
+alias(name = "product", actual = ":products")
+
+swift_test(
+    name = "DevContainerHostIntegrationTests",
+    srcs = glob(["Tests/DevContainerHostIntegrationTests/*.swift"]),
+    module_name = "DevContainerHostIntegrationTests",
+    copts = ["-DDEVCONTAINER_ENHANCED_RUNTIME"],
+    env_inherit = ["DEVCONTAINER_HOST_INTEGRATION"],
+    tags = ["manual", "local", "no-cache", "external"],
+    timeout = "short",
+    target_compatible_with = select({
+        ":stock_runtime": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":DevContainerAppleRuntime", "@swiftpkg_container//:ContainerAPIClient"],
 )
 
 swift_test(

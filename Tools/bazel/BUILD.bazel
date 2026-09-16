@@ -3,6 +3,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
+    "candidate_archive.py",
     "build_identity.bzl",
     "rules-swift-sandbox-output.patch",
     "tests/FrameworkTests.swift",

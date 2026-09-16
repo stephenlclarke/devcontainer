@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 @testable import DevContainerCLI
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -136,7 +137,7 @@ private final class PluginRegistrationFixture {
     let installRoot: URL
 
     init() throws {
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-plugin-tests-\(UUID().uuidString)")
         source = root.appendingPathComponent("payload")
         installRoot = root.appendingPathComponent("container")

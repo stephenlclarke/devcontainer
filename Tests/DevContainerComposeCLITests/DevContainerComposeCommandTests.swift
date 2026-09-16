@@ -19,6 +19,7 @@ import Darwin
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -328,7 +329,7 @@ private final class ComposeCommandFixture {
         self.volumeProbeStatus = volumeProbeStatus
         self.innerGeneration = innerGeneration
         self.innerProjectKey = innerProjectKey
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-compose-cli-tests-\(UUID().uuidString)",
                 isDirectory: true
@@ -366,7 +367,7 @@ private final class ComposeCommandFixture {
             ;;
         esac
         """
-        try Data(script.utf8).write(to: executable, options: .atomic)
+        try Data(script.utf8).write(to: executable)
         #expect(chmod(executable.path, S_IRWXU) == 0)
     }
 

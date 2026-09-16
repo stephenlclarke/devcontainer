@@ -219,6 +219,9 @@ struct AppleContainerRuntimeDirectTests {
             containers: [target],
             context: context
         )
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("transfers").path
+        ))
         try await runtime.synchronizeNetworkHosts(
             target: target,
             containers: [target],
@@ -226,6 +229,7 @@ struct AppleContainerRuntimeDirectTests {
         )
         #expect(await files.copyOutCallCount() == 1)
         #expect(await files.copyInCallCount() == 1)
+        #expect(await files.uploadedPermissions() == 0o644)
 
         await files.resetHostsForBootstrap()
         try await runtime.startContainer(id: "fixture", context: context)
@@ -727,6 +731,7 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
     private var currentHosts = "127.0.0.1 localhost\n"
     private var copyOutCalls = 0
     private var copyInCalls = 0
+    private var lastUploadedPermissions: Int?
 
     func copyIn(
         id _: String,
@@ -734,6 +739,9 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
         destination _: String
     ) throws {
         copyInCalls += 1
+        lastUploadedPermissions = try FileManager.default.attributesOfItem(
+            atPath: source
+        )[.posixPermissions] as? Int
         currentHosts = try String(contentsOfFile: source, encoding: .utf8)
     }
 
@@ -745,6 +753,9 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
         copyOutCalls += 1
         try Data(currentHosts.utf8).write(
             to: URL(fileURLWithPath: destination)
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: destination
         )
     }
 
@@ -758,6 +769,10 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
 
     func copyInCallCount() -> Int {
         copyInCalls
+    }
+
+    func uploadedPermissions() -> Int? {
+        lastUploadedPermissions
     }
 
     func hosts() -> String {
@@ -795,7 +810,8 @@ private func directRuntime(
             inventory: inventory,
             files: files,
             networks: networks
-        )
+        ),
+        transferRoot: fixture.root.appendingPathComponent("transfers")
     )
 }
 

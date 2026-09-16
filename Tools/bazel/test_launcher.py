@@ -25,6 +25,52 @@ def invoke(function: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class LauncherTests(unittest.TestCase):
+    def test_real_argument_assembly_handles_empty_arrays_on_system_bash(self) -> None:
+        for command, targets in [("query", ["//:product"]), ("info", []), ("coverage", ["//:unit", "--config=stock"])]:
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    ["/bin/bash", "-c", 'source "$1"; shift; clean_environment() { "$@"; }; capture() { printf "%s\\0" "$@"; }; run_bazel /repo "$1" /invocation capture stock "${@:2}"',
+                     "test", str(SCRIPT), command, *targets],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = result.stdout.split("\0")[:-1]
+                self.assertEqual(args.count("--config=stock"), 1)
+                self.assertIn(command, args)
+                self.assertEqual(any(a.startswith("--disk_cache=") for a in args), command == "coverage")
+                self.assertEqual(any(a.startswith("--test_tmpdir=") for a in args), command == "coverage")
+
+    def test_build_environment_excludes_credentials_and_shell_hooks(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "-c", 'source "$1"; export UNRELATED_SECRET=fixture-secret BASH_ENV=/does/not/exist PYTHONPATH=/untrusted; clean_environment /usr/bin/env',
+             "test", str(SCRIPT)], capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines())
+        self.assertEqual(set(values), {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DEVELOPER_DIR", "PYTHONDONTWRITEBYTECODE", "DEVCONTAINER_HOST_INTEGRATION"})
+        self.assertEqual(values["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+
+    def test_host_opt_in_is_preserved_only_as_a_boolean(self) -> None:
+        for value, expected in [("1", 0), ("0", 0), ("not-a-boolean", 2)]:
+            result = subprocess.run(
+                ["/bin/bash", "-c", 'source "$1"; export DEVCONTAINER_HOST_INTEGRATION="$2"; clean_environment /usr/bin/printenv DEVCONTAINER_HOST_INTEGRATION',
+                 "test", str(SCRIPT), value], capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, expected)
+            if expected == 0:
+                self.assertEqual(result.stdout.strip(), value)
+
+    def test_runtime_profile_is_one_coherent_selection(self) -> None:
+        self.assertEqual(invoke("runtime_profile").stdout.strip(), "enhanced")
+        self.assertEqual(invoke("runtime_profile", "--config=stock", "--config=asan").stdout.strip(), "stock")
+        self.assertEqual(invoke("runtime_profile", "--config=stock", "--config=enhanced").returncode, 2)
+        self.assertEqual(invoke("runtime_profile", "--config", "stock").returncode, 2)
+        self.assertEqual(invoke("validate_arguments", "--define=runtime_profile=stock").returncode, 2)
+
+    def test_profile_expansion_is_not_duplicated(self) -> None:
+        result = invoke("execution_arguments", "--config=stock", "//:unit", "--config=asan", "--test_arg=two words", "--config=stock")
+        self.assertEqual(result.stdout.split("\0"), ["//:unit", "--config=asan", "--test_arg=two words", ""])
+
     def test_valid_external_volume(self) -> None:
         self.assertEqual(invoke("validate_volume", UUID, UUID, "/Volumes/SSD", "false").returncode, 0)
 
@@ -47,9 +93,16 @@ class LauncherTests(unittest.TestCase):
             "--test_env=TMPDIR=/tmp", "--remote_cache=https://example.invalid",
             "--host_jvm_args=-Djava.io.tmpdir=/tmp", "--profile=/tmp/profile",
             "--symlink_prefix=/tmp/", "--repo_env=TMPDIR=/tmp",
+            "--override_module=rules_swift=/tmp/local", "--override_repository=lib=/tmp/local",
+            "--lockfile_mode=off", "--registry=https://example.invalid", "--noenable_bzlmod",
         ]:
             with self.subTest(argument=argument):
                 self.assertEqual(invoke("validate_arguments", argument).returncode, 2)
+
+    def test_equivalent_qualification_labels(self) -> None:
+        for label in ["bazel_qualification", ":bazel_qualification", "//:bazel_qualification"]:
+            self.assertEqual(invoke("is_qualification_label", label).returncode, 0)
+        self.assertNotEqual(invoke("is_qualification_label", "//other:bazel_qualification").returncode, 0)
 
     def test_normal_target_selection_and_test_output_are_allowed(self) -> None:
         self.assertEqual(invoke("validate_arguments", "//:bazel_qualification", "--test_output=all", "--config=asan").returncode, 0)

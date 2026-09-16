@@ -16,6 +16,7 @@
 
 import Darwin
 import DevContainerProcess
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -42,7 +43,7 @@ struct ProcessRunnerTests {
 
     @Test
     func `captured runner cancels and reaps a TERM ignoring process tree`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
+        let pidFile = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-runner-group-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: pidFile) }
         let task = Task {

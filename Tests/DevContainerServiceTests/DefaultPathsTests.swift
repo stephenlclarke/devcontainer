@@ -16,6 +16,7 @@
 
 import Darwin
 @testable import DevContainerService
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -59,11 +60,7 @@ func `private provider socket cleanup removes expected artifacts`() throws {
     let socket = directory.appendingPathComponent("provider.sock")
     let lock = URL(fileURLWithPath: socket.path + ".lock")
     try createPrivateDirectory(directory)
-    #expect(FileManager.default.createFile(
-        atPath: lock.path,
-        contents: Data(),
-        attributes: [.posixPermissions: 0o600]
-    ))
+    try createPrivateFile(lock)
 
     try DefaultPaths.removeProviderSocketArtifacts(socketPath: socket.path)
 
@@ -80,15 +77,8 @@ func `private provider socket cleanup preserves unexpected artifacts`() throws {
     let lock = URL(fileURLWithPath: socket.path + ".lock")
     let unexpected = directory.appendingPathComponent("unexpected")
     try createPrivateDirectory(directory)
-    #expect(FileManager.default.createFile(
-        atPath: lock.path,
-        contents: Data(),
-        attributes: [.posixPermissions: 0o600]
-    ))
-    #expect(FileManager.default.createFile(
-        atPath: unexpected.path,
-        contents: Data()
-    ))
+    try createPrivateFile(lock)
+    try createPrivateFile(unexpected)
 
     #expect(throws: (any Error).self) {
         try DefaultPaths.removeProviderSocketArtifacts(socketPath: socket.path)
@@ -104,12 +94,8 @@ func `private provider socket cleanup rejects live sockets and unsafe locks`() t
     let socket = directory.appendingPathComponent("provider.sock")
     let lock = URL(fileURLWithPath: socket.path + ".lock")
     try createPrivateDirectory(directory)
-    #expect(FileManager.default.createFile(atPath: socket.path, contents: Data()))
-    #expect(FileManager.default.createFile(
-        atPath: lock.path,
-        contents: Data(),
-        attributes: [.posixPermissions: 0o600]
-    ))
+    try createPrivateFile(socket)
+    try createPrivateFile(lock)
     #expect(throws: (any Error).self) {
         try DefaultPaths.removeProviderSocketArtifacts(socketPath: socket.path)
     }
@@ -126,7 +112,7 @@ func `private provider socket cleanup rejects live sockets and unsafe locks`() t
 }
 
 private func providerArtifactDirectory() -> URL {
-    FileManager.default.temporaryDirectory
+    TestStorage.temporaryDirectory
         .appendingPathComponent("devcontainer-provider-test-\(UUID().uuidString)")
 }
 
@@ -136,4 +122,9 @@ private func createPrivateDirectory(_ directory: URL) throws {
         withIntermediateDirectories: false,
         attributes: [.posixPermissions: 0o700]
     )
+}
+
+private func createPrivateFile(_ file: URL) throws {
+    try Data().write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
 }

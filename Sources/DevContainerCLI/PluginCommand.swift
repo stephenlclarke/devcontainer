@@ -87,7 +87,7 @@ struct PluginRegistration {
                 destination.deletingLastPathComponent()
                     .appendingPathComponent(target)
             }
-        return targetURL.standardizedFileURL.resolvingSymlinksInPath() == canonicalSource
+        return targetURL.standardizedFileURL.resolvingSymlinksInPath().path == canonicalSource.path
             ? .registered
             : .conflicting
     }

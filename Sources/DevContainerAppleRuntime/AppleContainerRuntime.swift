@@ -109,6 +109,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let networkClient: any AppleNetworkClient
     let metadataStore: (any RuntimeMetadataStore)?
     let managedVolumes: ManagedVolumeStore
+    let transferRoot: URL
     let portForwarding = PortForwarding()
     var execs: [ExecID: ExecSnapshot] = [:]
     var requestedContainers: [String: RequestedContainer] = [:]
@@ -135,7 +136,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectProcessAPI: Bool = true,
         useDirectContainerAPI: Bool = true,
         metadataStore: (any RuntimeMetadataStore)? = nil,
-        volumeRoot: URL? = nil
+        volumeRoot: URL? = nil,
+        transferRoot: URL? = nil
     ) throws {
         let apiClient = ContainerClient()
         try self.init(
@@ -150,7 +152,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
                 inventory: LiveAppleContainerInventoryClient(client: apiClient),
                 files: LiveAppleContainerFileClient(client: apiClient),
                 networks: AppleNetworkClientAdapter()
-            )
+            ),
+            transferRoot: transferRoot
         )
     }
 
@@ -161,7 +164,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectContainerAPI: Bool,
         metadataStore: (any RuntimeMetadataStore)?,
         volumeRoot: URL?,
-        clients: DirectClients
+        clients: DirectClients,
+        transferRoot: URL? = nil
     ) throws {
         let resolved = executable.standardizedFileURL
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
@@ -181,6 +185,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         fileClient = clients.files
         networkClient = clients.networks
         self.metadataStore = metadataStore
+        self.transferRoot = transferRoot ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
             root: volumeRoot ?? Self.defaultVolumeRoot
         )
@@ -864,7 +869,7 @@ public extension AppleContainerRuntime {
             snapshot: snapshot,
             context: context
         ) {
-            let temporary = try TemporaryDirectory(base: Self.transferDirectory)
+            let temporary = try TemporaryDirectory(base: transferRoot)
             defer { temporary.remove() }
             let requestedName = URL(fileURLWithPath: path).lastPathComponent
             let archiveName = requestedName.isEmpty ? "root" : requestedName
@@ -937,7 +942,7 @@ public extension AppleContainerRuntime {
             snapshot: snapshot,
             context: context
         ) {
-            let temporary = try TemporaryDirectory(base: Self.transferDirectory)
+            let temporary = try TemporaryDirectory(base: transferRoot)
             defer { temporary.remove() }
             let extractResult = try await AppleCommandRunner.run(
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
@@ -1138,7 +1143,7 @@ public extension AppleContainerRuntime {
         let temporary = try TemporaryDirectory()
         defer { temporary.remove() }
         let archiveURL = temporary.url.appendingPathComponent("image.tar")
-        try archive.write(to: archiveURL, options: .atomic)
+        try AtomicFile.write(archive, to: archiveURL)
         let result = try await command([
             "image",
             "load",
@@ -1279,9 +1284,10 @@ public extension AppleContainerRuntime {
             operation: "Feature content archive creation"
         )
         let preparedDockerfile = prepared.url.appendingPathComponent("Dockerfile")
-        try Data(
-            "FROM scratch\nADD context.tar /tmp/build-features/\n".utf8
-        ).write(to: preparedDockerfile, options: .atomic)
+        try AtomicFile.write(
+            Data("FROM scratch\nADD context.tar /tmp/build-features/\n".utf8),
+            to: preparedDockerfile
+        )
         return NativeBuildInput(
             contextRoot: prepared.url,
             dockerfile: preparedDockerfile,

@@ -19,6 +19,7 @@ import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -107,7 +108,7 @@ private final class MutationStreamFixture: @unchecked Sendable {
     private let project = ProjectKey(rawValue: "\(getuid()):docker-api")
 
     init(runtime: InMemoryRuntime) throws {
-        directory = FileManager.default.temporaryDirectory
+        directory = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-mutation-stream-tests-\(UUID().uuidString)",
                 isDirectory: true

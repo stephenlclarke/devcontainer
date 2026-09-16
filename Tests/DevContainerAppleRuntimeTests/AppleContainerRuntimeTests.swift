@@ -19,6 +19,7 @@ import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -807,7 +808,7 @@ struct FakeAppleCLI {
     ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
         self.distribution = distribution
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
         logURL = root.appendingPathComponent("commands.log")
@@ -837,7 +838,8 @@ struct FakeAppleCLI {
             useDirectProcessAPI: useDirectProcessAPI,
             useDirectContainerAPI: false,
             metadataStore: metadataStore,
-            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
+            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true),
+            transferRoot: root.appendingPathComponent("transfers", isDirectory: true)
         )
     }
 

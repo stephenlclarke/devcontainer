@@ -19,6 +19,7 @@ import ContainerEngineRuntimeSPI
 import ContainerEngineWire
 import Darwin
 @testable import DevContainerService
+import DevContainerTestStorage
 import Foundation
 import Security
 import Testing
@@ -27,7 +28,8 @@ import Testing
 struct ServiceCommandIntegrationTests {
     @Test
     func `engine executable starts serves and terminates cleanly`() async throws {
-        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        try requireHostIntegrationOptIn()
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "dcs-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
@@ -50,7 +52,7 @@ struct ServiceCommandIntegrationTests {
         let executable = try engineExecutable()
         let process = Process()
         let log = root.appendingPathComponent("engine.log")
-        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        try Data().write(to: log)
         let output = try FileHandle(forWritingTo: log)
         defer { try? output.close() }
         process.executableURL = executable
@@ -77,7 +79,8 @@ struct ServiceCommandIntegrationTests {
 
     @Test
     func `engine executable serves a private provider session`() async throws {
-        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        try requireHostIntegrationOptIn()
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "dcs-provider-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
@@ -100,7 +103,7 @@ struct ServiceCommandIntegrationTests {
         let executable = try engineExecutable()
         let process = Process()
         let log = root.appendingPathComponent("provider.log")
-        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        try Data().write(to: log)
         let output = try FileHandle(forWritingTo: log)
         defer { try? output.close() }
         process.executableURL = executable
@@ -126,8 +129,22 @@ struct ServiceCommandIntegrationTests {
     }
 }
 
+private func requireHostIntegrationOptIn() throws {
+    if ProcessInfo.processInfo.environment["BAZEL_TEST"] == "1" {
+        try #require(
+            ProcessInfo.processInfo.environment["DEVCONTAINER_HOST_INTEGRATION"] == "1",
+            "This test uses the macOS Keychain; explicitly enable the host-integration lane."
+        )
+    }
+}
+
 private func engineEnvironment(executable: URL) throws -> [String: String] {
     var environment = ProcessInfo.processInfo.environment
+    if environment["BAZEL_TEST"] == "1" {
+        // Keep the inherited per-test LLVM profile path; the native collector
+        // merges the child process profile from the same test execution.
+        return environment
+    }
     guard environment["LLVM_PROFILE_FILE"] != nil else {
         return environment
     }
@@ -451,6 +468,21 @@ private func executableCandidatePrecedes(
 }
 
 private func configuredEngineExecutable() throws -> URL? {
+    let environment = ProcessInfo.processInfo.environment
+    if environment["BAZEL_TEST"] == "1" {
+        guard let runfile = environment["DEVCONTAINER_ENGINE_TEST_RUNFILE"],
+              let root = environment["TEST_SRCDIR"],
+              let workspace = environment["TEST_WORKSPACE"]
+        else {
+            throw ServiceIntegrationError("Bazel must declare the engine test executable")
+        }
+        let executable = URL(fileURLWithPath: root).appendingPathComponent(workspace)
+            .appendingPathComponent(runfile)
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw ServiceIntegrationError("Bazel engine runfile is not executable")
+        }
+        return executable
+    }
     guard let configured = ProcessInfo.processInfo.environment[
         "DEVCONTAINER_ENGINE_TEST_EXECUTABLE"
     ] else {

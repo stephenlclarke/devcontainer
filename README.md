@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-The opt-in [native Bazel qualification](docs/bazel-workflow.md) is the first implementation checkpoint of the build-workflow redesign. It does not yet replace the full SwiftPM build, runtime parity, or release workflow. Use `make bazel-configure` once and `make bazel-qualify` to exercise the migrated subset with build scratch and caches on the enrolled external SSD.
+The opt-in [native Bazel build](docs/bazel-workflow.md) builds all three executables and runs the unit suites against either stock Apple or enhanced dependencies. Use `make bazel-configure` once, then `make bazel-build` and `make bazel-unit`; add `BAZEL_PROFILE=stock` for the stock graph. `make bazel-package` creates an unsigned native candidate. Scratch and caches stay on the enrolled external SSD; test evidence and candidate archives are retained on internal storage, with authenticated restore that requires no rebuild. Runtime parity, signing and release publication have not yet moved to this workflow.
 
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
 (including its standard JSON and Psych YAML libraries), and `make`.

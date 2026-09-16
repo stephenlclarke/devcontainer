@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "scope": "binary-acquisition-only; runtime closure and reference bundle qualification pending",
+  "assets": [
+    {
+      "repository": "stephenlclarke/devcontainer",
+      "tag": "1.0.1",
+      "releaseID": 362079176,
+      "tagObject": "2a7147ad3f2eb12a72d529b0506ead0039072672",
+      "commit": "37ae0a873d4112576dac98fea3d969acb962a18b",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 494589421,
+      "name": "devcontainer-release-arm64.tar.gz",
+      "architecture": "arm64",
+      "size": 17911178,
+      "sha256": "0cd5210388572fd7c30eeb8f6196f72264c6881b445c13cda73a8c228633d906"
+    },
+    {
+      "repository": "apple/container",
+      "tag": "1.4.1",
+      "releaseID": 385155129,
+      "tagObject": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
+      "commit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 551745110,
+      "name": "container-1.4.1-installer-signed.pkg",
+      "architecture": "arm64",
+      "size": 117773865,
+      "sha256": "c0d2716afefbb194c93fae662e9cae7cc186bcbcf746816608ec673dd648a6a4"
+    },
+    {
+      "repository": "stephenlclarke/container-compose",
+      "tag": "0.15.1",
+      "releaseID": 387856368,
+      "tagObject": "4aca8f6ab4174522af294051a02b22c9dd86b3d9",
+      "commit": "81a2263adf30127a3cf774ffdaf56bd23e2f81c1",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 561300140,
+      "name": "container-compose-plugin-release-arm64.tar.gz",
+      "architecture": "arm64",
+      "size": 32234995,
+      "sha256": "45090e11ddf3ef7a2405111caf59915cd07880026e1983241405bcaef4cd7fe7"
+    },
+    {
+      "repository": "stephenlclarke/container-compose",
+      "tag": "0.15.1",
+      "releaseID": 387856368,
+      "tagObject": "4aca8f6ab4174522af294051a02b22c9dd86b3d9",
+      "commit": "81a2263adf30127a3cf774ffdaf56bd23e2f81c1",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 561300257,
+      "name": "container-release-arm64.tar.gz",
+      "architecture": "arm64",
+      "size": 230817039,
+      "sha256": "6620df9bca51150d2406d68f58a1aa0208d600ecf7fa0ff0b3dca0e241927e16"
+    },
+    {
+      "repository": "docker/compose",
+      "tag": "v5.3.1",
+      "releaseID": 350238808,
+      "tagObject": "a163be59cf8a81e1d0b9bf72d4ea980f12f577b7",
+      "commit": "f32009d4a2c687dd405398cc7975d12dccaf8dff",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 469146961,
+      "name": "docker-compose-darwin-aarch64",
+      "architecture": "arm64",
+      "size": 30795330,
+      "sha256": "32691ba1196d819fa68cbdc0aad9a5569e730a35ae40c6fdd8458110ecd69488"
+    }
+  ]
+}
