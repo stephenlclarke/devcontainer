@@ -9,19 +9,15 @@ harness, dependency review, OpenSSF Scorecard, DocC Pages workflow,
 deterministic package/SBOM tooling, and Homebrew formula validation described
 below. The executable gate discovers the complete current Swift suite and
 requires at least 90.0% first-party line coverage; the documentation does not
-carry a manually maintained test count. The 15 September 2026 SonarQube
-analysis of source revision `1b71fe3ec105` reports 95.5% coverage, 0.1%
-duplicated lines, zero bugs, vulnerabilities, code smells, security hotspots,
-or technical debt, and A ratings throughout. CodeQL is enabled and passed for
-that revision; draft pull requests remain outside iterative analysis until
-they are marked ready for review. Dependency review, AddressSanitizer, and
-ThreadSanitizer also pass. The immutable 1.0.1 release evidence records real
-Docker, stock Apple, and separately identified `container-compose` lanes
-passing all 18 CLI parity fixtures and the pinned real VS Code fixture with
-zero normalized semantic differences and complete timing evidence. Across the three
-audited release-era runs, the largest observed CLI slowdown is 4.509x and the
-largest observed VS Code slowdown is 1.545x. See
-[`PERFORMANCE.md`](PERFORMANCE.md) for the full matrix and variability.
+carry a manually maintained test count. Sonar analysis on protected `main` and
+explicit stable candidates fails unless the project has zero open issues and
+security hotspots, the quality gate passes, and coverage remains above the
+repository threshold. CodeQL, dependency review, AddressSanitizer, and
+ThreadSanitizer are active exact-commit release checks. Real
+Docker is confined to the reference-oracle workflow; stock Apple and the
+separately identified `container-compose` lane must match that oracle in every
+claimed CLI and real VS Code fixture while retaining complete timing evidence.
+See [`PERFORMANCE.md`](PERFORMANCE.md) for the current evidence and variability.
 
 The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in [`TESTING.md`](TESTING.md) into measurable merge and release conditions. A stable release cannot replace a failed gate with a manual assertion.
 
@@ -36,8 +32,9 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
   unexpected, malformed, stale, or bound to a different commit. A failed lane
   parent cannot be hidden by individually passing fixture records.
 - Functional parity differences, missing fixtures, ignored tests, and accepted signal-13 fallbacks cannot be waived for a stable release.
-- A timeout, non-completion, invalid timing, or candidate fixture taking at
-  least 10.00x its matching Docker oracle duration fails release acceptance;
+- A timeout, non-completion, invalid timing, or stock/Docker, provider/Docker,
+  or provider/stock comparison taking at least 10.00x its matching comparator
+  duration fails release acceptance;
   slower completed results below that boundary remain optimization evidence.
 
 ## Quality scorecard
@@ -52,8 +49,8 @@ The policy turns the architecture in [`DESIGN.md`](DESIGN.md) and test design in
 | Style | SwiftLint strict and SwiftFormat lint | Zero violations | Zero violations |
 | Memory safety | Swift AddressSanitizer | Pass for relevant changes | Pass on exact candidate |
 | Concurrency safety | Swift ThreadSanitizer | Nightly/dispatch | Pass on exact candidate |
-| Static security | CodeQL Swift | Pass for ready pull requests | Pass on exact candidate |
-| Sonar new code | Reliability, security, maintainability, coverage, duplication | Quality gate passes | Candidate analysis passes |
+| Static security | CodeQL Swift | Required | Required on exact candidate |
+| Sonar new code | Reliability, security, maintainability, coverage, duplication | Repository-owned coverage gate; Sonar runs after merge or explicit dispatch | Candidate analysis passes |
 | Dependencies | Dependency review and pinned resolution | No disallowed addition | Reviewed lockfile and licenses |
 | Supply chain | SBOM, checksums, signatures/attestations | Build artifacts only | Complete candidate-bound evidence |
 | Packaging | Archive and Homebrew install/test | Package validation | Physical-runner installed smoke passes |
@@ -205,11 +202,10 @@ Any sanitizer diagnostic fails the job. Suppressions require a pinned upstream i
 
 ### CodeQL
 
-CodeQL is enabled through the repository `CODEQL_ENABLED` variable. The
-retained `.github/workflows/codeql.yml` excludes draft pull requests; on
-`ready_for_review`, the pull request becomes eligible without another source
-change. The workflow is pinned and configured for Swift manual-build analysis
-on `macos-26`.
+CodeQL is enabled for non-draft pull requests, protected-main pushes, scheduled
+runs, and explicit stable candidates. The pinned workflow uses Swift
+manual-build analysis on `macos-26`; draft pull requests remain outside the
+expensive analysis window until `ready_for_review`.
 
 The CodeQL job:
 
@@ -220,44 +216,35 @@ The CodeQL job:
 4. runs the security-and-quality query suites;
 5. uploads SARIF and verifies that analysis completed for the candidate commit.
 
-Any new high or critical CodeQL alert is release blocking.
-Lower-severity findings require disposition before stable release and may not
-be dismissed as “used in tests” when the path is reachable from production.
+A new high or critical CodeQL alert is release blocking. Lower-severity
+findings require disposition before stable release and may not be dismissed as
+“used in tests” when the path is reachable from production.
 
 ### SonarCloud
 
 The implemented `sonar.yml` submits sources, tests, and generic coverage XML to
-SonarCloud after the repository-owned 90% gate passes. The quality gate for new
-code requires:
+SonarCloud after a protected-`main` push or explicit workflow dispatch and only
+after the repository-owned 90% gate passes. The quality gate for new code
+requires:
 
 - at least 90% line coverage;
 - at most 3% duplicated lines;
 - zero unresolved reliability, security, or maintainability issues;
-- zero unreviewed security hotspots;
+- zero security hotspots;
 - no unresolved analysis failure or missing coverage import.
 
-The SonarCloud project uses `main` as its real main branch and compares new
-code with the previous analysed version. Every scan is labelled with the exact
-40-character commit checked out by the job; the local target rejects a stale
-or mismatched override and refuses a dirty worktree, so the label identifies
-the analysed contents. The workflow validates both remote invariants before
-scanning so a newly created project cannot silently publish `Not Computed`
-badges. After the quality gate completes, it also queries unresolved issues
-and `TO_REVIEW` hotspots and fails unless both totals are zero. It separately
-enforces the complete-project coverage, duplication, rating, bug,
-vulnerability, and code-smell thresholds, so a failed analysis cannot evade a
-later gate merely by becoming the previous-version baseline. Pull requests
-from the repository also run the changed-code Sonar gate before merge, keeping
-failed changed coverage or duplication out of `main`. Coverage export refuses
-to run from a dirty worktree, records its source revision, and a standalone
-scan rejects a report generated from any other commit. A pull request without
-the repository Sonar token fails closed;
-fork changes require validation from a maintainer-owned branch and cannot pass
-by skipping the scanner.
+The SonarCloud project uses `main` as its real main branch and the project-level
+Previous version new-code definition. Every exact-commit analysis supplies its
+40-character source commit as `sonar.projectVersion`, so the previous analyzed
+commit becomes the baseline instead of a rolling date window. The workflow
+validates the remote policy and exact project version before scanning so a
+newly created or misconfigured project cannot silently publish `Not Computed`
+badges. After the quality gate completes, it also queries the issues and
+hotspots APIs and fails unless both totals are zero.
 
 SonarCloud supplements the repository-owned coverage and lint checks. A
 passing Sonar gate cannot override an independent coverage, compiler,
-sanitizer, parity, or CodeQL failure.
+sanitizer, or parity failure, nor a CodeQL failure.
 
 ### Dependency and license review
 
@@ -303,19 +290,44 @@ live validation:
 | --- | --- | --- |
 | `ci.yml` | Hosted `macos-26` | Format/lint, unit/contract/integration tests, both 90% coverage gates, build, and CLI smoke |
 | `quality.yml` | Hosted `macos-26` | ASan and TSan on pushes, PRs, schedules, and explicit dispatch |
-| `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL for protected `main`, schedules, dispatches, and ready pull requests |
+| `codeql.yml` | Hosted `macos-26` | Manual-build Swift CodeQL for ready pull requests, main, schedules, and stable candidates |
 | `dependency-review.yml` | Hosted Ubuntu | Vulnerability, scope, license, and dependency Scorecard review |
 | `scorecard.yml` | Hosted Ubuntu plus code scanning | Repository OpenSSF analysis and SARIF publication |
 | `sonar.yml` | Hosted `macos-26` | Coverage export and fail-closed SonarQube Cloud quality-gate analysis |
 | `docs.yml` | Hosted `macos-26` plus GitHub Pages | DocC build, verification, and publication |
+| `specification-drift.yml` | Hosted `macos-26` | Compare the live upstream Dev Containers base schema with the checked-in conformance ledger |
 | `parity.yml` | Serialized profiles on an isolated physical Apple-silicon runner | CLI and pinned VS Code parity for Docker, stock Apple, and the separate `container-compose` provider |
 | `stable-release-gate.yml` | Hosted verifier plus live evidence | Candidate-bound required-check and evidence verification |
 | `prebuilt-binaries.yml` | Hosted and trusted release runners | Immutable archives, checksums, SBOM, signing, notarization, and publication |
 | `homebrew.yml` | Hosted `macos-26` | Package/formula rendering, Ruby syntax, formula style, and evidence upload |
+| `stable-release.yml` | Trusted bare-metal tag signer, then hosted verifier | Create or verify the signed stable tag, dispatch the downstream authorities, and verify GitHub plus Homebrew publication |
+
+Each parity lane must additionally retain successful quiet-host receipts
+captured after runtime startup and immediately before both its CLI and VS Code
+timed suites. Missing, overloaded, or competing-process evidence fails the
+lane rather than producing benchmark numbers from a busy machine.
+
+The standard `lint` target also runs
+`Tools/ci/check-dockerless-product.py`. This fail-closed inventory scans the
+product sources, dependency locks, package/release scripts, formula template,
+and every non-parity workflow. It rejects Docker-family dependency identities,
+source repositories, linked libraries, frameworks, linker flags, executable
+discovery, execution, installation, application launch, and Homebrew
+dependencies. The
+serialized real-Docker parity workflow is deliberately outside that inventory:
+it is a behavioral oracle and cannot become a candidate backend or release
+dependency. Runtime tests additionally require the packaged adapter to
+authenticate the project-owned Apple engine before its first workload request;
+the probe is cached per adapter process and foreign Docker-compatible endpoints
+fail before side effects. The same audit requires all maintained Swift child
+processes to use the shared runner, whose launch-time policy rejects
+Docker-family executable names and resolved symlink targets.
 
 Swift build and test jobs on hosted `macos-26` explicitly select Xcode 26.6,
-matching the development and live-parity host instead of inheriting a moving
-runner-image default. All workflows use explicit least-privilege `permissions`,
+providing a fixed compatibility toolchain instead of inheriting a moving
+runner-image default. Release-bound live parity is separately pinned to the
+physical host's Xcode 27.0 and Swift 6.4 toolchain in the parity manifest. All
+workflows use explicit least-privilege `permissions`,
 pinned action SHAs, concurrency groups, timeouts, deterministic tool pins,
 dependency caching keyed by lockfiles/toolchains, and artifact names containing
 the candidate SHA. Scripts contain the substantial logic so it can be run and
@@ -332,7 +344,13 @@ Real runtime and VS Code tests use three provenance-specific labels:
 `devcontainer-container-compose`, in addition to `self-hosted`, `macOS`, and
 `ARM64`. A single isolated Mac may carry all three labels only when the workflow
 serializes the profiles, verifies the exact selected executable before every
-lane, and proves cleanup before switching runtime distributions.
+lane, and proves cleanup before switching runtime distributions. Stock and
+enhanced Apple lanes also stop any running Docker oracle before their runtime
+starts, so each candidate independently establishes a quiet Docker-free host.
+Every live lane holds the Container family's shared host-wide runtime lock for
+its runtime, CLI, VS Code, evidence-scrub, and cleanup boundary. This
+cross-repository lock makes independently queued `container-compose` work wait
+instead of invalidating the lane after its quiet-host check.
 
 Untrusted fork pull requests never execute on the self-hosted runner. A dispatcher may enqueue only an exact commit from protected `main`, a scheduled protected ref, or a maintainer-approved manual input that already passed hosted checks. The live workflow checks the commit's repository and ancestry again before checkout. Test jobs do not receive release or tap credentials.
 
@@ -340,13 +358,23 @@ Runner maintenance includes OS/toolchain pin records, clean workspace verificati
 
 ## Branch protection and merge gates
 
-Protected `main` requires:
+Protected `main` currently requires:
 
 - reviewed pull requests and resolved conversations;
-- successful required-check aggregation for build, test, overall coverage, changed coverage, style, ASan where relevant, Sonar, dependency review, documentation, and package validation;
+- the `Validate` required check, which aggregates the primary build, lint,
+  test, overall and changed coverage, CLI smoke, and stock-package compile/test
+  jobs;
 - current branch with no stale approval after material changes;
-- signed or otherwise policy-verified commits where repository settings support it;
-- no administrator bypass for ordinary delivery.
+- verified signed commits.
+
+CodeQL, dependency review, documentation, Homebrew, ASan, and TSan run as
+separate pull-request checks but are not duplicated inside the `Validate`
+context. Sonar runs only after the change reaches protected `main` or is
+explicitly dispatched. Regardless of the merge-check configuration, the stable
+release authority requires every applicable exact-commit result above before a
+tag or package can be published. Administrator bypass is reserved for an
+otherwise fully reviewed and checked solo-maintainer merge; it cannot bypass
+the release authority.
 
 Live runtime jobs cannot safely run arbitrary pull-request code and therefore do not become a fork-triggered merge requirement. Instead, a merge queue or protected-main candidate is automatically held from promotion until candidate-bound live parity succeeds. A failure opens a corrective change; it never causes the same untested SHA to be released.
 
@@ -392,16 +420,19 @@ Release workflows separate build from publication. Publishing permissions are gr
 
 ## Homebrew quality
 
-The stable formula in `stephenlclarke/homebrew-tap` uses immutable release URLs
-and checksums, declares Apple silicon and macOS Tahoe requirements, and installs
-only this project:
+The Docker-free stable formula design, effective with 1.0.2, uses immutable
+release URLs and checksums, declares Apple silicon and macOS Tahoe requirements,
+and installs only this project. The currently published legacy 1.0.1 formula
+still declares Docker dependencies and is not evidence for this candidate
+contract:
 
 ```ruby
 depends_on arch: :arm64
 depends_on macos: :tahoe
 ```
 
-`container-compose` remains optional and independently installed. The mutable
+An exact stock-profile `container-compose` build is bundled privately and is
+not a Homebrew dependency. The mutable
 `devcontainer-current` formula conflicts with the stable formula and does not
 share stable release claims.
 
@@ -423,6 +454,8 @@ The repository now implements:
 - the `Tools/ci/run-swift-test.sh` retry/log harness;
 - coverage collection, profile merge, LCOV/generic XML export, and both 90% checks;
 - raw-socket contract and fake-runtime integration infrastructure;
+- live socket identity attestation with foreign-endpoint rejection;
+- shared child-process launch enforcement with direct-launch bypass detection;
 - hosted ASan, TSan, CodeQL, dependency review, Scorecard, documentation, and package validation workflows;
 - deterministic pin, manifest, normalizer, and evidence schemas;
 - signed/notarized package, SBOM, checksum, formula, and fail-closed publication
@@ -439,7 +472,7 @@ result.
 
 ## Reference implementations and primary sources
 
-The current sibling repositories provide implementation precedents, not proof that this repository already has the controls:
+The current sibling repositories provide the implementation precedents used to keep Container-family controls aligned:
 
 - `container-compose/.github/workflows/quality.yml` and `container-compose/Tools/ci/run-swift-test.sh` for the ASan/TSan retry and log harness described above;
 - `container-compose/.github/workflows/ci.yml` for Swift coverage export and Sonar integration;
@@ -449,7 +482,7 @@ The current sibling repositories provide implementation precedents, not proof th
 
 Primary references:
 
-- [Swift Package Manager test and coverage](https://docs.swift.org/swiftpm/documentation/packagemanagerdocs/swifttest/)
+- [Swift Package Manager `swift test` options](https://github.com/swiftlang/swift-package-manager/blob/main/Sources/PackageManagerDocs/Documentation.docc/SwiftTest.md)
 - [SwiftLint](https://github.com/realm/SwiftLint)
 - [SwiftFormat](https://github.com/nicklockwood/SwiftFormat)
 - [CodeQL build modes for compiled languages](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages)

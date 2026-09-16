@@ -2,8 +2,8 @@
 
 ## Current status
 
-The repository contains the implemented Swift package, Docker Engine
-compatibility service, stock Apple runtime adapter, optional external
+The repository contains the implemented Swift package, Docker Engine protocol
+compatibility service, stock Apple runtime adapter, privately bundled native
 `container-compose` provider, command-line tools, tests, parity harness, DocC
 site, and package/Homebrew tooling.
 
@@ -31,6 +31,21 @@ Psych YAML libraries, `make`, and `git`, and reports missing optional quality
 tools. The full local quality aggregate also expects `actionlint`,
 `markdownlint`, `shellcheck`, `swiftformat`, and `swiftlint`.
 
+Run the Docker-less product-boundary audit independently with:
+
+```console
+python3 Tools/ci/check-dockerless-product.py
+```
+
+It is also mandatory within `make lint`; only the isolated parity oracle is
+permitted to discover or execute real Docker. Colima, Podman, and nerdctl are
+never candidate, build, package, or installation dependencies. Package
+identities, source repositories, linked libraries, frameworks, and linker flags
+are checked by the same fail-closed audit. Candidate
+adapter processes also authenticate the local `devcontainer-engine` endpoint
+before their first workload request, so renaming a foreign runtime socket does
+not bypass the boundary.
+
 ## Package structure
 
 The package targets enforce the provider boundary described in
@@ -51,18 +66,25 @@ ContainerEngineProviderSession -> DevContainerService
 ContainerUnixHTTPServer -> DevContainerService
 ```
 
-The three executable products are:
+The four executable products are:
 
 | Product | Purpose |
 | --- | --- |
 | `devcontainer` | Configure, diagnose, and inspect the local compatibility installation and durable provider claims |
-| `container-engine` (from the exact `container-engine-api` dependency) | Own the public user socket, generated API 1.44 through 1.53 route ledger, persistent provider selection, and fail-closed provider dispatch |
-| `devcontainer-engine` | Translate requests to stock Apple runtime operations; serve the legacy standalone endpoint or only the private provider-session socket selected by `--provider-socket` |
-| `devcontainer-compose` | Docker Compose-compatible dispatcher that selects upstream Docker Compose or an explicitly configured external `container-compose` executable |
+| `devcontainer-engine` | Translate requests to stock Apple runtime operations; normal mode starts its private provider session behind the embedded shared gateway, while `--provider-socket` exposes only that private session to a separately managed gateway |
+| `devcontainer-docker` | Present the Docker CLI-compatible command surface expected by the official Dev Containers CLI and VS Code while connecting only to the project-owned Apple-backed socket |
+| `devcontainer-compose` | Docker-shaped invocation adapter that selects the bundled stock-profile native `container-compose` executable or an explicit development override |
 
 Only `DevContainerAppleRuntime` links Apple runtime products. The Compose
 provider invokes an executable and has no `ComposeCore` or custom Apple-stack
 source dependency.
+
+The exact `container-engine-api` dependency also provides the shared
+`container-engine` development executable. It owns the public user socket,
+generated API 1.44 through 1.53 route ledger, persistent provider selection,
+and fail-closed provider dispatch. Release packages embed that gateway in
+`devcontainer-engine`; they do not install a separate `container-engine`
+command.
 
 `Package.resolved` is authoritative. CI copies it, resolves the package, and
 fails if resolution changes the copy. Use:
@@ -118,11 +140,14 @@ make check
 unrelated Apple containers. It uses in-memory or process fakes and temporary,
 user-owned sockets; it does not invoke a live `container system` operation.
 
-The Swift test harness prebuilds the tests and service executable, then loads
-the resulting bundle through Xcode's Swift Testing helper without asking
-SwiftPM to plan or launch the built product again. This avoids a reproducible
-Xcode 26.6 hosted-runner launch stall while retaining the supported Swift
-Testing runtime, explicit serial execution, and exact service executable. The
+The Swift test harness prebuilds the tests and service executable. With Swift
+6.3 from Xcode 26.6 it loads the aggregate bundle through Xcode's Swift Testing
+helper, avoiding a reproducible hosted-runner launch stall. With Swift 6.4 from
+Xcode 27 it asks the same selected Swift executable to launch the already-built
+per-target bundles using `--skip-build`; this version-based selection also
+prevents a stale aggregate bundle from an older toolchain from being executed.
+Both paths retain the supported Swift Testing runtime, explicit serial
+execution, and exact service executable. The
 harness writes complete output to `.build/swift-test.log`, bounds execution,
 and refuses signal-based success fallbacks during coverage. The current suite
 covers model, state, core, Docker-wire, Apple-adapter, Compose-provider,
@@ -201,11 +226,11 @@ Build first, then use an isolated configuration and state root:
 ```console
 export DEVCONTAINER_CONFIG="$PWD/.build/manual/config.toml"
 export DEVCONTAINER_STATE="$PWD/.build/manual/state.sqlite"
-export DEVCONTAINER_SOCKET="$PWD/.build/manual/docker.sock"
+export DEVCONTAINER_SOCKET="$PWD/.build/manual/engine.sock"
 
 .build/debug/devcontainer configure \
   --backend stock \
-  --compose-provider docker \
+  --compose-provider container-compose \
   --socket "$DEVCONTAINER_SOCKET"
 .build/debug/devcontainer context --format shell
 .build/debug/devcontainer doctor --format json
@@ -219,9 +244,10 @@ user's default Docker context. `backend show`, `backend set`, and
 the state database still owns resources.
 
 To test dispatch without a real Compose installation, set
-`DEVCONTAINER_DOCKER_BIN` or `DEVCONTAINER_COMPOSE_BIN` to a deterministic
-fixture executable. The selected external command receives a scrubbed
-environment and an explicit compatibility socket.
+`DEVCONTAINER_COMPOSE_BIN` to a deterministic fixture executable. The selected
+external command receives a hardened environment and an explicit compatibility
+socket. Product code never searches for or launches `docker`, `docker-compose`,
+Docker Desktop, Colima, Podman, or nerdctl.
 
 ## Parity harness
 
@@ -254,8 +280,9 @@ monotonic wall time in JSON and JUnit, and the aggregate matrix compares the
 stock and provider timings with Docker. Comparable or better performance
 (`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
 Docker is marked for further investigation but does not, by itself, change
-functional parity. A timeout, other non-completion, or missing or invalid
-timing evidence fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
+functional parity. A candidate at or above `10.00x` its matching Docker
+fixture, a timeout, other non-completion, or missing or invalid timing evidence
+fails the gate. See [PARITY-ROADMAP.md](PARITY-ROADMAP.md).
 
 `make parity-release` additionally requires every release-scoped fixture and
 recording. It fails when required physical evidence is absent.
@@ -280,11 +307,16 @@ Create and verify an unsigned development archive without installing it:
 make package
 ```
 
-The arm64 archive in `dist` contains all three executables, the
-`container-devcontainer` plug-in entry point, launchd template, Apache license,
-complete reviewed legal texts for every exact SwiftPM dependency, build
-metadata, and an SPDX 2.3 SBOM. The checked-in dependency-license ledger must
-match `Package.resolved` exactly. The packaging script writes a SHA-256
+The arm64 archive in `dist` contains all four project commands, the pinned
+official Dev Containers CLI, the stock-profile native Compose provider and its
+volume initializers, the `container-devcontainer` plug-in entry point, launchd
+template, Apache license, complete reviewed legal texts for every exact SwiftPM
+dependency, build metadata, and SPDX 2.3 SBOMs. The bundled native Compose
+payload separately records its exact SwiftPM lockfile, vendored Go build list,
+full legal texts, and a provider SBOM that includes the Go standard library.
+Unknown or missing provider licences fail packaging. The checked-in
+dependency-license ledger must match `Package.resolved` exactly. The packaging
+script writes a SHA-256
 checksum and machine-readable verification result. It also rewrites
 repository-relative README links to immutable file, directory, and image URLs
 for the exact packaged commit, so the installed documentation never depends on

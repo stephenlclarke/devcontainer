@@ -499,7 +499,12 @@ extension DockerRouter {
         _ mount: DockerMountRequest,
         prefix: String
     ) throws {
-        if mount.consistency?.isEmpty == false {
+        if let consistency = mount.consistency,
+           !consistency.isEmpty,
+           !["cached", "consistent", "delegated"].contains(
+               consistency.lowercased()
+           )
+        {
             try unsupportedCreateField("\(prefix).Consistency")
         }
         if let options = mount.bindOptions,
@@ -664,7 +669,9 @@ extension DockerRouter {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        try ContainerSpec(
+        let mounts = try containerMounts(request)
+        try validateDockerlessMountSources(mounts)
+        return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
@@ -675,7 +682,7 @@ extension DockerRouter {
             workingDirectory: request.workingDir,
             user: request.user,
             hostname: request.hostname,
-            mounts: containerMounts(request),
+            mounts: mounts,
             ports: portBindings(
                 request.hostConfig?.portBindings ?? [:],
                 exposedPorts: Set(request.exposedPorts?.keys.map(\.self) ?? [])
@@ -700,6 +707,57 @@ extension DockerRouter {
                 )
             }
         )
+    }
+
+    private func validateDockerlessMountSources(_ mounts: [RuntimeMount]) throws {
+        for mount in mounts where mount.type == .bind {
+            let source = URL(fileURLWithPath: mount.source)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            let name = source.lastPathComponent.lowercased()
+            let containsDockerSocket = Self.dockerSocketCandidates(source: source)
+                .contains { candidate in
+                    FileManager.default.fileExists(atPath: candidate.path)
+                        && Self.isSameOrDescendant(candidate, of: source)
+                }
+            guard name != "docker.sock",
+                  name != "docker.raw.sock",
+                  !containsDockerSocket
+            else {
+                throw DevContainerError(
+                    .unsupportedCapability,
+                    message: "mounting a Docker runtime socket is disabled in the Docker-less product"
+                )
+            }
+        }
+    }
+
+    private static func dockerSocketCandidates(source: URL) -> [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            source.appendingPathComponent("docker.sock"),
+            source.appendingPathComponent("docker.raw.sock"),
+            source.appendingPathComponent("run/docker.sock"),
+            source.appendingPathComponent("run/docker.raw.sock"),
+            URL(fileURLWithPath: "/var/run/docker.sock"),
+            URL(fileURLWithPath: "/private/var/run/docker.sock"),
+            URL(fileURLWithPath: "/run/docker.sock"),
+            home.appendingPathComponent(".docker/run/docker.sock"),
+            home.appendingPathComponent(".docker/run/docker.raw.sock"),
+            home.appendingPathComponent(".colima/default/docker.sock"),
+            home.appendingPathComponent(
+                "Library/Containers/com.docker.docker/Data/docker.sock"
+            ),
+            home.appendingPathComponent(
+                "Library/Containers/com.docker.docker/Data/docker.raw.sock"
+            )
+        ].map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+    }
+
+    private static func isSameOrDescendant(_ candidate: URL, of directory: URL) -> Bool {
+        candidate.path == directory.path
+            || directory.path == "/"
+            || candidate.path.hasPrefix(directory.path + "/")
     }
 
     func containerMounts(
@@ -784,6 +842,18 @@ extension DockerRouter {
                 continue
             }
             for binding in hostBindings {
+                let hostPort: UInt16?
+                if let requested = binding.hostPort, !requested.isEmpty {
+                    guard let parsed = UInt16(requested) else {
+                        throw DevContainerError(
+                            .invalidRequest,
+                            message: "invalid host port \(requested)"
+                        )
+                    }
+                    hostPort = parsed
+                } else {
+                    hostPort = nil
+                }
                 let hostAddress: String =
                     if let requested = binding.hostIP, !requested.isEmpty {
                         requested
@@ -793,7 +863,7 @@ extension DockerRouter {
                 result.append(
                     PortBinding(
                         containerPort: containerPort,
-                        hostPort: binding.hostPort.flatMap(UInt16.init),
+                        hostPort: hostPort,
                         protocolName: protocolName,
                         hostAddress: hostAddress,
                         published: true
@@ -1181,7 +1251,7 @@ extension DockerRouter {
             size: image.size,
             virtualSize: image.size,
             architecture: image.architecture,
-            variant: image.architecture == "arm64" ? "v8" : "",
+            variant: image.variant ?? (image.architecture == "arm64" ? "v8" : ""),
             operatingSystem: image.operatingSystem,
             config: DockerImageConfig(
                 user: image.user,

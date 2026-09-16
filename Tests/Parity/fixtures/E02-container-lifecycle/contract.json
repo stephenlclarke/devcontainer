@@ -1,5 +1,7 @@
 {
   "expected": {
+    "automatic_remove_cleanup": true,
+    "automatic_remove_exit": true,
     "create_state": "created",
     "exit_status": 7,
     "idempotent_cleanup": true,

@@ -31,6 +31,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resolved", type=Path, default=Path("Package.resolved"))
     parser.add_argument(
+        "--bundled-dependency",
+        action="append",
+        default=[],
+        metavar="NAME|VERSION|REVISION|URL|SHA256|LICENSE",
+    )
+    parser.add_argument(
         "--license-manifest",
         type=Path,
         default=Path("Tools/release/dependency-licenses.json"),
@@ -74,6 +80,34 @@ def main() -> int:
                 "licenseDeclared": dependency.license,
                 "filesAnalyzed": False,
                 "sourceInfo": f"Exact Git revision {dependency.revision}",
+            }
+        )
+        relationships.append(
+            {
+                "spdxElementId": "SPDXRef-Package-devcontainer",
+                "relationshipType": "DEPENDS_ON",
+                "relatedSpdxElement": identifier,
+            }
+        )
+    for value in args.bundled_dependency:
+        fields = value.split("|")
+        if len(fields) != 6:
+            parser.error("--bundled-dependency requires six pipe-delimited fields")
+        name, dependency_version, revision, location, checksum, license_name = fields
+        if not all(fields) or len(checksum) != 64:
+            parser.error("--bundled-dependency contains an empty or invalid field")
+        identifier = spdx_id(name)
+        packages.append(
+            {
+                "SPDXID": identifier,
+                "name": name,
+                "versionInfo": dependency_version,
+                "downloadLocation": location,
+                "licenseConcluded": license_name,
+                "licenseDeclared": license_name,
+                "filesAnalyzed": False,
+                "checksums": [{"algorithm": "SHA256", "checksumValue": checksum}],
+                "sourceInfo": f"Exact Git revision {revision}",
             }
         )
         relationships.append(

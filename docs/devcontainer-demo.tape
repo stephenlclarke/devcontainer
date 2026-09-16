@@ -1,6 +1,5 @@
 Output docs/images/devcontainer-demo.gif
 
-Require docker
 Require jq
 Require npx
 
@@ -27,24 +26,24 @@ Sleep 1s
 
 Type "$DEVCONTAINER_DEMO_BIN version"
 Enter
-Wait+Screen@20s /devcontainer 1.0.0/
+Wait+Screen@20s /devcontainer 1[.]0[.][0-9]+/
 Sleep 2s
 
-Type "eval $($DEVCONTAINER_DEMO_BIN context --socket $DEVCONTAINER_DEMO_SOCKET) && docker version | sed -n '1,16p'"
+Type "export DEVCONTAINER_SOCKET=$DEVCONTAINER_DEMO_SOCKET; $DEVCONTAINER_DEMO_DOCKER_BIN version | sed -n '1,16p'"
 Enter
-Wait+Screen@30s /API version: +1[.]53/
+Wait+Screen@30s /Docker version/
 Sleep 3s
 Ctrl+L
 Sleep 1s
 
-Type "npx --yes @devcontainers/cli@$DEVCONTAINER_DEMO_CLI_VERSION up --workspace-folder Examples/hello --log-level info | jq '{outcome, containerId}'"
+Type "npx --yes @devcontainers/cli@$DEVCONTAINER_DEMO_CLI_VERSION up --docker-path $DEVCONTAINER_DEMO_DOCKER_BIN --docker-compose-path $DEVCONTAINER_DEMO_COMPOSE_BIN --workspace-folder Examples/hello --log-level info | jq '{outcome, containerId}'"
 Enter
 Wait+Screen@600s /"outcome": "success"/
 Sleep 3s
 Ctrl+L
 Sleep 1s
 
-Type "npx --yes @devcontainers/cli@$DEVCONTAINER_DEMO_CLI_VERSION exec --workspace-folder Examples/hello sh -lc 'cat hello.txt; cat /tmp/devcontainer-ready; printf architecture:; uname -m'"
+Type "npx --yes @devcontainers/cli@$DEVCONTAINER_DEMO_CLI_VERSION exec --docker-path $DEVCONTAINER_DEMO_DOCKER_BIN --docker-compose-path $DEVCONTAINER_DEMO_COMPOSE_BIN --workspace-folder Examples/hello sh -lc 'cat hello.txt; cat /tmp/devcontainer-ready; printf architecture:; uname -m'"
 Enter
 Wait+Screen@120s /architecture:aarch64/
 Sleep 4s
@@ -58,7 +57,7 @@ Sleep 4s
 Ctrl+L
 Sleep 1s
 
-Type "docker ps -aq --filter label=devcontainer.local_folder=$DEVCONTAINER_DEMO_ROOT/Examples/hello | xargs docker rm -f >/dev/null; test -z $(docker ps -aq --filter label=devcontainer.local_folder=$DEVCONTAINER_DEMO_ROOT/Examples/hello) && echo 'clean shutdown: no demo containers remain'"
+Type "$DEVCONTAINER_DEMO_DOCKER_BIN ps -aq --filter label=devcontainer.local_folder=$DEVCONTAINER_DEMO_ROOT/Examples/hello | xargs $DEVCONTAINER_DEMO_DOCKER_BIN rm -f >/dev/null; test -z $($DEVCONTAINER_DEMO_DOCKER_BIN ps -aq --filter label=devcontainer.local_folder=$DEVCONTAINER_DEMO_ROOT/Examples/hello) && echo 'clean shutdown: no demo containers remain'"
 Enter
 Wait+Screen@60s /clean shutdown: no demo containers remain/
 Sleep 4s

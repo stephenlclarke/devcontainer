@@ -11,4 +11,10 @@ The project interoperates with, but is independent of, Apple container, the Dev 
 Release archives include `THIRD-PARTY-NOTICES.txt`, containing the complete
 root license and notice texts for every exact SwiftPM dependency, and
 `devcontainer.spdx.json`, identifying those reviewed dependencies and their
-declared SPDX licenses.
+declared SPDX licenses. The process-isolated native Compose payload separately
+includes `libexec/devcontainer-compose/THIRD-PARTY-NOTICES.txt` and
+`libexec/devcontainer-compose/resources/container-compose.spdx.json`, covering
+its exact SwiftPM packages, vendored Go modules, and linked Go standard
+library. The unmodified official Dev Containers CLI payload retains its own
+`share/devcontainer/reference-cli/LICENSE.txt` and
+`share/devcontainer/reference-cli/ThirdPartyNotices.txt`.

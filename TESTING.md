@@ -2,27 +2,28 @@
 
 ## Status
 
-The repository contains the production Docker compatibility service, stock
-Apple runtime adapter, optional `container-compose` provider, differential
+The repository contains the production Docker-protocol compatibility service,
+stock Apple runtime adapter, required native `container-compose` provider,
+differential
 parity harness, sanitizer workflows, and a pinned real VS Code end-to-end
 driver. The hosted-safe suite is discovered at execution time and must record
 greater than 90% first-party line coverage; documentation does not maintain a
 manual test-count claim that can drift from the executable suite. For version
-1.0.0, real Docker, stock Apple, and separately identified `container-compose`
-lanes pass all 18 CLI fixtures and the pinned real VS Code fixture with zero
-normalized semantic differences and complete timing evidence. In the exact
-1.0.0 tag run, the largest CLI
-ratios are 2.876x for stock Apple and 4.509x for `container-compose`; those
-results require further investigation under the current policy. The
-corresponding VS Code ratios are 1.232x and 1.311x. Three-run statistics and
-hotspot analysis are in [`PERFORMANCE.md`](PERFORMANCE.md). The release binds
-these results to the exact physical runner, signing, notarization, and
-publication evidence.
+1.0.2 to become stable, real Docker, stock Apple `container` 1.4.1, and the
+separately identified `container-compose` 0.15.1 lanes must pass all 19 CLI
+fixtures and the pinned real VS Code fixture with zero normalized semantic
+differences and complete timing evidence. The authoritative published provider
+pin is `container-compose` 0.15.1 at
+`81a2263adf30127a3cf774ffdaf56bd23e2f81c1`.
+[`PERFORMANCE.md`](PERFORMANCE.md)
+retains historical results and defines the required 1.0.2 run. Publication
+must bind the new results to the exact source, physical runner, signing,
+notarization, and release evidence.
 
 The implementation is not considered compatible merely because it builds or passes unit tests. A stable release requires reproducible evidence from the pinned real-Docker oracle, stock Apple runtime, `container-compose`, and VS Code lanes described here. [`QUALITY.md`](QUALITY.md) defines the corresponding merge and release gates.
 
-Direct oracle runs use the official `@devcontainers/cli` 0.88.0 package from
-tag commit `f683c29f64a20109b4453e5149807e390ff65133`. Preflight verifies its pinned
+Direct oracle runs use the official `@devcontainers/cli` 0.89.0 package from
+tag commit `5dc7533314b5ba7ec3875c30143dfe1aec644870`. Preflight verifies its pinned
 npm SHA-512 integrity value before execution, and each lane fingerprint retains
 that immutable package identity.
 
@@ -33,7 +34,7 @@ The test system proves all of the following:
 - Docker Engine requests used by the pinned Dev Containers toolchain have the expected status, headers, body, stream framing, errors, and lifecycle effects.
 - Provider-neutral behavior is identical through the stock Apple and `container-compose` providers wherever the project claims support.
 - A decoded unsupported Apple primitive fails before creating resources. The
-  separate standards audit tracks Docker request members that 1.0.1 does not
+  separate standards audit tracks Docker request members that 1.0.2 does not
   yet decode and reject.
 - State reconciliation, cancellation, concurrent operations, and cleanup remain correct after partial failures.
 - A pinned stable VS Code and Dev Containers extension can open, rebuild, reuse, and close a representative workspace without patches.
@@ -65,6 +66,8 @@ Unit tests own fast, deterministic coverage of:
 - provider selection, immutable project leases, and idempotency keys;
 - stream multiplexing, TTY/non-TTY behavior, chunk boundaries, cancellation, and EOF;
 - POSIX tar creation and extraction, modes, ownership, timestamps, symlinks, and long paths;
+- Docker-ignore grammar, exact Unicode-scalar behavior, budget-free linear literal matching, character-class scan accounting, global wildcard-work exhaustion, and excluded-directory subtree pruning;
+- automatic-removal coalescence across native ID, Docker ID, and name aliases, including same-name replacement protection;
 - event ordering, cursor resume, filtering, and reconnect behavior;
 - SQLite migrations, crash recovery, reconciliation, and cleanup plans;
 - deadlines, retry classification, privacy redaction, and diagnostic manifests.
@@ -188,13 +191,25 @@ lane.
 
 ### Timing evidence
 
-Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
+Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker, `container-compose`/Docker, and `container-compose`/stock-Apple ratios only between matching fixtures. Docker remains the behavioral oracle. The provider/stock ratio explicitly compares the enhanced Container stack with unmodified Apple Container, and the same investigation and order-of-magnitude timing boundaries apply to it.
+
+Immediately before each CLI and VS Code timing suite, the workflow runs
+`Tools/parity/require-quiet-host.sh`. It waits for the one-minute load average
+to fall to at most the smaller of one quarter of the logical CPU count and
+`2.0`, and for competing Swift, Clang, Xcode, Nextflow, Ninja, CMake, or
+Container-family release processes to be absent. The gate invalidates any old
+success receipt before checking and retains thermal state, load, process
+inventory, matching process IDs, the exact load policy, and a machine-readable
+success summary with the lane evidence. A host that does not become quiet
+within one hour fails the run; its timings cannot enter release or
+optimization evidence.
 
 Timing is not an exact-equivalence assertion. Comparable or better performance
-(`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
-Docker is marked for further investigation. A completed candidate at or above
-`10.00x` Docker fails timing acceptance and the overall parity gate without
-changing the separately reported functional result. A timeout or other
+(`<=1.00x` Docker) is the objective. A completed stock-Apple/Docker,
+`container-compose`/Docker, or `container-compose`/stock-Apple comparison above
+`2.50x` is marked for further investigation. A completed comparison at or above
+`10.00x` fails timing acceptance and the overall parity gate without changing
+the separately reported functional result. A timeout or other
 non-completion, or missing or invalid timing evidence, also fails the parity
 gate. The harness does not retry, normalize, or waive those failures.
 
@@ -227,8 +242,8 @@ moving the checked pin.
   behavior.
 - Exec TTY and non-TTY output, user/environment/workdir selection, byte-exact
   4 MiB stdin/stdout transfer, stderr separation, and exact exit status.
-- Dockerfile build arguments and labels, plain progress output, and a failed
-  build stream.
+- Dockerfile build arguments and labels, a private file-backed client upload,
+  staging cleanup, plain progress output, and a failed build stream.
 - Archive copy in and out with content, file mode, symlink, long-path, and
   1 MiB file preservation.
 - Network and volume creation and inspection, service-name DNS, read-only bind,
@@ -241,6 +256,9 @@ moving the checked pin.
 - Container and remote users, explicit `updateRemoteUserUID: false`, container/remote environment, and container-environment expansion.
 - String-valued lifecycle command order across initialize, create, update, post-create, start, and attach.
 - Two public Dev Container Features, generated build context, lockfile use, and frozen-lock rejection.
+- The upstream `devcontainer features test` author workflow against a local
+  Feature, including its generated image, assertion script, and automatic
+  test-container cleanup.
 - Workspace mounts, bind mounts, named volumes, port attributes, TCP publishing, and forwarding.
 - Same-configuration reuse, forced replacement, lifecycle-hook counts, and
   explicit container/volume cleanup.
@@ -270,7 +288,7 @@ integrity digest is introduced.
 
 The concurrency probe asserts the observed final container state and fixture
 cleanup. Wider fault injection and deterministic scheduler coverage remain
-future work and are not part of the 1.0.1 parity claim.
+future work and are not part of the 1.0.2 parity claim.
 
 ## Real runtime matrix
 
@@ -289,9 +307,26 @@ Live jobs use three provenance-specific self-hosted runner labels:
 `devcontainer-docker`, `devcontainer-apple-stock`, and
 `devcontainer-container-compose`. One isolated Mac may carry all three labels only
 when the workflow serializes them and validates the exact selected runtime
-before each lane. Each run creates an explicit application root, Docker
+before each lane. Every Apple candidate lane independently stops a running
+Docker oracle before starting its selected runtime; failure to establish that
+quiet Docker-free state fails the lane instead of relying on a prior cleanup.
+The complete CLI and VS Code sequence for every lane holds the same host-wide
+runtime lock used by `container-compose`, from runtime startup through evidence
+scrubbing and cleanup. Separate repository runners can therefore remain online
+without allowing either project to stop or replace the other's user-scoped
+Apple Container launchd services. A lane waits for that owner to finish and
+still requires a fresh quiet-host receipt before each timed suite.
+Each run creates an explicit application root, Docker
 context, socket, state database, runtime namespace, and fixture prefix. Cleanup
 runs even after cancellation and fails the job if owned resources remain.
+The Apple runtime root is short, marker-protected, and bound to the selected
+packaged runtime executable rather than a Homebrew wrapper. Its XDG
+configuration home is contained inside that root, and the harness writes a
+lane-owned empty configuration snapshot so ambient
+`~/.config/container/config.toml` values cannot replace the selected binary's
+immutable builder or VM-init defaults. Existing unmarked roots, mismatched
+runtime identities, and configuration paths outside the owned root fail before
+startup.
 
 The self-hosted runner never executes untrusted public-fork pull-request code.
 Live runs are limited to an exact trusted commit from protected `main`, a
@@ -311,10 +346,10 @@ Changes to fixture definitions, the normalizer, comparison rules, or release man
 
 ## VS Code end-to-end tests
 
-The E2E suite pins VS Code 1.131.0 for arm64 at commit
-`e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`, Dev Containers extension 0.467.0,
-and its embedded Dev Container CLI 0.88.0 at
-`f683c29f64a20109b4453e5149807e390ff65133`. The driver authenticates the
+The E2E suite pins VS Code 1.137.0 for arm64 at commit
+`645f29cc3176500b4b5762ba887cf2a7f0ffdf2c`, Dev Containers extension 0.470.0,
+and its embedded Dev Container CLI 0.89.0 at
+`5dc7533314b5ba7ec3875c30143dfe1aec644870`. The driver authenticates the
 official application, VSIX, and embedded CLI by checked-in SHA-256 digests.
 The installed CLI is required because its command set includes the `open`
 operation used by VS Code; a standalone `@devcontainers/cli` package must not
@@ -502,6 +537,6 @@ compatibility claim until its required candidate-bound recordings exist.
 - [VS Code extension testing](https://code.visualstudio.com/api/working-with-extensions/testing-extension)
 - [Apple container](https://github.com/apple/container)
 - [Building Apple container](https://github.com/apple/container/blob/main/BUILDING.md)
-- [Swift Package Manager test and coverage options](https://docs.swift.org/swiftpm/documentation/packagemanagerdocs/swifttest/)
+- [Swift Package Manager `swift test` options](https://github.com/swiftlang/swift-package-manager/blob/main/Sources/PackageManagerDocs/Documentation.docc/SwiftTest.md)
 - [GitHub-hosted runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 - [GitHub self-hosted runner security](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners)

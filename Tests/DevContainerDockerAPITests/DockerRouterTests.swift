@@ -29,6 +29,10 @@ func `negotiation works with versioned and unversioned paths`() async throws {
     #expect(ping.status == 200)
     #expect(try bytes(ping) == Data("OK".utf8))
     #expect(ping.headers["API-Version"] == "1.53")
+    #expect(
+        ping.headers[DevContainerEngineIdentity.header]
+            == DevContainerEngineIdentity.value
+    )
 
     let version = await router.respond(
         to: DockerHTTPRequest(method: .get, target: "/v1.53/version")
@@ -163,6 +167,39 @@ func `image endpoints cover pull inspect tag build and delete`() async throws {
 
     try await assertImagePullInspectAndTag(router)
     try await assertImageBuildLoadAndDelete(router)
+}
+
+@Test
+func `image inspection fails closed for an unavailable platform`() async {
+    let runtime = InMemoryRuntime()
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:3.22"],
+            createdAt: Date(),
+            size: 1,
+            architecture: "arm64",
+            variant: "v8"
+        )
+    )
+    let router = DockerRouter(runtime: runtime)
+
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .get,
+                target: "/images/alpine:3.22/json?platform=linux/amd64"
+            )
+        ).status == 404
+    )
+    #expect(
+        await router.respond(
+            to: DockerHTTPRequest(
+                method: .get,
+                target: "/images/alpine:3.22/json?platform=linux/arm64/v8"
+            )
+        ).status == 200
+    )
 }
 
 @Test

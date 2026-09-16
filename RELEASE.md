@@ -2,31 +2,38 @@
 
 <!-- markdownlint-disable MD013 -->
 
-> Version 1.0.1 uses the release process in this document. Its authoritative
+> Version 1.0.2 uses the release process in this document. Its authoritative
 > version, deterministic signed package, notarization evidence, checksums, SBOM,
 > GitHub attestation, hosted and physical parity gates, Homebrew promotion,
 > SonarQube analysis, and DocC publication are bound to one immutable release
 > commit and signed tag.
 
 This document defines how `devcontainer` validates and publishes an arm64
-macOS command-line tool for Apple's stock `container` runtime. Docker is the
-behavioral oracle, stock Apple `container` is the required runtime, and
-`container-compose` is an optional provider tested in a separate, explicitly
-identified parity lane.
+macOS command-line tool for Apple's stock `container` runtime. Docker is an
+isolated behavioral oracle only, stock Apple `container` is the required
+runtime, and native `container-compose` is the required process-isolated
+multi-service provider tested in both Apple runtime lanes.
 
 ## Release Principles
 
 - `main` is the releasable integration branch.
 - One checked-in value, `DEVCONTAINER_VERSION` in `Makefile`, is the authoritative product version.
 - Bare `MAJOR.MINOR.PATCH` tags are immutable stable release identities.
-- `current` is the only mutable tag and points to the newest release-eligible `main` commit.
+- Current builds use a new immutable `current-<sha40>` tag for each eligible
+  `main` commit; no release channel moves or reuses a published tag.
 - A package is authorized by an exact commit, never by a branch name alone.
 - Live Docker, stock Apple, and Compose-provider parity runs only on trusted bare-metal Apple silicon.
 - GitHub-hosted macOS validates source, tests, coverage, package structure, formula rendering, and documentation, but is not accepted as live Virtualization.framework evidence.
-- Releases never install, replace, or start a custom `container` runtime as a side effect.
-- Releases never install `container-compose` as a side effect.
+- Releases never install, replace, start, or select a custom `container` runtime as a side effect.
+- Product and Homebrew verification fail if they invoke Docker, Colima, Podman, or nerdctl
+  software; only the isolated parity-oracle lane may do so.
+- Candidate workload adapters must authenticate the project-owned Apple engine;
+  a Docker-compatible response without the project identity is release-blocking.
 - Missing runtime or provider prerequisites fail the strict release gate; they are not reported as successful skips.
-- Stable assets, tags, notes, checksums, SBOMs, and formula versions are immutable.
+- Published assets, tags, checksums, SBOMs, and formula versions are immutable.
+  GitHub permits editorial release-title, notes, prerelease, and latest-marker
+  changes after publication; automation verifies those fields at transaction
+  completion and never treats them as artifact identity.
 - GitHub Actions are pinned to complete commit SHAs, with the readable release version retained in a comment.
 - Prebuilt macOS artifacts are Developer ID signed and submitted to Apple's notary service before publication.
 - Every package publishes build metadata, a checksum, an SBOM, and GitHub build provenance.
@@ -46,7 +53,7 @@ The `devcontainer` adaptation removes `container-compose`'s duplicated version
 literals. The only tracked product-version declaration is:
 
 ```makefile
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.0.2
 ```
 
 Source code does not contain a second editable copy. The
@@ -70,6 +77,7 @@ Tools/release/sign-and-notarize.sh
 Tools/release/update-tap-readme.py
 Tools/release/verify-package.py
 Tools/release/write-build-info.py
+Tools/release/write-native-compose-legal.py
 Tools/release/write-notarization-evidence.py
 ```
 
@@ -106,10 +114,10 @@ make prepare-release VERSION_SELECTOR=-+-
 
 ### Current Channel
 
-Every eligible successful CI run for the newest `main` commit may refresh:
+Every eligible successful CI run for the newest `main` commit may publish:
 
-- Mutable lightweight tag: `current`
-- Mutable prerelease title: `Current build`
+- Immutable commit-addressed tag: `current-<sha40>`
+- Prerelease title: `Current build`
 - Commit-identified asset: `devcontainer-current-<sha12>-arm64.tar.gz`
 - Formula: `devcontainer-current.rb`
 - Homebrew version: `current.<github_run_number>.<sha12>`
@@ -120,23 +128,26 @@ The formula version uses the same validated algorithm as `container-compose`:
 current.418.0123456789ab
 ```
 
-Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until the designated repository-scoped MBP runner has both the `devcontainer-release` and `devcontainer-designated-mbp` labels, a Developer ID Application identity, the configured notary profile, and the tap token. Manual dispatch remains fail-closed against the same prerequisites.
+Automatic Current publication is gated by the repository variable `DEVCONTAINER_CURRENT_PUBLISH_ENABLED=true`. It remains disabled until the designated repository-scoped MBP runner has both the `devcontainer-release` and `devcontainer-designated-mbp` labels, the release-certificate and tap secrets, and either the notarization secrets or a prevalidated noninteractive local notary profile described below. Manual dispatch remains fail-closed against the same prerequisites.
 
 The full source identity remains the lowercase 40-character commit SHA. The 12-character prefix is only a display and asset-name convenience.
 
-Current publication must be staged safely:
+Current publication uses the same immutable draft transaction as a stable
+release. Each commit receives a new prerelease rather than mutating a tag or
+published asset:
 
 1. Build immutable commit-identified assets.
-2. Sign, notarize, validate, checksum, inventory, and attest those assets.
-3. Upload candidate assets to the existing Current prerelease without moving `current`.
-4. Render and commit `devcontainer-current.rb` using the commit-identified URL and checksum.
-5. Install and test that formula.
-6. Recheck that the candidate is still the remote `main` head.
-7. Move the unsigned lightweight `current` tag.
-8. Finalize the Current release object.
-9. Remove superseded Current assets only after the new channel is verified.
+2. Sign, notarize, validate, checksum, and inventory those assets.
+3. Create or reconcile a private `current-<sha40>` draft without replacing bytes.
+4. On retry after publication, download and authenticate the immutable release bytes instead of rebuilding the transaction around new notarization timestamps.
+5. Attest and retain the exact staged or recovered bytes.
+6. Publish and verify the immutable prerelease.
+7. Render and commit `devcontainer-current.rb` using the commit-addressed URL and checksum.
+8. Install and test that formula, then push the tap state.
 
-This ordering keeps the old Current formula valid if publication is interrupted.
+An interrupted run can safely resume at the same commit-addressed release. An older Current formula continues to use its own immutable tag and asset.
+Before creating a Current draft, the publisher rejects any existing tag whose peeled target is not the candidate commit. It repeats that check immediately before publication so a conflicting tag cannot be locked into a misleading immutable release.
+When publication already succeeded, the formula renderer reads the product, lane, release tag, and formula version from the restored published `.context.json` and hashes the restored published archive. A newly rebuilt or re-signed retry is never allowed to supply formula metadata or a checksum for different bytes.
 
 ### Stable Channel
 
@@ -168,14 +179,14 @@ An existing stable release is immutable. Recovery may recreate only a missing or
 
 ```json
 {
+  "architecture": "arm64",
   "buildType": "release",
   "commit": "0123456789abcdef0123456789abcdef01234567",
   "containerDistribution": "apple",
-  "containerVersion": "1.1.0",
   "lane": "stable",
   "provider": "none",
   "source": "stephenlclarke/devcontainer",
-  "version": "1.0.1"
+  "version": "1.0.2"
 }
 ```
 
@@ -190,15 +201,18 @@ The implemented workflow split is:
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
 | `ci.yml` | `macos-26`, Ubuntu aggregate | Format/lint, unit/contract/integration tests, both coverage gates, build, CLI smoke, and `Validate` aggregation |
-| `codeql.yml` | `macos-26` | Manual-build Swift analysis on protected `main`, schedules, dispatches, and ready pull requests |
+| `codeql.yml` | `macos-26` | Required Swift analysis for ready pull requests, main, schedules, and stable candidates |
 | `dependency-review.yml` | Hosted Ubuntu | Exact-range vulnerability and Apache-compatible license review |
 | `scorecard.yml` | Hosted Ubuntu | OpenSSF analysis, authenticated result publication, and SARIF upload |
 | `quality.yml` | `macos-26` | ASan and TSan on pull requests, pushes, schedules, and dispatch |
+| `sonar.yml` | `macos-26` | Export coverage, analyze the exact commit, and enforce the SonarQube Cloud quality gate |
 | `docs.yml` | `macos-26`, then Ubuntu | Build and publish DocC Pages |
+| `specification-drift.yml` | `macos-26` | Compare the live upstream Dev Containers base schema with the checked-in conformance ledger |
 | `homebrew.yml` | `macos-26` | Render the candidate package/formula, check Ruby syntax and formula style, and upload evidence |
 | `parity.yml` | Trusted bare-metal Apple silicon | Live Docker, stock Apple, and Compose-provider parity |
 | `stable-release-gate.yml` | Ubuntu and hosted macOS | Resolve immutable candidate and record release authority |
 | `prebuilt-binaries.yml` | Trusted bare-metal Apple silicon | Sign, notarize, package, attest, release, and update the tap |
+| `stable-release.yml` | Trusted bare-metal tag signer, then hosted Ubuntu | Create or verify the signed tag, dispatch both downstream authorities, wait, and verify GitHub plus Homebrew publication |
 
 ```mermaid
 flowchart TD
@@ -220,8 +234,9 @@ flowchart TD
     HostedGate --> Authority["Stable Release Authority check on candidate SHA"]
     Authority --> StableBuild["Rebuild tagged source on trusted release runner"]
     StableBuild --> SupplyChain["Sign, notarize, SBOM, checksum, and attest"]
-    SupplyChain --> StableRelease["Publish immutable GitHub Release"]
+    SupplyChain --> StableRelease["Publish immutable non-latest GitHub Release"]
     StableRelease --> StableTap["Update, install, and verify stable Homebrew formula"]
+    StableTap --> Latest["Promote tested release as Latest"]
 ```
 
 ### Stable Aggregate Checks
@@ -263,15 +278,15 @@ shown below:
 - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
 - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
 - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-- uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
-- uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
-- uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+- uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+- uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+- uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
 ```
 
 Dependabot updates the grouped GitHub Actions ecosystem weekly. Any new action
 is reviewed and pinned before merge.
 
-Permissions begin at read-only and escalate per job. The attestation job alone receives `id-token: write` and `attestations: write`; the release job alone receives `contents: write`; the stable-authority job alone receives `checks: write`; and the Pages deployment receives `pages: write` and `id-token: write`.
+Permissions begin at read-only and escalate per job. The package job alone receives `contents: write`, `id-token: write`, and `attestations: write`; the stable controller's tag job alone receives `contents: write`; its hosted continuation alone receives `actions: write`; and the Pages deployment receives `pages: write` and `id-token: write`. The candidate-bound stable-authority artifact is read-only and does not synthesize a check run.
 
 Self-hosted workflows must never run pull-request code. They accept only protected `main`, a GitHub-verified stable tag, or an explicit trusted dispatch. The release runner registration is repository-scoped.
 
@@ -293,8 +308,8 @@ The runner must provide:
 - A deliberately installed Docker engine and pinned Docker Compose oracle.
 - An explicitly configured `container-compose` executable for the provider lane.
 - `gh`, `git`, `jq`, `make`, `python3`, `shasum`, `ssh-keygen`, `swift`, and `tar`.
-- A noninteractive Developer ID signing identity.
-- A `notarytool` profile in the local keychain.
+- The release-certificate secrets and either notarization repository secrets or
+  the validated compatibility profile described below.
 - Git identity and SSH signing configuration for release commits and tags.
 
 The gate must capture versions and executable paths before testing. It must reject a stock lane when `container system version --format json` identifies a custom distribution.
@@ -304,15 +319,14 @@ The three lanes are:
 | Lane | Runtime | Compose | Release meaning |
 | --- | --- | --- | --- |
 | Docker oracle | Pinned Docker engine | Pinned Docker Compose | Expected Dev Containers behavior |
-| Stock Apple | Apple-signed `container` | None | Required core compatibility |
-| Compose provider | Explicitly supplied runtime and `container-compose` | Required | Optional multi-service integration evidence |
+| Stock Apple | Apple-signed `container` | Bundled stock-profile `container-compose` | Required Docker-less compatibility |
+| Enhanced provider | Explicitly supplied enhanced runtime | Explicit compatible enhanced `container-compose` | Optional enhanced-stack evidence |
 
 The provider lane must state whether its underlying runtime is `apple` or
-`custom`. Current supported `stephenlclarke/tap/container-compose` depends on a
-custom matched runtime, so installing that formula is forbidden in the stock
-lane. Until the provider works against stock Apple, its live evidence is valid
-only as a separately labelled provider comparison and cannot be used to claim
-that Apple supplies Compose support.
+`custom`. The release-bundled stock profile must work against unmodified Apple
+Container without installing the external formula. Any enhanced Compose formula
+and matched custom runtime are forbidden in the stock lane and remain a
+separately labelled comparison; Apple does not supply Compose support.
 
 Each lane uses:
 
@@ -323,7 +337,7 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
-- Per-fixture monotonic durations and candidate/Docker timing ratios. Comparable or better performance (`<=1.00x` Docker) is the objective; any completed result above `2.50x` requires further investigation. Non-completion or missing or invalid timing evidence fails the gate, while a completed timing ratio alone does not alter functional parity. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
+- Per-fixture monotonic durations and stock-Apple/Docker, enhanced-provider/Docker, and enhanced-provider/stock-Apple timing ratios. Comparable or better performance (`<=1.00x` the matching comparator) is the objective; any completed result above `2.50x` requires further investigation. A result at or above `10.00x` its matching comparator, non-completion, or missing or invalid timing evidence fails the gate without changing the separately reported functional result. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.
@@ -366,13 +380,72 @@ Source identity and binary identity are separate requirements:
 - The exact signed executable is submitted to Apple's notary service.
 - GitHub provenance attests the final distributed archive and SBOM.
 
-The release runner should hold signing and notarization material in the macOS keychain. Private keys, certificates, API keys, and notary credentials must not be copied into pull-request workflows, logs, artifacts, repository files, or generic Actions secrets.
+Signing-certificate inputs are repository Actions secrets available only to
+the trusted release job; pull-request workflows never receive them.
+Notarization uses either the three repository secrets or the prevalidated
+compatibility profile described below. Each package run imports the certificate
+into a new operation-scoped keychain below `RUNNER_TEMP`. When all three
+notarization secrets are configured, the run creates its notary profile in that
+same keychain. It verifies the exact configured identity, certificate expiry,
+hardened-runtime timestamp signing, and Apple credentials before the package
+build. Every prompt-capable command has closed standard input and a
+process-group deadline. An `always()` step restores the exact prior user
+keychain search list and deletes the operation keychain after success or
+failure. The helper publishes its restoration record only after a successful
+search-list capture. If restoration or deletion fails, it retains that record
+and fails the job so the exact cleanup can be retried; it never treats an empty
+or incomplete capture as authority to clear the user's search list. This is the
+preferred path and does not depend on the login keychain.
 
-Verification includes:
+Configure the one-time repository authorities from a private terminal. Each
+`gh secret set` command securely prompts for its value:
 
 ```sh
-codesign --verify --strict --verbose=2 /path/to/devcontainer
-xcrun notarytool submit /path/to/notarization.zip --keychain-profile devcontainer-release --wait
+gh secret set DEVELOPER_ID_APPLICATION_P12_BASE64 \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVELOPER_ID_APPLICATION_P12_PASSWORD \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_APPLE_ID \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_TEAM_ID \
+  --repo stephenlclarke/devcontainer
+gh secret set DEVCONTAINER_NOTARY_PASSWORD \
+  --repo stephenlclarke/devcontainer
+```
+
+`DEVCONTAINER_NOTARY_PASSWORD` is the Apple ID app-specific password, not the
+Apple account password. The P12 base64 value contains the Developer ID
+Application certificate and private key. Keep all values out of shell history,
+chat, files, logs, and workflow inputs. Configure the expected public identity
+name separately:
+
+```sh
+gh variable set DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY \
+  --repo stephenlclarke/devcontainer \
+  --body 'Developer ID Application: Steve Clarke (4MEB7MUTAV)'
+```
+
+For compatibility while those three notary secrets are being migrated, the
+workflow accepts `DEVCONTAINER_NOTARY_PROFILE` from the repository variables.
+Before any expensive build it runs a bounded, stdin-closed `notarytool history`
+against that profile and fails if it is missing, locked, or interactive. The
+configured `devcontainer-release` profile is only usable after it passes that
+exact noninteractive probe on the designated release host. A partial set of
+notarization secrets is always rejected. The three operation-scoped repository
+secrets remain the preferred unattended authority because they do not depend on
+the state of a user's login keychain.
+
+When repository notary secrets are present, the release helper creates the
+configured profile inside the unique temporary keychain. Its effective
+verification is equivalent to:
+
+```sh
+codesign --keychain /path/to/operation.keychain-db \
+  --verify --strict --verbose=2 /path/to/devcontainer
+xcrun notarytool submit /path/to/notarization.zip \
+  --keychain-profile devcontainer-release \
+  --keychain /path/to/operation.keychain-db \
+  --wait --timeout 2040s
 ```
 
 A standalone Mach-O executable cannot be stapled like an app, pkg, or dmg. The
@@ -388,17 +461,25 @@ After downloading the published asset, validate the signature again and run an a
 
 Every Current and stable package publishes:
 
-- `devcontainer-<lane>-arm64.tar.gz`
+- Stable `devcontainer-release-arm64.tar.gz` or Current
+  `devcontainer-current-<sha12>-arm64.tar.gz`
 - Matching `.sha256`
-- `devcontainer-sbom.spdx.json`
+- Matching `.context.json`
+- Matching `.verification.json`
+- `devcontainer.spdx.json`
 - `build-info.json`
+- `notarization.json`
 - Release notes with exact CI, documentation, parity, signing, and notarization links
 
 The repository-owned deterministic SPDX 2.3 generator records the exact source
 commit, source-date epoch, and every pin in `Package.resolved`. A checked-in
 ledger assigns a reviewed Apache-compatible SPDX license to every pin; any
 missing or stale entry fails packaging. Release archives also contain complete
-root license and notice texts for all pins. Package validation rejects
+root license and notice texts for all pins. The bundled stock-profile Compose
+provider carries a second SPDX document, its exact SwiftPM lockfile and
+vendored Go module build list, plus complete legal texts for those SwiftPM and
+Go dependencies and the linked Go standard library. Missing, replaced, or
+unrecognized provider dependencies fail closed. Package validation rejects
 dependency, version, revision, source, license, relationship, notice,
 provenance, normalized-archive-metadata drift, and packaged README links that
 are relative or bound to a different source commit.
@@ -409,13 +490,22 @@ the published repository.
 
 Checksums are calculated only after signing and notarization, because those bytes are the distributed identity. Formula rendering downloads the published archive and checksum again, verifies both, checks required archive entries, and derives the Homebrew SHA from that verified archive.
 
-Publication is a retryable two-phase transaction. The workflow first uploads
-the candidate as a public prerelease, commits the candidate tap state locally,
-and installs and tests that exact local commit. It then pushes the tested tap
-commit and only afterward finalizes a stable release. Failed stable attempts
-may replace assets only while the release remains a prerelease; a finalized
-stable release is immutable. Current remains a prerelease and moves its
-deliberately mutable source tag only after the tap promotion succeeds.
+Publication is a retryable transaction. GitHub draft creation has bounded
+retries and reconciles an ambiguous failure only when the returned draft has
+the exact tag, target commit, title, and prerelease state. The workflow creates
+a private draft,
+uploads and verifies the complete asset inventory and GitHub-computed digests,
+attests those exact bytes, then publishes the draft as an immutable release
+before testing and promoting the matching tap formula. A stable release is
+published with `latest=false`; it becomes GitHub's Latest release only after
+the exact formula has passed audit, fetch, install, and test and its tap commit
+has been pushed. An interrupted run can reconcile only a draft whose existing
+bytes match the retained candidate. If publication already succeeded, the
+retry downloads and authenticates the immutable published bytes so new signing
+timestamps cannot change the transaction. Stable and Current releases are
+accepted only after their exact tag target, metadata, asset names, digests, and
+immutable state are verified. Current uses a new `current-<sha40>` prerelease
+for every candidate commit.
 
 ## Homebrew Design
 
@@ -427,27 +517,27 @@ Stable formula:
 class Devcontainer < Formula
   desc "Dev Containers compatibility for Apple's container runtime"
   homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
+  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.2/devcontainer-release-arm64.tar.gz"
   sha256 "RELEASE_SHA256"
   license "Apache-2.0"
 
   depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
   depends_on macos: :tahoe
+  depends_on "node"
 
   def install
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
+    bin.install "bin/devcontainer-docker"
     bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
+    libexec.install Dir["libexec/*"]
+    pkgshare.install Dir["share/devcontainer/*"]
   end
 
   def caveats
     <<~EOS
-      This formula installs devcontainer and requires the upstream Docker CLI
-      and Docker Compose protocol clients.
+      This formula installs devcontainer's own compatibility adapters and the
+      bundled native container-compose provider. Docker software is not required.
       Install Apple's stock container runtime separately from Apple.
       Register the optional Apple CLI plugin explicitly:
         devcontainer plugin register
@@ -457,8 +547,10 @@ class Devcontainer < Formula
   test do
     assert_match version.to_s, shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_match "bundled-stock", shell_output("#{libexec}/devcontainer-compose/bin/compose version --format json")
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
+    assert_predicate libexec/"devcontainer-compose/resources/compose-normalizer", :executable?
   end
 end
 ```
@@ -476,9 +568,9 @@ The formula must not:
 
 Tap updates are serialized and use a dedicated token. Automation verifies the tap push remote, commits only the intended formula, pushes one Conventional Commit, waits for tap CI, installs the formula, runs `brew test`, and compares the installed binary's build info with the selected commit.
 
-## Release Operator Commands
+## Unattended Stable Release
 
-The checked-in Make targets are the local release authority:
+The checked-in Make targets remain useful local evidence:
 
 ```console
 make check
@@ -489,20 +581,27 @@ make release-gate-hosted
 make package-release
 ```
 
-For stable 1.0.1 publication:
+After the exact candidate is reviewed, merged to protected `main`, and green,
+the sole operator action for stable 1.0.2 is:
 
-1. Push the exact candidate to protected `main` and require every workflow in
-   the stable gate to succeed for that commit.
-2. Run the serialized three-lane parity workflow and retain its raw, normalized,
-   VS Code, and cleanup evidence.
-3. Create and push the annotated SSH-signed `1.0.1` tag.
-4. Dispatch `stable-release-gate.yml` with `ref=1.0.1`.
-5. After its candidate-bound authority artifact is present, dispatch
-   `prebuilt-binaries.yml` with `ref=1.0.1`.
-6. Verify the finalized GitHub release, attestations, tap commit, fresh
-   `brew install stephenlclarke/tap/devcontainer`, formula test, build identity,
-   and a stock-runtime smoke.
+```sh
+gh workflow run stable-release.yml \
+  --repo stephenlclarke/devcontainer \
+  --ref main \
+  -f version=1.0.2
+```
+
+The controller verifies that the requested version is the exact reviewed
+`Makefile` version and that its checkout is remote `main`. On the designated
+MBP it creates or verifies the annotated SSH-signed tag. A hosted continuation
+then dispatches each downstream workflow through GitHub's versioned API, binds
+the wait to the immutable returned run ID, waits for the candidate-bound stable
+gate and package publication, and verifies the immutable Latest release and
+the matching Homebrew formula. Because the long wait runs on a hosted runner,
+the single release MBP remains free for the package workflow. Rerunning the
+controller safely verifies and reuses an already correct tag.
 
 The publication workflow performs Developer ID signing, notarization, staged
-release upload, formula rendering, strict audit/fetch/install/test, tested tap
-push, and final release promotion as one fail-closed transaction.
+release upload, immutable non-latest publication, formula rendering, strict
+audit/fetch/install/test, tested tap push, and final Latest-marker promotion as
+one fail-closed transaction.

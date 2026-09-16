@@ -11,7 +11,7 @@ fingerprints one distribution at a time so a lane never replaces another
 lane's live runtime distribution. Release validation rejects incomplete or
 missing evidence.
 
-Stock Apple `container` 1.1.0 does not transport explicit Docker hostnames or
+Stock Apple `container` 1.4.1 does not transport explicit Docker hostnames or
 security options. The adapter rejects a non-empty hostname and security
 options other than the already-native `seccomp=unconfined` state before
 runtime creation. Stock privileged mode is also rejected instead of being

@@ -2,16 +2,17 @@
 
 <!-- markdownlint-disable MD013 -->
 
-This document states exactly where `devcontainer` 1.0.1 conforms to, delegates, partially implements, does not implement, or has not verified the Development Containers standards. It is intentionally broader than the release fixture ledger in [COMPATIBILITY.md](COMPATIBILITY.md).
+This document states exactly where `devcontainer` 1.0.2 conforms to, delegates, partially implements, does not implement, or has not verified the Development Containers standards. It is intentionally broader than the release fixture ledger in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Audit basis
 
-The audit was completed on 29 July 2026 against:
+The audit was completed on 29 July 2026 and revalidated on 14 September 2026
+against the unchanged pinned specification commit and refreshed release clients:
 
 - [`devcontainers/spec` commit `c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421`](https://github.com/devcontainers/spec/tree/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421), including the [`devcontainer.json` property reference](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md), [base schema](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/schemas/devContainer.base.schema.json), [Feature specification](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-features.md), [image metadata](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/image-metadata.md), [lockfiles](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-lockfile.md), [declarative secrets](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/declarative-secrets.md), and [GPU host requirements](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/gpu-host-requirement.md);
-- official [`@devcontainers/cli` 0.88.0 at commit `f683c29f64a20109b4453e5149807e390ff65133`](https://github.com/devcontainers/cli/tree/f683c29f64a20109b4453e5149807e390ff65133), which is the unmodified parser and lifecycle implementation used by the 1.0.1 release;
+- official [`@devcontainers/cli` 0.89.0 at commit `5dc7533314b5ba7ec3875c30143dfe1aec644870`](https://github.com/devcontainers/cli/tree/5dc7533314b5ba7ec3875c30143dfe1aec644870), which is the unmodified parser and lifecycle implementation pinned by the 1.0.2 release candidate;
 - the complete [Dev Containers GitHub organization](https://github.com/devcontainers), including [Features](https://github.com/devcontainers/features), [Templates](https://github.com/devcontainers/templates), [Images](https://github.com/devcontainers/images), and [CI tooling](https://github.com/devcontainers/ci);
-- stock [`apple/container` 1.1.0](https://github.com/apple/container/tree/1.1.0) and its resolved [`apple/containerization` 0.35.0](https://github.com/apple/containerization/tree/0.35.0);
+- stock [`apple/container` 1.4.1](https://github.com/apple/container/tree/1.4.1) and its resolved [`apple/containerization` 0.45.0](https://github.com/apple/containerization/tree/0.45.0);
 - the three release lanes and fixtures defined by [`Tests/Parity/manifest.json`](Tests/Parity/manifest.json).
 
 The specification is a moving upstream branch. This audit is reproducible because it names an exact specification commit and an exact reference CLI commit.
@@ -23,42 +24,74 @@ The specification is a moving upstream branch. This audit is reproducible becaus
 | `certified` | The exact behavior is in a release-bound real-Docker, stock-Apple, and optional-provider parity fixture with zero semantic differences. |
 | `delegated` | The official CLI, VS Code, or another supporting tool owns the behavior; the bridge is not the parser or user-interface implementation. |
 | `partial` | A useful subset works, but at least one standard form is unsupported or behavior differs. |
-| `unsupported` | Version 1.0.1 cannot provide the required behavior. |
+| `unsupported` | Version 1.0.2 cannot provide the required behavior. |
 | `unverified` | Code may pass the request, or the official client may own it, but no release-bound fixture proves the behavior. No support claim is made. |
 
 `delegated` does not automatically mean `certified`. A delegated client feature can still depend on Docker runtime behavior that the bridge does not implement.
 
 ## Executive conclusion
 
-Version 1.0.1 is conformant only for the bounded configurations exercised by its 18 CLI fixtures and real VS Code fixture. It is not a complete implementation of every `devcontainer.json` property, every Feature requirement, every Docker Compose configuration, or every Docker `run`/`build` option allowed by the standard.
+Version 1.0.2 is a release candidate for the bounded configurations exercised
+by its 19 CLI fixtures and real VS Code fixture. That scope becomes a stable
+conformance claim only after the release-bound parity gate passes. Even then,
+it is not a complete implementation of every `devcontainer.json` property,
+every Feature requirement, every Docker Compose configuration, or every
+Docker `run`/`build` option allowed by the standard.
 
 The official CLI provides standards parsing, metadata merging, variable expansion, Feature resolution, and lifecycle orchestration. This project provides a Docker-compatible transport and Apple runtime adapter for a tested subset. The distinction matters: accepting a JSON property in the official CLI does not prove that every Docker request produced by that property is enforced by stock Apple `container`.
 
-The project's north-star goal is to close every gap in this audit and reach 100% behavioural parity with Docker-based Development Containers. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md) turns the gaps into a prioritised implementation and certification design. Until that evidence exists, the bounded conclusion above remains authoritative.
+The project's north-star goal is to close every gap in the audited,
+Docker-independent surface and reach 100% behavioural parity there. A host
+Docker daemon or daemon-socket mount is deliberately excluded. [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md)
+turns the remaining gaps into a prioritised implementation and certification
+design. Until that evidence exists, the bounded conclusion above remains
+authoritative.
 
-## Known 1.0.1 non-conformances
+## Known 1.0.2 non-conformances
 
 These are confirmed implementation differences, not merely missing tests.
 
-| ID | Standard or required behavior | 1.0.1 behavior | Impact and workaround |
+| ID | Standard or required behavior | 1.0.2 behavior | Impact and workaround |
 | --- | --- | --- | --- |
 | NC-001 | `runArgs` accepts Docker CLI run arguments | Runtime-affecting container, exec, network, and volume objects now use strict nested schemas. Unknown members fail with `400`, and known but unenforceable fields fail with `501`, before side effects. Complete endpoint and API-version coverage is not yet generated from the Docker schema. | Do not treat arbitrary `runArgs` as supported. Every requested field must have an explicit translation and Docker-oracle fixture before entering the claim. |
-| NC-002 | `hostRequirements.gpu` causes the reference CLI to request a GPU, normally through Docker `--gpus all` | Docker `HostConfig.DeviceRequests` is decoded and rejected before creation. Stock Apple `container` 1.1.0 has no certified GPU path. | GPU-required configurations and GPU-dependent Features are unsupported. There is no stock workaround in 1.0.1. |
-| NC-003 | `privileged: true` means Docker `--privileged` semantics | Stock Apple 1.1.0 has no `--privileged`. The adapter rejects the request before native creation instead of approximating it with `--cap-add ALL`. A separately fingerprinted enhanced runtime may use a real advertised flag. | Stock privileged configurations, Docker-in-Docker, and host-device workflows remain unsupported until a tagged Apple primitive passes the complete differential contract. |
-| NC-004 | `securityOpt` values must be applied | `seccomp=unconfined` is a semantic no-op because Apple containers do not install Docker’s default seccomp profile. Other supported Docker forms, including `no-new-privileges`, cannot be transported by stock Apple 1.1.0 and are rejected. Unrecognized forms are rejected by the router. | The common debugger setting `seccomp=unconfined` works as the already-native state. Other security options require a separately fingerprinted runtime that advertises and enforces them; they are outside the stock claim. |
-| NC-005 | Docker run arguments and Compose may set an explicit container hostname | Stock Apple `container` 1.1.0 exposes no hostname field. The bridge rejects non-empty Docker `Hostname` before runtime creation. | Remove `runArgs: ["--hostname", ...]` and Compose `hostname` from stock configurations. Network service aliases used by the certified Compose fixtures remain supported. |
+| NC-002 | `hostRequirements.gpu` causes the reference CLI to request a GPU, normally through Docker `--gpus all` | Docker `HostConfig.DeviceRequests` is decoded and rejected before creation. Stock Apple `container` 1.4.1 has no certified GPU path. | GPU-required configurations and GPU-dependent Features are unsupported. There is no stock workaround in 1.0.2. |
+| NC-003 | `privileged: true` means Docker `--privileged` semantics | Stock Apple 1.4.1 has no `--privileged`. The adapter rejects the request before native creation instead of approximating it with `--cap-add ALL`. A separately fingerprinted enhanced runtime may use a real advertised flag. | Stock privileged configurations, Docker-in-Docker, and host-device workflows remain unsupported until a tagged Apple primitive passes the complete differential contract. |
+| NC-004 | `securityOpt` values must be applied | `seccomp=unconfined` is a semantic no-op because Apple containers do not install Docker’s default seccomp profile. Other supported Docker forms, including `no-new-privileges`, cannot be transported by stock Apple 1.4.1 and are rejected. Unrecognized forms are rejected by the router. | The common debugger setting `seccomp=unconfined` works as the already-native state. Other security options require a separately fingerprinted runtime that advertises and enforces them; they are outside the stock claim. |
+| NC-005 | Docker run arguments and Compose may set an explicit container hostname | Stock Apple `container` 1.4.1 exposes no hostname field, so the bridge rejects non-empty Docker `Hostname` before runtime creation. The separately fingerprinted enhanced Container distribution advertises a native `--hostname` flag and the adapter forwards it, but the current release matrix does not independently certify hostname parity. | Remove `runArgs: ["--hostname", ...]` and Compose `hostname` from stock configurations. Users of the enhanced Container and `container-compose` stack can use its native hostname support, while network service aliases remain the certified portable option. |
 | NC-006 | String-valued `mounts` and `workspaceMount` accept Docker `--mount` fields | Type, source, target, and read-only state are implemented. Bind propagation, consistency, volume `nocopy`, tmpfs size/mode, driver configuration, and related nested fields are decoded and rejected before creation when non-default behaviour cannot be enforced. | Use only the basic certified forms. Advanced mount semantics fail explicitly until a tagged runtime primitive and differential fixture exist. |
 | NC-007 | Image-declared anonymous `VOLUME` entries have Docker anonymous-volume lifecycle and storage semantics | The adapter projects anonymous volumes in inspect data but leaves their content on Apple’s native writable root filesystem instead of allocating a separate managed volume. | Do not rely on Docker anonymous-volume persistence, sharing, or cleanup semantics for image-declared `VOLUME` paths. Declare a named volume explicitly when persistence matters. |
 | NC-008 | A Docker-compatible runtime can attach or detach a running container from a network when the client requires it | Stock Apple requires networks and aliases at create time. The bridge rejects `network connect` and `network disconnect` after creation. | The certified Dev Container and Compose paths supply networks at creation. Configurations or Compose flows that dynamically change attachments are unsupported. |
 | NC-009 | Resource, namespace, device, DNS, host mapping, restart, and similar Docker run options supplied through `runArgs` are applied | Memory/CPU/pids/shared-memory, devices, device rules, extra hosts, DNS, PID/IPC/UTS/user/cgroup namespaces, read-only root, sysctls, restart, stop, and related field families are decoded. Non-default values without exact support return `501` before side effects. | These options remain outside the claim. There is no pass-through or silent omission; add a typed translation and parity fixture before treating any field as supported. |
+| NC-010 | A bind mount may name any host path, including a Docker daemon socket | Bind sources resolving to `docker.sock` or `docker.raw.sock` return `501` before container creation. The product never proxies or exposes a host Docker daemon. | Docker-outside-of-Docker socket workflows are intentionally unsupported. Use the Apple-backed service and native Compose path instead. |
 
 Features contribute `privileged`, `capAdd`, `securityOpt`, mounts, lifecycle commands, and other metadata to the merged configuration. A Feature inherits every applicable non-conformance above; a successful installation of the two certified public Features is not a blanket claim for the Feature catalog.
+
+## Docker-less product invariant
+
+The names `DockerHTTPRequest`, `Dockerfile`, `DOCKER_HOST`, `dockerPath`, and
+`devcontainer-docker` are compatibility vocabulary required by the unmodified
+Dev Containers clients and their wire protocol. They do not identify installed
+or invoked Docker software. The shipped product, release archive, Homebrew
+formula, and candidate runtime lanes contain no Docker Engine, Docker Desktop,
+Docker CLI, Docker Compose, Colima, Podman, nerdctl, daemon socket, or fallback.
+
+The compatibility adapter connects only to the package-owned local
+`engine.sock`. Obvious Docker daemon socket names and symlink aliases are
+rejected before connection. A side-effect-free `HEAD /_ping` probe then
+requires the exact project engine identity before the first workload request;
+the result is cached for that adapter process. A foreign Docker-compatible
+daemon is therefore rejected even if it is exposed through a renamed Unix
+socket. The separately serialized Docker parity lane is test-oracle
+infrastructure only and cannot be selected, discovered, or packaged as a
+candidate backend. All product child processes pass through one shared
+launch-time policy that rejects Docker-family executable names and resolved
+symlink targets; the source audit rejects direct process-launch bypasses.
 
 [`UNSUPPORTED-CAPABILITIES.md`](UNSUPPORTED-CAPABILITIES.md) maps every confirmed rejection and semantic gap above to the exact Docker fields, existing tagged Apple primitives, required bridge or upstream work, owning repository, and differential acceptance evidence. It also separates current Dev Containers requirements from Swarm-only Docker fields that remain deliberately outside the north-star gate unless the supported client corpus starts emitting them.
 
 ## Platform support boundary
 
-Version 1.0.1 supports Linux `arm64` containers on Apple silicon with macOS
+Version 1.0.2 supports Linux `arm64` containers on Apple silicon with macOS
 Tahoe. Windows containers, Intel Macs, Linux hosts, remote engines, and
 cross-architecture execution are outside the implementation. This is an
 explicit product support limitation, not a violation of the Development
@@ -69,7 +102,7 @@ hosts and image platforms.
 
 The following ledger covers every root property in the audited base schema. Related fields are grouped where they share an implementation boundary.
 
-| Property | Status | 1.0.1 evidence and boundary |
+| Property | Status | 1.0.2 evidence and boundary |
 | --- | --- | --- |
 | `$schema`, `additionalProperties` | `delegated` | JSONC parsing, schema selection, comments, and tool-specific extra properties are owned by the official CLI or supporting tool. The bridge never reads `devcontainer.json`. |
 | `name` | `delegated` | Display metadata is owned by the official CLI/VS Code. Names exist in certified fixtures but are not a runtime semantic claim. |
@@ -119,7 +152,7 @@ The following ledger covers every root property in the audited base schema. Rela
 
 ## Ports, networks, and Compose boundary
 
-The standard deliberately uses Docker Compose as the multi-container orchestrator. The 1.0.1 claim therefore names a tested Compose subset, not the complete Compose Specification.
+The standard deliberately uses Docker Compose as the multi-container orchestrator. The 1.0.2 claim therefore names a tested Compose subset, not the complete Compose Specification.
 
 Certified:
 
@@ -161,13 +194,20 @@ These are scope boundaries, not claims that upstream projects are incompatible.
 
 The local service advertises Docker API 1.44 through 1.53 only for endpoints required by the pinned clients and fixtures. It is not a general Docker Engine.
 
-The most important standards risk is unknown-field handling: Swift `Decodable` ignores create/build members that are not present in the DTO. That is why NC-001 and NC-009 explicitly warn that success is not enforcement. The existing design requirement that unsupported fields fail before side effects is true only for fields the router currently decodes and validates, such as a stock hostname, unsupported mount type, recognized-but-unavailable security option, and dynamic network change.
+The most important standards risk is completeness of the strict request model.
+The implemented create, exec, network, and volume DTO boundaries reject unknown
+members, and recognized but unavailable behavior fails before side effects.
+That does not prove that every endpoint and API-version shape the evolving
+official clients may emit has been generated from the Docker schema. NC-001 and
+NC-009 therefore forbid treating an unmodelled request family as supported
+until its complete wire shape, rejection policy, and oracle fixture exist.
 
 Private registries, credential helpers, registry mirrors, content trust, BuildKit cache exporters/importers, multi-platform manifests, arbitrary Buildx options, swarm, plugins, and general Docker administration are outside the release claim.
 
 ## Release parity versus full-standard parity
 
-All release fixtures passed with zero normalized semantic differences. That proves exact parity for their assertions:
+The published 1.0.1 release fixtures passed with zero normalized semantic
+differences. That proves exact parity for their assertions:
 
 - 18 CLI fixtures;
 - one real VS Code fixture;
@@ -177,11 +217,15 @@ All release fixtures passed with zero normalized semantic differences. That prov
 
 It does not prove configurations that the manifest does not contain. The [timing analysis](PERFORMANCE.md) likewise reports only those same fixtures.
 
+The 1.0.2 candidate adds a nineteenth CLI fixture for the upstream Feature
+author test command. It does not enter the stable claim until its exact
+three-lane release evidence passes.
+
 ## Remediation priorities
 
 | Priority | Work | Required acceptance evidence |
 | --- | --- | --- |
-| P0 | Reject unknown Docker create/build fields before side effects | DTO unknown-key tests plus real CLI fixtures proving unsupported `runArgs` fail explicitly |
+| P0 | Generate complete endpoint/API-version request coverage and preserve strict unknown-field rejection | Schema-derived DTO coverage plus real CLI fixtures proving unsupported `runArgs` fail explicitly |
 | P0 | Decode and either implement or reject GPU `DeviceRequests` | Required/optional GPU fixtures against Docker and every Apple lane |
 | P1 | Separate the stock privileged claim from full Docker privileged semantics | Docker-in-Docker/device/capability parity fixtures or an explicit hard rejection |
 | P1 | Expand or hard-reject resource, namespace, device, DNS, host, restart, and stop options | One focused differential fixture per supported field family |

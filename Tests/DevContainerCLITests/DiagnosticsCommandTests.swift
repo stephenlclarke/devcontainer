@@ -32,6 +32,40 @@ struct DiagnosticsCommandTests {
     }
 
     @Test
+    func `diagnostic commands reject Docker Compose executables`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("devcontainer-dockerless-cli-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = directory.appendingPathComponent("missing.toml")
+
+        var doctor = try DoctorCommand.parse([
+            "--config", configuration.path,
+            "--compose", "/usr/local/bin/docker-compose"
+        ])
+        await #expect(throws: DevContainerError.self) {
+            try await doctor.run()
+        }
+
+        var diagnostics = try DiagnosticsCommand.parse([
+            "--config", configuration.path,
+            "--compose", "/usr/local/bin/colima",
+            "--output", directory.appendingPathComponent("diagnostics.tar.gz").path
+        ])
+        await #expect(throws: DevContainerError.self) {
+            try await diagnostics.run()
+        }
+
+        let configure = try ConfigureCommand.parse([
+            "--config", directory.appendingPathComponent("config.toml").path,
+            "--container", "/usr/local/bin/docker"
+        ])
+        #expect(throws: DevContainerError.self) {
+            try configure.run()
+        }
+        #expect(!FileManager.default.fileExists(atPath: configure.config))
+    }
+
+    @Test
     func `redactor removes home paths and credential-like values`() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let value = DiagnosticsRedactor.redact(
@@ -475,7 +509,7 @@ private final class DiagnosticsFixture {
     private static func configurationValue() -> DevContainerConfiguration {
         DevContainerConfiguration(
             backend: .stock,
-            composeProvider: .docker,
+            composeProvider: .containerCompose,
             socket: FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("diagnostics.sock").path,
             strictCompatibility: true

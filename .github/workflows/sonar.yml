@@ -163,6 +163,7 @@ jobs:
         if: steps.sonar_credentials.outputs.configured == 'true'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_VERSION: ${{ env.ANALYSIS_REVISION }}
           SONAR_PULL_REQUEST_KEY: ${{ github.event.pull_request.number }}
           SONAR_PULL_REQUEST_BRANCH: ${{ github.head_ref }}
           SONAR_PULL_REQUEST_BASE: ${{ github.base_ref }}

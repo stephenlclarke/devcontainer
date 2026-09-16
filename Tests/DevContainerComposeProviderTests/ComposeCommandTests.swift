@@ -95,33 +95,6 @@ func `project removing commands release provider ownership`() throws {
 }
 
 @Test
-func `docker Compose command prefers standalone executable`() {
-    let docker = URL(fileURLWithPath: "/opt/homebrew/bin/docker")
-    let compose = URL(fileURLWithPath: "/opt/homebrew/bin/docker-compose")
-    let command = DockerComposeCommand(
-        arguments: ["version", "--short"],
-        docker: docker,
-        standaloneCompose: compose
-    )
-
-    #expect(command.executable == compose)
-    #expect(command.arguments == ["version", "--short"])
-}
-
-@Test
-func `docker Compose command falls back to CLI plugin`() {
-    let docker = URL(fileURLWithPath: "/usr/local/bin/docker")
-    let command = DockerComposeCommand(
-        arguments: ["up", "--detach"],
-        docker: docker,
-        standaloneCompose: nil
-    )
-
-    #expect(command.executable == docker)
-    #expect(command.arguments == ["compose", "up", "--detach"])
-}
-
-@Test
 func `command envelope accepts every global option spelling and separator`() throws {
     let split = try ComposeCommandEnvelope(
         arguments: [
@@ -272,6 +245,8 @@ func `provider rejects missing executable`() {
 }
 
 @Test
+// One end-to-end scenario intentionally covers both the probe and the invocation environment.
+// swiftlint:disable:next function_body_length
 func `provider probes and invokes a compatible executable`() async throws {
     let fixture = try FakeComposeExecutable(mode: .valid)
     let provider = try ExecutableComposeProvider(
@@ -279,6 +254,11 @@ func `provider probes and invokes a compatible executable`() async throws {
         environment: [
             "PATH": "/usr/bin:/bin",
             "SAFE_BASE": "yes",
+            "DOCKER_CONTEXT": "desktop-linux",
+            "DOCKER_CONFIG": "/tmp/docker-config",
+            "DOCKER_API_VERSION": "1.24",
+            "CONTAINER_BIN": "/tmp/foreign-runtime",
+            "CONTAINER_COMPOSE_RUNTIME_PROFILE": "foreign",
             "DYLD_INSERT_LIBRARIES": "blocked",
             "BASH_ENV": "blocked"
         ]
@@ -287,7 +267,7 @@ func `provider probes and invokes a compatible executable`() async throws {
     let descriptor = try await provider.descriptor(context: context)
     #expect(descriptor.provider == .containerCompose)
     #expect(descriptor.providerVersion == "0.10.0")
-    #expect(descriptor.providerCommit == "fixture-commit")
+    #expect(descriptor.providerCommit == String(repeating: "a", count: 40))
     #expect(descriptor.capabilities[.build] == .native)
     #expect(descriptor.capabilities[.events] == .emulated)
     #expect(descriptor.capabilities[.registryAuthentication] == .unsupported)
@@ -316,6 +296,11 @@ func `provider probes and invokes a compatible executable`() async throws {
     #expect(environment.contains("COMPOSE_PROJECT_NAME=fixture"))
     #expect(!environment.contains("DYLD_INSERT_LIBRARIES"))
     #expect(!environment.contains("BASH_ENV"))
+    #expect(!environment.contains("DOCKER_CONTEXT"))
+    #expect(!environment.contains("DOCKER_CONFIG"))
+    #expect(!environment.contains("DOCKER_API_VERSION"))
+    #expect(!environment.contains("CONTAINER_BIN"))
+    #expect(!environment.contains("CONTAINER_COMPOSE_RUNTIME_PROFILE"))
 }
 
 @Test
@@ -334,8 +319,26 @@ func `provider rejects unsafe overrides and incompatible version probes`() async
             context: RuntimeRequestContext()
         )
     }
+    await #expect(throws: DevContainerError.self) {
+        _ = try await provider.invoke(
+            ComposeInvocation(
+                arguments: ["version"],
+                environment: ["DOCKER_CONTEXT": "desktop-linux"],
+                workingDirectory: valid.root,
+                project: nil,
+                mutating: false
+            ),
+            context: RuntimeRequestContext()
+        )
+    }
 
-    for mode in [FakeComposeExecutable.Mode.wrongSource, .invalidJSON, .failure] {
+    for mode in [
+        FakeComposeExecutable.Mode.wrongSource,
+        .invalidCommit,
+        .invalidVersion,
+        .invalidJSON,
+        .failure
+    ] {
         let fixture = try FakeComposeExecutable(mode: mode)
         let incompatible = try ExecutableComposeProvider(executable: fixture.executable)
         await #expect(throws: DevContainerError.self) {
@@ -344,12 +347,26 @@ func `provider rejects unsafe overrides and incompatible version probes`() async
     }
 }
 
+@Test
+func `provider probe enforces its request deadline`() async throws {
+    let fixture = try FakeComposeExecutable(mode: .hang)
+    let provider = try ExecutableComposeProvider(executable: fixture.executable)
+    let context = RuntimeRequestContext(deadline: Date().addingTimeInterval(0.1))
+
+    await #expect(throws: DevContainerError.self) {
+        _ = try await provider.descriptor(context: context)
+    }
+}
+
 private struct FakeComposeExecutable {
     enum Mode: String {
         case valid
         case wrongSource
+        case invalidCommit
+        case invalidVersion
         case invalidJSON
         case failure
+        case hang
     }
 
     let root: URL
@@ -366,7 +383,20 @@ private struct FakeComposeExecutable {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        let script = """
+        try Data(Self.script(mode: mode, environmentURL: environmentURL).utf8)
+            .write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: executable.path
+        )
+    }
+
+    func environmentLog() throws -> String {
+        try String(contentsOf: environmentURL, encoding: .utf8)
+    }
+
+    private static func script(mode: Mode, environmentURL: URL) -> String {
+        """
         #!/bin/sh
         set -eu
         env | sort > '\(environmentURL.path)'
@@ -376,12 +406,26 @@ private struct FakeComposeExecutable {
               printf '%s\\n' '{
                 "version":"0.10.0",
                 "source":"stephenlclarke/container-compose",
-                "commit":"fixture-commit",
+                "commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "containerDistribution":"custom"
               }'
               ;;
             wrongSource)
               printf '%s\\n' '{"version":"1","source":"someone/else"}'
+              ;;
+            invalidCommit)
+              printf '%s\\n' '{
+                "version":"0.10.0",
+                "source":"stephenlclarke/container-compose",
+                "commit":"branch-head"
+              }'
+              ;;
+            invalidVersion)
+              printf '%s\\n' '{
+                "version":"current",
+                "source":"stephenlclarke/container-compose",
+                "commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }'
               ;;
             invalidJSON)
               printf '%s\\n' 'not-json'
@@ -390,20 +434,14 @@ private struct FakeComposeExecutable {
               printf '%s' 'probe-failed' >&2
               exit 23
               ;;
+            hang)
+              while :; do sleep 60; done
+              ;;
           esac
         else
           printf '%s' "${COMPOSE_PROJECT_NAME-unset}"
           printf '%s' 'compose-warning' >&2
         fi
         """
-        try Data(script.utf8).write(to: executable)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: executable.path
-        )
-    }
-
-    func environmentLog() throws -> String {
-        try String(contentsOf: environmentURL, encoding: .utf8)
     }
 }

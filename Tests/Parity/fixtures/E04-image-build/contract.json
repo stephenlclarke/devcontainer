@@ -1,7 +1,9 @@
 {
   "expected": {
     "build_progress": true,
+    "cleaned_ignore_path": true,
     "failed_build": true,
-    "inspect_label": true
+    "inspect_label": true,
+    "literal_bang_class": true
   }
 }

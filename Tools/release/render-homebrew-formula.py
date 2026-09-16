@@ -15,6 +15,11 @@ CURRENT_VERSION_PATTERN = re.compile(
     r"^current\.(?P<run>[1-9][0-9]*)\.(?P<commit>[0-9a-f]{12})$"
 )
 RELEASE_ROOT = "https://github.com/stephenlclarke/devcontainer/releases/download"
+CURRENT_URL_PATTERN = re.compile(
+    re.escape(RELEASE_ROOT)
+    + r"/current-(?P<full_commit>[0-9a-f]{40})/"
+    + r"devcontainer-current-(?P<asset_commit>[0-9a-f]{12})-arm64[.]tar[.]gz"
+)
 
 
 def validate_identity(
@@ -47,12 +52,17 @@ def validate_identity(
             )
         if conflict != "devcontainer":
             raise ValueError("Current formula must conflict with devcontainer")
-        expected_url = (
-            f"{RELEASE_ROOT}/current/"
-            f"devcontainer-current-{match.group('commit')}-arm64.tar.gz"
-        )
-        if url != expected_url:
-            raise ValueError(f"Current formula URL must be {expected_url}")
+        url_match = CURRENT_URL_PATTERN.fullmatch(url)
+        short_commit = match.group("commit")
+        if (
+            url_match is None
+            or url_match.group("asset_commit") != short_commit
+            or not url_match.group("full_commit").startswith(short_commit)
+        ):
+            raise ValueError(
+                "Current formula URL must use one matching immutable "
+                "commit-addressed release and asset"
+            )
         return
 
     raise ValueError(f"unsupported formula class: {formula_class}")

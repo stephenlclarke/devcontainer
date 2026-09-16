@@ -203,6 +203,53 @@ class VSCodeParityTests(unittest.TestCase):
         self.assertIn("--extensionDevelopmentPath=/source/driver", command)
         self.assertEqual(command[-1], "/evidence/workspace")
 
+    def test_enhanced_vscode_launch_selects_enhanced_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ["output", "workspace", "user", "extensions"]:
+                (root / name).mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "container-compose"
+            lane.repository = root
+            lane.output = root / "output"
+            lane.runtime = mock.Mock(environment={"PATH": "/usr/bin:/bin"})
+            lane.vscode_gui = root / "Visual Studio Code.app"
+            lane.process = None
+            lane.devcontainer_docker_path = mock.Mock(
+                return_value="/project/bin/devcontainer-docker"
+            )
+            driver_result = root / "driver-result.json"
+
+            def start(*_args: object, **_kwargs: object) -> mock.Mock:
+                driver_result.write_text("{}\n", encoding="utf-8")
+                return mock.Mock(poll=mock.Mock(return_value=0), returncode=0)
+
+            with (
+                mock.patch("run_vscode.subprocess.Popen", side_effect=start) as popen,
+                mock.patch(
+                    "run_vscode.shutil.which",
+                    return_value="/project/bin/container-compose",
+                ),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+            ):
+                lane.launch(
+                    root / "workspace",
+                    root / "user",
+                    root / "extensions",
+                    root / "driver-state.json",
+                    driver_result,
+                )
+
+            environment = popen.call_args.kwargs["env"]
+            self.assertEqual(
+                environment["DEVCONTAINER_BACKEND"],
+                "container-compose",
+            )
+            self.assertEqual(
+                environment["DEVCONTAINER_COMPOSE_PROVIDER"],
+                "container-compose",
+            )
+
     def test_process_cleanup_selects_only_the_unique_isolated_profile(self) -> None:
         output = "\n".join(
             [

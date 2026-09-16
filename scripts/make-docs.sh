@@ -11,8 +11,16 @@ hosting_base_path="$2"
 scratch_path="${DOCS_SCRATCH_PATH:-.build/docc}"
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source_reference="${DOCS_SOURCE_REFERENCE:-${GITHUB_SHA:-main}}"
+resolved_backup="$(mktemp "${TMPDIR:-/tmp}/devcontainer-docs-resolved.XXXXXX")"
+cp "$repository_root/Package.resolved" "$resolved_backup"
+restore_resolved() {
+  cp "$resolved_backup" "$repository_root/Package.resolved"
+  rm -f "$resolved_backup"
+}
+trap restore_resolved EXIT
+cp "$repository_root/Package.stock.resolved" "$repository_root/Package.resolved"
 
-swift package \
+DEVCONTAINER_RUNTIME_PROFILE=stock swift package \
   --disable-automatic-resolution \
   -Xswiftc -warnings-as-errors \
   --scratch-path "$scratch_path" \

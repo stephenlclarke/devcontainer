@@ -23,6 +23,16 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
         return path
 
+    def make_swift_63(self, root: Path) -> Path:
+        return self.make_executable(
+            root / "swift-6.3",
+            "if [[ \"${1:-}\" == \"--version\" ]]; then\n"
+            "  printf 'Swift version 6.3.3 (swift-6.3.3-RELEASE)\\n'\n"
+            "else\n"
+            "  exit 70\n"
+            "fi\n",
+        )
+
     def test_loads_absolute_bundle_with_explicit_swift_testing_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -40,6 +50,7 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
                 {
                     "SWIFT_TEST_HELPER": str(helper),
                     "SWIFT_TEST_PLATFORM_PATH": str(platform),
+                    "SWIFT_TEST_SWIFT": str(self.make_swift_63(root)),
                     "DYLD_FRAMEWORK_PATH": "/existing/frameworks",
                     "DYLD_LIBRARY_PATH": "/existing/libraries",
                 }
@@ -95,6 +106,7 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
                     "SWIFT_TEST_CLANG": clang,
                     "SWIFT_TEST_HELPER": str(helper),
                     "SWIFT_TEST_PLATFORM_PATH": str(platform),
+                    "SWIFT_TEST_SWIFT": str(self.make_swift_63(root)),
                 }
             )
 
@@ -142,6 +154,90 @@ class SwiftTestingBundleRunnerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 66)
         self.assertIn("does not exist", result.stderr)
+
+    def test_uses_swiftpm_for_per_target_bundles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            swift = self.make_executable(
+                root / "swift",
+                "if [[ \"${1:-}\" == \"--version\" ]]; then\n"
+                "  printf 'Swift version 6.4 (swift-6.4-RELEASE)\\n'\n"
+                "else\n"
+                "  printf 'args=%s\\n' \"$*\"\n"
+                "fi\n",
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "SWIFT_TEST_SCRATCH_PATH": str(scratch),
+                    "SWIFT_TEST_SWIFT": str(swift),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    str(RUNNER),
+                    str(root / "missing-PackageTests"),
+                    "--no-parallel",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                f"args=test --scratch-path {scratch} --skip-build "
+                "--disable-automatic-resolution --no-parallel",
+            )
+
+    def test_swift_64_ignores_stale_aggregate_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            stale_bundle = self.make_executable(
+                root / "stale-PackageTests",
+                "printf 'stale aggregate executed\\n'\n",
+            )
+            swift = self.make_executable(
+                root / "selected-swift",
+                "if [[ \"${1:-}\" == \"--version\" ]]; then\n"
+                "  printf 'Swift version 6.4 (swift-6.4-RELEASE)\\n'\n"
+                "else\n"
+                "  printf 'selected=%s\\n' \"$*\"\n"
+                "fi\n",
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "SWIFT_TEST_SCRATCH_PATH": str(scratch),
+                    "SWIFT_TEST_SWIFT": str(swift),
+                }
+            )
+
+            result = subprocess.run(
+                [str(RUNNER), str(stale_bundle), "--no-parallel"],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("stale aggregate executed", result.stdout)
+            self.assertEqual(
+                result.stdout.strip(),
+                f"selected=test --scratch-path {scratch} --skip-build "
+                "--disable-automatic-resolution --no-parallel",
+            )
+
+    def test_makefile_passes_selected_swift_to_each_test_lane(self) -> None:
+        makefile = (TOOLS.parent.parent / "Makefile").read_text(encoding="utf-8")
+
+        self.assertEqual(makefile.count('SWIFT_TEST_SWIFT="$(SWIFT)"'), 4)
 
 
 if __name__ == "__main__":

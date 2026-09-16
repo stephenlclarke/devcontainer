@@ -70,6 +70,72 @@ struct AppleContainerRuntimeLifecycleRaceTests {
     }
 
     @Test
+    func `automatic removal does not delete a replaced stopped incarnation`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        _ = try await runtime.createContainer(
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                autoRemove: true
+            ),
+            context: RuntimeRequestContext()
+        )
+        try fixture.setMode("recreated-stopped")
+
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+
+        #expect(try !fixture.log().contains("delete --force fixture"))
+    }
+
+    @Test(arguments: ["fail-list-once", "fail-delete-once"])
+    func `automatic removal recovers from a transient native failure`(
+        mode: String
+    ) async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        let runtime = try fixture.runtime()
+        try fixture.setMode(mode)
+
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+
+        #expect(try fixture.log().contains("delete --force fixture"))
+    }
+
+    @Test
+    func `automatic removal scheduling does not wait for native inventory`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        try fixture.setMode("slow-list")
+        let runtime = try fixture.runtime()
+        let deadline = ContinuousClock.now + .milliseconds(200)
+
+        await runtime.scheduleAutomaticRemoval(id: "fixture")
+
+        #expect(ContinuousClock.now < deadline)
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+        #expect(try fixture.log().contains("delete --force fixture"))
+    }
+
+    @Test
+    func `automatic removal coalesces native and Docker aliases`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("stopped")
+        let runtime = try fixture.runtime()
+
+        async let nativeRemoval: Void = runtime.scheduleAutomaticRemoval(id: "fixture")
+        async let dockerRemoval: Void = runtime.scheduleAutomaticRemoval(id: "docker-fixture")
+        _ = await (nativeRemoval, dockerRemoval)
+        await runtime.waitForTestAutomaticRemoval(id: "fixture")
+
+        let removals = try fixture.log().split(separator: "\n")
+            .filter { $0 == "delete --force fixture" }
+        #expect(removals.count == 1)
+    }
+
+    @Test
     func `automatic removal waits through an active restart`() async throws {
         let fixture = try FakeAppleCLI()
         try fixture.setState("stopped")
@@ -220,6 +286,12 @@ private extension AppleContainerRuntime {
 
     func clearTestAutomaticRemoval(id: String) {
         automaticRemovalRegistrations.removeValue(forKey: id)
+    }
+
+    func waitForTestAutomaticRemoval(id: String) async {
+        while let task = automaticRemovalTasks[id] {
+            await task.value
+        }
     }
 
     func registerTestExitTask(

@@ -149,10 +149,11 @@ func `request and lifecycle edge routes retain Docker semantics`() async throws 
 @Test
 func `archive and exec edge routes reject incomplete requests`() async throws {
     let fixture = try await makeEdgeFixture()
-    for request in [
+    let requests = [
         DockerHTTPRequest(method: .head, target: "/containers/\(fixture.identifier)/archive"),
         DockerHTTPRequest(method: .put, target: "/containers/\(fixture.identifier)/archive")
-    ] {
+    ]
+    for request in requests {
         #expect(await fixture.router.respond(to: request).status == 400)
     }
     #expect(
@@ -190,18 +191,97 @@ func `container creation rejects invalid bind port and mount forms`() async thro
     let invalidPort = try JSONSerialization.data(
         withJSONObject: ["Image": "edge:latest", "HostConfig": ["PortBindings": ["invalid/tcp": []]]]
     )
+    let nonnumericHostPort = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "edge:latest",
+            "HostConfig": ["PortBindings": ["8080/tcp": [["HostPort": "abc"]]]]
+        ]
+    )
+    let oversizedHostPort = try JSONSerialization.data(
+        withJSONObject: [
+            "Image": "edge:latest",
+            "HostConfig": ["PortBindings": ["8080/tcp": [["HostPort": "70000"]]]]
+        ]
+    )
     let invalidMount = try JSONSerialization.data(
         withJSONObject: [
             "Image": "edge:latest",
             "Mounts": [["Type": "unknown", "Target": "/workspace"]]
         ]
     )
-    for (body, expectedStatus) in [(invalidBind, 400), (invalidPort, 400), (invalidMount, 501)] {
+    for (body, expectedStatus) in [
+        (invalidBind, 400),
+        (invalidPort, 400),
+        (nonnumericHostPort, 400),
+        (oversizedHostPort, 400),
+        (invalidMount, 501)
+    ] {
         let response = await fixture.router.respond(
             to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
         )
         #expect(response.status == expectedStatus)
     }
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func `container creation rejects host Docker sockets before side effects`() async throws {
+    let fixture = try await makeEdgeFixture()
+    let socketDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("devcontainer-docker-socket-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: socketDirectory) }
+    try FileManager.default.createDirectory(
+        at: socketDirectory,
+        withIntermediateDirectories: false
+    )
+    let socket = socketDirectory.appendingPathComponent("docker.sock")
+    #expect(FileManager.default.createFile(atPath: socket.path, contents: Data()))
+    let alias = socketDirectory.appendingPathComponent("runtime.sock")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: socket)
+    let requests: [[String: Any]] = [
+        [
+            "Image": "edge:latest",
+            "HostConfig": ["Binds": ["/var/run/docker.sock:/var/run/docker.sock"]]
+        ],
+        [
+            "Image": "edge:latest",
+            "Mounts": [[
+                "Type": "bind",
+                "Source": "/Users/example/.docker/run/docker.raw.sock",
+                "Target": "/var/run/docker.sock"
+            ]]
+        ],
+        [
+            "Image": "edge:latest",
+            "Mounts": [[
+                "Type": "bind",
+                "Source": alias.path,
+                "Target": "/runtime.sock"
+            ]]
+        ],
+        [
+            "Image": "edge:latest",
+            "Mounts": [[
+                "Type": "bind",
+                "Source": socketDirectory.path,
+                "Target": "/host-run"
+            ]]
+        ]
+    ]
+    for request in requests {
+        let body = try JSONSerialization.data(withJSONObject: request)
+        let response = await fixture.router.respond(
+            to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
+        )
+        #expect(response.status == 501)
+    }
+    #expect(
+        await fixture.runtime.listContainers(
+            all: true,
+            labels: [:],
+            context: fixture.context
+        ).count == 1
+    )
 }
 
 @Test
@@ -248,7 +328,7 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["RestartPolicy": ["Name": "always"]]],
         ["Image": "edge:latest", "Mounts": [[
             "Type": "bind", "Source": "/tmp", "Target": "/work",
-            "Consistency": "cached"
+            "Consistency": "future"
         ]]],
         ["Image": "edge:latest", "Mounts": [[
             "Type": "bind", "Source": "/tmp", "Target": "/work",

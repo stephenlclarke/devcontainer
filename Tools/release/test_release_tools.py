@@ -182,6 +182,44 @@ class ReleaseToolTests(unittest.TestCase):
                 )
             )
 
+    def test_sbom_file_checksum_is_bound_to_exact_staged_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            sbom = root / "sbom.json"
+            binary = root / "compose"
+            binary.write_bytes(b"signed-compose")
+            sbom.write_text(
+                json.dumps(
+                    {
+                        "packages": [
+                            {
+                                "name": "container-compose",
+                                "checksums": [
+                                    {"algorithm": "SHA256", "checksumValue": "0" * 64}
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.run_tool(
+                "update-sbom-file-checksum.py",
+                "--sbom",
+                str(sbom),
+                "--package",
+                "container-compose",
+                "--file",
+                str(binary),
+            )
+
+            value = json.loads(sbom.read_text(encoding="utf-8"))
+            self.assertEqual(
+                value["packages"][0]["checksums"][0]["checksumValue"],
+                hashlib.sha256(b"signed-compose").hexdigest(),
+            )
+
     def test_third_party_notices_include_exact_reviewed_legal_texts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -246,6 +284,110 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertIn("----- LICENSE.txt -----", rendered)
             self.assertIn("----- NOTICE.txt -----", rendered)
             self.assertIn("Fixture attribution", rendered)
+
+    def test_native_compose_legal_inventory_covers_swift_go_and_standard_library(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            resolved = root / "Package.resolved"
+            licenses = root / "dependency-licenses.json"
+            checkouts = root / "checkouts"
+            swift_checkout = checkouts / "swift-fixture"
+            vendor = root / "vendor"
+            go_module = vendor / "example.com" / "go-fixture"
+            go_license = root / "go" / "LICENSE"
+            notices = root / "THIRD-PARTY-NOTICES.txt"
+            sbom = root / "container-compose.spdx.json"
+            swift_checkout.mkdir(parents=True)
+            go_module.mkdir(parents=True)
+            go_license.parent.mkdir(parents=True)
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "swift-fixture",
+                                "location": "https://example.com/swift-fixture.git",
+                                "state": {
+                                    "revision": "a" * 40,
+                                    "version": "1.2.3",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            licenses.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "licenses": {"swift-fixture": "MIT"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mit = (
+                "MIT License\nPermission is hereby granted, free of charge, "
+                "to any person obtaining a copy\n"
+            )
+            bsd = (
+                "Redistribution and use in source and binary forms are permitted.\n"
+            )
+            (swift_checkout / "LICENSE").write_text(mit, encoding="utf-8")
+            (go_module / "LICENSE").write_text(mit, encoding="utf-8")
+            (vendor / "modules.txt").write_text(
+                "# example.com/go-fixture v2.3.4\n## explicit; go 1.26\n",
+                encoding="utf-8",
+            )
+            go_license.write_text(bsd, encoding="utf-8")
+
+            self.run_tool(
+                "write-native-compose-legal.py",
+                "--version",
+                "0.15.1",
+                "--commit",
+                "b" * 40,
+                "--source-date-epoch",
+                "1785100000",
+                "--resolved",
+                str(resolved),
+                "--license-manifest",
+                str(licenses),
+                "--checkouts",
+                str(checkouts),
+                "--go-vendor",
+                str(vendor),
+                "--go-version",
+                "1.26.3",
+                "--go-license",
+                str(go_license),
+                "--notices-output",
+                str(notices),
+                "--sbom-output",
+                str(sbom),
+            )
+
+            package_names = {
+                package["name"]
+                for package in json.loads(sbom.read_text(encoding="utf-8"))[
+                    "packages"
+                ]
+            }
+            self.assertEqual(
+                package_names,
+                {
+                    "container-compose",
+                    "container-compose-swift:swift-fixture",
+                    "container-compose-go:example.com/go-fixture",
+                    "container-compose-go:standard-library",
+                },
+            )
+            rendered = notices.read_text(encoding="utf-8")
+            self.assertIn("Dependency type: SwiftPM", rendered)
+            self.assertIn("Dependency type: Go module", rendered)
+            self.assertIn("Dependency type: Go standard library", rendered)
 
     def test_dependency_license_ledger_must_exactly_match_lockfile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -408,7 +550,8 @@ class ReleaseToolTests(unittest.TestCase):
                 "--url",
                 (
                     "https://github.com/stephenlclarke/devcontainer/releases/"
-                    "download/current/"
+                    "download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     "devcontainer-current-0123456789ab-arm64.tar.gz"
                 ),
                 "--conflicts-with",
@@ -426,7 +569,8 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertIn(
                 (
                     'url "https://github.com/stephenlclarke/devcontainer/'
-                    "releases/download/current/"
+                    "releases/download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     'devcontainer-current-0123456789ab-arm64.tar.gz"'
                 ),
                 rendered,
@@ -484,6 +628,68 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertNotIn("version ", rendered)
             self.assertNotIn("conflicts_with", rendered)
 
+    def test_release_formula_is_dockerless_and_installs_flat_payload(self) -> None:
+        template = (TOOLS / "devcontainer.rb.in").read_text(encoding="utf-8")
+
+        self.assertIn('depends_on "node"', template)
+        self.assertNotIn(
+            'depends_on "stephenlclarke/tap/container-compose"', template
+        )
+        self.assertNotIn('depends_on "docker"', template)
+        self.assertNotIn('depends_on "docker-compose"', template)
+        self.assertIn(
+            'assert_match "devcontainer Apple compatibility"',
+            template,
+        )
+        self.assertNotIn('assert_match "Docker version"', template)
+        self.assertIn('bin.install "bin/devcontainer-docker"', template)
+        self.assertIn('libexec.install Dir["libexec/*"]', template)
+        self.assertIn(
+            'libexec/"devcontainer-compose/resources/compose-normalizer"',
+            template,
+        )
+        self.assertIn(
+            'volume_initializer = libexec/"devcontainer-compose/resources/volume-initializer"',
+            template,
+        )
+        self.assertIn(
+            'volume_initializer/"compose-volume-initializer-linux-arm64"',
+            template,
+        )
+        self.assertIn(
+            'volume_initializer/"compose-volume-initializer-linux-amd64"',
+            template,
+        )
+        self.assertFalse(
+            [line for line in template.splitlines() if len(line) > 118]
+        )
+        self.assertIn('pkgshare.install Dir["share/devcontainer/*"]', template)
+        self.assertIn('"dev.containers.dockerPath"', template)
+        self.assertIn('"dev.containers.dockerComposePath"', template)
+
+    def test_release_archive_builds_a_pinned_stock_native_compose(self) -> None:
+        metadata = json.loads(
+            (TOOLS / "native-compose.json").read_text(encoding="utf-8")
+        )
+        builder = (TOOLS / "build-native-compose.sh").read_text(encoding="utf-8")
+        package = (TOOLS.parents[1] / "scripts" / "package.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(metadata["schemaVersion"], 1)
+        self.assertRegex(metadata["commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(metadata["appleContainerVersion"], "1.4.1")
+        self.assertEqual(metadata["appleContainerizationVersion"], "0.45.0")
+        self.assertEqual(metadata["goVersion"], "1.26.3")
+        self.assertIn("CONTAINER_COMPOSE_BUILD_PROFILE=stock", builder)
+        self.assertIn('go env GOVERSION', builder)
+        self.assertIn("Package.stock.resolved", builder)
+        self.assertIn("go mod vendor", builder)
+        self.assertIn("write-native-compose-legal.py", builder)
+        self.assertIn("--runtime-profile stock", builder)
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE=stock", package)
+        self.assertIn("Tools/release/build-native-compose.sh", package)
+
     def test_homebrew_renderer_rejects_cross_channel_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
@@ -504,7 +710,8 @@ class ReleaseToolTests(unittest.TestCase):
                 "--url",
                 (
                     "https://github.com/stephenlclarke/devcontainer/"
-                    "releases/download/current/"
+                    "releases/download/current-"
+                    "0123456789abcdef0123456789abcdef01234567/"
                     "devcontainer-current-0123456789ab-arm64.tar.gz"
                 ),
                 "--conflicts-with",

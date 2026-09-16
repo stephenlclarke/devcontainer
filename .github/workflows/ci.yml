@@ -47,7 +47,9 @@ jobs:
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer context --format value | grep '^unix://'
-          DEVCONTAINER_DOCKER_BIN="$PWD/Tools/ci/docker-compose-smoke-fixture.sh" \
+          install -m 0755 Tools/ci/compose-cli-smoke-fixture.sh \
+            "${RUNNER_TEMP}/container-compose"
+          DEVCONTAINER_COMPOSE_BIN="${RUNNER_TEMP}/container-compose" \
             DEVCONTAINER_STATE="${RUNNER_TEMP}/devcontainer-smoke-state.sqlite" \
             .build/debug/devcontainer-compose version \
             | jq -e '.Version == "fixture"'
@@ -67,10 +69,12 @@ jobs:
   stock-test:
     name: Stock Apple tests
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       DEVCONTAINER_RUNTIME_PROFILE: stock
+      SWIFT_TEST_ATTEMPTS: "1"
+      SWIFT_TEST_TIMEOUT_SECONDS: "900"
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +88,7 @@ jobs:
           swift package resolve
           cmp /tmp/devcontainer-stock-Package.resolved Package.resolved
       - name: Test against unmodified Apple packages
-        run: swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors
+        run: make swift-test
       - name: Smoke test stock-profile products
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'

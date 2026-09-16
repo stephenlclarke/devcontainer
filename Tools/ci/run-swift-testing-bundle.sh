@@ -2,8 +2,8 @@
 # USAGE:
 #   run-swift-testing-bundle.sh BUNDLE_EXECUTABLE [TESTING_ARGUMENT...]
 #
-# Load a prebuilt Swift Testing bundle without asking SwiftPM to plan or launch
-# the already-built test product a second time.
+# Load a prebuilt aggregate Swift Testing bundle on Swift 6.3 and earlier, or
+# ask SwiftPM 6.4+ to launch its already-built per-target bundles.
 
 set -euo pipefail
 
@@ -26,6 +26,28 @@ fi
 
 readonly BUNDLE_EXECUTABLE="$1"
 shift
+
+SWIFT_TEST_SWIFT="${SWIFT_TEST_SWIFT:-swift}"
+readonly SWIFT_TEST_SWIFT
+SWIFT_TEST_SCRATCH_PATH="${SWIFT_TEST_SCRATCH_PATH:-}"
+readonly SWIFT_TEST_SCRATCH_PATH
+
+run_with_swiftpm() {
+  if [[ -z "$SWIFT_TEST_SCRATCH_PATH" ]]; then
+    printf 'Swift test scratch path is required for per-target bundles.\n' >&2
+    exit 66
+  fi
+  if [[ "$SWIFT_TEST_SCRATCH_PATH" != /* ]]; then
+    printf 'Swift test scratch path must be absolute: %s\n' \
+      "$SWIFT_TEST_SCRATCH_PATH" >&2
+    exit 64
+  fi
+  exec "$SWIFT_TEST_SWIFT" test \
+    --scratch-path "$SWIFT_TEST_SCRATCH_PATH" \
+    --skip-build \
+    --disable-automatic-resolution \
+    "$@"
+}
 
 SANITIZER_KIND=""
 for argument in "$@"; do
@@ -55,10 +77,24 @@ if [[ "$BUNDLE_EXECUTABLE" != /* ]]; then
     "$BUNDLE_EXECUTABLE" >&2
   exit 64
 fi
-if [[ ! -f "$BUNDLE_EXECUTABLE" ]]; then
+if [[ ! -f "$BUNDLE_EXECUTABLE" && -z "$SWIFT_TEST_SCRATCH_PATH" ]]; then
   printf 'Swift test bundle executable does not exist: %s\n' \
     "$BUNDLE_EXECUTABLE" >&2
   exit 66
+fi
+
+SWIFT_VERSION="$("$SWIFT_TEST_SWIFT" --version 2>/dev/null | sed -nE \
+  's/.*Swift version ([0-9]+)[.]([0-9]+).*/\1 \2/p' | head -n 1)"
+readonly SWIFT_VERSION
+if [[ -n "$SWIFT_VERSION" ]]; then
+  read -r SWIFT_MAJOR SWIFT_MINOR <<< "$SWIFT_VERSION"
+  readonly SWIFT_MAJOR SWIFT_MINOR
+  if (( SWIFT_MAJOR > 6 || (SWIFT_MAJOR == 6 && SWIFT_MINOR >= 4) )); then
+    run_with_swiftpm "$@"
+  fi
+fi
+if [[ ! -f "$BUNDLE_EXECUTABLE" ]]; then
+  run_with_swiftpm "$@"
 fi
 
 HELPER="${SWIFT_TEST_HELPER:-}"

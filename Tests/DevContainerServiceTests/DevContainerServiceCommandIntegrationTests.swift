@@ -18,6 +18,7 @@ import ContainerEngineProviderSession
 import ContainerEngineRuntimeSPI
 import ContainerEngineWire
 import Darwin
+import DevContainerModel
 @testable import DevContainerService
 import Foundation
 import Security
@@ -25,6 +26,28 @@ import Testing
 
 @Suite(.serialized)
 struct ServiceCommandIntegrationTests {
+    @Test
+    func `engine help identifies the Apple adapter without implying a Docker service`() {
+        #expect(
+            DevContainerServiceCommand.configuration.abstract
+                == "Dev Containers Engine API adapter for Apple container"
+        )
+    }
+
+    @Test
+    func `engine rejects a runtime from the wrong provider lane`() throws {
+        #expect(throws: DevContainerError.self) {
+            try DevContainerServiceCommand.requireMatchingProvider(
+                selected: .stock,
+                observed: .containerCompose
+            )
+        }
+        try DevContainerServiceCommand.requireMatchingProvider(
+            selected: .stock,
+            observed: .stock
+        )
+    }
+
     @Test
     func `engine executable starts serves and terminates cleanly`() async throws {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -45,7 +68,7 @@ struct ServiceCommandIntegrationTests {
             [.posixPermissions: 0o700],
             ofItemAtPath: container.path
         )
-        let socket = root.appendingPathComponent("docker.sock").path
+        let socket = root.appendingPathComponent("engine.sock").path
         let state = root.appendingPathComponent("state.sqlite").path
         let executable = try engineExecutable()
         let process = Process()
@@ -60,7 +83,9 @@ struct ServiceCommandIntegrationTests {
             "--state",
             state,
             "--container",
-            container.path
+            container.path,
+            "--provider",
+            "container-compose"
         ]
         process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output
@@ -110,7 +135,9 @@ struct ServiceCommandIntegrationTests {
             "--state",
             state,
             "--container",
-            container.path
+            container.path,
+            "--provider",
+            "container-compose"
         ]
         process.environment = try engineEnvironment(executable: executable)
         process.standardOutput = output
@@ -155,6 +182,13 @@ private func exerciseEngineProcess(
         try await waitForSocket(socket, process: process)
         let ping = try runCurl(socket: socket, path: "/_ping")
         #expect(ping == "OK")
+        let pingHeaders = try runCurlHeaders(socket: socket, path: "/_ping")
+        #expect(
+            pingHeaders.contains(
+                "\(DevContainerEngineIdentity.header): "
+                    + DevContainerEngineIdentity.value
+            )
+        )
         let version = try runCurl(socket: socket, path: "/version")
         #expect(version.contains("\"Version\":\"1.1.0\""))
         let selectionData = try Data(contentsOf: providerSelection)
@@ -504,6 +538,35 @@ private func runCurl(socket: String, path: String) throws -> String {
     return response.body
 }
 
+private func runCurlHeaders(socket: String, path: String) throws -> String {
+    let process = Process()
+    let output = Pipe()
+    let error = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    process.arguments = [
+        "--silent",
+        "--show-error",
+        "--unix-socket",
+        socket,
+        "--head",
+        "http://localhost\(path)"
+    ]
+    process.standardOutput = output
+    process.standardError = error
+    try process.run()
+    process.waitUntilExit()
+    let data = try output.fileHandleForReading.readToEnd() ?? Data()
+    let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
+    guard process.terminationStatus == 0 else {
+        throw ServiceIntegrationError(
+            String(data: diagnostic, encoding: .utf8)
+                ?? "non-UTF-8 curl diagnostic"
+        )
+    }
+    return String(data: data, encoding: .utf8)
+        ?? "non-UTF-8 response headers"
+}
+
 private func runCurlResponse(
     socket: String,
     path: String,
@@ -551,11 +614,12 @@ private func runCurlResponse(
     return (status, String(text[..<newline]))
 }
 
+// swiftlint:disable line_length
 private let fakeContainerCLI = """
 #!/bin/sh
 set -eu
 if [ "$*" = "system version --format json" ]; then
-  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"fixture"}]'
+  printf '%s\\n' '[{"appName":"container","version":"1.1.0","commit":"fixture","distribution":"custom","source":"stephenlclarke/container"}]'
   exit 0
 fi
 if [ "$*" = "list --all --format json" ]; then
@@ -565,6 +629,7 @@ fi
 printf 'unexpected fake container invocation: %s\\n' "$*" >&2
 exit 64
 """
+// swiftlint:enable line_length
 
 private struct ServiceIntegrationError: Error {
     let message: String

@@ -208,12 +208,14 @@ extension DockerRouter {
     ) -> RuntimeRequestContext {
         let requestedCorrelation = request.header("X-Request-ID")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let correlation = requestedCorrelation.flatMap {
-            $0.isEmpty || $0.utf8.count > 128 ? nil : $0
-        } ?? UUID().uuidString.lowercased()
-        let operationID = idempotencyKey(for: request).map {
-            OperationID(rawValue: Self.digest(Data($0.utf8)))
-        } ?? .random()
+        let correlation =
+            requestedCorrelation.flatMap {
+                $0.isEmpty || $0.utf8.count > 128 ? nil : $0
+            } ?? UUID().uuidString.lowercased()
+        let operationID =
+            idempotencyKey(for: request).map {
+                OperationID(rawValue: Self.digest(Data($0.utf8)))
+            } ?? .random()
         return RuntimeRequestContext(
             operationID: operationID,
             correlationID: correlation,
@@ -223,7 +225,8 @@ extension DockerRouter {
     }
 
     private func idempotencyKey(for request: DockerHTTPRequest) -> String? {
-        guard let value = request.header("Idempotency-Key")
+        guard
+            let value = request.header("Idempotency-Key")
             ?? request.header("X-Idempotency-Key")
         else {
             return nil
@@ -236,7 +239,8 @@ extension DockerRouter {
     }
 
     private func isReplayableMutation(_ request: DockerHTTPRequest) -> Bool {
-        guard request.method == .post
+        guard
+            request.method == .post
             || request.method == .put
             || request.method == .delete,
             let target = try? ParsedTarget(request.target)
@@ -273,7 +277,8 @@ extension DockerRouter {
         for request: DockerHTTPRequest,
         context: RuntimeRequestContext
     ) async throws -> ProjectMutation? {
-        guard request.method == .post
+        guard
+            request.method == .post
             || request.method == .put
             || request.method == .delete
         else {
@@ -285,11 +290,13 @@ extension DockerRouter {
             separator: "/",
             omittingEmptySubsequences: true
         ).map(String.init)
-        guard isJournalledMutation(
-            method: request.method,
-            path: path,
-            segments: segments
-        ) else {
+        guard
+            isJournalledMutation(
+                method: request.method,
+                path: path,
+                segments: segments
+            )
+        else {
             return nil
         }
 
@@ -351,7 +358,8 @@ extension DockerRouter {
         {
             throw DevContainerError(
                 .conflict,
-                message: "resource ownership selects provider \(requestedProvider), not \(provider.rawValue)"
+                message:
+                "resource ownership selects provider \(requestedProvider), not \(provider.rawValue)"
             )
         }
         let requestHash = Self.digest(
@@ -534,6 +542,7 @@ extension DockerRouter {
         if let response = try await imageReadResponse(
             method: route.request.method,
             path: route.path,
+            target: route.target,
             context: route.context
         ) {
             return response
@@ -631,6 +640,7 @@ extension DockerRouter {
         if method == .get || method == .head, path == "/_ping" {
             var response = DockerHTTPResponse.text("OK")
             response.headers["API-Version"] = "1.53"
+            response.headers[DevContainerEngineIdentity.header] = DevContainerEngineIdentity.value
             response.headers["Docker-Experimental"] = "false"
             response.headers["OSType"] = "linux"
             if method == .head {
@@ -881,13 +891,15 @@ extension DockerRouter {
             return try await containerAttachResponse(
                 id: id,
                 context: context,
-                webSocket: false
+                webSocket: false,
+                start: target.first("start").map(Self.boolValue) ?? false
             )
         case (.get, "attach") where segments.count == 4 && segments[3] == "ws":
             return try await containerAttachResponse(
                 id: id,
                 context: context,
-                webSocket: true
+                webSocket: true,
+                start: false
             )
         default:
             return nil
@@ -897,14 +909,23 @@ extension DockerRouter {
     private func containerAttachResponse(
         id: String,
         context: RuntimeRequestContext,
-        webSocket: Bool
+        webSocket: Bool,
+        start: Bool
     ) async throws -> DockerHTTPResponse {
         let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
-        let session = try await runtime.attachContainer(
-            id: id,
-            terminal: terminal,
-            context: context
-        )
+        let session = if start {
+            try await runtime.startAttachedContainer(
+                id: id,
+                terminal: terminal,
+                context: context
+            )
+        } else {
+            try await runtime.attachContainer(
+                id: id,
+                terminal: terminal,
+                context: context
+            )
+        }
         let adaptedSession = DockerRuntimeHijackSession(session)
         if webSocket {
             return DockerHTTPResponse(
@@ -963,23 +984,29 @@ extension DockerRouter {
                 path: path,
                 context: context
             )
+            let body: DockerHTTPBody = switch archive.body {
+            case let .bytes(data):
+                .bytes(data)
+            case let .file(file):
+                try .managedStream(DockerArchiveFileStream(archive: file))
+            }
             return try DockerHTTPResponse(
                 status: 200,
                 headers: [
                     "Content-Type": "application/x-tar",
                     "X-Docker-Container-Path-Stat": archiveStatHeader(archive.stat)
                 ],
-                body: .bytes(archive.data)
+                body: body
             )
         case .head:
-            let archive = try await runtime.copyArchiveFromContainer(
+            let stat = try await runtime.statContainerPath(
                 id: id,
                 path: path,
                 context: context
             )
             return try DockerHTTPResponse(
                 status: 200,
-                headers: ["X-Docker-Container-Path-Stat": archiveStatHeader(archive.stat)]
+                headers: ["X-Docker-Container-Path-Stat": archiveStatHeader(stat)]
             )
         case .put:
             try await runtime.copyArchiveToContainer(
@@ -1150,6 +1177,7 @@ extension DockerRouter {
     private func imageReadResponse(
         method: DockerHTTPMethod,
         path: String,
+        target: ParsedTarget,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if method == .get, path == "/images/json" {
@@ -1161,7 +1189,13 @@ extension DockerRouter {
            let reference = identifier(in: path, prefix: "/images/", suffix: "/json")
         {
             return try await .json(
-                imageInspect(runtime.inspectImage(reference: reference, context: context))
+                imageInspect(
+                    runtime.inspectImage(
+                        reference: reference,
+                        platform: target.first("platform"),
+                        context: context
+                    )
+                )
             )
         }
         return nil
@@ -1177,13 +1211,14 @@ extension DockerRouter {
             guard let source = target.first("fromImage"), !source.isEmpty else {
                 throw DevContainerError(.invalidRequest, message: "fromImage is required")
             }
-            let reference: String = if let tag = target.first("tag"), !tag.isEmpty {
-                tag.hasPrefix("sha256:")
-                    ? "\(source)@\(tag)"
-                    : "\(source):\(tag)"
-            } else {
-                source
-            }
+            let reference: String =
+                if let tag = target.first("tag"), !tag.isEmpty {
+                    tag.hasPrefix("sha256:")
+                        ? "\(source)@\(tag)"
+                        : "\(source):\(tag)"
+                } else {
+                    source
+                }
             let stream = try await runtime.pullImage(reference: reference, context: context)
             return DockerHTTPResponse(
                 status: 200,
@@ -1224,7 +1259,10 @@ extension DockerRouter {
                 tags: target.query["t"] ?? [],
                 buildArguments: stringDictionary(target.first("buildargs"), name: "buildargs"),
                 target: target.first("target"),
-                labels: stringDictionary(target.first("labels"), name: "labels")
+                labels: stringDictionary(target.first("labels"), name: "labels"),
+                noCache: target.first("nocache").map(Self.boolValue) ?? false,
+                pull: target.first("pull").map(Self.boolValue) ?? false,
+                platform: target.first("platform")
             ),
             context: context
         )

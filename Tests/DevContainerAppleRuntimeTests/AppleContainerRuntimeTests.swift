@@ -579,7 +579,10 @@ struct AppleContainerRuntimeTests {
             ) == 23
         )
 
-        let deadline = ContinuousClock.now + .seconds(5)
+        // Sanitizer instrumentation can make this process-backed cleanup
+        // substantially slower than the ordinary suite. Preserve a bounded
+        // liveness assertion without treating sub-10x overhead as failure.
+        let deadline = ContinuousClock.now + .seconds(30)
         while await store.containerMetadata(id: "fixture") != nil,
               ContinuousClock.now < deadline
         {
@@ -789,6 +792,25 @@ struct AppleContainerRuntimeTests {
             }
         }
         #expect(actions == [.create, .start, .stop, .destroy])
+        await runtime.shutdown()
+    }
+}
+
+@Test
+func `descriptor rejects foreign Container distributions`() async throws {
+    for fixture in try [
+        FakeAppleCLI(distribution: "docker", source: "docker/docker"),
+        FakeAppleCLI(distribution: "custom", source: "example/container")
+    ] {
+        let runtime = try fixture.runtime()
+        do {
+            _ = try await runtime.descriptor(context: RuntimeRequestContext())
+            Issue.record("foreign Container distribution unexpectedly succeeded")
+        } catch let error as DevContainerError {
+            #expect(error.code == .providerProtocolMismatch)
+            #expect(error.message.contains("stock apple/container"))
+            #expect(error.message.contains("stephenlclarke/container"))
+        }
     }
 }
 
@@ -800,13 +822,18 @@ struct FakeAppleCLI {
     private let modeURL: URL
     private let enhancedCreateOptions: Bool
     private let distribution: String
+    private let source: String
 
     init(
         enhancedCreateOptions: Bool = true,
-        distribution: String = "apple"
+        distribution: String = "apple",
+        source: String? = nil
     ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
         self.distribution = distribution
+        self.source = source ?? (distribution == "apple"
+            ? "apple/container"
+            : "stephenlclarke/container")
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
@@ -883,13 +910,19 @@ struct FakeAppleCLI {
               "appName":"container",
               "version":"1.1.0",
               "commit":"fixture-commit",
-              "distribution":"\(distribution)"
+              "distribution":"\(distribution)",
+              "source":"\(source)"
             }]'
             ;;
           "create --help")
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ "$mode" = fail-list-once ]; then
+              printf '%s' normal > "$MODE"
+              printf '%s\n' 'transient list failure' >&2
+              exit 42
+            fi
             if [ "$mode" = slow-list ]; then
               sleep 0.3
             fi
@@ -897,7 +930,11 @@ struct FakeAppleCLI {
               printf '%s\\n' '[]'
               exit 0
             fi
-            if [ "$mode" = recreated ]; then
+            if [ "$mode" = recreated ] || [ "$mode" = recreated-stopped ]; then
+              recreated_state=running
+              if [ "$mode" = recreated-stopped ]; then
+                recreated_state=stopped
+              fi
               printf '%s\\n' '[{
                 "id":"fixture",
                 "configuration":{
@@ -914,7 +951,7 @@ struct FakeAppleCLI {
                   "publishedPorts":[],
                   "creationDate":"2027-07-26T12:34:56.123Z"
                 },
-                "status":{"state":"running"}
+                "status":{"state":"'"$recreated_state"'"}
               }]'
               exit 0
             fi
@@ -942,7 +979,9 @@ struct FakeAppleCLI {
               }]'
               exit 0
             fi
-            if [ "$state" = stopped ] || [ "$state" = created ]; then
+            if [ "$state" = created ]; then
+              cstate=created
+            elif [ "$state" = stopped ]; then
               cstate=stopped
             else
               cstate=running
@@ -1016,11 +1055,11 @@ struct FakeAppleCLI {
               },
               "variants":[
                 {
-                  "platform":{"architecture":"amd64","os":"linux"},
+                  "platform":{"architecture":"amd64","os":"linux","variant":"v3"},
                   "size":1
                 },
                 {
-                  "platform":{"architecture":"arm64","os":"linux"},
+                  "platform":{"architecture":"arm64","os":"linux","variant":"v8"},
                   "size":12345,
                   "config":{"config":{
                     "User":"vscode",
@@ -1066,9 +1105,18 @@ struct FakeAppleCLI {
           "logs "*)
             printf '%s\\n' 'log-output'
             printf '%s\\n' 'log-error' >&2
+            if [ "$mode" = follow-logs ]; then
+              trap 'printf "%s\\n" logs-terminated >> "$LOG"; exit 0' TERM
+              printf '%s\\n' logs-follow-ready >> "$LOG"
+              while :; do sleep 1; done
+            fi
             ;;
           "exec "*)
-            printf '%s\\n' 'exec-output'
+            if [ "${6-}" = devcontainer-stat ]; then
+              printf '%s\\n' '81a4' '6' '1789380000'
+            else
+              printf '%s\\n' 'exec-output'
+            fi
             ;;
           "image pull")
             printf '%s\\n' 'pull-progress'
@@ -1090,9 +1138,27 @@ struct FakeAppleCLI {
               printf '%s' running > "$STATE"
             fi
             ;;
+          "start --attach")
+            if [ "$mode" = attached-delayed-running ]; then
+              sleep 0.1
+              printf '%s' running > "$STATE"
+            fi
+            if [ "$mode" = attached-fast-failure ]; then
+              printf '%s' stopped > "$STATE"
+              exit 7
+            fi
+            cat
+            ;;
           "stop --time")
             if [ "$4" = fixture ]; then
               printf '%s' stopped > "$STATE"
+            fi
+            ;;
+          "delete --force")
+            if [ "$mode" = fail-delete-once ]; then
+              printf '%s' normal > "$MODE"
+              printf '%s\n' 'transient delete failure' >&2
+              exit 42
             fi
             ;;
           "cp "*)

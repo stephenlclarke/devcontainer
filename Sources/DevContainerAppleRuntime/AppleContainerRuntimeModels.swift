@@ -41,6 +41,7 @@ struct AppleVersionRecord: Decodable {
     let version: String
     let commit: String?
     let distribution: String?
+    let source: String?
 }
 
 final class TemporaryDirectory {

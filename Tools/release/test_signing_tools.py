@@ -31,7 +31,16 @@ class SigningToolTests(unittest.TestCase):
         binaries = [
             stage / "bin" / "devcontainer",
             stage / "bin" / "devcontainer-compose",
+            stage / "bin" / "devcontainer-docker",
             stage / "bin" / "devcontainer-engine",
+            stage / "libexec" / "devcontainer-compose" / "bin" / "compose",
+            (
+                stage
+                / "libexec"
+                / "devcontainer-compose"
+                / "resources"
+                / "compose-normalizer"
+            ),
             (
                 stage
                 / "libexec"
@@ -45,6 +54,24 @@ class SigningToolTests(unittest.TestCase):
         for binary in binaries:
             binary.parent.mkdir(parents=True, exist_ok=True)
             self.write_executable(binary, "exit 0\n")
+        metadata = stage / "share" / "devcontainer"
+        metadata.mkdir(parents=True)
+        (metadata / "devcontainer.spdx.json").write_text(
+            json.dumps(
+                {
+                    "spdxVersion": "SPDX-2.3",
+                    "packages": [
+                        {
+                            "name": "container-compose",
+                            "checksums": [
+                                {"algorithm": "SHA256", "checksumValue": "0" * 64}
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         return stage
 
     def make_fake_tools(self, root: Path) -> tuple[Path, Path]:
@@ -77,11 +104,15 @@ class SigningToolTests(unittest.TestCase):
             stage = self.make_stage(root)
             fake_bin, trace = self.make_fake_tools(root)
             evidence = root / "notarization.json"
+            keychain = root / "operation.keychain-db"
+            keychain.touch()
             environment = os.environ.copy()
             environment.update(
                 {
                     "DEVCONTAINER_NOTARY_PROFILE": "fixture-profile",
+                    "DEVCONTAINER_NOTARY_KEYCHAIN": str(keychain),
                     "DEVCONTAINER_SIGNING_IDENTITY": "Developer ID Application: Fixture",
+                    "DEVCONTAINER_SIGNING_KEYCHAIN": str(keychain),
                     "PATH": f"{fake_bin}:{environment['PATH']}",
                     "SIGNING_TRACE": str(trace),
                 }
@@ -96,11 +127,14 @@ class SigningToolTests(unittest.TestCase):
             )
 
             trace_lines = trace.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(trace_lines), 8)
+            self.assertEqual(len(trace_lines), 14)
             for executable in (
                 "devcontainer",
                 "devcontainer-compose",
+                "devcontainer-docker",
                 "devcontainer-engine",
+                "compose",
+                "compose-normalizer",
             ):
                 expected = 4 if executable == "devcontainer" else 2
                 self.assertEqual(
@@ -116,6 +150,17 @@ class SigningToolTests(unittest.TestCase):
             self.assertRegex(value["archiveSHA256"], r"^[0-9a-f]{64}$")
             self.assertNotIn("private", value)
             self.assertNotIn("fixture-profile", evidence.read_text(encoding="utf-8"))
+            sbom = json.loads(
+                (stage / "share" / "devcontainer" / "devcontainer.spdx.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            checksum = sbom["packages"][0]["checksums"][0]["checksumValue"]
+            self.assertNotEqual(checksum, "0" * 64)
+            script = SIGNING_SCRIPT.read_text(encoding="utf-8")
+            self.assertIn('--keychain "$SIGNING_KEYCHAIN"', script)
+            self.assertIn('--keychain "$NOTARY_KEYCHAIN"', script)
+            self.assertIn('run_bounded "$NOTARY_TIMEOUT_SECONDS"', script)
 
     def test_missing_release_credentials_fail_before_signing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
