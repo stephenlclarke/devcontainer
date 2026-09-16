@@ -1,0 +1,16 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+module(name = "devcontainer")
+
+bazel_dep(name = "rules_swift", version = "3.6.1")
+bazel_dep(name = "apple_support", version = "1.24.2")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_shell", version = "0.3.0")
+
+# macOS Foundation createFile can use a volume-level replacement directory,
+# which is outside Bazel's sandbox when outputs live on the external SSD.
+single_version_override(
+    module_name = "rules_swift",
+    version = "3.6.1",
+    patches = ["//Tools/bazel:rules-swift-sandbox-output.patch"],
+    patch_strip = 1,
+)

@@ -1,0 +1,100 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_swift//swift:swift_binary.bzl", "swift_binary")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
+load("//Tools/bazel:build_identity.bzl", "build_identity")
+
+package(default_visibility = ["//visibility:public"])
+
+swift_binary(
+    name = "DevContainerVersionGenerator",
+    srcs = ["Tools/version-generator/main.swift"],
+)
+
+build_identity(
+    name = "DevContainerVersionGenerated",
+    generator = ":DevContainerVersionGenerator",
+    makefile = "Makefile",
+)
+
+swift_library(
+    name = "DevContainerModel",
+    srcs = glob(["Sources/DevContainerModel/*.swift"]) + [":DevContainerVersionGenerated"],
+    module_name = "DevContainerModel",
+)
+
+swift_library(
+    name = "DevContainerRuntimeSPI",
+    srcs = glob(["Sources/DevContainerRuntimeSPI/*.swift"]),
+    module_name = "DevContainerRuntimeSPI",
+    deps = [":DevContainerModel"],
+)
+
+swift_interop_hint(
+    name = "CSQLiteInterop",
+    module_map = "Sources/CSQLite/module.modulemap",
+    module_name = "CSQLite",
+)
+
+cc_library(
+    name = "CSQLite",
+    hdrs = ["Sources/CSQLite/shim.h"],
+    aspect_hints = [":CSQLiteInterop"],
+    linkopts = ["-lsqlite3"],
+)
+
+swift_library(
+    name = "DevContainerState",
+    srcs = glob(["Sources/DevContainerState/*.swift"]),
+    module_name = "DevContainerState",
+    deps = [":CSQLite", ":DevContainerModel", ":DevContainerRuntimeSPI"],
+)
+
+swift_library(
+    name = "DevContainerCore",
+    srcs = glob(["Sources/DevContainerCore/*.swift"]),
+    module_name = "DevContainerCore",
+    deps = [":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState"],
+)
+
+swift_test(
+    name = "DevContainerModelTests",
+    srcs = glob(["Tests/DevContainerModelTests/*.swift"]),
+    data = ["Makefile"],
+    module_name = "DevContainerModelTests",
+    deps = [":DevContainerModel"],
+)
+
+swift_test(
+    name = "DevContainerStateTests",
+    srcs = glob(["Tests/DevContainerStateTests/*.swift"]),
+    module_name = "DevContainerStateTests",
+    deps = [":CSQLite", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState"],
+)
+
+swift_test(
+    name = "DevContainerProjectTests",
+    srcs = ["Tests/DevContainerCoreTests/DevContainerProjectTests.swift"],
+    module_name = "DevContainerProjectTests",
+    deps = [":DevContainerCore", ":DevContainerModel"],
+)
+
+swift_test(
+    name = "BazelFrameworkTests",
+    srcs = ["//Tools/bazel:tests/FrameworkTests.swift"],
+    module_name = "BazelFrameworkTests",
+)
+
+# Deliberately not //:unit: this is the initial migration subset, not all tests.
+test_suite(
+    name = "bazel_qualification",
+    tests = [
+        ":BazelFrameworkTests",
+        ":DevContainerModelTests",
+        ":DevContainerProjectTests",
+        ":DevContainerStateTests",
+        "//Tools/bazel:version_generator_tests",
+    ],
+)

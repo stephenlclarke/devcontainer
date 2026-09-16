@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+The opt-in [native Bazel qualification](docs/bazel-workflow.md) is the first implementation checkpoint of the build-workflow redesign. It does not yet replace the full SwiftPM build, runtime parity, or release workflow. Use `make bazel-configure` once and `make bazel-qualify` to exercise the migrated subset with build scratch and caches on the enrolled external SSD.
+
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
 (including its standard JSON and Psych YAML libraries), and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,

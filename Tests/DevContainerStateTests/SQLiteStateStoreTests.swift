@@ -191,7 +191,7 @@ struct SQLiteStateStoreTests {
 
     @Test
     func `version two state migrates image identity transactionally`() throws {
-        let directory = temporaryDirectory()
+        let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("state.sqlite")
         _ = try SQLiteStateStore(path: path)
@@ -213,7 +213,7 @@ struct SQLiteStateStoreTests {
 
     @Test
     func `future state schema is rejected without mutation`() throws {
-        let directory = temporaryDirectory()
+        let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("state.sqlite")
         _ = try SQLiteStateStore(path: path)
@@ -314,8 +314,7 @@ struct SQLiteStateStoreTests {
     private func withStore(
         _ body: (SQLiteStateStore) async throws -> Void
     ) async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("devcontainer-state-test-\(UUID().uuidString)", isDirectory: true)
+        let directory = try temporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -323,12 +322,20 @@ struct SQLiteStateStoreTests {
         try await body(store)
     }
 
-    private func temporaryDirectory() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "devcontainer-state-migration-test-\(UUID().uuidString)",
-                isDirectory: true
-            )
+    private func temporaryDirectory() throws -> URL {
+        // On Darwin Foundation prefers the per-user system directory over
+        // TMPDIR. Honour the test runner's owned storage explicitly.
+        let environment = ProcessInfo.processInfo.environment
+        let path = environment["TEST_TMPDIR"] ?? environment["TMPDIR"]
+            ?? FileManager.default.temporaryDirectory.path
+        try #require(path.hasPrefix("/"))
+        if environment["BAZEL_TEST"] == "1" {
+            try #require(path.hasPrefix("/Volumes/SSD/cf/bazel/"))
+        }
+        return URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent(
+            "devcontainer-state-migration-test-\(UUID().uuidString)",
+            isDirectory: true
+        )
     }
 
     private func executeSQL(path: URL, sql: String) throws {

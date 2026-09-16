@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+# USAGE: ssd-test-runner.sh TEST_EXECUTABLE [ARGS...]
+# Give tools a writable per-test TMPDIR. Foundation on Darwin can still prefer
+# its system directory, so Swift fixtures must explicitly honour TEST_TMPDIR.
+set -euo pipefail
+
+[[ "${TEST_TMPDIR:-}" == /Volumes/SSD/cf/bazel/* && -d "$TEST_TMPDIR" && -w "$TEST_TMPDIR" ]] || {
+    printf 'Bazel test requires its own writable SSD temporary directory.\n' >&2
+    exit 2
+}
+export TMPDIR="$TEST_TMPDIR" TMP="$TEST_TMPDIR" TEMP="$TEST_TMPDIR"
+if "$@"; then
+    status=0
+else
+    status=$?
+fi
+[[ "$status" == 0 ]] || exit "$status"
+
+# rules_swift instruments Swift but this pinned Bazel tuple does not invoke a
+# native LLVM collector. Export the profiles from this execution into the
+# standard COVERAGE_DIR; Bazel's existing LCOV merger handles source filtering.
+if [[ "${COVERAGE:-0}" == 1 && -n "${TEST_BINARIES_FOR_LLVM_COV:-}" ]]; then
+    [[ "${COVERAGE_DIR:-}" == /Volumes/SSD/cf/bazel/* ]] || exit 2
+    shopt -s nullglob
+    profiles=("$COVERAGE_DIR"/*.profraw)
+    if [[ ${#profiles[@]} == 0 ]]; then
+        # A framework-only probe has no instrumented production sources.
+        [[ ! -s "${COVERAGE_MANIFEST:?}" ]] && exit 0
+        printf 'Coverage execution produced no LLVM profiles (binary: %s).\n' "$TEST_BINARIES_FOR_LLVM_COV" >&2
+        exit 2
+    else
+        # The LCOV merger rejects mixed .profdata and .dat input. Keep the
+        # intermediate profile in test scratch, outside its discovery tree.
+        /usr/bin/xcrun llvm-profdata merge -sparse "${profiles[@]}" -o "$TEST_TMPDIR/swift.profdata"
+        /usr/bin/xcrun llvm-cov export -format=lcov \
+            -instr-profile="$TEST_TMPDIR/swift.profdata" \
+            "$TEST_BINARIES_FOR_LLVM_COV" > "$COVERAGE_DIR/swift.dat"
+    fi
+fi

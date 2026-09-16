@@ -43,6 +43,17 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: release-version
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
+.PHONY: bazel-configure bazel-qualify bazel-test-tools
+
+# Opt-in native qualification; existing product/release entry points are unchanged.
+bazel-configure:
+	Tools/bazel/run.sh configure
+
+bazel-qualify:
+	Tools/bazel/run.sh coverage //:bazel_qualification
+
+bazel-test-tools:
+	Tools/bazel/run.sh test-tools
 
 all: workflow
 

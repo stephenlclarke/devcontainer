@@ -1,0 +1,26 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+# Host-specific paths are supplied by Tools/bazel/run.sh, never inferred here.
+common --enable_bzlmod
+common --enable_workspace=false
+build --jobs=6
+build --local_resources=cpu=6
+build --local_resources=memory=8192
+build --compilation_mode=dbg
+build --macos_minimum_os=15.0
+build --@rules_swift//swift:copt=-swift-version
+build --@rules_swift//swift:copt=6
+build --@rules_swift//swift:copt=-warnings-as-errors
+build --action_env=TMPDIR
+test --test_env=TMPDIR
+build --symlink_prefix=/
+test --test_output=errors
+test --flaky_test_attempts=1
+test --local_test_jobs=2
+test --run_under=//Tools/bazel:ssd_test_runner
+coverage --combined_report=lcov
+coverage --instrumentation_filter=^//
+coverage --experimental_use_llvm_covmap
+coverage --experimental_generate_llvm_lcov
+build:release --compilation_mode=opt
+build:asan --features=asan
+build:tsan --features=tsan

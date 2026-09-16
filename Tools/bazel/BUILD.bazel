@@ -1,0 +1,24 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+exports_files([
+    "build_identity.bzl",
+    "rules-swift-sandbox-output.patch",
+    "tests/FrameworkTests.swift",
+])
+
+sh_binary(
+    name = "ssd_test_runner",
+    srcs = ["ssd-test-runner.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "version_generator_tests",
+    srcs = ["tests/version-generator.sh"],
+    args = ["$(location //:DevContainerVersionGenerator)"],
+    data = ["//:DevContainerVersionGenerator"],
+    env = {"TEST_BINARIES_FOR_LLVM_COV": "$(location //:DevContainerVersionGenerator)"},
+    visibility = ["//visibility:public"],
+)
