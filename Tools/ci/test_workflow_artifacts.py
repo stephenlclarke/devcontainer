@@ -434,7 +434,10 @@ jobs:
         quality = (ROOT / "QUALITY.md").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count('== ["previous_version"]'), 2)
-        self.assertIn("SONAR_PROJECT_VERSION: ${{ github.sha }}", workflow)
+        self.assertIn(
+            "SONAR_PROJECT_VERSION: ${{ env.ANALYSIS_REVISION }}",
+            workflow,
+        )
         self.assertIn(
             '-Dsonar.projectVersion="$$sonar_project_version"',
             makefile,
