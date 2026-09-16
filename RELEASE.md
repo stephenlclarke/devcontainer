@@ -337,7 +337,7 @@ Each lane uses:
 - A preflight that fails in strict mode.
 - Deterministic fixtures.
 - Normalized JSON results.
-- Per-fixture monotonic durations and candidate/Docker timing ratios. Comparable or better performance (`<=1.00x` Docker) is the objective; any completed result above `2.50x` requires further investigation. A candidate at or above `10.00x` its matching Docker fixture, non-completion, or missing or invalid timing evidence fails the gate without changing the separately reported functional result. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
+- Per-fixture monotonic durations and stock-Apple/Docker, enhanced-provider/Docker, and enhanced-provider/stock-Apple timing ratios. Comparable or better performance (`<=1.00x` the matching comparator) is the objective; any completed result above `2.50x` requires further investigation. A result at or above `10.00x` its matching comparator, non-completion, or missing or invalid timing evidence fails the gate without changing the separately reported functional result. See [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 - Sequential execution on a shared host.
 
 The aggregate release gate fails if any required lane is unavailable, the Docker oracle version differs from its pin, stock Apple is replaced by a custom distribution, cleanup fails materially, or an undocumented parity difference appears.

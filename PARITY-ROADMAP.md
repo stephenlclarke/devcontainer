@@ -45,7 +45,7 @@ Performance certification should use paired runs on the same host, with at least
 | Candidate regression against the previous certified Apple result | No regression |
 | Peak resident memory and CPU time | At or below Docker |
 
-Any completed candidate result above `2.50x` Docker requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A candidate result at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence is a hard acceptance failure without changing the separately reported functional result.
+Any completed stock-Apple/Docker, enhanced-provider/Docker, or enhanced-provider/stock-Apple result above `2.50x` its matching comparator requires further investigation. That threshold is a triage trigger, not a performance pass criterion and not a functional-parity failure. Results above `1.00x` miss the objective even when they do not trigger the investigation threshold. A result at or above `10.00x` its matching comparator, a timeout, other non-completion, or missing or invalid timing evidence is a hard acceptance failure without changing the separately reported functional result.
 
 Cold-start and warm-reuse results must be reported separately. An optimisation is accepted only when its median improvement exceeds baseline variation, its p90 does not worsen materially, resource use remains bounded, and semantic observations remain identical.
 

@@ -214,7 +214,7 @@ The `docker` lane is the behavioral oracle. For a fixture to pass,
 `apple-stock` and `container-compose` must have zero semantic differences from the
 oracle within the claimed surface.
 
-Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed result above `2.50x` Docker requires further investigation but does not, by itself, alter functional parity. A candidate at or above `10.00x` its matching Docker fixture, a timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
+Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports stock-Apple/Docker, enhanced-provider/Docker, and enhanced-provider/stock-Apple ratios for each matching fixture. Comparable or better performance (`<=1.00x` the matching comparator) is the objective. A completed result above `2.50x` its comparator requires further investigation but does not, by itself, alter functional parity. A result at or above `10.00x` its matching comparator, a timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
 The harness may normalize only:
 
