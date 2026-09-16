@@ -131,17 +131,19 @@ def compare(
             "Functional parity requires zero semantic differences and completed, "
             "valid evidence. Comparable or better performance "
             f"(at most {PERFORMANCE_TARGET_FACTOR:.2f}x Docker) is the objective. "
-            "A completed candidate above "
-            f"{PERFORMANCE_INVESTIGATION_FACTOR:.2f}x Docker requires investigation; "
-            f"a candidate at least {PERFORMANCE_FAILURE_FACTOR:.2f}x Docker fails "
+            "A completed comparison above "
+            f"{PERFORMANCE_INVESTIGATION_FACTOR:.2f}x its matching comparator "
+            "requires investigation; a comparison at least "
+            f"{PERFORMANCE_FAILURE_FACTOR:.2f}x its matching comparator fails "
             "timing acceptance without changing functional parity."
         ),
         "",
         (
             "| Fixture | Docker oracle | Stock Apple | container-compose provider "
-            "| Stock/Docker | Provider/Docker | Functional parity | Performance |"
+            "| Stock/Docker | Provider/Docker | Provider/Stock | Functional parity "
+            "| Performance |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     all_equivalent = True
     all_functionally_equivalent = True
@@ -169,6 +171,7 @@ def compare(
             lane: None for lane in LANES
         }
         candidate_ratios: dict[str, float] = {}
+        provider_to_stock_ratio: float | None = None
         if missing:
             functional_differences.append(f"missing lanes: {', '.join(missing)}")
         invalid_timings = [
@@ -211,6 +214,35 @@ def compare(
                             f"{lane} duration is {ratio:.3f}x Docker "
                             f"(failure: >={PERFORMANCE_FAILURE_FACTOR:g}x)"
                         )
+        stock_duration = durations["apple-stock"]
+        provider_duration = durations["container-compose"]
+        if (
+            stock_duration is not None
+            and stock_duration > 0
+            and provider_duration is not None
+        ):
+            provider_to_stock_ratio = round(
+                provider_duration / stock_duration,
+                3,
+            )
+            if (
+                statuses["container-compose"] == "passed"
+                and provider_to_stock_ratio > PERFORMANCE_INVESTIGATION_FACTOR
+            ):
+                performance_investigations.append(
+                    "container-compose duration is "
+                    f"{provider_to_stock_ratio:.3f}x stock Apple "
+                    f"(investigate: >{PERFORMANCE_INVESTIGATION_FACTOR:g}x)"
+                )
+            if (
+                statuses["container-compose"] == "passed"
+                and provider_to_stock_ratio >= PERFORMANCE_FAILURE_FACTOR
+            ):
+                performance_failures.append(
+                    "container-compose duration is "
+                    f"{provider_to_stock_ratio:.3f}x stock Apple "
+                    f"(failure: >={PERFORMANCE_FAILURE_FACTOR:g}x)"
+                )
         if oracle is not None:
             for lane in ("apple-stock", "container-compose"):
                 candidate = by_lane[lane]
@@ -251,6 +283,7 @@ def compare(
                 "statuses": statuses,
                 "durationsSeconds": durations,
                 "relativeDurations": relative_durations,
+                "providerToStockRatio": provider_to_stock_ratio,
                 "functionalEquivalent": functional_equivalent,
                 "functionalDifferences": functional_differences,
                 "timingEvidenceValid": not timing_differences,
@@ -294,6 +327,11 @@ def compare(
             status_cell("container-compose"),
             ratio_cell("apple-stock"),
             ratio_cell("container-compose"),
+            (
+                "-"
+                if provider_to_stock_ratio is None
+                else f"{provider_to_stock_ratio:.3f}x"
+            ),
             "yes" if functional_equivalent else "no",
             performance_cell,
         ]
@@ -307,7 +345,7 @@ def compare(
         for fixture in comparisons
     )
     payload = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "suite": suite,
         "status": "passed" if overall_passed else "failed",
         "evidenceStatus": "passed" if evidence_valid else "failed",
@@ -325,6 +363,12 @@ def compare(
         "performancePolicy": {
             "durationMetric": "fixture wall-clock seconds",
             "oracle": "docker",
+            "providerToStockComparison": (
+                "informational ratio of the enhanced container-compose provider "
+                "duration to the stock Apple duration for the same fixture; "
+                "the common investigation and order-of-magnitude failure "
+                "boundaries still apply"
+            ),
             "targetFactor": PERFORMANCE_TARGET_FACTOR,
             "target": (
                 "completed candidate duration is at most "
@@ -332,14 +376,18 @@ def compare(
             ),
             "investigationFactor": PERFORMANCE_INVESTIGATION_FACTOR,
             "investigationRule": (
-                "completed candidate duration is greater than "
-                f"{PERFORMANCE_INVESTIGATION_FACTOR:g}x Docker"
+                "completed stock or provider duration is greater than "
+                f"{PERFORMANCE_INVESTIGATION_FACTOR:g}x Docker, or completed "
+                "provider duration is greater than "
+                f"{PERFORMANCE_INVESTIGATION_FACTOR:g}x stock Apple"
             ),
             "failureFactor": PERFORMANCE_FAILURE_FACTOR,
             "failureRule": (
                 "lane failure, incomplete evidence, missing or invalid timing, "
-                "or completed candidate duration at least "
-                f"{PERFORMANCE_FAILURE_FACTOR:g}x Docker; timing failure does not "
+                "completed stock or provider duration at least "
+                f"{PERFORMANCE_FAILURE_FACTOR:g}x Docker, or completed provider "
+                f"duration at least {PERFORMANCE_FAILURE_FACTOR:g}x stock Apple; "
+                "timing failure does not "
                 "alter functional parity"
             ),
         },

@@ -191,7 +191,7 @@ lane.
 
 ### Timing evidence
 
-Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker and `container-compose`/Docker ratios only between matching fixtures.
+Every fixture records monotonic wall-clock `durationSeconds` in its lane JSON and JUnit testcase. The comparison JSON and Markdown matrix preserve the three raw durations and compute stock-Apple/Docker, `container-compose`/Docker, and `container-compose`/stock-Apple ratios only between matching fixtures. Docker remains the behavioral oracle. The provider/stock ratio explicitly compares the enhanced Container stack with unmodified Apple Container, and the same investigation and order-of-magnitude timing boundaries apply to it.
 
 Immediately before each CLI and VS Code timing suite, the workflow runs
 `Tools/parity/require-quiet-host.sh`. It waits for the one-minute load average
@@ -205,10 +205,11 @@ within one hour fails the run; its timings cannot enter release or
 optimization evidence.
 
 Timing is not an exact-equivalence assertion. Comparable or better performance
-(`<=1.00x` Docker) is the objective. A completed candidate above `2.50x`
-Docker is marked for further investigation. A completed candidate at or above
-`10.00x` Docker fails timing acceptance and the overall parity gate without
-changing the separately reported functional result. A timeout or other
+(`<=1.00x` Docker) is the objective. A completed stock-Apple/Docker,
+`container-compose`/Docker, or `container-compose`/stock-Apple comparison above
+`2.50x` is marked for further investigation. A completed comparison at or above
+`10.00x` fails timing acceptance and the overall parity gate without changing
+the separately reported functional result. A timeout or other
 non-completion, or missing or invalid timing evidence, also fails the parity
 gate. The harness does not retry, normalize, or waive those failures.
 

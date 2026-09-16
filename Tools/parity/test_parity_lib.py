@@ -72,10 +72,11 @@ class ParityLibraryTests(unittest.TestCase):
             result, markdown = compare(root, {"D01"})
 
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["schemaVersion"], 3)
+            self.assertEqual(result["schemaVersion"], 4)
             self.assertTrue(result["performanceInvestigationRequired"])
             fixture = result["fixtures"][0]
             self.assertEqual(fixture["relativeDurations"]["apple-stock"], 2.51)
+            self.assertEqual(fixture["providerToStockRatio"], 0.797)
             self.assertTrue(fixture["functionalEquivalent"])
             self.assertFalse(fixture["performanceTargetMet"])
             self.assertTrue(fixture["performanceInvestigationRequired"])
@@ -84,6 +85,7 @@ class ParityLibraryTests(unittest.TestCase):
                 fixture["performanceInvestigations"][0],
             )
             self.assertIn("investigate", markdown)
+            self.assertIn("Provider/Stock", markdown)
 
     def test_comparison_does_not_investigate_exactly_at_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -102,6 +104,32 @@ class ParityLibraryTests(unittest.TestCase):
             fixture = result["fixtures"][0]
             self.assertFalse(fixture["performanceTargetMet"])
             self.assertFalse(fixture["performanceInvestigationRequired"])
+
+    def test_provider_to_stock_slowdown_uses_common_timing_policy(self) -> None:
+        cases = ((9.999, "passed"), (10.0, "failed"))
+        for ratio, expected_status in cases:
+            with (
+                self.subTest(ratio=ratio),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                self.write_lane(root, "docker", 10.0)
+                self.write_lane(root, "apple-stock", 1.0)
+                self.write_lane(root, "container-compose", ratio)
+
+                result, _ = compare(root, {"D01"})
+
+                fixture = result["fixtures"][0]
+                self.assertEqual(result["status"], expected_status)
+                self.assertEqual(fixture["providerToStockRatio"], ratio)
+                self.assertEqual(
+                    fixture["performanceAcceptancePassed"],
+                    ratio < 10.0,
+                )
+                self.assertIn(
+                    "stock Apple",
+                    result["performancePolicy"]["failureRule"],
+                )
 
     def test_comparison_records_comparable_or_better_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

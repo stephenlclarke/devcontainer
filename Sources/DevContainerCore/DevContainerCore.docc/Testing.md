@@ -36,7 +36,7 @@ produce a quiet-host receipt. The gate waits for the one-minute load to fall
 to at most the smaller of one quarter of the logical CPU count and `2.0`,
 rejects competing build and Container-family release processes, invalidates
 any old success receipt before checking, and retains thermal, load, process,
-and policy evidence. A host that does not become quiet within ten minutes
+and policy evidence. A host that does not become quiet within one hour
 cannot contribute release or optimization timings.
 
 In the exact 1.0.0 tag run, the largest CLI ratios are 2.876x for stock Apple
@@ -46,14 +46,18 @@ recordings, diagnostics, fingerprints, JUnit, and cleanup reports for all
 three lanes.
 
 Every CLI fixture also records monotonic wall-clock time in lane JSON and
-JUnit. The comparison artifact retains raw durations and reports stock/Docker
-and provider/Docker ratios even when functional parity fails. Comparable or
-better performance (`<=1.00x` Docker) is the objective. A completed result
-above `2.50x` Docker requires further investigation but does not, by itself,
-change functional parity. A candidate at or above `10.00x` its matching Docker
-fixture, a timeout, other non-completion, or missing or invalid timing evidence
-fails the parity gate without changing the separately reported functional
-result. The full target is in
+JUnit. The comparison artifact retains raw durations and reports stock/Docker,
+provider/Docker, and provider/stock ratios even when functional parity fails.
+The provider/stock ratio directly compares the enhanced Container stack with
+unmodified Apple Container. Docker remains the behavioral oracle, while the
+same investigation and order-of-magnitude timing boundaries apply to every
+recorded comparison. Comparable or better performance (`<=1.00x` Docker) is
+the objective. A completed comparison above `2.50x` its matching comparator
+requires further investigation but does not, by itself, change functional
+parity. A comparison at or above `10.00x` its matching comparator, a timeout,
+other non-completion, or missing or invalid timing evidence fails the parity
+gate without changing the separately reported functional result. The full
+target is in
 [PARITY-ROADMAP.md](https://github.com/stephenlclarke/devcontainer/blob/main/PARITY-ROADMAP.md).
 
 See <doc:Performance> for the three-run matrix, variability, phase analysis,
