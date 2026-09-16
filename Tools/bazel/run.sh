@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -21,7 +21,7 @@ error() {
 
 # Explain the intentionally limited migration interface.
 usage() {
-    printf 'Usage: %s configure|test-tools|restore-candidate ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
+    printf 'Usage: %s configure|test-tools|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
@@ -196,7 +196,7 @@ main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|cleanup|restore-candidate|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|cleanup|restore-candidate|coverage-report|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -250,6 +250,11 @@ main() {
     if [[ "$command" == restore-candidate ]]; then
         [[ $# == 1 ]] || { error 'restore-candidate requires one retained invocation ID.'; return 2; }
         clean_environment /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" --restore-candidate "$1"
+        return
+    fi
+    if [[ "$command" == coverage-report ]]; then
+        [[ $# == 1 ]] || { error 'coverage-report requires one retained invocation ID.'; return 2; }
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/coverage_report.py" "$1"
         return
     fi
     if [[ "$command" == test-tools ]]; then

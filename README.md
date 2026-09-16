@@ -152,6 +152,8 @@ advanced mount options.
 
 The opt-in [native Bazel build](docs/bazel-workflow.md) builds all three executables and runs the unit suites against either stock Apple or enhanced dependencies. Use `make bazel-configure` once, then `make bazel-build` and `make bazel-unit`; add `BAZEL_PROFILE=stock` for the stock graph. `make bazel-package` creates an unsigned native candidate. Scratch and caches stay on the enrolled external SSD; test evidence and candidate archives are retained on internal storage, with authenticated restore that requires no rebuild. Runtime parity, signing and release publication have not yet moved to this workflow.
 
+Use `make bazel-coverage-report INVOCATION=ID` to export a retained unit run's LCOV and Sonar XML without rerunning tests. The receipt identifies the tested commit/profile; exporting historical coverage does not make it current-head quality evidence.
+
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
 (including its standard JSON and Psych YAML libraries), and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,

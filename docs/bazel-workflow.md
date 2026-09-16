@@ -15,6 +15,7 @@ make bazel-configure
 make bazel-test-tools
 make bazel-build
 make bazel-unit
+make bazel-coverage-report INVOCATION=RETAINED-UNIT-INVOCATION-ID
 make bazel-build BAZEL_PROFILE=stock
 make bazel-unit BAZEL_PROFILE=stock
 make bazel-package
@@ -30,6 +31,12 @@ Tools/bazel/run.sh test --config=tsan //:DevContainerModelTests //:DevContainerS
 Bazel 8.8.0 and dependency versions are pinned. The launcher downloads Bazel directly and verifies its SHA-256 on every invocation, including cache hits; it does not delegate through Bazelisk or a workspace wrapper. `Package.resolved` and `Package.stock.resolved` supply exact source revisions through the native Swift package rules. Select one profile with `--config=stock` or `--config=enhanced`; independent dependency overrides and mismatched profile defines are rejected. Makefile remains the product version authority. Build identity takes declared `DEVCONTAINER_COMMIT` and `DEVCONTAINER_BUILD_LANE` Bazel defines; development defaults explicitly to `unspecified`/`development`, not a fabricated release identity.
 
 The Keychain-backed service process tests and live Apple-service logging test are explicit, uncached host-integration targets, not silently skipped unit cases. They require `DEVCONTAINER_HOST_INTEGRATION=1`; the launcher preserves only a validated `0` or `1` for that opt-in. The logging target is incompatible with the stock profile because that upstream API is absent. These targets remain unqualified for unattended execution and are not a parity claim.
+
+### Reuse native coverage
+
+`make bazel-coverage-report INVOCATION=ID` exports the retained unit invocation's exact LCOV, Sonar generic `coverage.xml` and digest-bearing `receipt.json` under the SSD coverage directory. It does not start Bazel, compile, rerun tests or contact Sonar. It works after the original test output disappears. Only successful, complete source-unit coverage with clean recorded source identities is eligible; dirty, mismatched, corrupted or incomplete evidence fails. The XML preserves the LCOV line denominator without additional exclusions, and includes uncovered lines.
+
+The receipt names the original source commit and profile, not the current checkout. A historical export must not be submitted as current-head coverage; scanner integration must verify that binding before upload. This is coverage export, not a passing 90% quality gate, hosted analysis or release authority. Existing `make sonar-scan` has not been switched over. Report output is disposable and reconstructible; broader report-directory lifetime cleanup remains a migration gate.
 
 ## Native candidate archives
 
@@ -95,6 +102,7 @@ Validated locally on 2026-09-16 with Xcode 27.0 build 27A266a:
 - The earlier Model/State qualification passed ASan and TSan. Full-graph sanitizer and leak proof remains outstanding; earlier subset evidence must not be represented as full-product proof.
 - The first enhanced optimized archive built natively in 156.175 seconds (invocation `776cbcfc-08b2-4580-bc1e-32d2533c31f7`), was retained, restored and its CLI executed successfully. The unchanged request took 0.361 seconds with zero compilation/archive execution (invocation `410cb60d-e28a-4530-bce5-3824631d01b7`). These are cache diagnostics, not quiet-host runtime comparisons.
 - The complete `make bazel-checkpoint` passed at `db772e52f573ee9387cf9660d597c969eecd68aa`: 54 helper tests, stock coverage/products (`35964129-0478-4d39-9e25-00ccd819dc44`), stock optimized archive (`4b366505-0939-47f0-ae4e-1feb95d7d9b3`), enhanced coverage/products (`c80ce02b-0ecb-4fea-89aa-95e50290fb46`), enhanced optimized archive (`25947ef4-ed45-4af4-9e9d-0ec1e2e2f254`) and owned cleanup. Cleanup preserved recent/unknown scratch; it made no material deletion. Later source edits require affected checks and are not qualified by this historical checkpoint.
+- After preserving hosts staging permissions, the complete checkpoint passed at `50f74fa482843ca44203b4a3154c50d5ac644d4e`: stock unit/products `452e63d3-9386-47f6-9c13-6ab2aa965eb9`, stock archive `c090335b-f04f-4e99-9860-6a335f12ee4f`, enhanced unit/products `898ae68e-849d-4688-9ca9-533dc0e860b9`, enhanced archive `6f20ac12-729a-4a7d-bd56-cc1fe8884760`. The later report exporter successfully consumed both retained unit receipts without rebuilding. Enhanced coverage was 11,815 / 13,646 lines (86.5821%); this remains unit-only evidence below the quality target. Sixty helper tests pass, including six coverage conversion, provenance, corruption and reuse regressions.
 
 ## Pinned compatibility adaptations
 
