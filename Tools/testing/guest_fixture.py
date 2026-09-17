@@ -25,7 +25,7 @@ class GuestFixture:
     """Create once; reconcile uncertain creation/deletion by exact ID and owner."""
 
     def __init__(self, socket: Path, owner: str, image: str, api_version: str, journal,
-                 *, command: tuple[str, ...] = ("sleep", "300"), observe=None):
+                 *, command: tuple[str, ...] = ("sleep", "300"), network="none", mounts=(), aliases=(), observe=None):
         if (re.fullmatch(r"[0-9a-f]{64}", owner) is None or
                 re.fullmatch(r"sha256:[0-9a-f]{64}", image) is None or
                 re.fullmatch(r"[0-9]+\.[0-9]+", api_version) is None or
@@ -34,12 +34,20 @@ class GuestFixture:
         if (not isinstance(command, tuple) or not command or len(command) > 32 or
                 any(not isinstance(item, str) or not item or "\0" in item for item in command)):
             raise ValueError("Guest fixture requires an explicit command tuple")
+        if (not isinstance(network, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", network) is None or
+                not isinstance(mounts, tuple) or any(not isinstance(mount, dict) for mount in mounts) or
+                not isinstance(aliases, tuple) or any(not isinstance(alias, str) or
+                    re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", alias) is None for alias in aliases)):
+            raise ValueError("Guest network/mount configuration is invalid")
         self.socket, self.journal = socket, journal
         self.observe = observe
         self.owner, self.image, self.version = owner, image, api_version
         self.name = "cf-test-" + owner[:32]
         self.intent = {"name": self.name, "image": image, "labels": {OWNER_LABEL: owner},
                        "socket": str(socket), "apiVersion": api_version, "command": list(command)}
+        self.configuration = json.loads(canonical({"network": network, "mounts": mounts, "aliases": aliases}))
+        if network != "none" or mounts or aliases:
+            self.intent["networkMounts"] = self.configuration
         self.identifier = None
 
     def call(self, method: str, route: str, body=None, *, timeout=5):
@@ -93,7 +101,12 @@ class GuestFixture:
             raise ValueError("Fixture name already exists; refusing adoption")
         self.journal.put("container-intent.json", canonical(self.intent))
         body = {"Image": self.image, "Cmd": self.intent["command"], "Labels": self.intent["labels"],
-                "HostConfig": {"AutoRemove": False, "NetworkMode": "none"}}
+                "HostConfig": {"AutoRemove": False, "NetworkMode": self.configuration["network"]}}
+        if self.configuration["mounts"]:
+            body["HostConfig"]["Mounts"] = self.configuration["mounts"]
+        if self.configuration["aliases"]:
+            body["NetworkingConfig"] = {"EndpointsConfig": {
+                self.configuration["network"]: {"Aliases": self.configuration["aliases"]}}}
         status, payload = self.call("POST", f"/containers/create?name={self.name}", body)
         value = json.loads(payload)
         identifier = value.get("Id") if isinstance(value, dict) else None

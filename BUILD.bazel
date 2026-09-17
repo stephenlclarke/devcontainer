@@ -12,6 +12,7 @@ exports_files([
     "Tests/Parity/fixtures/E02-container-lifecycle/contract.json",
     "Tests/Parity/fixtures/E03-exec-streams/contract.json",
     "Tests/Parity/fixtures/E05-archive-copy/contract.json",
+    "Tests/Parity/fixtures/E06-network-volume/contract.json",
 ])
 
 candidate_archive(

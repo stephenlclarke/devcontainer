@@ -18,9 +18,10 @@ from prepare_guest_images import require_image, validate_image
 from prepare_releases import require_retained
 from release_inputs import sha256, validate_lock
 from exec_probe import exec_streams
+from network_volume_probe import NetworkVolumeFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E05-archive-copy"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E05-archive-copy", "E06-network-volume"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 
 
@@ -136,6 +137,12 @@ class ReleasedGuest:
 
     def operation(self):
         self.runtime.verify()
+        if self.fixture == "E06-network-volume":
+            self.guest = NetworkVolumeFixture(self.socket, digest(canonical(self.owner["identity"])),
+                                              self.inputs["workload"]["image"]["config"], "1.54", self.runtime.journal,
+                                              self.root, observe=self.observe)
+            with deadline(180):
+                return self.guest.operation()
         command = COMMAND if self.fixture == "E02-container-lifecycle" else ("sleep", "300")
         if self.fixture == "E03-exec-streams":
             command = ("sleep", "600")
@@ -165,6 +172,10 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "network-volume-intent.json" in records:
+        removed = json.loads(records.get("network-volume-removed.json", b"null"))
+        if removed != {"intentSHA256": digest(records["network-volume-intent.json"]), "absent": True}:
+            raise ValueError("Network/volume resources need explicit reconciliation before service recovery")
     if "container-intent.json" in records:
         intent = json.loads(records["container-intent.json"])
         removed = json.loads(records.get("container-removed.json", b"null"))

@@ -126,6 +126,18 @@ class GuestFixtureTests(unittest.TestCase):
             with self.subTest(socket=socket), self.assertRaisesRegex(ValueError, "another fixture"):
                 other.cleanup()
 
+    def test_network_configuration_is_snapshotted_and_invalid_options_rejected(self):
+        mount = {"Type": "tmpfs", "Target": "/scratch"}
+        guest = GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                             network="fixture-net", mounts=(mount,), aliases=("app",))
+        mount["Target"] = "/changed-after-admission"
+        self.assertEqual(guest.intent["networkMounts"]["mounts"][0]["Target"], "/scratch")
+        for options in ({"network": "../unsafe"}, {"mounts": ({"Type": "tmpfs"}, "bad")},
+                        {"aliases": ("../other",)}, {"mounts": []}, {"aliases": []}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "configuration"):
+                GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal, **options)
+        self.assertEqual(self.server.routes, [])
+
     def test_unprepared_image_does_not_pull_or_register_creation(self):
         self.server.prepared = False
         with self.assertRaisesRegex(ValueError, "no implicit pull"):

@@ -155,6 +155,26 @@ class GuestRuntimeTests(unittest.TestCase):
             deadline.assert_called_once_with(360)
             self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
 
+    def test_network_volume_adapter_is_bounded_and_cleanup_precedes_provider_stop(self):
+        case = ReleasedGuest(self.inputs, "E06-network-volume", self.root, self.owner, self.runtime,
+                             "/released/container", self.root / "socket")
+        with patch("guest_runtime.NetworkVolumeFixture") as factory, patch("guest_runtime.deadline") as deadline:
+            self.assertEqual(case.operation(), factory.return_value.operation.return_value)
+            deadline.assert_called_once_with(180)
+            self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
+            self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
+
+    def test_service_recovery_requires_verified_network_volume_cleanup(self):
+        intent = canonical({"fixture": "E06"})
+        records = {"network-volume-intent.json": intent}
+        with self.assertRaisesRegex(ValueError, "Network/volume resources"):
+            require_guest_cleanup(records)
+        records["network-volume-removed.json"] = canonical({"intentSHA256": "wrong", "absent": True})
+        with self.assertRaises(ValueError):
+            require_guest_cleanup(records)
+        records["network-volume-removed.json"] = canonical({"intentSHA256": guest_runtime.digest(intent), "absent": True})
+        require_guest_cleanup(records)
+
     def test_recovery_requires_verified_guest_removal_and_each_command_stop(self):
         require_guest_cleanup({})
         records = {"container-intent.json": canonical({"name": "owned"})}
