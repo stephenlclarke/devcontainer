@@ -30,6 +30,8 @@ struct ResolvedAppleImage {
     let nativeReference: String
     let nativeDigest: String
     var manifestDigest: String?
+    var descriptor: Data?
+    var platform: Data?
 
     func matches(_ reference: String) -> Bool {
         if snapshot.id == reference || nativeDigest == reference
@@ -80,9 +82,11 @@ extension AppleContainerRuntime {
                 )
             }
             snapshot.id = configDigest
-            images.append(ResolvedAppleImage(
+            try images.append(ResolvedAppleImage(
                 snapshot: snapshot, nativeReference: reference, nativeDigest: nativeDigest,
-                manifestDigest: variant["digest"] as? String
+                manifestDigest: variant["digest"] as? String,
+                descriptor: JSONSerialization.data(withJSONObject: descriptor),
+                platform: JSONSerialization.data(withJSONObject: platform)
             ))
         }
         try context.checkActive()

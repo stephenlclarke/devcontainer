@@ -78,6 +78,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let files: any AppleContainerFileClient
         let networks: any AppleNetworkClient
         let images: any AppleImageIdentityClient
+        let creator: any AppleContainerCreateClient
         let loggingRecords: any AppleContainerLoggingRecordClient
         let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
 
@@ -87,6 +88,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             files: any AppleContainerFileClient,
             networks: any AppleNetworkClient,
             images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
+            creator: (any AppleContainerCreateClient)? = nil,
             loggingRecords: (any AppleContainerLoggingRecordClient)? = nil,
             loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)? = nil
         ) {
@@ -95,6 +97,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             self.files = files
             self.networks = networks
             self.images = images
+            self.creator = creator ?? LiveAppleContainerCreateClient(client: api)
             self.loggingRecords = loggingRecords
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
             self.loggingHandoffClientOverride = loggingHandoffClientOverride
@@ -117,6 +120,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let networkClient: any AppleNetworkClient
     let metadataStore: (any RuntimeMetadataStore)?
     let imageIdentityClient: any AppleImageIdentityClient
+    let containerCreateClient: any AppleContainerCreateClient
     let managedVolumes: ManagedVolumeStore
     let transferRoot: URL
     let portForwarding = PortForwarding()
@@ -192,6 +196,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         fileClient = clients.files
         networkClient = clients.networks
         imageIdentityClient = clients.images
+        containerCreateClient = clients.creator
         self.metadataStore = metadataStore
         transferRoot = storageRoots.transfers ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
@@ -607,7 +612,10 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
-        try Self.requireNamedImageMutation(spec.image)
+        let digestAddressed = spec.image.hasPrefix("sha256:") || spec.image.contains("@")
+        if digestAddressed, !useDirectContainerAPI {
+            try Self.requireNamedImageMutation(spec.image)
+        }
         var spec = spec
         let mutation = beginContainerLifecycleMutation(id: spec.name)
         var mutationIdentifiers: Set<String> = [spec.name]
@@ -627,11 +635,15 @@ public extension AppleContainerRuntime {
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
         containerExitRegistrations.removeValue(forKey: spec.name)
         containerExits.removeValue(forKey: spec.name)
-        let image = try await inspectImage(reference: spec.image, context: context)
-        let result = try await command(
-            containerCreateArguments(spec, optionSupport: optionSupport)
-        )
-        try requireSuccess(result, operation: "container create")
+        let resolved = try await resolvedImage(reference: spec.image, context: context)
+        let image = resolved.snapshot
+        do {
+            try await performContainerCreate(
+                spec: spec, image: resolved, optionSupport: optionSupport, context: context
+            )
+        } catch {
+            throw directAPIError(error, operation: "container create")
+        }
         requestedContainers[spec.name] = RequestedContainer(
             spec: spec,
             imageID: image.id,
@@ -650,6 +662,28 @@ public extension AppleContainerRuntime {
         try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()
         return snapshot
+    }
+
+    private func performContainerCreate(
+        spec: ContainerSpec, image: ResolvedAppleImage,
+        optionSupport: CreateOptionSupport, context: RuntimeRequestContext
+    ) async throws {
+        guard useDirectContainerAPI else {
+            let result = try await command(containerCreateArguments(spec, optionSupport: optionSupport))
+            try requireSuccess(result, operation: "container create")
+            return
+        }
+        // Validate flags before preparing mounts or creating native resources.
+        _ = try containerConfigurationArguments(spec, optionSupport: optionSupport)
+        try Self.validateNativeMounts(spec.mounts)
+        let configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
+        var mountOptions: [String] = []
+        for mount in spec.mounts {
+            mountOptions += try await mountArguments(mount)
+        }
+        try await containerCreateClient.create(
+            configuration: configuration, mountOptions: mountOptions, context: context
+        )
     }
 
     private func containerCreateArguments(
@@ -811,6 +845,29 @@ public extension AppleContainerRuntime {
             return ["--mount", Self.mountValue(mount, type: "bind", source: volume.mountpoint)]
         case .tmpfs:
             return ["--tmpfs", mount.destination]
+        }
+    }
+
+    static func validateNativeMounts(_ mounts: [RuntimeMount]) throws {
+        var destinations: Set<String> = []
+        for mount in mounts {
+            guard destinations.insert(mount.destination).inserted else {
+                throw DevContainerError(.invalidRequest, message: "Duplicate mount destination")
+            }
+            if mount.type == .volume, mount.anonymous == true {
+                // These remain on the container's private root filesystem.
+                guard mount.destination.hasPrefix("/") else {
+                    throw DevContainerError(.invalidRequest, message: "Mount destination must be absolute")
+                }
+                continue
+            }
+            if mount.type == .tmpfs {
+                _ = try Parser.tmpfsMounts([mount.destination])
+            } else {
+                _ = try Parser.mounts([mountValue(
+                    mount, type: mount.type == .volume ? "volume" : "bind", source: mount.source
+                )])
+            }
         }
     }
 
@@ -1241,7 +1298,7 @@ public extension AppleContainerRuntime {
         return arguments
     }
 
-    private static func hostBuildDNSArguments() -> [String] {
+    static func hostBuildDNSArguments() -> [String] {
         guard
             let resolverConfiguration = try? String(
                 contentsOfFile: "/etc/resolv.conf",

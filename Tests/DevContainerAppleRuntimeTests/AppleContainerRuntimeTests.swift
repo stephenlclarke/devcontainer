@@ -832,13 +832,14 @@ struct FakeAppleCLI {
     func runtime(
         metadataStore: (any RuntimeMetadataStore)? = nil,
         useDirectProcessAPI: Bool = false,
-        images: any AppleImageIdentityClient = FakeAppleImageIdentityClient()
+        images: any AppleImageIdentityClient = FakeAppleImageIdentityClient(),
+        creator: (any AppleContainerCreateClient)? = nil
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
-            useDirectContainerAPI: false,
+            useDirectContainerAPI: creator != nil,
             metadataStore: metadataStore,
             storageRoots: AppleContainerRuntime.StorageRoots(
                 volumes: root.appendingPathComponent("volumes", isDirectory: true),
@@ -849,7 +850,8 @@ struct FakeAppleCLI {
                 inventory: LiveAppleContainerInventoryClient(client: ContainerClient()),
                 files: LiveAppleContainerFileClient(client: ContainerClient()),
                 networks: AppleNetworkClientAdapter(),
-                images: images
+                images: images,
+                creator: creator
             )
         )
     }
