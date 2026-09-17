@@ -195,6 +195,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 deadline: Date().addingTimeInterval(5 * 60)
             )
         )
+        logger.info("Runtime recovery completed")
         let router = DockerRouter(
             runtime: runtime,
             coordinator: coordinator,
@@ -208,6 +209,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             stateDirectory: stateURL.deletingLastPathComponent(),
             providerVersion: BuildInfo.current.version
         )
+        logger.info("Provider handoff identity ready")
         let internalProviderSocket = DefaultPaths.providerSocket(
             publicSocket: socket
         )
