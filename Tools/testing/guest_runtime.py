@@ -17,9 +17,10 @@ from lifecycle_probe import COMMAND, lifecycle
 from prepare_guest_images import require_image, validate_image
 from prepare_releases import require_retained
 from release_inputs import sha256, validate_lock
+from exec_probe import exec_streams
 
 
-FIXTURES = {"E02-container-lifecycle", "E05-archive-copy"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E05-archive-copy"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 
 
@@ -136,13 +137,17 @@ class ReleasedGuest:
     def operation(self):
         self.runtime.verify()
         command = COMMAND if self.fixture == "E02-container-lifecycle" else ("sleep", "300")
+        if self.fixture == "E03-exec-streams":
+            command = ("sleep", "600")
         self.guest = GuestFixture(self.socket, digest(canonical(self.owner["identity"])),
                                   self.inputs["workload"]["image"]["config"], "1.54", self.runtime.journal,
                                   command=command, observe=self.observe)
-        with deadline(90):
+        with deadline(360 if self.fixture == "E03-exec-streams" else 90):
             if self.fixture == "E02-container-lifecycle":
                 return lifecycle(self.guest)
             self.guest.setup()
+            if self.fixture == "E03-exec-streams":
+                return exec_streams(self.guest)
             return self.guest.archive(observe=self.observe)
 
     def cleanup(self):

@@ -143,6 +143,18 @@ class GuestRuntimeTests(unittest.TestCase):
         self.case.cleanup()
         self.case.commands[0].stop.assert_called_once()
 
+    def test_exec_uses_admitted_guest_and_preserves_binary_transfer_deadline(self):
+        case = ReleasedGuest(self.inputs, "E03-exec-streams", self.root, self.owner, self.runtime,
+                             "/released/container", self.root / "socket")
+        with patch("guest_runtime.GuestFixture") as factory, patch("guest_runtime.exec_streams", return_value={"exec": "ok"}) as probe, \
+                patch("guest_runtime.deadline") as deadline:
+            self.assertEqual(case.operation(), {"exec": "ok"})
+            self.assertEqual(factory.call_args.kwargs["command"], ("sleep", "600"))
+            factory.return_value.setup.assert_called_once()
+            probe.assert_called_once_with(factory.return_value)
+            deadline.assert_called_once_with(360)
+            self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
+
     def test_recovery_requires_verified_guest_removal_and_each_command_stop(self):
         require_guest_cleanup({})
         records = {"container-intent.json": canonical({"name": "owned"})}
