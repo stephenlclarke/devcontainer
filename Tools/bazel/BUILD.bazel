@@ -16,6 +16,20 @@ sh_binary(
 )
 
 sh_test(
+    name = "release_preparation_tests",
+    srcs = ["tests/release-preparation.sh"],
+    args = ["$(location //Tools/testing:run_tests.py)", "$(location prepare_releases.py)"],
+    data = [
+        "prepare_releases.py",
+        "release_inputs.py",
+        "test_prepare_releases.py",
+        "//Tools/testing:run_tests.py",
+    ],
+    size = "small",
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
     name = "version_generator_tests",
     srcs = ["tests/version-generator.sh"],
     args = ["$(location //:DevContainerVersionGenerator)"],

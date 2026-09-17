@@ -44,7 +44,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
-.PHONY: bazel-coverage-report bazel-build-timings
+.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
@@ -57,6 +57,9 @@ bazel-qualify:
 
 bazel-test-tools:
 	Tools/bazel/run.sh test-tools
+
+bazel-harness:
+	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests
 
 bazel-build:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
@@ -79,6 +82,9 @@ bazel-package:
 
 bazel-acquire-releases:
 	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
+
+bazel-prepare-releases:
+	Tools/bazel/run.sh prepare-releases "$(RELEASE_SET)" $(if $(filter 1,$(OFFLINE)),--offline)
 
 bazel-cleanup:
 	Tools/bazel/run.sh cleanup

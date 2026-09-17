@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
 set -euo pipefail
 
-readonly SELF_PATH="${BASH_SOURCE[0]}"
+TOOL_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly TOOL_DIRECTORY
+readonly SELF_PATH="$TOOL_DIRECTORY/${BASH_SOURCE[0]##*/}"
 readonly SCRIPT_NAME="${SELF_PATH##*/}"
 readonly BAZEL_VERSION="8.8.0"
 readonly BAZEL_SHA256="f0ac192aba2ccaa373cdfd527d4c407cc492c1296a2f11a4b67563e4d5aa9acb"
@@ -21,9 +23,11 @@ error() {
 
 # Explain the intentionally limited migration interface.
 usage() {
+    printf 'Optional prefix: --workspace ABSOLUTE_REPOSITORY (reuse the pinned family tools).\n'
     printf 'Usage: %s configure|test-tools|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
+    printf '       %s prepare-releases LOCK [--offline] (unpack releases on SSD, never install or build)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
 }
@@ -140,7 +144,7 @@ run_bazel() {
     esac
     local measurement=()
     case "$command" in
-        build|test|coverage) measurement=(/usr/bin/python3 "$repo/Tools/bazel/build_timing.py" measure "$invocation/timing.json" "$profile" --) ;;
+        build|test|coverage) measurement=(/usr/bin/python3 "$TOOL_DIRECTORY/build_timing.py" measure "$invocation/timing.json" "$profile" --) ;;
         *) : ;; # Diagnostics do not create build timing observations.
     esac
     clean_environment ${measurement[@]+"${measurement[@]}"} "$executable" "${bazel_args[@]}" \
@@ -157,9 +161,9 @@ execute_invocation() {
         run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@"
         return
     fi
-    /usr/bin/python3 "$repo/Tools/bazel/input_identity.py" "$repo" > "$invocation/inputs-before.json" || return
+    /usr/bin/python3 "$TOOL_DIRECTORY/input_identity.py" "$repo" --tooling "$TOOL_DIRECTORY" > "$invocation/inputs-before.json" || return
     run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@" || status=$?
-    /usr/bin/python3 "$repo/Tools/bazel/input_identity.py" "$repo" \
+    /usr/bin/python3 "$TOOL_DIRECTORY/input_identity.py" "$repo" --tooling "$TOOL_DIRECTORY" \
         --verify "$invocation/inputs-before.json" > "$invocation/inputs-after.json" || validation=$?
     if [[ "$command" == coverage && "$status" == 0 && "$validation" == 0 ]]; then
         for part in "$@"; do
@@ -180,7 +184,7 @@ execute_invocation() {
         "$status" "$validation" "$suite" > "$invocation/outcome.json"
     # Failed completed runs are retained too; an interrupted/incomplete BEP is
     # deliberately not sealed as a result. Nothing schedules a retry here.
-    /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" "$invocation/events.json" || {
+    /usr/bin/python3 "$TOOL_DIRECTORY/retain_evidence.py" "$invocation/events.json" || {
         error "Evidence retention failed; preserve $invocation before another invocation."; return 2;
     }
     [[ "$status" == 0 ]] || return "$status"
@@ -197,13 +201,19 @@ verify_digest() {
 
 # Resolve and enrol storage before allowing build or test tooling to start.
 main() {
+    local workspace=""
+    if [[ "${1:-}" == --workspace ]]; then
+        [[ $# -ge 3 && "$2" == /* && -d "$2" ]] || { error '--workspace requires an absolute repository and a command.'; return 2; }
+        workspace="$(cd "$2" && pwd -P)"
+        shift 2
+    fi
     local command="${1:---help}" repo config_root config metadata expected actual mount internal
     local executable partial invocation bazel_args=() pinned_version part profile workspace_key
     local first_argument second_argument
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|cleanup|restore-candidate|coverage-report|build-timings|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|cleanup|restore-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -211,7 +221,8 @@ main() {
     profile="$(runtime_profile "$@")" || return
     first_argument="${1:-}"
     second_argument="${2:-}"
-    repo="$(cd "$(dirname "$SELF_PATH")/../.." && pwd -P)"
+    repo="${workspace:-$(cd "$TOOL_DIRECTORY/../.." && pwd -P)}"
+    [[ -f "$repo/MODULE.bazel" && -f "$repo/.bazelrc" ]] || { error 'Workspace must declare its Bazel module and configuration.'; return 2; }
     read -r pinned_version < "$repo/.bazelversion"
     [[ "$pinned_version" == "$BAZEL_VERSION" ]] || { error 'Bazel version and verified bootstrap checksum disagree.'; return 2; }
     metadata="$(/usr/sbin/diskutil info -plist "$SSD_VOLUME")" || { error 'SSD is unavailable.'; return 2; }
@@ -247,34 +258,40 @@ main() {
     export TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" PYTHONDONTWRITEBYTECODE=1
     ensure_directory "$config_root" || return
     if [[ "$command" == cleanup ]]; then
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/hygiene.py" cleanup "$@"
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/hygiene.py" cleanup "$@"
         return
     fi
-    if [[ "$command" == acquire-releases ]]; then
-        [[ $# == 1 || ( $# == 2 && "$second_argument" == --offline ) ]] || { error 'acquire-releases requires LOCK [--offline].'; return 2; }
+    if [[ "$command" == acquire-releases || "$command" == prepare-releases ]]; then
+        [[ $# == 1 || ( $# == 2 && "$second_argument" == --offline ) ]] || { error "$command requires LOCK [--offline]."; return 2; }
+        local release_helper=release_inputs.py
+        if [[ "$command" == prepare-releases ]]; then
+            release_helper=prepare_releases.py
+            ensure_directory "$SSD_ROOT/prepared-releases" || return
+            ensure_directory "$config_root/prepared-receipts" || return
+        fi
         clean_environment /usr/bin/lockf -k -t 300 "$SSD_ROOT/locks/reference-store.lock" \
-            /usr/bin/python3 "$repo/Tools/bazel/release_inputs.py" "$@"
+            /usr/bin/python3 "$TOOL_DIRECTORY/$release_helper" "$@"
         return
     fi
     if [[ "$command" == restore-candidate ]]; then
         [[ $# == 1 ]] || { error 'restore-candidate requires one retained invocation ID.'; return 2; }
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" --restore-candidate "$first_argument"
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/retain_evidence.py" --restore-candidate "$first_argument"
         return
     fi
     if [[ "$command" == coverage-report ]]; then
         [[ $# == 1 ]] || { error 'coverage-report requires one retained invocation ID.'; return 2; }
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/coverage_report.py" "$first_argument"
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/coverage_report.py" "$first_argument"
         return
     fi
     if [[ "$command" == build-timings ]]; then
         [[ $# == 1 || ( $# == 3 && "$second_argument" == --baseline ) ]] || { error 'build-timings requires ID [--baseline ID].'; return 2; }
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/build_timing.py" report "$@"
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/build_timing.py" report "$@"
         return
     fi
     if [[ "$command" == test-tools ]]; then
         [[ $# == 0 ]] || { error 'test-tools accepts no arguments.'; return 2; }
         export PYTHONDONTWRITEBYTECODE=1
-        exec /usr/bin/python3 -m unittest discover -s "$repo/Tools/bazel" -p 'test_*.py'
+        exec /usr/bin/python3 -m unittest discover -s "$TOOL_DIRECTORY" -p 'test_*.py'
     fi
     export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
     [[ -d "$DEVELOPER_DIR/Platforms/MacOSX.platform" ]] || {
@@ -304,7 +321,7 @@ main() {
                 invocation="$SSD_ROOT/invocations/diagnostic-info"
             else
                 invocation="$(mktemp -d "$SSD_ROOT/invocations/run.XXXXXX")"
-                clean_environment /usr/bin/python3 "$repo/Tools/bazel/hygiene.py" register "$invocation" "$repo" || return
+                clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/hygiene.py" register "$invocation" "$repo" || return
                 printf 'Bazel evidence: %s\n' "$invocation" >&2
             fi
             workspace_key="$(printf '%s' "$repo" | /usr/bin/shasum -a 256)"

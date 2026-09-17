@@ -7,6 +7,8 @@ load("//Tools/bazel:candidate_archive.bzl", "candidate_archive")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["Tests/Parity/fixtures/E01-engine-negotiation/contract.json"])
+
 candidate_archive(
     name = "candidate_archive",
     binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine"],

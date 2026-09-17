@@ -156,6 +156,10 @@ Use `make bazel-coverage-report INVOCATION=ID` to export a retained unit run's L
 
 New Bazel build/test invocations also retain elapsed timings, platform/toolchain identity and cache metrics. Use `make bazel-build-timings INVOCATION=ID BASELINE=ID` to compare matching configurations. Ordinary timings are labelled observations; controlled quiet-machine benchmarks remain a separate performance gate.
 
+The [test-harness replacement](docs/bazel-test-harness.md) is in progress. `make bazel-harness` runs its deterministic recovery and real Unix-socket component tests under Bazel without building products or starting container services. These checks do not yet establish live runtime parity; all 19 existing fixtures remain required for cutover.
+
+`make bazel-prepare-releases` verifies and unpacks the pinned GitHub releases onto the enrolled SSD without installing packages or rebuilding products. Add `OFFLINE=1` to use already verified retained downloads. Repeated preparation checks and reuses the extracted files; changed or incomplete files fail closed. This prepares binaries only, not the complete guest-image, Docker-oracle or VS Code runtime environment.
+
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
 (including its standard JSON and Psych YAML libraries), and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,

@@ -25,6 +25,14 @@ def invoke(function: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class LauncherTests(unittest.TestCase):
+    def test_shared_launcher_remains_absolute_after_changing_workspaces(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "-c", 'source ./run.sh; cd /; /bin/bash -c \'source "$1"; printf "%s" "$SELF_PATH"\' test "$SELF_PATH"'],
+            cwd=SCRIPT.parent, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, str(SCRIPT.resolve()))
+
     def test_test_wrapper_declares_only_validated_ssd_scratch(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             for temporary, status in [(directory, 0), ("/tmp", 2)]:
@@ -154,6 +162,12 @@ class LauncherTests(unittest.TestCase):
             result = subprocess.run(["/bin/bash", str(SCRIPT), argument], capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, status)
             self.assertIn("Usage:", result.stdout + result.stderr)
+            self.assertNotIn("Bazel evidence:", result.stderr)
+
+    def test_workspace_prefix_rejects_missing_or_relative_paths(self) -> None:
+        for arguments in [("--workspace",), ("--workspace", "relative", "build")]:
+            result = subprocess.run(["/bin/bash", str(SCRIPT), *arguments], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 2)
             self.assertNotIn("Bazel evidence:", result.stderr)
 
 

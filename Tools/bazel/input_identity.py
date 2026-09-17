@@ -51,6 +51,8 @@ def verify(before: dict, after: dict) -> None:
     """Reject a mixed editable-source run; only Bazel's generated lock may move."""
     if before["commit"] != after["commit"]:
         raise ValueError("Source commit changed during the invocation")
+    if before.get("tooling") != after.get("tooling"):
+        raise ValueError("Build tooling changed during the invocation")
     old = {key: value for key, value in before["files"].items() if key != "MODULE.bazel.lock"}
     new = {key: value for key, value in after["files"].items() if key != "MODULE.bazel.lock"}
     if old != new:
@@ -61,11 +63,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repository", type=Path)
     parser.add_argument("--verify", type=Path)
+    parser.add_argument("--tooling", type=Path)
     args = parser.parse_args()
     current = source_identity(args.repository)
+    if args.tooling:
+        current["tooling"] = tooling_identity(args.tooling, args.repository)
     if args.verify:
         verify(json.loads(args.verify.read_text()), current)
     print(json.dumps(current, sort_keys=True))
+
+
+def tooling_identity(directory: Path, repository: Path) -> dict:
+    """Bind shared executable helpers to the consumer's tracked digest lock."""
+    files = {path.name: file_identity(path, directory) for path in sorted(directory.iterdir())
+             if path.suffix in {".py", ".sh"}}
+    if directory.resolve() != (repository / "Tools/bazel").resolve():
+        expected = json.loads((repository / "Tools/bazel/workflow-tooling.json").read_text())
+        if expected != files:
+            raise ValueError("Shared build tooling differs from the consumer's reviewed lock")
+    return files
 
 
 if __name__ == "__main__":

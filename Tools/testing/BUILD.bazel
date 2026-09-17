@@ -1,0 +1,20 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+exports_files(["run_tests.py"])
+
+sh_test(
+    name = "case_evidence_tests",
+    srcs = ["test-evidence.sh"],
+    data = [
+        "case_evidence.py",
+        "test_case_evidence.py",
+        "engine_probe.py",
+        "test_engine_probe.py",
+        "run_tests.py",
+        "test_run_tests.py",
+        "//:Tests/Parity/fixtures/E01-engine-negotiation/contract.json",
+    ],
+    size = "small",
+    visibility = ["//visibility:public"],
+)

@@ -1,14 +1,37 @@
 """Source mutation detection separate from action-cache scheduling."""
 
 import os
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from input_identity import file_identity, verify
+from input_identity import file_identity, tooling_identity, verify
 
 
 class InputIdentityTests(unittest.TestCase):
+    def test_external_tooling_requires_exact_consumer_lock(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            root = Path(directory)
+            tools = root / "shared"
+            tools.mkdir()
+            (tools / "run.sh").write_text("fixture")
+            consumer = root / "consumer"
+            lock = consumer / "Tools/bazel/workflow-tooling.json"
+            lock.parent.mkdir(parents=True)
+            expected = {"run.sh": file_identity(tools / "run.sh", tools)}
+            lock.write_text(json.dumps(expected))
+            self.assertEqual(tooling_identity(tools, consumer), expected)
+            (tools / "run.sh").write_text("changed")
+            with self.assertRaisesRegex(ValueError, "reviewed lock"):
+                tooling_identity(tools, consumer)
+
+    def test_tooling_mutations_invalidate_evidence(self) -> None:
+        before = {"commit": "a", "files": {}, "tooling": {"run.sh": "original"}}
+        verify(before, before)
+        with self.assertRaisesRegex(ValueError, "tooling changed"):
+            verify(before, dict(before, tooling={"run.sh": "changed"}))
+
     def test_modes_and_linked_bytes_are_inputs(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             root = Path(directory).resolve()
