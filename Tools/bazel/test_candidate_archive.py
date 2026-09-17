@@ -19,7 +19,7 @@ class CandidateTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
-        self.manifest = {"binaries": {}, "files": {}, "profile": "stock", "commit": "unspecified", "epoch": "0"}
+        self.manifest = {"binaries": {}, "files": {}, "profile": "stock", "commit": "b" * 40, "epoch": "0"}
         for name in PRODUCTS:
             path = self.root / name
             path.write_bytes(struct.pack("<II", 0xFEEDFACF, 0x0100000C) + b"fixture-not-executable")
@@ -83,7 +83,7 @@ class CandidateTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob("candidate-stage-*")))
 
     def test_rejects_bad_version_commit_profile_epoch_and_resource_paths(self) -> None:
-        for key, value in [("commit", "main"), ("profile", "unknown"), ("epoch", "-1")]:
+        for key, value in [("commit", "main"), ("commit", "unspecified"), ("profile", "unknown"), ("epoch", "-1")]:
             with self.subTest(key=key):
                 before = self.manifest[key]
                 self.manifest[key] = value

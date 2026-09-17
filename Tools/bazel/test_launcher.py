@@ -98,6 +98,32 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(set(values), {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DEVELOPER_DIR", "PYTHONDONTWRITEBYTECODE", "DEVCONTAINER_HOST_INTEGRATION"})
         self.assertEqual(values["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
 
+    def test_release_identity_comes_from_the_captured_source_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            root = Path(directory)
+            (root / "inputs-before.json").write_text('{"commit":"' + "a" * 40 + '"}')
+            result = subprocess.run(
+                ["/bin/bash", "-c", 'source "$1"; clean_environment() { printf "%s\\0" "$@"; }; run_bazel /repo build "$2" /pinned-bazel stock --config=release //:candidate_archive',
+                 "test", str(SCRIPT), str(root)], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("--define=DEVCONTAINER_COMMIT=" + "a" * 40, result.stdout.split("\0"))
+            self.assertIn("--define=DEVCONTAINER_BUILD_LANE=candidate", result.stdout.split("\0"))
+
+    def test_release_info_diagnostic_does_not_require_a_build_snapshot(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "-c", 'source "$1"; clean_environment() { printf "%s\\0" "$@"; }; execute_invocation /repo info /nonexistent-invocation /pinned-bazel stock --config=release execution_root',
+             "test", str(SCRIPT)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--config=release", result.stdout.split("\0"))
+        self.assertNotIn("DEVCONTAINER_COMMIT", result.stdout)
+
+    def test_indirect_targets_and_source_identity_overrides_are_rejected(self) -> None:
+        for arguments in [("--target_pattern_file=/tmp/targets",), ("--target_pattern_file", "/tmp/targets"),
+                          ("--define=DEVCONTAINER_COMMIT=forged",), ("--define", "DEVCONTAINER_COMMIT=forged"),
+                          ("--define=DEVCONTAINER_BUILD_LANE=release",), ("--define", "DEVCONTAINER_BUILD_LANE=release")]:
+            with self.subTest(arguments=arguments):
+                self.assertEqual(invoke("validate_arguments", *arguments).returncode, 2)
+
     def test_host_opt_in_is_preserved_only_as_a_boolean(self) -> None:
         for value, expected in [("1", 0), ("0", 0), ("not-a-boolean", 2)]:
             result = subprocess.run(

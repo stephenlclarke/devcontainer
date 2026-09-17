@@ -51,6 +51,22 @@ class BuildTimingTests(unittest.TestCase):
         self.assertEqual(result["incompatible"], [])
         self.assertFalse(result["authoritativeBenchmark"])
 
+    def test_stamped_build_comparisons_keep_source_separate_from_configuration(self):
+        configurations = []
+        with patch("build_timing.host_identity", return_value={"model": "fixture"}), \
+                patch("build_timing.subprocess.run", return_value=subprocess.CompletedProcess(["fixture"], 0)):
+            for index, args in enumerate([
+                    ["--define=DEVCONTAINER_COMMIT=" + "a" * 40, "--config=stock"],
+                    ["--define=DEVCONTAINER_COMMIT=" + "b" * 40, "--config=stock"],
+                    ["--define=DEVCONTAINER_COMMIT=" + "b" * 40, "--config=enhanced"],
+                    ["--config=stock"]]):
+                output = self.root / f"stamp-{index}.json"
+                measure(output, "stock", ["fixture", *args])
+                configurations.append(json.loads(output.read_text())["configurationSHA256"])
+        self.assertEqual(configurations[0], configurations[1])
+        self.assertNotEqual(configurations[1], configurations[2])
+        self.assertNotEqual(configurations[0], configurations[3])
+
     def test_invalid_or_incompatible_comparisons_fail_closed(self):
         baseline = self.record()
         for key, value in [("host", {}), ("runtimeProfile", "enhanced"), ("configurationSHA256", "other"), ("exitCode", 1),

@@ -48,7 +48,11 @@ def measure(output: Path, profile: str, arguments: list[str]) -> int:
     record = {
         "schema": 1, "runtimeProfile": profile, "host": host,
         "configurationSHA256": hashlib.sha256(json.dumps([
-            argument for argument in arguments[1:] if not argument.startswith("--build_event_json_file=")
+            # Source SHA is retained independently in the invocation snapshot.
+            # Keep stamped vs unstamped configurations distinct, but permit
+            # like-for-like release-build comparisons across source revisions.
+            "--define=DEVCONTAINER_COMMIT=<source>" if argument.startswith("--define=DEVCONTAINER_COMMIT=") else argument
+            for argument in arguments[1:] if not argument.startswith("--build_event_json_file=")
         ]).encode() + Path(".bazelrc").read_bytes()).hexdigest(),
         "startedUnixNS": started, "elapsedNS": elapsed, "exitCode": status,
         "loadBefore": before, "loadAfter": os.getloadavg(),

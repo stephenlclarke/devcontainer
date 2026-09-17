@@ -29,7 +29,7 @@ def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) ->
         raise ValueError("Missing semantic version in Makefile")
     version = version_match[1]
     commit = manifest["commit"]
-    if commit != "unspecified" and not re.fullmatch(r"[0-9a-f]{40}", commit):
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Invalid candidate source commit")
     epoch = int(manifest["epoch"])
     if epoch < 0 or manifest["profile"] not in {"stock", "enhanced"}:
