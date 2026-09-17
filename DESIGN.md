@@ -174,6 +174,8 @@ archive, and managed `/etc/hosts` transfers continue to use distribution-safe
 direct clients. Operations without a certified typed equivalent continue
 through the selected `container` executable.
 
+Archive uploads validate their tar input before host extraction and preserve member permission bits independently of the service's file-creation mask. Extraction uses a child of an untouched private `0700` temporary directory: an archive's `.` entry may change the child mode but cannot expose the enclosing host staging tree. Both direct-client and CLI copy paths upload only that extracted child. This does not claim UID/GID or extended-attribute parity beyond the separately qualified fixture scope.
+
 ```mermaid
 flowchart LR
     Request["Runtime SPI request"] --> Choice{"Certified typed operation?"}

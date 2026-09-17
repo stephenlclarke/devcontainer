@@ -223,6 +223,12 @@ The subsequent live run at harness `0059999` reused the existing `2c43263` produ
 
 That request used `/v1.54/` despite the [documented implemented API envelope](../COMPATIBILITY.md#docker-engine-api-bounds) ending at 1.53. Guest fixtures now use fixed API 1.53 for all lanes, validate that `/version` declares a range containing it before mutation, and retain the observed range privately plus the requested version in the runtime fingerprint. The Docker oracle remains the pinned API-1.54-capable engine; this does not change its version or waive a fixture assertion. It tests the existing claimed common API contract, not 1.54 support, and does not dynamically downgrade each lane. The API range regressions and full component suite pass (`c365adc0-1c5d-47a7-bee3-11e6880d1cd6`); live lifecycle proof remains outstanding.
 
+### First stock candidate lifecycle and stream passes
+
+Harness `0dd7ca8` reused candidate `2c43263` and the same prepared published stock provider/guest inputs, without rebuilding. E02 passed all five lifecycle observations (`44e8742f-c457-43cf-8716-8e575b297534`): setup 5.101 seconds, operation 4.400 seconds and cleanup 1.239 seconds. E03 passed all six stream observations, including exact 4 MiB duplex content (`3fd03ab2-ab88-470e-aa61-072c36f7bb1c`): setup 4.847 seconds, operation 1.290 seconds and cleanup 1.334 seconds. Both left zero owned resources and clear recovery. These are local-candidate functional results, not quiet comparative benchmarks or final downloaded-release parity.
+
+E05 then failed exactly one observation (`0d8d52e1-f8be-4c67-aeb7-e24742a3ff56`): content, large file, long path and symlink matched, but mode was `0700` instead of required `0750`. Setup was 4.847 seconds, operation 1.157 seconds and successful cleanup 1.347 seconds. The service extracted uploads without preserving permissions, applying the harness's private `077` umask. The correction uses permission-preserving extraction inside a separate private parent so archive root-directory modes cannot expose staging. Focused stock (`bc93f91d-3b79-4feb-a4d8-306ff974f8e6`) and enhanced (`5b2a7242-26a6-4d34-8f96-079c53cdf084`) tests pass; E05 requires a rebuilt corrected candidate and live proof. Its expected mode is unchanged.
+
 ### Scenario sources
 
 The replacement should import version-pinned upstream scenarios and assertions wherever possible, rather than inventing an independent definition of Docker or Dev Containers behaviour. The 17 September inspection identified these concrete sources:

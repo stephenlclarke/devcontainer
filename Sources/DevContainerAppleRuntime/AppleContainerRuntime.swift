@@ -1016,9 +1016,15 @@ public extension AppleContainerRuntime {
         ) {
             let temporary = try TemporaryDirectory(base: transferRoot)
             defer { temporary.remove() }
+            // An archive may give its "." directory broad permissions. Keep
+            // an untouched private parent outside the extraction namespace.
+            let contents = try TemporaryDirectory(base: temporary.url)
+            defer { contents.remove() }
             let extractResult = try await AppleCommandRunner.run(
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
-                arguments: ["-xf", "-", "-C", temporary.url.path],
+                // Preserve the validated archive's permissions, not the
+                // service's restrictive umask. The staging root stays 0700.
+                arguments: ["-xpf", "-", "-C", contents.url.path],
                 environment: environment,
                 input: extractionInput
             )
@@ -1030,7 +1036,7 @@ public extension AppleContainerRuntime {
                         try context.checkActive()
                         try await fileClient.copyIn(
                             id: resolved,
-                            source: temporary.url.path,
+                            source: contents.url.path,
                             destination: staging
                         )
                         try context.checkActive()
@@ -1043,7 +1049,7 @@ public extension AppleContainerRuntime {
                 } else {
                     let uploadResult = try await command([
                         "cp",
-                        temporary.url.path,
+                        contents.url.path,
                         "\(resolved):\(staging)"
                     ])
                     try requireSuccess(

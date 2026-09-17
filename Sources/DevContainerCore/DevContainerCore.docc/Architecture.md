@@ -16,6 +16,8 @@ The dispatcher classifies the complete supported Compose global-option surface
 before execution and uses the selected provider's canonical configuration output
 when explicit project identity is absent.
 
+Archive uploads preserve member permission bits independently of the host service's file-creation mask. Validated tar data is extracted beneath an untouched private `0700` parent, so an archive's root-directory mode cannot expose host staging. Both native and CLI upload paths use the extracted child. This staging guarantee does not by itself establish complete archive metadata parity.
+
 The stock adapter also supports coordinated identity/lifecycle handoff for
 stopped containers. An atomic quiescence check rejects running containers,
 active execs, starts, and concurrent lifecycle mutations before exporting the

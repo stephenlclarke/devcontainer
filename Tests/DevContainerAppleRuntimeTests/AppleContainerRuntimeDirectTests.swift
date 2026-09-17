@@ -24,6 +24,40 @@ import Foundation
 import Testing
 
 struct AppleContainerRuntimeDirectTests {
+    @Test(arguments: [0o644, 0o750, 0o777], [false, true])
+    func `archive upload preserves member permissions inside private staging`(
+        mode: Int, includesRoot: Bool
+    ) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let input = fixture.root.appendingPathComponent("archive-input")
+        try FileManager.default.createDirectory(at: input, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: input.path)
+        let source = input.appendingPathComponent("permissions.txt")
+        try Data("archive permission fixture".utf8).write(to: source)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: source.path)
+        let archive = try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["--format=ustar", "-cf", "-", "-C", input.path, includesRoot ? "." : source.lastPathComponent],
+            environment: ["COPYFILE_DISABLE": "1"]
+        )
+        #expect(archive.exitCode == 0)
+        let files = ArchivePermissionsClient()
+        let runtime = try directRuntime(
+            fixture: fixture,
+            inventory: FakeContainerInventory(snapshots: [
+                nativeSnapshot(id: "fixture", labels: [:], status: .running)
+            ]),
+            files: files
+        )
+        try await runtime.copyArchiveToContainer(
+            id: "fixture", path: "/workspace", archive: archive.standardOutput, context: RuntimeRequestContext()
+        )
+        #expect(await files.memberMode == mode)
+        #expect(await files.privateParentMode == 0o700)
+        #expect(await files.stagingMode == (includesRoot ? 0o777 : 0o700))
+    }
+
     @Test(arguments: ["a", "c"])
     func `native digest references retain config IDs during list and inspection`(hex: String) async throws {
         let fixture = try FakeAppleCLI()
@@ -741,6 +775,27 @@ private actor FakeNetworkClient: AppleNetworkClient {
         if failure == operation {
             throw DirectInventoryFailure.failed
         }
+    }
+}
+
+private actor ArchivePermissionsClient: AppleContainerFileClient {
+    var memberMode: Int?
+    var stagingMode: Int?
+    var privateParentMode: Int?
+
+    func copyIn(id _: String, source: String, destination _: String) throws {
+        let manager = FileManager.default
+        stagingMode = try manager.attributesOfItem(atPath: source)[.posixPermissions] as? Int
+        privateParentMode = try manager.attributesOfItem(
+            atPath: URL(fileURLWithPath: source).deletingLastPathComponent().path
+        )[.posixPermissions] as? Int
+        memberMode = try manager.attributesOfItem(
+            atPath: URL(fileURLWithPath: source).appendingPathComponent("permissions.txt").path
+        )[.posixPermissions] as? Int
+    }
+
+    func copyOut(id _: String, source _: String, destination _: String) throws {
+        throw DirectInventoryFailure.failed
     }
 }
 
