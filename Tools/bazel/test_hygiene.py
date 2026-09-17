@@ -38,6 +38,19 @@ class HygieneTests(unittest.TestCase):
         self.assertFalse(self.run.exists())
         self.assertTrue(self.database.exists())
 
+    def test_measured_invocation_expires_only_after_timing_is_retained(self) -> None:
+        timing = self.run / "timing.json"
+        timing.write_text('{"elapsedNS": 100}')
+        retain(self.run / "events.json", self.database, self.root)
+        self.assertIn("timing.json", verify_retained(self.run, self.database, self.root, 2**62)["files"])
+        original = timing.read_bytes()
+        timing.write_text("changed")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            remove_verified(self.run, self.database, self.root, 2**62)
+        timing.write_bytes(original)
+        self.assertEqual(remove_verified(self.run, self.database, self.root, 2**62)["recoverableFrom"], "fixture")
+        self.assertFalse(self.run.exists())
+
     def test_unretained_unowned_new_and_changed_runs_are_preserved(self) -> None:
         self.assertIn("preserved", cleanup(self.root, self.database, 0, False)[0])
         retain(self.run / "events.json", self.database, self.root)

@@ -65,6 +65,7 @@ def measure(output: Path, profile: str, arguments: list[str]) -> int:
 def observation(database: Path, invocation: str) -> dict:
     """Read authenticated timing/provenance only, never historic raw events."""
     from retain_evidence import digest
+    from input_identity import verify
 
     if database.is_symlink() or not database.is_file():
         raise ValueError("Missing or symlinked timing database")
@@ -83,9 +84,11 @@ def observation(database: Path, invocation: str) -> dict:
 
         timing = read("timing.json")
         inputs = read("inputs-before.json")
+        after = read("inputs-after.json")
+        verify(inputs, after)
         summary = read("build-metrics.json")
     return dict(timing, invocation=invocation, sourceCommit=inputs["commit"],
-                dirty=inputs["dirty"], validationExitCode=row[1], metrics=summary)
+                dirty=inputs["dirty"] or after["dirty"], validationExitCode=row[1], metrics=summary)
 
 
 def compare(baseline: dict, candidate: dict) -> dict:

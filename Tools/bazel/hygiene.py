@@ -14,7 +14,7 @@ import time
 
 SSD = Path("/Volumes/SSD/cf/bazel")
 RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
-FILES = {"owner.json", "events.json", "inputs-before.json", "inputs-after.json", "outcome.json", "qualification.json", "source-tests.json"}
+FILES = {"owner.json", "events.json", "inputs-before.json", "inputs-after.json", "outcome.json", "qualification.json", "source-tests.json", "timing.json"}
 
 
 def digest(data: bytes) -> str:

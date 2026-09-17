@@ -74,7 +74,8 @@ class BuildTimingTests(unittest.TestCase):
         ]))
         timing = self.root / "timing.json"
         timing.write_text(json.dumps(self.record()))
-        (self.root / "inputs-before.json").write_text(json.dumps({"commit": "a" * 40, "dirty": False}))
+        for name in ("inputs-before.json", "inputs-after.json"):
+            (self.root / name).write_text(json.dumps({"commit": "a" * 40, "dirty": False, "files": {}}))
         retain(events, database, self.root)
         timing.unlink()
         result = observation(database, "run")
@@ -87,6 +88,27 @@ class BuildTimingTests(unittest.TestCase):
             db.execute("UPDATE blobs SET bytes=?", (b"corrupt",))
         with self.assertRaisesRegex(ValueError, "corrupt"):
             observation(database, "run")
+
+    def test_dirty_after_snapshot_cannot_produce_clean_comparison(self):
+        from retain_evidence import digest
+
+        database = self.root / "changed.sqlite"
+        before = {"commit": "a" * 40, "dirty": False, "files": {}}
+        after = dict(before, dirty=True, files={"MODULE.bazel.lock": {"sha256": "changed"}})
+        contents = {"inputs-before.json": before, "inputs-after.json": after,
+                    "timing.json": self.record(), "build-metrics.json": self.record()["metrics"]}
+        with sqlite3.connect(database) as db:
+            db.execute("CREATE TABLE blobs (sha256 TEXT PRIMARY KEY, bytes BLOB)")
+            db.execute("CREATE TABLE invocations (id TEXT, manifest TEXT, exit_code INTEGER)")
+            manifest = {}
+            for name, value in contents.items():
+                data = json.dumps(value).encode()
+                manifest[name] = digest(data)
+                db.execute("INSERT INTO blobs VALUES (?, ?)", (digest(data), data))
+            db.execute("INSERT INTO invocations VALUES (?, ?, 0)", ("changed", json.dumps(manifest)))
+        candidate = observation(database, "changed")
+        self.assertTrue(candidate["dirty"])
+        self.assertIsNone(compare(self.record(), candidate)["candidateOverBaseline"])
 
 
 if __name__ == "__main__":
