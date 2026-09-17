@@ -45,6 +45,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case
+.PHONY: bazel-recover-runtime bazel-recover-runtime-apply
+export CASE_ID
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
@@ -64,6 +66,12 @@ bazel-harness:
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
 	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)"
+
+bazel-recover-runtime:
+	Tools/bazel/run.sh recover-runtime
+
+bazel-recover-runtime-apply:
+	Tools/bazel/run.sh recover-runtime --apply --case "$${CASE_ID}"
 
 bazel-build:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product

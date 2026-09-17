@@ -100,6 +100,7 @@ class ReleasedCase:
         self.output = (self.root / "engine.log").open("xb")
         engine = self.releases[0]["executables"]["devcontainer-engine"]
         container = self.releases[1]["executables"]["container"]
+        self.store.attach(self.identity, "process-intent.json", canonical({"root": str(self.root), "program": engine}))
         self.child.start([engine, "--container", container, "--socket", str(self.socket),
                           "--state", str(self.root / "state.sqlite")], self.root, self.output)
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))

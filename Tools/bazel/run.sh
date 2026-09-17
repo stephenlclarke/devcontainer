@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|recover-runtime [--apply --case ID]|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -28,6 +28,7 @@ usage() {
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
     printf '       %s prepare-releases LOCK [--offline] (unpack releases on SSD, never install or build)\n' "$SCRIPT_NAME"
+    printf '       %s recover-runtime [--apply --case ID] (report or restore a journalled service transaction)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
 }
@@ -215,7 +216,7 @@ main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|cleanup|restore-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|recover-runtime|cleanup|restore-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -259,6 +260,10 @@ main() {
     done
     export TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" PYTHONDONTWRITEBYTECODE=1
     ensure_directory "$config_root" || return
+    if [[ "$command" == recover-runtime ]]; then
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/recover_runtime.py" "$@"
+        return
+    fi
     if [[ "$command" == cleanup ]]; then
         clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/hygiene.py" cleanup "$@"
         return

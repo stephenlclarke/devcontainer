@@ -136,7 +136,7 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(json.loads((case.root / "owner.json").read_text())["identity"], self.identity)
         with self.store.connect() as database:
             names = [row[0] for row in database.execute("SELECT name FROM artifacts ORDER BY name")]
-        self.assertEqual(names, ["owner.json", "process.json"])
+        self.assertEqual(names, ["owner.json", "process-intent.json", "process.json"])
         self.assertEqual(case.cleanup()["status"], "passed")
         self.assertFalse(case.root.exists())
 

@@ -21,6 +21,8 @@ sh_test(
         "test_service_journal.py",
         "runtime_services.py",
         "test_runtime_services.py",
+        "recover_runtime.py",
+        "test_recover_runtime.py",
         "released_engine.py",
         "test_released_engine.py",
         "//Tools/bazel:prepare_releases.py",

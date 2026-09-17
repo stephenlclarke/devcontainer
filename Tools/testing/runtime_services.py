@@ -6,6 +6,7 @@ not install kernels, pull images, start guest workloads or modify provider keys.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -157,6 +158,8 @@ class ControlledRuntime:
         definition = selected_definition(self.root, self.executable)
         path = self.journal_parent / (digest(str(self.root).encode()) + ".sqlite")
         self.journal = ServiceJournal(path, self.owner, create=True)
+        self.journal.put("runtime-context.json", json.dumps(
+            {"apiExecutable": str(self.executable)}, sort_keys=True).encode())
         self.journal.put("original-processes.plist", plistlib.dumps(self.original_processes))
         self.switch = ServiceSwitch(self.launchd, prior, self.root, self.journal.put)
         self.require_idle_before_selection(prior)
