@@ -21,7 +21,7 @@ EXPECTED = {
 SOURCE_TESTS = {
     "//:DevContainerModelTests": 11,
     "//:DevContainerStateTests": 7,
-    "//:DevContainerCoreTests": 11,
+    "//:DevContainerCoreTests": 13,
     "//:DevContainerCLITests": 13,
     "//:DevContainerProcessTests": 2,
     "//:DevContainerDockerAPITests": 53,

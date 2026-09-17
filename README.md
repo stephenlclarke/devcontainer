@@ -154,6 +154,8 @@ The opt-in [native Bazel build](docs/bazel-workflow.md) builds all three executa
 
 Use `make bazel-coverage-report INVOCATION=ID` to export a retained unit run's LCOV and Sonar XML without rerunning tests. The receipt identifies the tested commit/profile; exporting historical coverage does not make it current-head quality evidence.
 
+New Bazel build/test invocations also retain elapsed timings, platform/toolchain identity and cache metrics. Use `make bazel-build-timings INVOCATION=ID BASELINE=ID` to compare matching configurations. Ordinary timings are labelled observations; controlled quiet-machine benchmarks remain a separate performance gate.
+
 Requirements are Xcode 26, Swift 6.2 or newer, Python 3, Ruby 2.7 or newer
 (including its standard JSON and Psych YAML libraries), and `make`.
 Runtime parity additionally requires a physical Apple-silicon Mac on macOS 26,

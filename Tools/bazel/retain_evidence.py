@@ -124,10 +124,28 @@ def retain(events_path: Path, database: Path, scratch_root: Path) -> str:
     contents = {"events.json": event_bytes}
     contents.update({name: path.read_bytes() for name, path in evidence_paths(events, scratch_root).items()})
     contents.update({name: path.read_bytes() for name, path in artifact_paths(events, scratch_root).items()})
-    for name in ("owner.json", "qualification.json", "source-tests.json", "inputs-before.json", "inputs-after.json", "outcome.json"):
+    for name in ("owner.json", "qualification.json", "source-tests.json", "inputs-before.json", "inputs-after.json", "outcome.json", "timing.json"):
         path = events_path.with_name(name)
         if path.is_file():
             contents[name] = path.read_bytes()
+    if "timing.json" in contents:
+        metrics = next((event["buildMetrics"] for event in events if "buildMetrics" in event), {})
+        tests = []
+        for event in events:
+            if "testResult" in event:
+                result = event["testResult"]
+                tests.append({"identity": event["id"]["testResult"],
+                              "cachedLocally": result.get("cachedLocally", False),
+                              "cachedRemotely": result.get("executionInfo", {}).get("cachedRemotely", False),
+                              "duration": result.get("testAttemptDuration"),
+                              "durationMillis": result.get("testAttemptDurationMillis")})
+        summary = {"command": starts[0].get("command"),
+                   "bazelVersion": starts[0].get("buildToolVersion"),
+                   "targets": sorted({event["id"]["targetCompleted"]["label"] for event in events
+                                      if "targetCompleted" in event.get("id", {})}),
+                   "actionSummary": metrics.get("actionSummary", {}),
+                   "timingMetrics": metrics.get("timingMetrics", {}), "tests": tests}
+        contents["build-metrics.json"] = json.dumps(summary, sort_keys=True).encode()
     manifest = json.dumps({name: digest(data) for name, data in sorted(contents.items())}, sort_keys=True)
     if database.is_symlink():
         raise ValueError("Refusing symlinked evidence database")

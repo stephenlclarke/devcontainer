@@ -44,7 +44,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
-.PHONY: bazel-coverage-report
+.PHONY: bazel-coverage-report bazel-build-timings
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
@@ -67,6 +67,12 @@ bazel-unit:
 bazel-coverage-report:
 	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a retained source-unit coverage ID.\n' >&2; exit 2; }
 	Tools/bazel/run.sh coverage-report "$(INVOCATION)"
+
+bazel-build-timings:
+	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a measured build/test invocation ID.\n' >&2; exit 2; }
+	@if [[ -n "$(BASELINE)" ]]; then \
+		Tools/bazel/run.sh build-timings "$(INVOCATION)" --baseline "$(BASELINE)"; \
+	else Tools/bazel/run.sh build-timings "$(INVOCATION)"; fi
 
 bazel-package:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) --config=release //:candidate_archive

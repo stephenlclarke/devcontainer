@@ -10,8 +10,8 @@ class EvidenceTests(unittest.TestCase):
     def test_profile_discovery_inventory(self) -> None:
         stock = expected_tests("source", "stock")
         enhanced = expected_tests("source", "enhanced")
-        self.assertEqual(sum(stock.values()), 221)
-        self.assertEqual(sum(enhanced.values()), 232)
+        self.assertEqual(sum(stock.values()), 223)
+        self.assertEqual(sum(enhanced.values()), 234)
         self.assertEqual(set(stock), set(enhanced))
 
     def test_required_sources_each_have_hits(self) -> None:

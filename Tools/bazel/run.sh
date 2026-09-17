@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh configure|test-tools|cleanup [--days N] [--apply]|restore-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -23,6 +23,7 @@ error() {
 usage() {
     printf 'Usage: %s configure|test-tools|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
+    printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
 }
@@ -137,7 +138,12 @@ run_bazel() {
         test|coverage) bazel_args+=("--test_tmpdir=$SSD_ROOT/t") ;;
         *) : ;; # Only test executions need test scratch.
     esac
-    clean_environment "$executable" "${bazel_args[@]}" \
+    local measurement=()
+    case "$command" in
+        build|test|coverage) measurement=(/usr/bin/python3 "$repo/Tools/bazel/build_timing.py" measure "$invocation/timing.json" "$profile" --) ;;
+        *) : ;; # Diagnostics do not create build timing observations.
+    esac
+    clean_environment ${measurement[@]+"${measurement[@]}"} "$executable" "${bazel_args[@]}" \
         "--repository_cache=$SSD_ROOT/repository" "--build_event_json_file=$invocation/events.json"
 }
 
@@ -197,7 +203,7 @@ main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|cleanup|restore-candidate|coverage-report|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|cleanup|restore-candidate|coverage-report|build-timings|acquire-releases|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -258,6 +264,11 @@ main() {
     if [[ "$command" == coverage-report ]]; then
         [[ $# == 1 ]] || { error 'coverage-report requires one retained invocation ID.'; return 2; }
         clean_environment /usr/bin/python3 "$repo/Tools/bazel/coverage_report.py" "$first_argument"
+        return
+    fi
+    if [[ "$command" == build-timings ]]; then
+        [[ $# == 1 || ( $# == 3 && "$second_argument" == --baseline ) ]] || { error 'build-timings requires ID [--baseline ID].'; return 2; }
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/build_timing.py" report "$@"
         return
     fi
     if [[ "$command" == test-tools ]]; then

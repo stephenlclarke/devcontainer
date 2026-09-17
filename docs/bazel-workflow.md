@@ -4,7 +4,7 @@
 
 This is an opt-in native product build, not yet the replacement release system. Bazel owns native Swift/C compilation, the complete pinned package graph, generated version inputs, C/SQLite interoperability, test discovery and action caching. All three executables (`devcontainer`, `devcontainer-compose`, `devcontainer-engine`) build against both dependency profiles. Existing SwiftPM/CI/release entry points remain unchanged until the host and release operations are qualified. There is no new Python build coordinator: the small Python helpers validate and retain evidence; they never schedule or retry builds.
 
-`//:unit` runs all ten deterministic source test targets: 232 cases with enhanced dependencies and 221 with stock dependencies. `//:bazel_qualification` remains a smaller compiler/framework/generator diagnostic and must not substitute for the unit suite. Native executable modules are compiled once and shared with their importing tests. Third-party packages retain their declared Swift language settings; Swift 6 and warnings-as-errors apply to project code.
+`//:unit` runs all ten deterministic source test targets: 234 cases with enhanced dependencies and 223 with stock dependencies. `//:bazel_qualification` remains a smaller compiler/framework/generator diagnostic and must not substitute for the unit suite. Native executable modules are compiled once and shared with their importing tests. Third-party packages retain their declared Swift language settings; Swift 6 and warnings-as-errors apply to project code.
 
 ## Run locally
 
@@ -37,6 +37,14 @@ The Keychain-backed service process tests and live Apple-service logging test ar
 `make bazel-coverage-report INVOCATION=ID` exports the retained unit invocation's exact LCOV, Sonar generic `coverage.xml` and digest-bearing `receipt.json` under the SSD coverage directory. It does not start Bazel, compile, rerun tests or contact Sonar. It works after the original test output disappears. Only successful, complete source-unit coverage with clean recorded source identities is eligible; dirty, mismatched, corrupted or incomplete evidence fails. The XML preserves the LCOV line denominator without additional exclusions, and includes uncovered lines.
 
 The receipt names the original source commit and profile, not the current checkout. A historical export must not be submitted as current-head coverage; scanner integration must verify that binding before upload. This is coverage export, not a passing 90% quality gate, hosted analysis or release authority. Existing `make sonar-scan` has not been switched over. Report output is disposable and reconstructible; broader report-directory lifetime cleanup remains a migration gate.
+
+## Build timing records
+
+Every new build, test and coverage invocation records monotonic elapsed time around the Bazel process, its exit status, before/after load averages, machine identity hash, macOS/Xcode/Swift versions and configuration fingerprint. Metadata collection and evidence retention are excluded from that elapsed interval. Retention seals these measurements with the source identity, Bazel version, action/cache metrics and each test's original duration/cache disposition. Cached test durations describe their original execution, not time spent rerunning a cached test.
+
+Use `make bazel-build-timings INVOCATION=ID` to read the record, or add `BASELINE=ID` for a comparison. Different platforms, toolchains, configurations, profiles or target sets are reported as incompatible; failed or dirty runs receive no ratio. Reports contain no inherited environment or raw historic events. Old runs without measurements remain unavailable rather than acquiring invented times. Measurements survive disposable SSD output cleanup through internal retention.
+
+Ordinary invocation records are explicitly non-authoritative observations: low load averages alone do not prove an isolated machine. Controlled cold, warm, no-change and uncached-test campaigns must record cache preparation and quiet-host checks separately before performance claims are accepted. Neither recording nor reporting schedules another build or changes the existing correctness gates.
 
 ## Native candidate archives
 

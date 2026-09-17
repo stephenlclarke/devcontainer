@@ -42,7 +42,7 @@ class LauncherTests(unittest.TestCase):
         for command, targets in [("query", ["//:product"]), ("info", []), ("coverage", ["//:unit", "--config=stock"])]:
             with self.subTest(command=command):
                 result = subprocess.run(
-                    ["/bin/bash", "-c", 'source "$1"; shift; clean_environment() { "$@"; }; capture() { printf "%s\\0" "$@"; }; run_bazel /repo "$1" /invocation capture stock "${@:2}"',
+                    ["/bin/bash", "-c", 'source "$1"; shift; clean_environment() { printf "%s\\0" "$@"; }; run_bazel /repo "$1" /invocation /pinned-bazel stock "${@:2}"',
                      "test", str(SCRIPT), command, *targets],
                     capture_output=True, text=True, check=False,
                 )
@@ -50,6 +50,7 @@ class LauncherTests(unittest.TestCase):
                 args = result.stdout.split("\0")[:-1]
                 self.assertEqual(args.count("--config=stock"), 1)
                 self.assertIn(command, args)
+                self.assertEqual(args[0], "/usr/bin/python3" if command == "coverage" else "/pinned-bazel")
                 self.assertEqual(any(a.startswith("--disk_cache=") for a in args), command == "coverage")
                 self.assertEqual(any(a.startswith("--test_tmpdir=") for a in args), command == "coverage")
 
