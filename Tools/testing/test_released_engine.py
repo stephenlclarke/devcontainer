@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
 from case_evidence import CaseStore, canonical
@@ -74,7 +74,6 @@ class ReleasedEngineTests(unittest.TestCase):
         output = self.root / "case.xml"
         with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
                 patch("released_engine.admit", return_value=releases), patch("released_engine.version", return_value="fixture"), \
-                patch("released_engine.require_api_service", return_value={"pid": 42}) as service, \
                 patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
                 patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
                 patch("released_engine.ReleasedCase") as factory, patch("sys.stdout", new_callable=io.StringIO), \
@@ -92,12 +91,6 @@ class ReleasedEngineTests(unittest.TestCase):
             case.cleanup.assert_called_once()
             revalidate = factory.call_args.args[4]
             self.assertEqual(revalidate(), releases)
-            service.return_value = {"pid": 43}
-            with self.assertRaisesRegex(ValueError, "service changed"):
-                revalidate()
-            service.side_effect = ValueError("wrong provider")
-            with self.assertRaisesRegex(ValueError, "wrong provider"):
-                released_engine.main()
             self.assertEqual(factory.call_count, 2)
         self.assertEqual(ET.parse(output).getroot().attrib["failures"], "0")
 
@@ -149,6 +142,62 @@ class ReleasedEngineTests(unittest.TestCase):
         with patch("released_engine.engine_negotiation", return_value={"ping": "true"}) as probe:
             self.assertEqual(case.operation(), {"ping": "true"})
         probe.assert_called_once_with(case.socket, observe=case.requests.append)
+
+    def test_selected_runtime_is_started_then_restored_even_after_input_failure(self):
+        case = self.case()
+        runtime = Mock(service={"pid": 42})
+        runtime.receipt.return_value = {"seal": "fixture", "visibility": "private-do-not-export"}
+        case.runtime_factory = Mock(return_value=runtime)
+        with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), patch.object(case.child, "process") as process:
+            process.pid = 43
+            case.setup()
+        runtime.start.assert_called_once()
+        case.revalidate = lambda: []
+        with self.assertRaisesRegex(ValueError, "inputs changed"):
+            case.cleanup()
+        runtime.verify.assert_called_once()
+        runtime.restore.assert_called_once()
+        self.assertTrue(case.root.exists())
+        with self.assertRaisesRegex(ValueError, "quarantined"):
+            case.guard.check()
+
+    def test_failed_runtime_setup_still_restores_before_removing_owned_root(self):
+        case = self.case()
+        runtime = Mock(service=None)
+        runtime.start.side_effect = RuntimeError("injected partial setup")
+        runtime.receipt.return_value = {"status": "restored"}
+        case.runtime_factory = Mock(return_value=runtime)
+        with self.assertRaisesRegex(RuntimeError, "partial setup"):
+            case.setup()
+        self.assertEqual(case.cleanup()["status"], "passed")
+        runtime.restore.assert_called_once()
+        runtime.verify.assert_not_called()
+        self.assertFalse(case.root.exists())
+        case.guard.check()
+
+    def test_failed_runtime_restore_keeps_quarantine_and_private_root(self):
+        case = self.case()
+        runtime = Mock(service=None)
+        runtime.start.side_effect = RuntimeError("injected partial setup")
+        runtime.restore.side_effect = RuntimeError("injected restore failure")
+        runtime.receipt.return_value = {"status": "incomplete"}
+        case.runtime_factory = Mock(return_value=runtime)
+        with self.assertRaises(RuntimeError):
+            case.setup()
+        with self.assertRaisesRegex(RuntimeError, "restore failure"):
+            case.cleanup()
+        self.assertTrue(case.root.exists())
+        with self.assertRaisesRegex(ValueError, "quarantined"):
+            case.guard.check()
+
+    def test_diagnostic_retention_failure_does_not_prevent_runtime_restoration(self):
+        case = self.case()
+        case.runtime = Mock(service={"pid": 42})
+        case.runtime.receipt.return_value = {"status": "restored"}
+        with patch.object(self.store, "attach", side_effect=OSError("retention unavailable")), self.assertRaises(OSError):
+            case.cleanup()
+        case.runtime.restore.assert_called_once()
+        case.runtime.preserve_logs.assert_called_once()
 
     def test_cleanup_preserves_changed_inputs_and_unowned_root(self):
         case = self.case()

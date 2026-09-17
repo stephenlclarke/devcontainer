@@ -1,0 +1,215 @@
+"""Released API service lifecycle under the caller's lease and durable host guard.
+
+Only the metadata/Engine negotiation case uses this adapter initially. It does
+not install kernels, pull images, start guest workloads or modify provider keys.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import plistlib
+import stat
+import subprocess
+import time
+
+from host_runtime import deadline, require_api_service
+from service_journal import ServiceJournal, digest
+from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, snapshot
+
+
+def process_inventory() -> dict[int, dict]:
+    result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,pgid=,lstart=,comm="], check=True, capture_output=True,
+                            timeout=5, env={"PATH": "/usr/bin:/bin"})
+    processes = {}
+    for line in result.stdout.decode().splitlines():
+        fields = line.split(maxsplit=8)
+        if len(fields) != 9 or any(not value.isdigit() for value in fields[:3]):
+            raise ValueError("Incomplete host process identity")
+        pid, parent, group = map(int, fields[:3])
+        if pid <= 0 or pid in processes:
+            raise ValueError("Ambiguous host process identity")
+        processes[pid] = {"pid": pid, "parent": parent, "group": group,
+                          "started": " ".join(fields[3:8]), "program": fields[8]}
+    return processes
+
+
+def process_programs() -> list[str]:
+    return [item["program"] for item in process_inventory().values()]
+
+
+def capture_owned_processes(launchd, prior: list[dict]) -> list[dict]:
+    roots = {item["label"]: pid for item in prior if (pid := launchd.process_id(item["label"])) is not None}
+    processes = process_inventory()
+    if not set(roots.values()) <= processes.keys():
+        raise ValueError("Service processes changed during ownership capture")
+    owners = {}
+    for label, root in roots.items():
+        owned = {root}
+        while True:
+            expanded = owned | {pid for pid, item in processes.items() if item["parent"] in owned}
+            if expanded == owned:
+                break
+            owned = expanded
+        for pid in owned:
+            owners.setdefault(pid, []).append(label)
+    return [dict(processes[pid], labels=sorted(owners[pid])) for pid in sorted(owners)]
+
+
+def require_idle(programs: list[str]) -> None:
+    # Do not stop an active Actions job or a user CLI/guest workload. Listener
+    # jobs may be suspended by the explicitly scoped service transaction.
+    busy = {"Runner.Worker", "container", "compose", "docker", "docker-compose", "colima",
+            "container-runtime-linux", "com.apple.Virtualization.VirtualMachine"}
+    if any(Path(program).name in busy for program in programs):
+        raise ValueError("Active worker, container command or guest prevents runtime selection")
+
+
+def authorised_roots(launchd: Launchd, home: Path) -> dict[str, Path]:
+    """Known family services only; never derive authority from a loaded plist."""
+    roots = {label: home / "Library/Application Support/com.apple.container" for label in BASE_SERVICES}
+    agents = home / "Library/LaunchAgents"
+    for label in launchd.labels():
+        if label in {"homebrew.mxcl.devcontainer", "sh.brew.container", "com.stephenlclarke.container-family-ci"} or any(
+                label.startswith(f"actions.runner.stephenlclarke-{repository}.")
+                for repository in ("devcontainer", "container-compose", "container-build")):
+            roots[label] = agents
+    return roots
+
+
+def selected_definition(root: Path, executable: Path) -> Path:
+    """Mirror stock SystemStart's service contract, omitting guest provisioning."""
+    if not root.is_absolute() or root.resolve() != root or not root.is_dir():
+        raise ValueError("Selected runtime needs a canonical owned root")
+    if not executable.is_absolute() or executable.resolve() != executable or not executable.is_file():
+        raise ValueError("Selected runtime needs a canonical prepared executable")
+    app = root / "container"
+    app.mkdir(mode=0o700)
+    logs = root / "container-logs"
+    logs.mkdir(mode=0o700)
+    environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(root),
+                   "TMPDIR": str(root), "TMP": str(root), "TEMP": str(root),
+                   "CONTAINER_APP_ROOT": str(app), "CONTAINER_INSTALL_ROOT": str(executable.parent.parent),
+                   "CONTAINER_LOG_ROOT": str(logs)}
+    definition = {"Label": API, "ProgramArguments": [str(executable), "start"],
+                  "EnvironmentVariables": environment, "RunAtLoad": True,
+                  "LimitLoadToSessionType": ["Aqua", "Background", "System"], "MachServices": {API: True},
+                  "StandardOutPath": str(logs / "apiserver.stdout"),
+                  "StandardErrorPath": str(logs / "apiserver.stderr")}
+    path = root / "selected-apiserver.plist"
+    with path.open("xb") as output:
+        output.write(plistlib.dumps(definition))
+        output.flush()
+        os.fsync(output.fileno())
+    return path
+
+
+class ControlledRuntime:
+    """Select one released service, then restore originals before guard removal.
+
+    The caller has already marked root ownership and acquired the shared lease.
+    `journal_parent` is private retained INTERNAL storage, checked against the
+    disposable SSD device here. Logs/state/selected plists stay in `root`.
+    """
+
+    def __init__(self, root: Path, owner: dict, executable: Path, journal_parent: Path, *,
+                 launchd=None, home: Path | None = None):
+        if owner.get("root") != str(root) or journal_parent.stat().st_dev == root.stat().st_dev:
+            raise ValueError("Runtime journal must retain this owner on a separate internal volume")
+        self.root, self.owner, self.executable = root, owner, executable
+        self.journal_parent = journal_parent
+        self.launchd, self.home = launchd or Launchd(), home or Path.home()
+        self.switch = None
+        self.journal = None
+        self.service = None
+        self.original_processes = []
+
+    def start(self):
+        require_idle(process_programs())
+        prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
+        definition = selected_definition(self.root, self.executable)
+        path = self.journal_parent / (digest(str(self.root).encode()) + ".sqlite")
+        self.journal = ServiceJournal(path, self.owner, create=True)
+        self.original_processes = capture_owned_processes(self.launchd, prior)
+        self.journal.put("original-processes.plist", plistlib.dumps(self.original_processes))
+        self.switch = ServiceSwitch(self.launchd, prior, self.root, self.journal.put)
+        require_idle(process_programs())
+        self.switch.prepare()
+        # A listener/helper that survived removal may not overlap this lane.
+        self.require_workers_stopped()
+        self.switch.install(definition)
+        with deadline(25):
+            while True:
+                current = self.launchd.inspect(API)
+                if current != {"label": API, "path": str(definition), "program": str(self.executable)}:
+                    raise ValueError("Selected API service changed before readiness")
+                try:
+                    self.service = require_api_service(self.executable)
+                    break
+                except ValueError:
+                    # Registration identity is checked above; wait only for
+                    # launchd to report this selected job running, not a retry
+                    # of an Engine conformance request.
+                    time.sleep(0.05)
+        self.journal.put("service-ready.plist", plistlib.dumps(self.service))
+
+    def require_workers_stopped(self):
+        programs = process_programs()
+        require_idle(programs)
+        outgoing = {Path(item["program"]).resolve() for item in self.switch.prior if item["label"] in BASE_SERVICES}
+        if any(Path(program).name in {"Runner.Listener", "devcontainer-engine"} or Path(program).resolve() in outgoing
+               for program in programs):
+            raise ValueError("An outgoing provider, runtime consumer or CI listener survived service removal")
+        self.require_original_processes_stopped()
+
+    def require_original_processes_stopped(self, *, allow_registered=False):
+        current = process_inventory()
+        for prior in self.original_processes:
+            actual = current.get(prior["pid"])
+            # exec/setsid change executable/group without ending ownership.
+            # Only a different start identity establishes PID reuse here.
+            if actual is not None and actual["started"] == prior["started"]:
+                if allow_registered and any(
+                        self.launchd.inspect(label) == {key: original[key] for key in ("label", "path", "program")}
+                        for label in prior["labels"] for original in self.switch.prior if original["label"] == label):
+                    continue  # A partial prepare may leave an original registered and untouched.
+                raise ValueError("An owned original service process survived removal")
+
+    def verify(self):
+        if self.service is None or require_api_service(self.executable) != self.service:
+            raise ValueError("Selected API service changed during the case")
+
+    def restore(self):
+        if self.switch is None:
+            return
+        self.switch.restore(before_originals=self.require_selected_stopped)
+
+    def require_selected_stopped(self):
+        install = self.executable.parent.parent
+        unregistered = {Path(item["program"]).resolve() for item in self.switch.prior
+                        if item["label"] in BASE_SERVICES and self.launchd.inspect(item["label"]) is None}
+        if any(Path(program).is_relative_to(install) or Path(program).is_relative_to(self.root)
+               or Path(program).resolve() in unregistered
+               for program in process_programs()):
+            raise ValueError("Runtime processes survived service removal")
+        self.require_original_processes_stopped(allow_registered=True)
+
+    def receipt(self) -> dict:
+        return self.journal.receipt() if self.journal is not None else {"status": "not-started"}
+
+    def preserve_logs(self):
+        """Keep bounded service diagnostics privately; they may contain secrets."""
+        if self.journal is None:
+            return
+        for name in ("stdout", "stderr"):
+            path = self.root / "container-logs" / ("apiserver." + name)
+            if path.is_symlink() or path.parent.resolve() != path.parent:
+                raise ValueError("Selected API log path changed")
+            if not path.exists():
+                continue
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                    raise ValueError("Selected API log ownership changed")
+                stream.seek(max(0, info.st_size - 64 * 1024))
+                self.journal.put("service-" + name + "-snapshot.log", stream.read(64 * 1024))

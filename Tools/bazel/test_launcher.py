@@ -143,6 +143,7 @@ class LauncherTests(unittest.TestCase):
             "--symlink_prefix=/tmp/", "--repo_env=TMPDIR=/tmp",
             "--override_module=rules_swift=/tmp/local", "--override_repository=lib=/tmp/local",
             "--lockfile_mode=off", "--registry=https://example.invalid", "--noenable_bzlmod",
+            "--flagfile=/tmp/options", "--flagfile", "--flagfile=",
         ]:
             with self.subTest(argument=argument):
                 self.assertEqual(invoke("validate_arguments", argument).returncode, 2)

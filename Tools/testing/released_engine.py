@@ -1,4 +1,4 @@
-"""One released Engine negotiation case; no build, download or runtime installation."""
+"""One released Engine negotiation case with reversible, isolated service selection."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from prepare_releases import require_prepared
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from engine_probe import engine_negotiation, request
-from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, require_api_service, runtime_lease
+from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
+from runtime_services import ControlledRuntime
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
@@ -71,7 +72,8 @@ def write_junit(identity: dict, result: dict, path: Path) -> None:
 
 
 class ReleasedCase:
-    def __init__(self, store: CaseStore, identity: dict, releases: list[dict], parent: Path, revalidate, guard: HostGuard):
+    def __init__(self, store: CaseStore, identity: dict, releases: list[dict], parent: Path, revalidate, guard: HostGuard,
+                 *, runtime_factory=None):
         self.store, self.identity, self.releases = store, identity, releases
         self.parent, self.revalidate = parent, revalidate
         self.root = None
@@ -79,6 +81,7 @@ class ReleasedCase:
         self.child = OwnedProcess()
         self.guard, self.owner = guard, None
         self.requests = []
+        self.runtime_factory, self.runtime = runtime_factory, None
 
     def setup(self):
         self.root = Path(tempfile.mkdtemp(dir=self.parent, prefix="case-"))
@@ -89,6 +92,10 @@ class ReleasedCase:
         self.store.attach(self.identity, "owner.json", owner)
         self.owner = json.loads(owner)
         self.guard.begin(self.owner)
+        if self.runtime_factory is not None:
+            self.runtime = self.runtime_factory(self.root, self.owner)
+            self.runtime.start()
+            self.store.attach(self.identity, "api-service.json", canonical(self.runtime.service))
         self.output = (self.root / "engine.log").open("xb")
         engine = self.releases[0]["executables"]["devcontainer-engine"]
         container = self.releases[1]["executables"]["container"]
@@ -104,20 +111,32 @@ class ReleasedCase:
     def cleanup(self):
         stopped = False
         try:
-            self.child.stop()
-            stopped = True
+            try:
+                self.child.stop()
+                stopped = True
+            finally:
+                # A failed stop still needs its diagnostics sealed before
+                # run_case completes; a surviving process has only a snapshot.
+                if self.output is not None:
+                    self.output.close()
+                self.store.attach(self.identity, "process-cleanup.json", canonical({"verifiedStopped": stopped}))
+                self.store.attach(self.identity, "requests.json", canonical(self.requests))
+                if self.output is not None:
+                    self.store.attach(self.identity, "engine.log", (self.root / "engine.log").read_bytes())
+            if self.runtime is not None and self.runtime.service is not None:
+                self.runtime.verify()
+            # Detect executable replacement before claiming successful cleanup.
+            if self.revalidate() != self.releases:
+                raise ValueError("Released runtime inputs changed during execution")
         finally:
-            # A failed stop still needs its diagnostics sealed before run_case
-            # completes. The log is only a snapshot if descendants survive.
-            if self.output is not None:
-                self.output.close()
-            self.store.attach(self.identity, "process-cleanup.json", canonical({"verifiedStopped": stopped}))
-            self.store.attach(self.identity, "requests.json", canonical(self.requests))
-            if self.output is not None:
-                self.store.attach(self.identity, "engine.log", (self.root / "engine.log").read_bytes())
-        # Detect executable replacement during the case before claiming cleanup.
-        if self.revalidate() != self.releases:
-            raise ValueError("Released runtime inputs changed during execution")
+            # A diagnostics/retention failure must not prevent restoring the
+            # operator's services after the child has verifiably stopped.
+            if stopped and self.runtime is not None:
+                try:
+                    self.runtime.restore()
+                finally:
+                    self.runtime.preserve_logs()
+                    self.store.attach(self.identity, "service-journal.json", canonical(self.runtime.receipt()))
         if self.root is not None:
             owner = json.loads((self.root / "owner.json").read_text())
             if self.root.is_symlink() or owner != {"identity": self.identity, "root": str(self.root)}:
@@ -158,9 +177,8 @@ def main():
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED, SSD)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
-        service = require_api_service(api_server)
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
-                   "apiService": service,
+                   "apiProgram": str(api_server), "serviceSelection": "released-private-root-v1",
                    "versions": [version(Path(releases[0]["executables"]["devcontainer"])),
                                 version(Path(releases[1]["executables"]["container"]))]}
         identity = {"campaign": args.campaign, "fixture": FIXTURE, "lane": args.lane,
@@ -169,11 +187,14 @@ def main():
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         def revalidate():
-            if require_api_service(api_server) != service:
-                raise ValueError("Selected API service changed during the case")
             return admit(lock, args.lane, RETAINED, SSD)
 
-        case = ReleasedCase(store, identity, releases, parent, revalidate, guard)
+        def runtime_factory(root, owner):
+            journal_parent = RETAINED / "private-runtime"
+            journal_parent.mkdir(mode=0o700, exist_ok=True)
+            return ControlledRuntime(root, owner, api_server, journal_parent)
+
+        case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory)
         result = run_case(store, identity, expected, case.setup, case.operation, case.cleanup)
         if os.environ.get("XML_OUTPUT_FILE"):
             write_junit(identity, result, Path(os.environ["XML_OUTPUT_FILE"]))

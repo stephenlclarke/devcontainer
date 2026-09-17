@@ -75,6 +75,19 @@ class Launchd:
         if self.command("bootout", f"{self.domain}/{label}").returncode != 0:
             raise RuntimeError("Launchd job removal failed")
 
+    def process_id(self, label: str) -> int | None:
+        if re.fullmatch(r"[A-Za-z0-9._-]+", label) is None:
+            raise ValueError("Invalid launchd job label")
+        result = self.command("print", f"{self.domain}/{label}")
+        if result.returncode != 0:
+            raise RuntimeError("Cannot capture launchd process ownership")
+        values = re.findall(r"^\tpid = ([0-9]+)$", result.stdout.decode(), re.MULTILINE)
+        if not values:
+            return None
+        if len(values) != 1 or int(values[0]) <= 0:
+            raise ValueError("Ambiguous launchd process ownership")
+        return int(values[0])
+
     def bootstrap(self, path: Path):
         if self.command("bootstrap", self.domain, str(path)).returncode != 0:
             raise RuntimeError("Launchd job registration failed")
@@ -187,8 +200,13 @@ class ServiceSwitch:
         self.journal("service-selected.plist", payload)
         self.record("bootstrap-selected", label)
         self.launchd.bootstrap(definition)
+        arguments = job.get("ProgramArguments", [])
+        expected = {"label": label, "path": str(definition),
+                    "program": job.get("Program") or (arguments[0] if arguments else None)}
+        if canonical_file(definition) != payload or self.launchd.inspect(label) != expected:
+            raise ValueError("Selected service registration differs from its journalled definition")
 
-    def restore(self):
+    def restore(self, *, before_originals=None):
         if not self.recorded:
             return
         # Validate *all* originals and survivors before any restoration mutation.
@@ -200,6 +218,8 @@ class ServiceSwitch:
         remaining = self.launchd.labels()
         if any(label.startswith("com.apple.container.") and label not in prior for label in remaining):
             raise ValueError("Selected runtime still has unreconciled jobs")
+        if before_originals is not None:
+            before_originals()
         self.restore_originals()
         self.record("restored", "all")
 

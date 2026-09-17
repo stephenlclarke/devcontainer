@@ -23,6 +23,9 @@ class FakeLaunchd:
     def inspect(self, label):
         return self.jobs.get(label)
 
+    def process_id(self, label):
+        return None  # These fake registrations have no actual host processes.
+
     def bootout(self, label):
         if self.fail == ("bootout", label):
             raise RuntimeError("injected removal failure")
@@ -156,6 +159,34 @@ class ServiceSwitchTests(unittest.TestCase):
         self.switch.restore()
         self.assert_restored()
 
+    def test_replaced_selected_definition_cannot_pass_registration(self):
+        self.switch.prepare()
+        original_bootstrap = self.launchd.bootstrap
+
+        def replace_before_bootstrap(path):
+            self.definition(self.owned, API, "/replaced/api")
+            original_bootstrap(path)
+
+        with patch.object(self.launchd, "bootstrap", side_effect=replace_before_bootstrap), \
+                self.assertRaisesRegex(ValueError, "journalled definition"):
+            self.switch.install(self.selected)
+        self.switch.restore()
+        self.assert_restored()
+
+    def test_loaded_identity_cannot_differ_even_if_plist_is_unchanged(self):
+        self.switch.prepare()
+        original_bootstrap = self.launchd.bootstrap
+
+        def different_registration(path):
+            original_bootstrap(path)
+            self.launchd.jobs[API]["program"] = "/different/api"
+
+        with patch.object(self.launchd, "bootstrap", side_effect=different_registration), \
+                self.assertRaisesRegex(ValueError, "journalled definition"):
+            self.switch.install(self.selected)
+        self.switch.restore()
+        self.assert_restored()
+
     def test_restore_reentry_handles_already_registered_original(self):
         self.switch.prepare()
         self.launchd.fail = ("bootstrap-after", API)
@@ -225,6 +256,12 @@ class ServiceSwitchTests(unittest.TestCase):
             self.assertEqual(backend.labels(), {"job"})
             run.return_value.stdout = b"job = {\n\tpath = /owned/job.plist\n\tprogram = /owned/bin\n}\n"
             self.assertEqual(backend.inspect("job"), {"label": "job", "path": "/owned/job.plist", "program": "/owned/bin"})
+            self.assertIsNone(backend.process_id("job"))
+            run.return_value.stdout = b"job = {\n\tpid = 42\n}\n"
+            self.assertEqual(backend.process_id("job"), 42)
+            run.return_value.stdout = b"job = {\n\tpid = 0\n}\n"
+            with self.assertRaisesRegex(ValueError, "Ambiguous"):
+                backend.process_id("job")
             backend.bootout("job")
             backend.bootstrap(self.selected)
             self.assertEqual(run.call_args.kwargs["timeout"], 10)
@@ -232,7 +269,7 @@ class ServiceSwitchTests(unittest.TestCase):
             self.assertIsNone(backend.inspect("job"))
             run.return_value.returncode = 1
             run.return_value.stderr = b"sensitive data"
-            for operation in (backend.labels, lambda: backend.inspect("job"), lambda: backend.bootout("job"),
+            for operation in (backend.labels, lambda: backend.inspect("job"), lambda: backend.process_id("job"), lambda: backend.bootout("job"),
                               lambda: backend.bootstrap(self.selected)):
                 with self.assertRaises(RuntimeError) as error:
                     operation()

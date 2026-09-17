@@ -66,6 +66,8 @@ validate_arguments() {
     local argument
     for argument in "$@"; do
         case "$argument" in
+            --flagfile*)
+                error 'Indirect Bazel argument files are not supported.'; return 2 ;;
             --define=runtime_profile*|runtime_profile=*)
                 error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
             --override_module*|--override_repository*|--inject_repository*|--lockfile_mode*|--registry*|--module_mirrors*|--experimental_downloader_config*|--enable_bzlmod*|--noenable_bzlmod*|--enable_workspace*|--noenable_workspace*)
