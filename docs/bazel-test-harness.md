@@ -229,6 +229,15 @@ Harness `0dd7ca8` reused candidate `2c43263` and the same prepared published sto
 
 E05 then failed exactly one observation (`0d8d52e1-f8be-4c67-aeb7-e24742a3ff56`): content, large file, long path and symlink matched, but mode was `0700` instead of required `0750`. Setup was 4.847 seconds, operation 1.157 seconds and successful cleanup 1.347 seconds. The service extracted uploads without preserving permissions, applying the harness's private `077` umask. The correction uses permission-preserving extraction inside a separate private parent so archive root-directory modes cannot expose staging. Focused stock (`bc93f91d-3b79-4feb-a4d8-306ff974f8e6`) and enhanced (`5b2a7242-26a6-4d34-8f96-079c53cdf084`) tests pass; E05 requires a rebuilt corrected candidate and live proof. Its expected mode is unchanged.
 
+The corrected archive source was committed as `805940f55b04098dd20bfdb201bbc757e5fe8439` after independent review, focused enhanced lifetime-guard verification (`4e61765a-a2c9-4739-adb9-9e03188b256b`), SwiftLint/SwiftFormat and Markdown checks. One optimized candidate build (`43f27f56-7051-4de7-a001-6495432a35a3`) took 25.825 seconds, with 1,228 action-cache hits and 20 actions executed. Its retained archive SHA-256 is `306c1d7906f47784093041e522f01f990fcc92f16ed90ccf6804640ee376c53f`; preparation and both following live cases reused it without compiling again.
+
+| Stock candidate fixture | Retained invocation | Setup seconds | Operation seconds | Cleanup seconds | Result |
+| --- | --- | ---: | ---: | ---: | --- |
+| E05 archive copy | `f21b6d91-ca27-4814-87aa-45f7451a0b84` | 5.390 | 1.288 | 4.513 | All five unchanged observations pass, including `0750` |
+| E06 network/volume | `69e041fe-bb07-4924-948f-5412fbb6aa24` | 4.786 | 3.500 | 4.967 | All six unchanged observations pass |
+
+Both cases report zero remaining owned resources; recovery is clear. Together with the earlier E02/E03 results this clears four implemented stock candidate fixtures, not the complete matrix: E02/E03 used the preceding candidate, the Docker/enhanced lanes and remaining adapters are unfinished, and final qualification must use published downloads. These raw functional/build durations are retained diagnostics, not a quiet-host paired benchmark or a performance improvement claim.
+
 ### Scenario sources
 
 The replacement should import version-pinned upstream scenarios and assertions wherever possible, rather than inventing an independent definition of Docker or Dev Containers behaviour. The 17 September inspection identified these concrete sources:
