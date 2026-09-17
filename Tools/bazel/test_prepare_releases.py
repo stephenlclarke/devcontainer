@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -70,6 +71,50 @@ class PrepareReleasesTests(unittest.TestCase):
         shutil.rmtree(Path(result["root"]))
         self.assertEqual(self.prepare(), result)  # SSD eviction never loses the retained asset.
         self.assertEqual(len(list(self.prepared.iterdir())), 1)
+
+    def test_kernel_preparation_retains_data_not_an_executable_and_reuses_it(self):
+        self.source.write_bytes(b"reviewed compressed archive fixture")
+        self.asset = {"repository": "kata-containers/kata-containers", "tag": "3.32.0",
+                      "name": "kata-static-3.32.0-arm64.tar.zst", "size": self.source.stat().st_size,
+                      "sha256": sha256(self.source)}
+        kernel = b"x" * 56 + b"ARMd" + b"x" * 4
+        with patch.object(preparation, "KERNEL_BYTES", len(kernel)), \
+                patch.object(preparation.subprocess, "run", return_value=SimpleNamespace(stdout=kernel, stderr=b"")) as extract:
+            prepared = self.prepare()
+            self.assertEqual(prepared["executables"], {})
+            self.assertEqual(Path(prepared["files"]["kernel"]).read_bytes(), kernel)
+            self.assertEqual(extract.call_args.args[0][-1], preparation.KERNEL_MEMBER)
+            self.assertEqual(extract.call_args.kwargs["timeout"], 60)
+            self.assertEqual(self.prepare(), prepared)
+            extract.assert_called_once()
+            retained = self.durable_root()
+            result = preparation.retain_prepared(self.asset, self.source, self.prepared, retained, self.receipts)
+            self.assertEqual(Path(result["files"]["kernel"]).stat().st_mode & 0o777, 0o600)
+            shutil.rmtree(Path(prepared["root"]))
+            self.assertEqual(preparation.require_retained(self.asset, self.source, retained, self.receipts), result)
+
+    def test_kernel_invalid_header_duplicate_output_and_tar_warnings_fail(self):
+        kernel = b"x" * 56 + b"ARMd" + b"x" * 4
+        self.source.write_bytes(b"fixture")
+        for payload, warning in ((kernel * 2, b""), (b"x" * 64, b""), (kernel, b"warning")):
+            with self.subTest(warning=warning, size=len(payload)), \
+                    patch.object(preparation, "KERNEL_BYTES", len(kernel)), \
+                    patch.object(preparation.subprocess, "run", return_value=SimpleNamespace(stdout=payload, stderr=warning)), \
+                    self.assertRaisesRegex(ValueError, "kernel has unexpected"):
+                preparation.unpack_kernel(self.source, self.prepared)
+            self.assertEqual(list(self.prepared.iterdir()), [])
+
+    def test_kernel_member_must_exist_as_nonempty_nonexecutable_data(self):
+        self.archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        receipt = json.loads((root / preparation.RECEIPT).read_text())
+        specification = receipt["specification"]
+        for path in ("missing", "compose/bin/compose"):
+            specification["layout"]["files"] = {"kernel": path}
+            (root / preparation.RECEIPT).write_text(json.dumps(receipt))
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "data file"):
+                preparation.validate_prepared(root, specification, receipt)
 
     def test_runtime_admission_never_recreates_missing_payloads(self):
         self.archive()

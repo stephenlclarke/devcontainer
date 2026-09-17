@@ -1,4 +1,4 @@
-"""Extract on SSD and retain verified release executables as durable local assets."""
+"""Extract on SSD and retain verified release payloads as durable local assets."""
 
 from __future__ import annotations
 
@@ -19,11 +19,15 @@ from release_inputs import acquire, canonical, sha256, verify_object
 RECEIPT = ".prepared-release.json"
 MAX_FILES = 10000
 MAX_BYTES = 2 * 1024**3
+KERNEL_MEMBER = "./opt/kata/share/kata-containers/vmlinux-6.18.35-197-debug"
+KERNEL_BYTES = 30423552
 
 
 def layout(asset: dict) -> dict:
     """Only reviewed release layouts are admitted; never guess a missing binary."""
     repository, name = asset["repository"], asset["name"]
+    if (repository, asset["tag"], name) == ("kata-containers/kata-containers", "3.32.0", "kata-static-3.32.0-arm64.tar.zst"):
+        return {"format": "kernel-zstd", "executables": {}, "files": {"kernel": "kernel/vmlinux"}}
     if repository == "stephenlclarke/devcontainer" and name == "devcontainer-release-arm64.tar.gz":
         return {"format": "tar", "executables": {
             key: f"devcontainer-{asset['tag']}/bin/{key}"
@@ -88,6 +92,22 @@ def expand_package(source: Path, destination: Path) -> None:
                    env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": str(destination.parent)})
 
 
+def unpack_kernel(source: Path, destination: Path) -> None:
+    """Read one reviewed release member; never extract the full Kata root tree."""
+    result = subprocess.run(["/usr/bin/tar", "-xOf", str(source), KERNEL_MEMBER],
+                            check=True, capture_output=True, timeout=60,
+                            env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "TMPDIR": str(destination.parent)})
+    # The input archive digest is checked before and after this extraction.
+    # Pin size as well: duplicate matches cannot silently concatenate kernels.
+    if result.stderr or len(result.stdout) != KERNEL_BYTES or result.stdout[56:60] != b"ARMd":
+        raise ValueError("Recommended kernel has unexpected size, header or extraction warning")
+    kernel = destination / "kernel/vmlinux"
+    kernel.parent.mkdir()
+    with kernel.open("xb") as output:
+        output.write(result.stdout)
+    kernel.chmod(0o600)
+
+
 def inventory(root: Path) -> dict:
     """Authenticate the complete payload, not just the command used first."""
     result = {}
@@ -125,6 +145,10 @@ def validate_prepared(root: Path, specification: dict, retained_receipt: dict) -
         item = receipt["inventory"].get(path, {})
         if item.get("kind") != "file" or not item["mode"] & 0o111:
             raise ValueError("Required release executable is missing or not executable")
+    for path in specification["layout"].get("files", {}).values():
+        item = receipt["inventory"].get(path, {})
+        if item.get("kind") != "file" or item.get("size", 0) <= 0 or item["mode"] & 0o111:
+            raise ValueError("Required release data file is missing, empty or executable")
     return receipt
 
 
@@ -178,6 +202,8 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
                 staged.mkdir()
                 if kind == "tar":
                     unpack_tar(source, staged)
+                elif kind == "kernel-zstd":
+                    unpack_kernel(source, staged)
                 else:
                     command = staged / "bin/docker-compose"
                     command.parent.mkdir()
@@ -193,7 +219,9 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
             staged.rename(destination)
     return {"assetSHA256": asset["sha256"], "preparationSHA256": key, "root": str(destination),
             "inventorySHA256": hashlib.sha256(canonical(receipt["inventory"]).encode()).hexdigest(),
-            "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()}}
+            "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()},
+            **({"files": {name: str(destination / path) for name, path in specification["layout"]["files"].items()}}
+               if "files" in specification["layout"] else {})}
 
 
 def require_prepared(asset: dict, source: Path, root: Path, receipts: Path) -> dict:
@@ -211,7 +239,9 @@ def require_prepared(asset: dict, source: Path, root: Path, receipts: Path) -> d
     receipt = validate_prepared(destination, specification, json.loads(retained.read_text()))
     return {"assetSHA256": asset["sha256"], "preparationSHA256": key, "root": str(destination),
             "inventorySHA256": hashlib.sha256(canonical(receipt["inventory"]).encode()).hexdigest(),
-            "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()}}
+            "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()},
+            **({"files": {name: str(destination / path) for name, path in specification["layout"]["files"].items()}}
+               if "files" in specification["layout"] else {})}
 
 
 def sync_directory(path: Path) -> None:
@@ -331,7 +361,7 @@ def main() -> None:
     executables = retained / "prepared-releases"
     executables.mkdir(mode=0o700, exist_ok=True)
     acquired = acquire(json.loads(args.lock.read_text()), retained, scratch / "tmp", offline=args.offline)
-    result = {"schemaVersion": 1, "scope": "prepared-binaries-only", "runtimeReady": False,
+    result = {"schemaVersion": 1, "scope": "prepared-release-assets-only", "runtimeReady": False,
               "lockSHA256": acquired["lockSHA256"], "assets": []}
     for asset in acquired["assets"]:
         source, receipts = Path(asset["path"]), retained / "prepared-receipts"

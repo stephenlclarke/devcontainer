@@ -47,6 +47,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-prepare-guest-images
+.PHONY: bazel-prepare-guest-kernel
 export CASE_ID
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
@@ -66,6 +67,9 @@ bazel-harness:
 
 bazel-prepare-guest-images:
 	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-guest-kernel:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/guest-kernel.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
