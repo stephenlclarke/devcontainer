@@ -119,6 +119,54 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.launchd.mutations, before)
         self.assert_quarantined()
 
+    def pending_diagnostic(self):
+        self.journal.put("guest-kernel-intent.json", b"{}")
+        self.journal.put("guest-kernel-stopped.json", canonical({"verifiedStopped": True}))
+        (self.root / "guest-kernel.log").write_bytes(b"important private setup diagnostic")
+
+    def test_report_plans_diagnostic_retention_without_writes_then_apply_restores(self):
+        self.pending_diagnostic()
+        records = self.journal.records()
+        mutations = list(self.launchd.mutations)
+        self.assertEqual(self.run_recovery(apply=False),
+                         {"status": "ready-to-retain-and-restore", "caseID": self.key, "changed": False})
+        self.assertEqual(self.journal.records(), records)
+        self.assertEqual(self.launchd.mutations, mutations)
+        self.assertEqual(self.run_recovery()["status"], "restored")
+        records = self.journal.records()
+        self.assertEqual(records["guest-kernel.log"], b"important private setup diagnostic")
+        self.assertFalse(json.loads(records["guest-kernel-log.json"])["truncated"])
+        self.assertFalse(self.root.exists())
+        self.assertFalse(self.guard.path.exists())
+        self.assertEqual(self.store.begin(self.identity), self.result)
+
+    def test_interrupted_diagnostic_retention_resumes_before_any_service_mutation(self):
+        self.pending_diagnostic()
+        mutations = list(self.launchd.mutations)
+        put = ServiceJournal.put
+        def fail_metadata(journal, name, data):
+            if name == "guest-kernel-log.json":
+                raise OSError("interrupted snapshot receipt")
+            put(journal, name, data)
+        with patch.object(ServiceJournal, "put", new=fail_metadata), self.assertRaisesRegex(OSError, "snapshot receipt"):
+            self.run_recovery()
+        self.assertEqual(self.launchd.mutations, mutations)
+        self.assert_quarantined()
+        self.assertIn("guest-kernel.log", self.journal.records())
+        self.assertNotIn("guest-kernel-log.json", self.journal.records())
+        self.assertEqual(self.run_recovery()["status"], "restored")
+        self.assertEqual(self.store.begin(self.identity), self.result)
+
+    def test_missing_diagnostic_cannot_clear_guard_or_restore_services(self):
+        self.pending_diagnostic()
+        (self.root / "guest-kernel.log").unlink()
+        mutations = list(self.launchd.mutations)
+        for apply in (False, True):
+            with self.assertRaises(FileNotFoundError):
+                self.run_recovery(apply=apply)
+            self.assertEqual(self.launchd.mutations, mutations)
+            self.assert_quarantined()
+
     def test_recovery_accepts_internal_retained_executables(self):
         self.switch.restore()
         self.journal.path.unlink()

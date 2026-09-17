@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 import time
 
@@ -18,6 +20,21 @@ from release_inputs import sha256, validate_lock
 
 
 FIXTURES = {"E02-container-lifecycle", "E05-archive-copy"}
+PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
+
+
+def diagnostic_snapshot(path: Path) -> tuple[bytes, bytes]:
+    """Read a bounded, singly owned regular log; never follow a substituted path."""
+    if not path.is_absolute() or path.resolve() != path:
+        raise ValueError("Provisioning log path must be canonical")
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as incoming:
+        info = os.fstat(incoming.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+                info.st_nlink != 1 or info.st_mode & 0o022):
+            raise ValueError("Provisioning log must remain a singly owned regular file")
+        data = incoming.read(1024**2 + 1)
+    payload = data[:1024**2]
+    return payload, canonical({"bytes": len(payload), "sha256": digest(payload), "truncated": len(data) > len(payload)})
 
 
 def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path) -> dict:
@@ -68,12 +85,9 @@ class ReleasedGuest:
             stopped = json.loads(journal.records().get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
                 raise ValueError("Provisioning log is still live; retain its root for reconciliation")
-            with path.open("rb") as incoming:
-                data = incoming.read(1024**2 + 1)
-            snapshot = data[:1024**2]
-            journal.put(name + ".log", snapshot)
-            journal.put(name + "-log.json", canonical({"bytes": len(snapshot), "sha256": digest(snapshot),
-                        "truncated": len(data) > len(snapshot)}))
+            payload, metadata = diagnostic_snapshot(path)
+            journal.put(name + ".log", payload)
+            journal.put(name + "-log.json", metadata)
             del self.pending_logs[name]
 
     def command(self, name: str, arguments: list[str]):
@@ -144,21 +158,54 @@ class ReleasedGuest:
         return {"status": "passed", "remainingOwnedResources": []}
 
 
-def require_guest_cleanup(records: dict[str, bytes]) -> None:
+def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
     if "container-intent.json" in records:
         intent = json.loads(records["container-intent.json"])
         removed = json.loads(records.get("container-removed.json", b"null"))
         if removed != {"name": intent["name"], "absent": True}:
             raise ValueError("Guest resource needs explicit reconciliation before service recovery")
-    for name in ("guest-kernel", "guest-initialization", "guest-workload"):
+    steps = []
+    for name in PROVISION_STEPS:
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
                 raise ValueError("Guest provisioning process needs explicit reconciliation")
-            metadata = json.loads(records.get(name + "-log.json", b"null"))
-            payload = records.get(name + ".log")
-            if (not isinstance(metadata, dict) or payload is None or
-                    metadata != {"bytes": len(payload), "sha256": digest(payload),
-                                 "truncated": metadata.get("truncated")} or type(metadata.get("truncated")) is not bool):
-                raise ValueError("Guest provisioning diagnostics must be retained before recovery")
+            steps.append(name)
+    return steps
+
+
+def require_diagnostic(records: dict[str, bytes], name: str):
+    metadata = json.loads(records.get(name + "-log.json", b"null"))
+    payload = records.get(name + ".log")
+    if (not isinstance(metadata, dict) or payload is None or len(payload) > 1024**2 or
+            metadata != {"bytes": len(payload), "sha256": digest(payload), "truncated": metadata.get("truncated")} or
+            type(metadata.get("truncated")) is not bool):
+        raise ValueError("Guest provisioning diagnostics must be retained before recovery")
+
+
+def require_guest_cleanup(records: dict[str, bytes]) -> None:
+    for name in require_guest_resources_stopped(records):
+        require_diagnostic(records, name)
+
+
+def guest_diagnostic_plan(root: Path, records: dict[str, bytes]) -> dict[str, bytes]:
+    """Plan missing snapshots only after all recorded guest processes are stopped.
+
+    Report mode is read-only. The recovery caller has authenticated the case,
+    root, process absence and service registrations before committing this plan.
+    """
+    plan = {}
+    for name in require_guest_resources_stopped(records):
+        names = (name + ".log", name + "-log.json")
+        if all(key in records for key in names):
+            require_diagnostic(records, name)
+            continue
+        payload, metadata = diagnostic_snapshot(root / names[0])
+        for key, data in zip(names, (payload, metadata)):
+            if key in records:
+                if records[key] != data:
+                    raise ValueError("Partial provisioning diagnostic changed; refusing replacement")
+            else:
+                plan[key] = data
+    return plan

@@ -267,6 +267,23 @@ class ReleasedEngineTests(unittest.TestCase):
                 self.assertEqual(records["guest-kernel.log"], payload[:1024**2])
                 self.assertEqual(json.loads(records["guest-kernel-log.json"])["truncated"], oversized)
 
+    def test_oversized_engine_log_is_bounded_without_blocking_cleanup(self):
+        case = self.case()
+        with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), \
+                patch.object(case.child, "process") as process:
+            process.pid = 43
+            case.setup()
+        case.output.write(b"x" * (9 * 1024**2))
+        self.assertEqual(case.cleanup()["status"], "passed")
+        self.assertFalse(case.root.exists())
+        case.guard.check()
+        with self.store.connect() as database:
+            artifacts = dict(database.execute("SELECT name,bytes FROM artifacts"))
+        self.assertEqual(artifacts["engine.log"], b"x" * 1024**2)
+        self.assertEqual(json.loads(artifacts["engine-log.json"]), {
+            "bytes": 1024**2, "sha256": released_engine.digest(artifacts["engine.log"]), "truncated": True})
+        self.assertEqual(json.loads(artifacts["process-cleanup.json"]), {"verifiedStopped": True})
+
     def test_selected_runtime_is_started_then_restored_even_after_input_failure(self):
         case = self.case()
         runtime = Mock(service={"pid": 42})

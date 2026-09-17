@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from case_evidence import canonical
 import guest_runtime
-from guest_runtime import ReleasedGuest, admit_guest, require_guest_cleanup
+from guest_runtime import ReleasedGuest, admit_guest, diagnostic_snapshot, guest_diagnostic_plan, require_guest_cleanup
 from service_journal import ServiceJournal
 
 
@@ -197,3 +197,40 @@ class GuestRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             ReleasedGuest(self.inputs, "unknown", self.root, self.owner, self.runtime,
                           "/released/container", self.root / "socket")
+
+    def test_diagnostic_snapshot_refuses_alias_special_file_and_writable_log(self):
+        original = self.root / "log"
+        original.write_bytes(b"private diagnostic")
+        alias = self.root / "alias"
+        alias.symlink_to(original)
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            diagnostic_snapshot(alias)
+        alias.unlink()
+        os.link(original, alias)
+        with self.assertRaisesRegex(ValueError, "singly owned"):
+            diagnostic_snapshot(original)
+        alias.unlink()
+        original.chmod(0o666)
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            diagnostic_snapshot(original)
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            diagnostic_snapshot(fifo)
+
+    def test_diagnostic_plan_never_replaces_partial_or_invalid_complete_evidence(self):
+        records = {"guest-kernel-intent.json": b"{}",
+                   "guest-kernel-stopped.json": canonical({"verifiedStopped": True})}
+        path = self.root / "guest-kernel.log"
+        path.write_bytes(b"original")
+        before = dict(records)
+        plan = guest_diagnostic_plan(self.root, records)
+        self.assertEqual(records, before)
+        self.assertEqual(plan["guest-kernel.log"], b"original")
+        self.assertEqual(guest_diagnostic_plan(self.root, dict(records, **plan)), {})
+        records["guest-kernel.log"] = b"changed"
+        with self.assertRaisesRegex(ValueError, "Partial.*changed"):
+            guest_diagnostic_plan(self.root, records)
+        records["guest-kernel-log.json"] = b"{}"
+        with self.assertRaisesRegex(ValueError, "diagnostics must be retained"):
+            guest_diagnostic_plan(self.root, records)

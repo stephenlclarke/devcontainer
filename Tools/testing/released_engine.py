@@ -20,7 +20,7 @@ from case_evidence import CaseStore, canonical, digest, run_case, validate_ident
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
 from runtime_services import ControlledRuntime, require_owned_volume
-from guest_runtime import FIXTURES, ReleasedGuest, admit_guest
+from guest_runtime import FIXTURES, ReleasedGuest, admit_guest, diagnostic_snapshot
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
@@ -145,7 +145,9 @@ class ReleasedCase:
                 self.store.attach(self.identity, "process-cleanup.json", canonical({"verifiedStopped": stopped}))
                 self.store.attach(self.identity, "requests.json", canonical(self.requests))
                 if self.output is not None:
-                    self.store.attach(self.identity, "engine.log", (self.root / "engine.log").read_bytes())
+                    payload, metadata = diagnostic_snapshot(self.root / "engine.log")
+                    self.store.attach(self.identity, "engine.log", payload)
+                    self.store.attach(self.identity, "engine-log.json", metadata)
             if self.runtime is not None and self.runtime.service is not None:
                 self.runtime.verify()
             # Detect executable replacement before claiming successful cleanup.

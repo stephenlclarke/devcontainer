@@ -18,7 +18,7 @@ from runtime_services import (ControlledRuntime, capture_owned_processes, proces
                               require_captured_processes_stopped, require_idle, require_owned_volume)
 from service_journal import ServiceJournal
 from service_switch import Launchd, canonical_file
-from guest_runtime import require_guest_cleanup
+from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_resources_stopped
 
 
 def private_json(path: Path) -> dict:
@@ -131,7 +131,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     verify_case(retained, owner)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
-    require_guest_cleanup(records)
+    require_guest_resources_stopped(records)
     context = json.loads(records.get("runtime-context.json", b"null"))
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):
         raise ValueError("No recorded runtime context; manual journal reconciliation required")
@@ -148,6 +148,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     for original in switch.prior:
         switch.check_original(original)
     if not root.exists():
+        require_guest_cleanup(records)
         receipt = json.loads(records.get("recovery-cleanup-authorized.json", b"null"))
         if not isinstance(receipt, dict) or receipt.get("ownerSHA256") != digest(canonical(owner)) or "rootIdentity" not in receipt:
             raise ValueError("Missing root has no verified recovery cleanup receipt")
@@ -180,8 +181,13 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     recovery_idle(backend, switch.prior, root)
     runtime.require_original_processes_stopped(allow_registered=True)
     switch.owned_survivors({item["label"]: item for item in switch.prior})
+    diagnostics = guest_diagnostic_plan(root, journal.records())
     if not apply:
-        return {"status": "ready-to-restore", "caseID": key, "changed": False}
+        return {"status": "ready-to-retain-and-restore" if diagnostics else "ready-to-restore",
+                "caseID": key, "changed": False}
+    for name, data in diagnostics.items():
+        journal.put(name, data)
+    require_guest_cleanup(journal.records())
     restore_only(runtime)
     # Revalidate both markers before the only destructive operation. The saved
     # authorization permits resuming a crash after removal but before guard clear.
