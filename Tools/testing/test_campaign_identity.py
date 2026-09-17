@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from campaign_identity import PREPARATION_HELPERS, RELEASE_INPUTS, published_fingerprints
+from campaign_identity import PREPARATION_HELPERS, RELEASE_INPUTS, RUNTIME_HELPERS, published_fingerprints
 from case_evidence import canonical, compare_cases, digest
 
 
@@ -15,8 +15,8 @@ class CampaignIdentityTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "Tools/testing").mkdir(parents=True)
-        (self.root / "Tools/testing/probe.py").write_bytes(b"# fixture\n")
-        for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS]):
+        for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"{}\n")
@@ -42,8 +42,9 @@ class CampaignIdentityTests(unittest.TestCase):
             path.write_bytes(b'{"changed":true}\n')
             self.assertNotEqual(published_fingerprints(self.root)["releaseSetSHA256"], before["releaseSetSHA256"])
             path.write_bytes(b"{}\n")
-        for name in PREPARATION_HELPERS:
-            path = self.root / "Tools/bazel" / name
+        for name in (*["Tools/bazel/" + name for name in PREPARATION_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
+            path = self.root / name
             path.write_bytes(b"# changed\n")
             self.assertNotEqual(published_fingerprints(self.root)["harnessSHA256"], before["harnessSHA256"])
             path.write_bytes(b"{}\n")
@@ -53,6 +54,19 @@ class CampaignIdentityTests(unittest.TestCase):
         (self.root / RELEASE_INPUTS[1]).unlink()
         with self.assertRaises(FileNotFoundError):
             published_fingerprints(self.root)
+
+    def test_runfiles_and_resolved_workspace_have_identical_execution_closure(self):
+        runfiles = self.root / "runfiles"
+        for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
+            path = runfiles / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(self.root / name)
+        (self.root / "Tools/testing/test_extra.py").write_bytes(b"# not executed by the runtime\n")
+        self.assertEqual(published_fingerprints(self.root), published_fingerprints(runfiles))
+        (runfiles / "Tools/testing/docker_vm.py").unlink()
+        with self.assertRaises(FileNotFoundError):
+            published_fingerprints(runfiles)
 
 
 if __name__ == "__main__":
