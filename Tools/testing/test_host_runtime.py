@@ -88,7 +88,8 @@ class HostRuntimeTests(unittest.TestCase):
         original.chmod(0o666)
         with self.assertRaises(ValueError), runtime_lease(original):
             self.fail("writable lease entered")
-        with self.assertRaises(ValueError), runtime_lease(Path("relative.lock")):
+        relative = Path("relative.lock")
+        with self.assertRaises(ValueError), runtime_lease(relative):
             self.fail("relative lease entered")
 
     def test_whole_phase_deadline_interrupts_wait_and_restores_handler(self):
@@ -105,8 +106,9 @@ class HostRuntimeTests(unittest.TestCase):
 
     def test_sigterm_uses_cleanup_path_and_restores_handler(self):
         previous = signal.getsignal(signal.SIGTERM)
+        process_id = os.getpid()
         with self.assertRaises(KeyboardInterrupt), cancellation():
-            os.kill(os.getpid(), signal.SIGTERM)
+            os.kill(process_id, signal.SIGTERM)
         self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
 
     def child(self, code):

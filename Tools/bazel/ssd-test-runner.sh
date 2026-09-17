@@ -15,6 +15,7 @@ TEST_TMPDIR="$(cd "$TEST_TMPDIR" && pwd -P)"
     exit 2
 }
 export TEST_TMPDIR
+export BAZEL_TEST=1
 export TMPDIR="$TEST_TMPDIR" TMP="$TEST_TMPDIR" TEMP="$TEST_TMPDIR"
 export DEVCONTAINER_TEST_SCRATCH_ROOT=/Volumes/SSD/cf/bazel/
 if "$@"; then

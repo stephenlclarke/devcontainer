@@ -102,11 +102,19 @@ class ReleasedCase:
             return engine_negotiation(self.socket, observe=self.requests.append)
 
     def cleanup(self):
-        self.child.stop()
-        self.store.attach(self.identity, "requests.json", canonical(self.requests))
-        if self.output is not None:
-            self.output.close()
-            self.store.attach(self.identity, "engine.log", (self.root / "engine.log").read_bytes())
+        stopped = False
+        try:
+            self.child.stop()
+            stopped = True
+        finally:
+            # A failed stop still needs its diagnostics sealed before run_case
+            # completes. The log is only a snapshot if descendants survive.
+            if self.output is not None:
+                self.output.close()
+            self.store.attach(self.identity, "process-cleanup.json", canonical({"verifiedStopped": stopped}))
+            self.store.attach(self.identity, "requests.json", canonical(self.requests))
+            if self.output is not None:
+                self.store.attach(self.identity, "engine.log", (self.root / "engine.log").read_bytes())
         # Detect executable replacement during the case before claiming cleanup.
         if self.revalidate() != self.releases:
             raise ValueError("Released runtime inputs changed during execution")

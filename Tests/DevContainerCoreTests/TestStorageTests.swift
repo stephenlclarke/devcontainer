@@ -25,7 +25,9 @@ import Testing
     let alias = directory.appendingPathComponent("alias")
     try manager.createSymbolicLink(at: alias, withDestinationURL: directory)
     #expect(TestStorage.resolve(
-        environment: ["BAZEL_TEST": "1", "DEVCONTAINER_TEST_SCRATCH_ROOT": alias.path, "TEST_TMPDIR": alias.path + "/child"],
+        environment: [
+            "BAZEL_TEST": "1", "DEVCONTAINER_TEST_SCRATCH_ROOT": alias.path, "TEST_TMPDIR": alias.path + "/child"
+        ],
         fallback: ""
     ) == nil)
 }

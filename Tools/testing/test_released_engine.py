@@ -168,7 +168,12 @@ class ReleasedEngineTests(unittest.TestCase):
             case.setup()
         with self.assertRaisesRegex(RuntimeError, "uncertain"):
             case.cleanup()
-        case.output.close()
+        self.assertTrue(case.output.closed)
+        with self.store.connect() as database:
+            artifacts = dict(database.execute("SELECT name,bytes FROM artifacts"))
+        self.assertIn("engine.log", artifacts)
+        self.assertIn("requests.json", artifacts)
+        self.assertEqual(json.loads(artifacts["process-cleanup.json"]), {"verifiedStopped": False})
         with self.assertRaisesRegex(ValueError, "quarantined"):
             case.guard.check()
         self.assertTrue(case.root.is_dir())

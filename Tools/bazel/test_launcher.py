@@ -56,6 +56,15 @@ class LauncherTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
 
+    def test_test_wrapper_marks_wrapped_process_as_bazel_even_without_inherited_marker(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            result = subprocess.run(
+                ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")), "/usr/bin/printenv", "BAZEL_TEST"],
+                env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": directory}, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "1")
+
     def test_legacy_integration_entry_point_selects_manifest_opt_in(self) -> None:
         result = subprocess.run(["/usr/bin/make", "-n", "test-integration"], cwd=SCRIPT.parents[2],
                                 capture_output=True, text=True, check=False)
