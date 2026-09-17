@@ -25,16 +25,19 @@ class UnixHTTPConnection(http.client.HTTPConnection):
             raise
 
 
-def request(path: Path, method: str, route: str, body: bytes | None = None, timeout: float = 5) -> tuple[int, bytes]:
+def request(path: Path, method: str, route: str, body: bytes | None = None, timeout: float = 5,
+            *, content_type: str = "application/json", max_bytes: int = 65536) -> tuple[int, bytes]:
     """Bound response size; the enclosing Bazel case supplies its total deadline."""
+    if type(max_bytes) is not int or not 1 <= max_bytes <= 16 * 1024**2:
+        raise ValueError("Invalid Engine response limit")
     connection = UnixHTTPConnection(path, timeout)
     try:
-        headers = {"Content-Type": "application/json"} if body is not None else {}
+        headers = {"Content-Type": content_type} if body is not None else {}
         connection.request(method, route, body=body, headers=headers)
         response = connection.getresponse()
-        data = response.read(65537)
-        if len(data) > 65536:
-            raise ValueError("Engine negotiation response exceeds 64 KiB")
+        data = response.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError(f"Engine response exceeds {max_bytes / 1024:g} KiB")
         return response.status, data
     except socket.timeout as error:
         raise TimeoutError("Engine negotiation request timed out") from error
