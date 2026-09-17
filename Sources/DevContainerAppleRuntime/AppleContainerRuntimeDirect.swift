@@ -156,7 +156,7 @@ extension AppleContainerRuntime {
                 && metadata[$0.runtimeID.rawValue]?.imageID == nil
         }
         let images = requiresImageResolution
-            ? try await listImages(context: context)
+            ? try await resolvedImages(context: context)
             : []
 
         var snapshots: [DevContainerModel.ContainerSnapshot] = []
@@ -219,7 +219,7 @@ extension AppleContainerRuntime {
         if imageID == nil {
             imageID = try await Self.imageID(
                 for: observed.spec.image,
-                in: listImages(context: context)
+                in: resolvedImages(context: context)
             )
         }
         let snapshot = try await containerSnapshotWithMetadata(

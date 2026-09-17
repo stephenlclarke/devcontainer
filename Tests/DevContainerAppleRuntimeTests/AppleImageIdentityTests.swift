@@ -154,7 +154,7 @@ extension AppleContainerRuntimeTests {
     }
 }
 
-private func imageRecord(_ name: String) -> [String: Any] {
+func imageRecord(_ name: String) -> [String: Any] {
     [
         "id": String(repeating: "a", count: 64),
         "configuration": ["name": name, "descriptor": [

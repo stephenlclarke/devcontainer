@@ -329,7 +329,7 @@ public extension AppleContainerRuntime {
                 && metadata[$0.runtimeID.rawValue]?.imageID == nil
         }
         let images = requiresImageResolution
-            ? try await listImages(context: context)
+            ? try await resolvedImages(context: context)
             : []
         for observed in observed {
             let imageID = observed.imageID
@@ -352,17 +352,11 @@ public extension AppleContainerRuntime {
         return snapshots
     }
 
-    static func imageID(
+    internal static func imageID(
         for reference: String,
-        in images: [ImageSnapshot]
+        in images: [ResolvedAppleImage]
     ) -> String? {
-        images.first {
-            $0.id == reference
-                || imageDigest(reference) == $0.id
-                || $0.references.contains {
-                    equivalentImageReference($0, reference)
-                }
-        }?.id
+        images.first { $0.matches(reference) }?.snapshot.id
     }
 
     static func isInternalBuilderResource(_ snapshot: ContainerSnapshot) -> Bool {

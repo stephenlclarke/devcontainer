@@ -24,6 +24,23 @@ import Foundation
 import Testing
 
 struct AppleContainerRuntimeDirectTests {
+    @Test(arguments: ["a", "c"])
+    func `native digest references retain config IDs during list and inspection`(hex: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try fixture.setImageInventory([imageRecord("fixture:latest")])
+        let snapshot = nativeSnapshot(
+            id: "fixture", labels: [:], status: .running,
+            imageReference: "fixture@sha256:" + String(repeating: hex, count: 64)
+        )
+        let runtime = try directRuntime(fixture: fixture, inventory: FakeContainerInventory(snapshots: [snapshot]))
+        let context = RuntimeRequestContext()
+        let listed = try await runtime.listContainersDirect(all: true, labels: [:], context: context)
+        #expect(listed.first?.imageID == FakeAppleImageIdentityClient.digest)
+        let inspected = try await runtime.inspectContainerDirect(id: "fixture", context: context)
+        #expect(inspected?.imageID == FakeAppleImageIdentityClient.digest)
+    }
+
     @Test
     func `direct inventory filters state labels and internal builders`() async throws {
         let fixture = try FakeAppleCLI()
@@ -821,10 +838,11 @@ private func directRuntime(
 private func nativeSnapshot(
     id: String,
     labels: [String: String],
-    status: RuntimeStatus
+    status: RuntimeStatus,
+    imageReference: String = "fixture:latest"
 ) -> ContainerResource.ContainerSnapshot {
     let image = ImageDescription(
-        reference: "fixture:latest",
+        reference: imageReference,
         descriptor: .init(
             mediaType: "application/vnd.oci.image.manifest.v1+json",
             digest: "sha256:" + String(repeating: "a", count: 64),
