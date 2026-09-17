@@ -73,6 +73,7 @@ class ReleasedEngineTests(unittest.TestCase):
         guard = HostGuard(self.root / "admission.json")
         output = self.root / "case.xml"
         with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
+                patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}) as volume, \
                 patch("released_engine.admit", return_value=releases), patch("released_engine.version", return_value="fixture"), \
                 patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
                 patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
@@ -91,6 +92,9 @@ class ReleasedEngineTests(unittest.TestCase):
             case.cleanup.assert_called_once()
             revalidate = factory.call_args.args[4]
             self.assertEqual(revalidate(), releases)
+            volume.return_value = {"ownersEnabled": False}
+            with self.assertRaisesRegex(ValueError, "SSD ownership"):
+                revalidate()
             self.assertEqual(factory.call_count, 2)
         self.assertEqual(ET.parse(output).getroot().attrib["failures"], "0")
 

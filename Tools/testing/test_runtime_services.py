@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from runtime_services import (ControlledRuntime, ProcessSurvivors, authorised_roots, capture_owned_processes, process_inventory,
                               process_programs, require_idle, selected_definition, wait_stopped)
+from runtime_services import require_owned_volume
 from service_switch import API, BASE_SERVICES
 from test_service_switch import FakeLaunchd
 
@@ -88,6 +89,17 @@ class RuntimeServicesTests(unittest.TestCase):
         for owner in (self.owner, {"root": "/different"}):
             with self.assertRaisesRegex(ValueError, "separate internal"):
                 ControlledRuntime(self.owned, owner, self.executable, self.private)
+
+    def test_ssd_ownership_disabled_missing_or_wrong_volume_fail_before_services(self):
+        volume = Path("/Volumes/SSD")
+        valid = {"GlobalPermissionsEnabled": True, "MountPoint": str(volume), "Internal": False, "VolumeUUID": "fixture"}
+        with patch("runtime_services.subprocess.run") as command:
+            command.return_value.stdout = plistlib.dumps(valid)
+            self.assertEqual(require_owned_volume(volume), {"uuid": "fixture", "mount": str(volume), "ownersEnabled": True})
+            for change in ({"GlobalPermissionsEnabled": False}, {"MountPoint": "/different"}, {"Internal": True}, {"VolumeUUID": ""}):
+                command.return_value.stdout = plistlib.dumps(dict(valid, **change))
+                with self.assertRaises(ValueError):
+                    require_owned_volume(volume)
 
     def test_busy_worker_prevents_any_service_mutation(self):
         runtime = self.runtime()

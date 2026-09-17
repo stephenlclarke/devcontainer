@@ -22,6 +22,19 @@ class ProcessSurvivors(ValueError):
     """Expected asynchronous shutdown is incomplete, never a passing cleanup."""
 
 
+def require_owned_volume(volume: Path) -> dict:
+    """launchd rejects SSD plists when the volume ignores file ownership."""
+    result = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", str(volume)],
+                            check=True, capture_output=True, timeout=5, env={"PATH": "/usr/bin:/bin"})
+    info = plistlib.loads(result.stdout)
+    if info.get("GlobalPermissionsEnabled") is not True or info.get("MountPoint") != str(volume) or info.get("Internal") is not False:
+        raise ValueError("Released services require ownership enforcement on the enrolled external SSD")
+    uuid = info.get("VolumeUUID")
+    if not isinstance(uuid, str) or not uuid:
+        raise ValueError("SSD volume identity is unavailable")
+    return {"uuid": uuid, "mount": str(volume), "ownersEnabled": True}
+
+
 def wait_stopped(probe, seconds: float = 15):
     """Wait only for process/registration disappearance, not a failed case retry."""
     with deadline(seconds):

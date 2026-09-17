@@ -19,10 +19,11 @@ from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
-from runtime_services import ControlledRuntime
+from runtime_services import ControlledRuntime, require_owned_volume
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
+SSD_VOLUME = Path("/Volumes/SSD")
 RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
 FIXTURE = "E01-engine-negotiation"
 
@@ -167,6 +168,7 @@ def main():
             raise ValueError("Missing or symlinked enrolled storage")
     if SSD.stat().st_dev == RETAINED.stat().st_dev:
         raise ValueError("Scratch and retained evidence must use separate volumes")
+    volume = require_owned_volume(SSD_VOLUME)
     parent = SSD / "live"
     parent.mkdir(exist_ok=True)
     if parent.resolve() != parent:
@@ -178,6 +180,7 @@ def main():
         releases = admit(lock, args.lane, RETAINED, SSD)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
+                   "scratchVolume": volume,
                    "apiProgram": str(api_server), "serviceSelection": "released-private-root-v1",
                    "versions": [version(Path(releases[0]["executables"]["devcontainer"])),
                                 version(Path(releases[1]["executables"]["container"]))]}
@@ -187,6 +190,8 @@ def main():
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         def revalidate():
+            if require_owned_volume(SSD_VOLUME) != volume:
+                raise ValueError("SSD ownership or volume identity changed during execution")
             return admit(lock, args.lane, RETAINED, SSD)
 
         def runtime_factory(root, owner):
