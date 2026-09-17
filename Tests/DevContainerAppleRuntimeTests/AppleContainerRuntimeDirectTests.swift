@@ -52,7 +52,7 @@ struct AppleContainerRuntimeDirectTests {
             context: context
         )
         #expect(running.map(\.runtimeID.rawValue) == ["running"])
-        #expect(running.first?.imageID == "sha256:abc123")
+        #expect(running.first?.imageID == FakeAppleImageIdentityClient.digest)
 
         let all = try await runtime.listContainers(
             all: true,
@@ -84,7 +84,7 @@ struct AppleContainerRuntimeDirectTests {
             try await runtime.inspectContainerDirect(id: "fixture", context: context)
         )
         #expect(exact.dockerID.rawValue == "docker-fixture")
-        #expect(exact.imageID == "sha256:abc123")
+        #expect(exact.imageID == FakeAppleImageIdentityClient.digest)
         #expect(
             try await runtime.inspectContainerDirect(
                 id: "unrelated",
@@ -812,7 +812,8 @@ private func directRuntime(
             api: ContainerClient(),
             inventory: inventory,
             files: files,
-            networks: networks
+            networks: networks,
+            images: FakeAppleImageIdentityClient()
         )
     )
 }

@@ -239,6 +239,12 @@ project them into `com.docker.compose.*` labels and translate Docker label
 filters back to native discovery queries. A projected label never overwrites
 conflicting runtime data; conflict is a reconciliation error.
 
+### Image identity binding
+
+Docker image IDs are the SHA-256 digest of the original OCI configuration blob, not Apple's image-index identifier and not a hash of re-encoded JSON. The adapter resolves that digest from the selected platform manifest using the stock `ClientImage` API. Listings and inspection group tags sharing a configuration ID; `repository@digest` matching ignores tags but must still bind the canonical repository. The source correction is under Bazel validation; it is not yet published runtime evidence.
+
+Creation and image mutations must preserve that identity through the native operation. Do not translate a digest to a mutable tag and record the original digest as if the operation were pinned. Stock `ContainerClient.create` accepts a complete `ContainerConfiguration` containing the captured `ImageDescription`; the next required projection must preserve all supported spec fields, validate the resulting descriptor, and only then publish compatibility metadata. Its init-image lookup remains covered separately by isolated provider admission. Stock `ClientImage.tag(new:)` resolves a source reference, so it is not a descriptor-bound substitute. Config-ID deletion must account for every alias and Docker force/conflict semantics. These mutation contracts remain open. Until they are implemented, the draft correction explicitly rejects digest-addressed create/tag/delete before invoking the CLI: forwarding a config digest is also unsafe because stock CLI may parse it as a repository/tag and fetch different content. This refusal is a visible implementation gap, not accepted parity or a final solution.
+
 ## Provider selection
 
 Provider choice is explicit and recorded in a project lease:

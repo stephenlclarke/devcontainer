@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerAPIClient
 import ContainerResource
 import Darwin
 @testable import DevContainerAppleRuntime
@@ -830,7 +831,8 @@ struct FakeAppleCLI {
 
     func runtime(
         metadataStore: (any RuntimeMetadataStore)? = nil,
-        useDirectProcessAPI: Bool = false
+        useDirectProcessAPI: Bool = false,
+        images: any AppleImageIdentityClient = FakeAppleImageIdentityClient()
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
             executable: executable,
@@ -838,8 +840,17 @@ struct FakeAppleCLI {
             useDirectProcessAPI: useDirectProcessAPI,
             useDirectContainerAPI: false,
             metadataStore: metadataStore,
-            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true),
-            transferRoot: root.appendingPathComponent("transfers", isDirectory: true)
+            storageRoots: AppleContainerRuntime.StorageRoots(
+                volumes: root.appendingPathComponent("volumes", isDirectory: true),
+                transfers: root.appendingPathComponent("transfers", isDirectory: true)
+            ),
+            clients: AppleContainerRuntime.DirectClients(
+                api: ContainerClient(),
+                inventory: LiveAppleContainerInventoryClient(client: ContainerClient()),
+                files: LiveAppleContainerFileClient(client: ContainerClient()),
+                networks: AppleNetworkClientAdapter(),
+                images: images
+            )
         )
     }
 
@@ -855,10 +866,15 @@ struct FakeAppleCLI {
         try Data(value.utf8).write(to: modeURL)
     }
 
+    func setImageInventory(_ values: [[String: Any]]) throws {
+        try JSONSerialization.data(withJSONObject: values).write(to: root.appendingPathComponent("images.json"))
+    }
+
     private var script: String {
         let log = shellQuote(logURL.path)
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
+        let images = shellQuote(root.appendingPathComponent("images.json").path)
         let createHelp = enhancedCreateOptions
             ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
@@ -1010,10 +1026,19 @@ struct FakeAppleCLI {
             }]'
             ;;
           "image list")
+            if [ -f \(images) ]; then
+              cat \(images)
+              exit 0
+            fi
             printf '%s\\n' '[{
               "id":"abc123",
               "configuration":{
                 "name":"fixture:latest",
+                "descriptor":{
+                  "mediaType":"application/vnd.oci.image.index.v1+json",
+                  "digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size":123
+                },
                 "creationDate":"2026-07-26T12:34:56Z"
               },
               "variants":[

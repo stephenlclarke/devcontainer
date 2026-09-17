@@ -82,6 +82,8 @@ component's machine-readable version output.
 
 ## Current source dependency profiles
 
+The September 2026 Bazel requalification has found a specific gap with released devcontainer 1.0.1 and stock Apple Container 1.4.1: inspection by the original OCI configuration digest returns 404 before E02 creates its guest. The new read-only image-identity correction is a development candidate, not a release certification; descriptor-bound creation and alias-safe image mutations remain open. See the [retained attempt evidence](docs/bazel-test-harness.md#approved-helpers-and-first-stock-protocol-pass). Do not extend the historical 1.1.0 matrix above to this newer runtime combination.
+
 Current `main` builds two explicit dependency graphs. These are compile and
 hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
 runtime workflow did not produce complete lane evidence, so the release

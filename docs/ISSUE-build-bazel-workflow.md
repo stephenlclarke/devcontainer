@@ -8,6 +8,8 @@ The existing family workflow repeatedly rebuilds/retests work and couples recove
 
 Implement the complete native stock/enhanced product and test graph, version generation, real XCTest/Swift Testing discovery, meaningful coverage and unchanged-input cache reuse. Retain evidence before output reuse, reject mixed-source receipts and keep scratch on the enrolled SSD. Continue to artifact-only parity, recovery/publication, family adoption and ownership-based hygiene before replacing production workflows. Preserve existing release transactions and unrelated adapter work; native compilation alone is not the full migration.
 
+Final delivery includes stable GitHub/Homebrew releases for both projects, full unit/integration/parity validation of the published downloads, public quiet-host benchmark reports/raw evidence, and a final documentation phase producing both DocC sites and installation-first live VHS demos. The Compose demo must exercise the complete default monitoring stack, visibly showing empty, running, stopped and restarted states. See the [delivery contract](bazel-workflow.md#final-delivery-and-public-evidence) for provenance, storage and publication requirements.
+
 ## Resolution and remaining risk
 
 See [implementation status](bazel-workflow.md) and [PR 83](PR-83.md). The complete native graph, transactional evidence/candidate retention, archive restore, pinned GitHub binary acquisition and owned invocation cleanup are implemented. Host and quality qualification, complete artifact-only parity, durable release effects, family adoption, broader cleanup and CI cutover remain explicit gates.

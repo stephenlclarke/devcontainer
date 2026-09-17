@@ -77,6 +77,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let inventory: any AppleContainerInventoryClient
         let files: any AppleContainerFileClient
         let networks: any AppleNetworkClient
+        let images: any AppleImageIdentityClient
         let loggingRecords: any AppleContainerLoggingRecordClient
         let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
 
@@ -85,6 +86,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             inventory: any AppleContainerInventoryClient,
             files: any AppleContainerFileClient,
             networks: any AppleNetworkClient,
+            images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
             loggingRecords: (any AppleContainerLoggingRecordClient)? = nil,
             loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)? = nil
         ) {
@@ -92,6 +94,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             self.inventory = inventory
             self.files = files
             self.networks = networks
+            self.images = images
             self.loggingRecords = loggingRecords
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
             self.loggingHandoffClientOverride = loggingHandoffClientOverride
@@ -113,6 +116,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let fileClient: any AppleContainerFileClient
     let networkClient: any AppleNetworkClient
     let metadataStore: (any RuntimeMetadataStore)?
+    let imageIdentityClient: any AppleImageIdentityClient
     let managedVolumes: ManagedVolumeStore
     let transferRoot: URL
     let portForwarding = PortForwarding()
@@ -187,6 +191,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         inventoryClient = clients.inventory
         fileClient = clients.files
         networkClient = clients.networks
+        imageIdentityClient = clients.images
         self.metadataStore = metadataStore
         transferRoot = storageRoots.transfers ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
@@ -602,6 +607,7 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        try Self.requireNamedImageMutation(spec.image)
         var spec = spec
         let mutation = beginContainerLifecycleMutation(id: spec.name)
         var mutationIdentifiers: Set<String> = [spec.name]
@@ -1098,29 +1104,24 @@ public extension AppleContainerRuntime {
         ])
     }
 
-    func listImages(context _: RuntimeRequestContext) async throws -> [ImageSnapshot] {
-        let result = try await command(["image", "list", "--format", "json"])
-        try requireSuccess(result, operation: "image list")
-        return try parseJSONObjectArray(result.standardOutput).compactMap(imageSnapshot)
+    func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot] {
+        var snapshots: [ImageSnapshot] = []
+        for image in try await resolvedImages(context: context) {
+            if let index = snapshots.firstIndex(where: { $0.id == image.snapshot.id }) {
+                let references = snapshots[index].references + image.snapshot.references
+                snapshots[index].references = Array(Set(references)).sorted()
+            } else {
+                snapshots.append(image.snapshot)
+            }
+        }
+        return snapshots
     }
 
     func inspectImage(
         reference: String,
         context: RuntimeRequestContext
     ) async throws -> ImageSnapshot {
-        let images = try await listImages(context: context)
-        guard
-            let image = images.first(where: {
-                $0.id == reference
-                    || Self.imageDigest(reference) == $0.id
-                    || $0.references.contains(where: {
-                        Self.equivalentImageReference($0, reference)
-                    })
-            })
-        else {
-            throw DevContainerError(.notFound, message: "image \(reference) was not found")
-        }
-        return image
+        try await resolvedImage(reference: reference, context: context).snapshot
     }
 
     func pullImage(
@@ -1347,6 +1348,7 @@ public extension AppleContainerRuntime {
         target: String,
         context _: RuntimeRequestContext
     ) async throws {
+        try Self.requireNamedImageMutation(source)
         try await requireSuccess(
             command(["image", "tag", source, target]),
             operation: "image tag"
@@ -1358,6 +1360,7 @@ public extension AppleContainerRuntime {
         force: Bool,
         context _: RuntimeRequestContext
     ) async throws {
+        try Self.requireNamedImageMutation(reference)
         var arguments = ["image", "delete"]
         if force {
             arguments.append("--force")

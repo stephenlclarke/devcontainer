@@ -68,7 +68,7 @@ extension AppleContainerRuntimeTests {
         context: RuntimeRequestContext
     ) async throws {
         let image = try #require(try await runtime.listImages(context: context).first)
-        #expect(image.id == "sha256:abc123")
+        #expect(image.id == FakeAppleImageIdentityClient.digest)
         #expect(image.references == ["fixture:latest"])
         #expect(image.size == 12345)
         #expect(image.user == "vscode")
@@ -81,7 +81,7 @@ extension AppleContainerRuntimeTests {
         )
         #expect(
             try await runtime.inspectImage(
-                reference: "fixture:latest@sha256:abc123",
+                reference: "fixture:latest@sha256:" + String(repeating: "a", count: 64),
                 context: context
             ) == image
         )
