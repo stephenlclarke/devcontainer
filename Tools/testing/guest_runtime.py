@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import time
@@ -19,10 +20,27 @@ from prepare_releases import require_retained
 from release_inputs import sha256, validate_lock
 from exec_probe import exec_streams
 from network_volume_probe import NetworkVolumeFixture
+from engine_probe import request
 
 
 FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E05-archive-copy", "E06-network-volume"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
+GUEST_API_VERSION = "1.53"
+
+
+def require_guest_api(socket: Path) -> dict:
+    """Use the same claimed API contract in every lane, not the oracle maximum."""
+    status, payload = request(socket, "GET", "/version")
+    value = json.loads(payload)
+    if status != 200 or not isinstance(value, dict):
+        raise ValueError("Engine API range is unavailable")
+    versions = [value.get(key) for key in ("MinAPIVersion", "ApiVersion")]
+    if any(not isinstance(item, str) or re.fullmatch(r'1\.[0-9]{2}', item) is None for item in versions):
+        raise ValueError("Engine API range is malformed")
+    minimum, maximum = [tuple(map(int, item.split('.'))) for item in versions]
+    if not minimum <= tuple(map(int, GUEST_API_VERSION.split('.'))) <= maximum:
+        raise ValueError("Engine does not support the fixed guest API contract")
+    return {"requested": GUEST_API_VERSION, "minimum": versions[0], "maximum": versions[1]}
 
 
 def diagnostic_snapshot(path: Path) -> tuple[bytes, bytes]:
@@ -137,9 +155,10 @@ class ReleasedGuest:
 
     def operation(self):
         self.runtime.verify()
+        self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         if self.fixture == "E06-network-volume":
             self.guest = NetworkVolumeFixture(self.socket, digest(canonical(self.owner["identity"])),
-                                              self.inputs["workload"]["image"]["config"], "1.54", self.runtime.journal,
+                                              self.inputs["workload"]["image"]["config"], GUEST_API_VERSION, self.runtime.journal,
                                               self.root, observe=self.observe)
             with deadline(180):
                 return self.guest.operation()
@@ -147,7 +166,7 @@ class ReleasedGuest:
         if self.fixture == "E03-exec-streams":
             command = ("sleep", "600")
         self.guest = GuestFixture(self.socket, digest(canonical(self.owner["identity"])),
-                                  self.inputs["workload"]["image"]["config"], "1.54", self.runtime.journal,
+                                  self.inputs["workload"]["image"]["config"], GUEST_API_VERSION, self.runtime.journal,
                                   command=command, observe=self.observe)
         with deadline(360 if self.fixture == "E03-exec-streams" else 90):
             if self.fixture == "E02-container-lifecycle":

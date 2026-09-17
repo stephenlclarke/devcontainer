@@ -22,7 +22,7 @@ from case_evidence import CaseStore, canonical, digest, run_case, validate_ident
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
 from runtime_services import ControlledRuntime, require_owned_volume
-from guest_runtime import FIXTURES, ReleasedGuest, admit_guest, diagnostic_snapshot
+from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest, admit_guest, diagnostic_snapshot
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
@@ -242,6 +242,7 @@ def main():
                                 version(Path(releases[1]["executables"]["container"]))]}
         if guest_inputs is not None:
             runtime["guestInputs"] = guest_inputs
+            runtime["guestAPIVersion"] = GUEST_API_VERSION
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": args.lane,
                     "contractSHA256": digest(canonical(expected)), "harnessSHA256": digest(canonical(harness)),
                     "releaseSetSHA256": release_set_identity(lock, guest_locks, releases[0] if args.candidate_invocation else None),

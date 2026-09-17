@@ -30,6 +30,28 @@ class GuestRuntimeTests(unittest.TestCase):
                        "workload": {"path": "/retained/alpine.tar", "image": {"config": "sha256:" + "a" * 64}}}
         self.case = ReleasedGuest(self.inputs, "E05-archive-copy", self.root, self.owner,
                                    self.runtime, "/released/container", self.root / "socket")
+        request = patch('guest_runtime.request', return_value=(200, canonical({
+            'MinAPIVersion': '1.44', 'ApiVersion': '1.53'})))
+        self.request = request.start()
+        self.addCleanup(request.stop)
+
+    def test_fixed_guest_contract_accepts_stock_and_newer_oracle_without_changing_version(self):
+        for maximum in ('1.53', '1.54'):
+            self.request.return_value = (200, canonical({'MinAPIVersion': '1.44', 'ApiVersion': maximum}))
+            self.assertEqual(guest_runtime.require_guest_api(self.root / 'socket'),
+                             {'requested': '1.53', 'minimum': '1.44', 'maximum': maximum})
+
+    def test_invalid_or_incompatible_api_cannot_launch_guest(self):
+        for status, value in ((500, {}), (200, []), (200, {}),
+                              (200, {'MinAPIVersion': '1.54', 'ApiVersion': '1.54'}),
+                              (200, {'MinAPIVersion': '1.44', 'ApiVersion': '1.52'}),
+                              (200, {'MinAPIVersion': '1.60', 'ApiVersion': '1.44'}),
+                              (200, {'MinAPIVersion': '1.44', 'ApiVersion': True})):
+            self.request.return_value = (status, canonical(value))
+            with patch('guest_runtime.GuestFixture') as factory, self.assertRaises(ValueError):
+                self.case.operation()
+            factory.assert_not_called()
+        self.assertNotIn('guest-api.json', self.journal.records())
 
     def locks(self):
         directory = Path(__file__).parents[1] / "bazel"
@@ -136,6 +158,7 @@ class GuestRuntimeTests(unittest.TestCase):
                 observed = case.operation()
                 self.assertEqual(observed, {"archive": "ok"} if fixture == "E05-archive-copy" else {"lifecycle": "ok"})
                 self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
+                self.assertEqual(factory.call_args.args[3], '1.53')
                 self.assertEqual(case.cleanup(), guest.cleanup.return_value)
                 guest.cleanup.assert_called_once()
         self.assertEqual(self.case.cleanup()["status"], "passed")
