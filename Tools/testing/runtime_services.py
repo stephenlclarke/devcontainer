@@ -121,9 +121,7 @@ def selected_definition(root: Path, executable: Path) -> Path:
                    "CONTAINER_LOG_ROOT": str(logs)}
     definition = {"Label": API, "ProgramArguments": [str(executable), "start"],
                   "EnvironmentVariables": environment, "RunAtLoad": True,
-                  "LimitLoadToSessionType": ["Aqua", "Background", "System"], "MachServices": {API: True},
-                  "StandardOutPath": str(logs / "apiserver.stdout"),
-                  "StandardErrorPath": str(logs / "apiserver.stderr")}
+                  "LimitLoadToSessionType": ["Aqua", "Background", "System"], "MachServices": {API: True}}
     path = root / "selected-apiserver.plist"
     with path.open("xb") as output:
         output.write(plistlib.dumps(definition))
@@ -252,8 +250,11 @@ class ControlledRuntime:
         """Keep bounded service diagnostics privately; they may contain secrets."""
         if self.journal is None:
             return
-        for name in ("stdout", "stderr"):
-            path = self.root / "container-logs" / ("apiserver." + name)
+        # Stock SystemStart leaves stdio to launchd and supplies LogRoot for
+        # service-owned file logging. launchd cannot open SSD stdio here
+        # (EX_CONFIG), even when the selected process itself can use the disk.
+        for name in ("container-apiserver.log", "container-core-images.log", "container-machine-apiserver.log"):
+            path = self.root / "container-logs" / name
             if path.is_symlink() or path.parent.resolve() != path.parent:
                 raise ValueError("Selected API log path changed")
             if not path.exists():
@@ -263,4 +264,4 @@ class ControlledRuntime:
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
                     raise ValueError("Selected API log ownership changed")
                 stream.seek(max(0, info.st_size - 64 * 1024))
-                self.journal.put("service-" + name + "-snapshot.log", stream.read(64 * 1024))
+                self.journal.put("service-" + name, stream.read(64 * 1024))

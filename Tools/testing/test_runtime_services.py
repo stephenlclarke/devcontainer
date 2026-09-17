@@ -73,6 +73,8 @@ class RuntimeServicesTests(unittest.TestCase):
         value = plistlib.loads(path.read_bytes())
         self.assertEqual(value["ProgramArguments"], [str(self.executable), "start"])
         self.assertEqual(value["MachServices"], {API: True})
+        self.assertNotIn("StandardOutPath", value)
+        self.assertNotIn("StandardErrorPath", value)
         environment = value["EnvironmentVariables"]
         self.assertEqual(environment["CONTAINER_INSTALL_ROOT"], str(self.executable.parent.parent))
         for key in ("HOME", "TMPDIR", "TMP", "TEMP", "CONTAINER_APP_ROOT", "CONTAINER_LOG_ROOT"):
@@ -166,11 +168,11 @@ class RuntimeServicesTests(unittest.TestCase):
     def test_private_bounded_startup_diagnostics_survive_restoration(self):
         runtime = self.runtime()
         runtime.start()
-        path = self.owned / "container-logs/apiserver.stderr"
+        path = self.owned / "container-logs/container-apiserver.log"
         path.write_bytes(b"x" * (80 * 1024) + b"startup error fixture")
         runtime.restore()
         runtime.preserve_logs()
-        data = runtime.journal.records()["service-stderr-snapshot.log"]
+        data = runtime.journal.records()["service-container-apiserver.log"]
         self.assertEqual(len(data), 64 * 1024)
         self.assertTrue(data.endswith(b"startup error fixture"))
         self.assertNotIn("startup error fixture", str(runtime.receipt()))
