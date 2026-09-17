@@ -26,6 +26,9 @@ KERNEL_BYTES = 30423552
 def layout(asset: dict) -> dict:
     """Only reviewed release layouts are admitted; never guess a missing binary."""
     repository, name = asset["repository"], asset["name"]
+    if (repository, asset["tag"], name) == (
+            "ghcr.io/homebrew/core/docker", "29.6.2", "docker--29.6.2.arm64_tahoe.bottle.tar.gz"):
+        return {"format": "tar", "executables": {"docker": "docker/29.6.2/bin/docker"}}
     if repository == "local/devcontainer-candidate" and name == "candidate_archive.tar.gz":
         return {"format": "tar", "executables": {
             key: f"devcontainer-{asset['tag']}/bin/{key}"
