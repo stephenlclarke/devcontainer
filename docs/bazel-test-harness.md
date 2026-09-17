@@ -203,6 +203,14 @@ The focused enhanced coverage run `34da6376-005a-4c09-8c91-56bf71eb6879` passed 
 
 ## Upstream-first scenario reuse
 
+### Native-candidate follow-up evidence
+
+Candidate `cd32901cea7e93af040b4e3297b4a5197b753f5e` was built once (`44fff728-8aed-4008-a07b-031f6a6d8b3a`) and admitted from retained assets. Campaign `candidate-e02-descriptor-20260917a`, test invocation `aec37c4b-66b9-441f-a86b-413b1e3b104d`, timed out in engine setup after 24.976 seconds, before fixture operations. Cleanup passed in 1.084 seconds and restored the original services; recovery reported clear. The retained engine log reached provider selection but not socket readiness. A SecurityAgent appeared during startup; causation has not been established. This is a failed local candidate setup, not a benchmark or E02/parity pass. Further equivalent runtime attempts require a diagnosed startup change.
+
+The pending native-create journal introduced after that attempt is separately covered by focused stock/enhanced runtime/state tests. It preserves uncertain intent, checks final native identity, blocks archive/lifecycle bypass and rejects inventory adoption during creation. Its operator reconciliation interface and live interrupted-create proof are still required; these unit tests do not clear the startup blocker. See [native creation recovery](../DESIGN.md#native-creation-recovery).
+
+### Scenario sources
+
 The replacement should import version-pinned upstream scenarios and assertions wherever possible, rather than inventing an independent definition of Docker or Dev Containers behaviour. The 17 September inspection identified these concrete sources:
 
 | Source | Reuse boundary | Necessary adaptation |

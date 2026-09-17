@@ -247,6 +247,14 @@ Creation and image mutations must preserve that identity through the native oper
 
 Stock `ClientImage.tag(new:)` resolves a source reference, so it is not a descriptor-bound substitute. Config-ID deletion must account for every alias and Docker force/conflict semantics. Digest-addressed tag/delete still fail before CLI mutation. Digest creation is also refused if the direct API is explicitly disabled: forwarding a config digest is unsafe because stock CLI may parse it as a repository/tag and fetch different content. These remaining refusals are visible implementation gaps, not accepted parity or a final solution.
 
+### Native creation recovery
+
+The draft native path requires a durable `RuntimeCreationStore`; production supplies `SQLiteStateStore`. Before mount allocation and the native create RPC, it records a distinct operation UUID, native identifier, exact creation timestamp, selected configuration-image ID, requested spec and encoded native configuration. This is intent, not successful metadata. After creation, final typed inspection must match the captured identifier, descriptor, platform and timestamp. Only then does one database transaction publish compatibility metadata and remove the matching intent. Inventory adoption rejects pending intent in its own transaction, closing the concurrent reconciliation race.
+
+Failure, cancellation, verification mismatch or metadata failure retains the intent. Bridge start/restart/exec, rename and both archive-transfer directions reject the unresolved incarnation; read-only inspection remains available. A demonstrably different native incarnation is not quarantined, but never clears the earlier operation's evidence. Neither absence nor a name-based delete proves a timed-out RPC cannot still complete. No automatic rollback deletion is issued for failed native creation, because stock Apple provides no incarnation-conditional deletion. Explicit deletion retains unresolved intent as well. The separate CLI compatibility-create path is unchanged and is not covered by this native recovery guarantee.
+
+Schema 4 adds `runtime_container_creations` transactionally while preserving schema-2/3 metadata. `RuntimeCreationStore` implementations must reject ordinary metadata writes while an intent exists and atomically validate operation/spec/image/timestamp at completion. Its token-checked discard primitive is reserved for explicit reconciliation after proving the old writer cannot still create; a safe operator reconciliation interface and live crash/restart proof remain release blockers. Do not delete journal rows to make a test pass. For rollback to a schema-3 binary, restore the quiescent pre-upgrade database backup rather than lowering the schema number or dropping the journal.
+
 ## Provider selection
 
 Provider choice is explicit and recorded in a project lease:

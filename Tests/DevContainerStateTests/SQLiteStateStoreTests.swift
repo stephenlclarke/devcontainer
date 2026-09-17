@@ -23,6 +23,80 @@ import Testing
 
 @Suite(.serialized)
 struct SQLiteStateStoreTests {
+    private func creation() -> RuntimeContainerCreation {
+        RuntimeContainerCreation(
+            runtimeID: "pending", nativeCreatedAt: Date(timeIntervalSince1970: 123),
+            imageID: "sha256:fixture", spec: ContainerSpec(name: "pending", image: "fixture"),
+            nativeConfiguration: Data("native identity".utf8)
+        )
+    }
+
+    private func completed(_ creation: RuntimeContainerCreation) -> RuntimeContainerMetadata {
+        RuntimeContainerMetadata(
+            runtimeID: RuntimeID(rawValue: creation.runtimeID),
+            dockerID: DockerID(rawValue: String(repeating: "a", count: 64)),
+            imageID: creation.imageID, spec: creation.spec, createdAt: creation.nativeCreatedAt
+        )
+    }
+
+    @Test func `pending creation survives reopen and commits with metadata`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            try await store.beginContainerCreation(intent)
+            let reopened = try await SQLiteStateStore(path: store.path)
+            #expect(try await reopened.pendingContainerCreation(id: "pending") == intent)
+            #expect(try await reopened.containerMetadata(id: "pending") == nil)
+            await #expect(throws: DevContainerError.self) { try await reopened.beginContainerCreation(intent) }
+            try await reopened.finishContainerCreation(completed(intent), operationID: intent.operationID)
+            #expect(try await store.pendingContainerCreation(id: "pending") == nil)
+            #expect(try await store.containerMetadata(id: "pending") == completed(intent))
+        }
+    }
+
+    @Test func `failed creation completion rolls back metadata and preserves intent`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            try await store.beginContainerCreation(intent)
+            try await executeSQL(path: store.path, sql: """
+            CREATE TRIGGER fail_creation_commit BEFORE DELETE ON runtime_container_creations
+            BEGIN SELECT RAISE(ABORT, 'injected completion failure'); END;
+            """)
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(completed(intent), operationID: intent.operationID)
+            }
+            #expect(try await store.pendingContainerCreation(id: "pending") == intent)
+            #expect(try await store.containerMetadata(id: "pending") == nil)
+        }
+    }
+
+    @Test func `creation intent ownership and completion identity are enforced`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            try await store.beginContainerCreation(intent)
+            await #expect(throws: DevContainerError.self) {
+                try await store.discardContainerCreation(id: "pending", operationID: UUID())
+            }
+            var wrong = completed(intent)
+            wrong.imageID = "sha256:wrong"
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(wrong, operationID: intent.operationID)
+            }
+            wrong = completed(intent)
+            wrong.createdAt = wrong.createdAt.addingTimeInterval(1)
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(wrong, operationID: intent.operationID)
+            }
+            await #expect(throws: DevContainerError.self) {
+                try await store.recordContainerMetadata(completed(intent))
+            }
+            #expect(try await store.containerMetadata(id: "pending") == nil)
+            #expect(try await store.pendingContainerCreation(id: "pending") == intent)
+            try await store.discardContainerCreation(id: "pending", operationID: intent.operationID)
+            try await store.discardContainerCreation(id: "pending", operationID: intent.operationID)
+            #expect(try await store.pendingContainerCreation(id: "pending") == nil)
+        }
+    }
+
     @Test
     func `claims are durable and provider immutable`() async throws {
         try await withStore { store in
@@ -209,6 +283,25 @@ struct SQLiteStateStoreTests {
                 == SQLiteStateStore.schemaVersion
         )
         #expect(try tableColumns(path: path, table: "runtime_containers").contains("image_id"))
+    }
+
+    @Test
+    func `version three state adds creation journal without losing metadata`() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("state.sqlite")
+        let original = try SQLiteStateStore(path: path)
+        let intent = creation()
+        try await original.recordContainerMetadata(completed(intent))
+        try executeSQL(path: path, sql: """
+        DROP TABLE runtime_container_creations;
+        UPDATE schema_meta SET version = 3;
+        """)
+        let migrated = try SQLiteStateStore(path: path)
+        #expect(try scalar(path: path, sql: "SELECT version FROM schema_meta") == 4)
+        #expect(try await migrated.containerMetadata(id: "pending") == completed(intent))
+        try await migrated.beginContainerCreation(intent)
+        #expect(try await migrated.pendingContainerCreation(id: "pending") == intent)
     }
 
     @Test

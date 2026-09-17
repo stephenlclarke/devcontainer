@@ -1,5 +1,6 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
+import ContainerAPIClient
 import ContainerizationError
 import ContainerizationOCI
 import ContainerPersistence
@@ -15,13 +16,17 @@ struct AppleContainerCreateTests {
         "sha256:" + String(repeating: "a", count: 64)
     }
 
-    private actor Creator: AppleContainerCreateClient {
+    private actor Creator: AppleContainerCreateClient, AppleContainerInventoryClient {
         var prepared: [ContainerConfiguration] = []
         var created: [ContainerConfiguration] = []
         let failCreate: Bool
+        let failAfterCreate: Bool
+        let replacement: Bool
 
-        init(failCreate: Bool = false) {
+        init(failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false) {
             self.failCreate = failCreate
+            self.failAfterCreate = failAfterCreate
+            self.replacement = replacement
         }
 
         func prepare(
@@ -43,14 +48,226 @@ struct AppleContainerCreateTests {
                 throw ContainerizationError(.notFound, message: "Captured image content missing")
             }
             created.append(configuration)
+            if failAfterCreate {
+                throw DevContainerError(.providerProtocolMismatch, message: "Injected post-create verification failure")
+            }
         }
+
+        func list() -> [ContainerResource.ContainerSnapshot] {
+            created.map { .init(configuration: $0, status: .stopped, networks: []) }
+        }
+
+        func get(id _: String) throws -> ContainerResource.ContainerSnapshot {
+            guard var configuration = created.last else {
+                throw ContainerizationError(.notFound, message: "No fake native container")
+            }
+            if replacement {
+                configuration.creationDate = configuration.creationDate.addingTimeInterval(1)
+            }
+            return .init(configuration: configuration, status: .stopped, networks: [])
+        }
+    }
+
+    private struct Inventory: AppleContainerInventoryClient {
+        let snapshot: ContainerResource.ContainerSnapshot?
+        var unavailable = false
+        func list() -> [ContainerResource.ContainerSnapshot] {
+            snapshot.map { [$0] } ?? []
+        }
+
+        func get(id _: String) throws -> ContainerResource.ContainerSnapshot {
+            if unavailable {
+                throw DevContainerError(.runtimeUnavailable, message: "Injected transport failure")
+            }
+            guard let snapshot else { throw ContainerizationError(.notFound, message: "Absent fixture") }
+            return snapshot
+        }
+    }
+
+    @Test func `post-create verification failure retains intent and blocks launches`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator(failAfterCreate: true)
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let spec = ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"])
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        }
+        let created = try #require(await creator.created.first)
+        let intent = try #require(await store.pendingContainerCreation(id: "fixture"))
+        #expect(intent.nativeCreatedAt == created.creationDate)
+        let recorded = try JSONDecoder().decode(ContainerConfiguration.self, from: intent.nativeConfiguration)
+        #expect(recorded.image.digest == created.image.digest)
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        let restartedBridge = try fixture.runtime(
+            metadataStore: store, creator: Creator(),
+            inventory: Inventory(snapshot: .init(configuration: created, status: .stopped, networks: []))
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await restartedBridge.startContainer(id: "fixture", context: RuntimeRequestContext())
+        }
+        await #expect(throws: DevContainerError.self) {
+            try await restartedBridge.restartContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
+        }
+        let log = try fixture.log()
+        #expect(!log.contains("delete"))
+        #expect(!log.contains("start fixture"))
+        #expect(!log.contains("restart fixture"))
+        #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    @Test func `metadata completion failure preserves pending create without deletion`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore(failCreationCompletion: true)
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        await #expect(throws: MetadataTestError.self) {
+            try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"]
+                ),
+                context: RuntimeRequestContext()
+            )
+        }
+        #expect(await creator.created.count == 1)
+        #expect(await store.pendingContainerCreation(id: "fixture") != nil)
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        #expect(try !fixture.log().contains("delete"))
+    }
+
+    @Test func `replacement after create reply cannot complete the original operation`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator(replacement: true)
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(
+                spec: ContainerSpec(
+                    name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"]
+                ),
+                context: RuntimeRequestContext()
+            )
+        }
+        #expect(await creator.created.count == 1)
+        #expect(await store.pendingContainerCreation(id: "fixture") != nil)
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        #expect(try !fixture.log().contains("delete"))
+    }
+
+    @Test(arguments: ["created", "running"])
+    func `archive transfers and rename cannot bypass pending creation`(state: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try fixture.setState(state)
+        let store = TestMetadataStore()
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        let native = try configuration(spec)
+        let intent = try RuntimeContainerCreation(
+            runtimeID: "fixture", nativeCreatedAt: native.creationDate, imageID: digest,
+            spec: spec, nativeConfiguration: JSONEncoder().encode(native)
+        )
+        try await store.beginContainerCreation(intent)
+        let runtime = try fixture.runtime(
+            metadataStore: store,
+            inventory: Inventory(snapshot: .init(configuration: native, status: .stopped, networks: []))
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.copyArchiveFromContainer(id: "fixture", path: "/work", context: RuntimeRequestContext())
+        }
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.copyArchiveToContainer(
+                id: "fixture", path: "/work", archive: Data(repeating: 0, count: 1024), context: RuntimeRequestContext()
+            )
+        }
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.renameContainer(id: "fixture", name: "renamed", context: RuntimeRequestContext())
+        }
+        let log = try fixture.log()
+        #expect(!log.contains("start fixture"))
+        #expect(!log.contains("exec fixture"))
+        #expect(!log.contains("cp "))
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    @Test func `explicit removal retains unresolved creation evidence`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = TestMetadataStore()
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        let native = try configuration(spec)
+        let intent = try RuntimeContainerCreation(
+            runtimeID: "fixture", nativeCreatedAt: native.creationDate, imageID: digest,
+            spec: spec, nativeConfiguration: JSONEncoder().encode(native)
+        )
+        try await store.beginContainerCreation(intent)
+        let runtime = try fixture.runtime(metadataStore: store)
+        try await runtime.removeContainer(id: "fixture", force: true, context: RuntimeRequestContext())
+        #expect(try fixture.log().contains("delete --force fixture"))
+        #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    @Test func `native creation requires a creation journal before side effects`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let runtime = try fixture.runtime(metadataStore: FailingMetadataStore(), creator: creator)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(
+                spec: ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest),
+                context: RuntimeRequestContext()
+            )
+        }
+        #expect(await creator.prepared.isEmpty)
+        #expect(await creator.created.isEmpty)
+    }
+
+    @Test(arguments: ["absent", "replacement", "running", "unavailable", "wrong-id"])
+    func `reconciliation never deletes by mutable name`(mode: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = TestMetadataStore()
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        var native = try configuration(spec)
+        let intent = try RuntimeContainerCreation(
+            runtimeID: "fixture", nativeCreatedAt: native.creationDate, imageID: digest,
+            spec: spec, nativeConfiguration: JSONEncoder().encode(native)
+        )
+        try await store.beginContainerCreation(intent)
+        if mode == "replacement" {
+            native.creationDate = native.creationDate.addingTimeInterval(1)
+        }
+        if mode == "wrong-id" {
+            native.id = "foreign"
+        }
+        let inventory = Inventory(
+            snapshot: mode == "absent" ? nil : .init(configuration: native, status: .running, networks: []),
+            unavailable: mode == "unavailable"
+        )
+        let runtime = try fixture.runtime(metadataStore: store, inventory: inventory)
+        if mode == "replacement" {
+            try await runtime.requireCompletedCreation(id: "fixture")
+        } else {
+            await #expect(throws: DevContainerError.self) {
+                try await runtime.requireCompletedCreation(id: "fixture")
+            }
+        }
+        #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.requireCompletedCreation(id: "fixture", forCreate: true)
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.logURL.path))
     }
 
     @Test func `image id creation never forwards a mutable image tag to CLI`() async throws {
         let fixture = try FakeAppleCLI(distribution: "enhanced")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let creator = Creator()
-        let runtime = try fixture.runtime(creator: creator)
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
         let spec = ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"])
         let snapshot = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
         #expect(snapshot.imageID == FakeAppleImageIdentityClient.digest)
@@ -59,6 +276,34 @@ struct AppleContainerCreateTests {
         #expect(created.image.reference == "fixture:latest")
         #expect(created.initProcess.executable == "/bin/true")
         #expect(try !(fixture.log()).contains("create --name"))
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+        #expect(await store.containerMetadata(id: "fixture")?.imageID == FakeAppleImageIdentityClient.digest)
+        #expect(snapshot.dockerID.rawValue.count == 64)
+        let hexadecimalID = snapshot.dockerID.rawValue.allSatisfy(\.isHexDigit)
+        #expect(hexadecimalID)
+        let restarted = try fixture.runtime(metadataStore: store, creator: creator)
+        let listed = try await restarted.listContainersDirect(all: true, labels: [:], context: RuntimeRequestContext())
+        #expect(listed.first?.dockerID == snapshot.dockerID)
+        let inspected = try await restarted.inspectContainerDirect(
+            id: snapshot.dockerID.rawValue, context: RuntimeRequestContext()
+        )
+        #expect(inspected?.dockerID == snapshot.dockerID)
+    }
+
+    @Test func `native completion preserves supplied Docker identity`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let dockerID = String(repeating: "d", count: 64)
+        let spec = ContainerSpec(
+            name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"],
+            labels: [AppleContainerRuntime.dockerIDLabel: dockerID]
+        )
+        let snapshot = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        #expect(snapshot.dockerID.rawValue == dockerID)
+        #expect(await store.containerMetadata(id: "fixture")?.dockerID == snapshot.dockerID)
     }
 
     @Test func `invalid digest creation does not allocate volumes`() async throws {

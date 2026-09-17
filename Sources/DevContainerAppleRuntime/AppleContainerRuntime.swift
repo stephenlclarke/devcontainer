@@ -393,6 +393,13 @@ public extension AppleContainerRuntime {
         guard let metadataStore else {
             return snapshot
         }
+        if let store = metadataStore as? any RuntimeCreationStore,
+           try await store.pendingContainerCreation(id: snapshot.runtimeID.rawValue) != nil
+        {
+            // Observability is retained, but unverified creation cannot be
+            // promoted into successful metadata by ordinary reconciliation.
+            return snapshot
+        }
         if var metadata {
             if Self.sameContainerIncarnation(
                 metadataCreatedAt: metadata.createdAt,
@@ -521,7 +528,7 @@ public extension AppleContainerRuntime {
         containerMetadataAdoptionOperations.removeValue(forKey: id)
     }
 
-    private static func syntheticDockerIdentifier() -> String {
+    static func syntheticDockerIdentifier() -> String {
         let first = UUID().uuidString.replacingOccurrences(
             of: "-",
             with: ""
@@ -631,19 +638,17 @@ public extension AppleContainerRuntime {
         containerExits.removeValue(forKey: spec.name)
         let resolved = try await resolvedImage(reference: spec.image, context: context)
         let image = resolved.snapshot
+        let creation: RuntimeContainerCreation?
         do {
-            try await performContainerCreate(
+            creation = try await performContainerCreate(
                 spec: spec, image: resolved, optionSupport: optionSupport, context: context
             )
         } catch {
             throw directAPIError(error, operation: "container create")
         }
-        requestedContainers[spec.name] = RequestedContainer(
-            spec: spec,
-            imageID: image.id,
-            createdAt: nil
+        let snapshot = try await completeContainerCreation(
+            creation, spec: spec, imageID: image.id, context: context
         )
-        var snapshot = try await inspectContainer(id: spec.name, context: context)
         mutationIdentifiers.formUnion([
             snapshot.runtimeID.rawValue,
             snapshot.dockerID.rawValue
@@ -652,8 +657,6 @@ public extension AppleContainerRuntime {
             identifiers: mutationIdentifiers,
             registration: mutation
         )
-        snapshot.imageID = image.id
-        try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()
         return snapshot
     }
@@ -661,16 +664,24 @@ public extension AppleContainerRuntime {
     private func performContainerCreate(
         spec: ContainerSpec, image: ResolvedAppleImage,
         optionSupport: CreateOptionSupport, context: RuntimeRequestContext
-    ) async throws {
+    ) async throws -> RuntimeContainerCreation? {
         guard useDirectContainerAPI else {
             let result = try await command(containerCreateArguments(spec, optionSupport: optionSupport))
             try requireSuccess(result, operation: "container create")
-            return
+            return nil
         }
+        let store = try requireCreationStore()
+        try await requireCompletedCreation(id: spec.name, forCreate: true)
         // Validate flags before preparing mounts or creating native resources.
         _ = try containerConfigurationArguments(spec, optionSupport: optionSupport)
         try Self.validateNativeMounts(spec.mounts)
         let configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
+        let creation = try RuntimeContainerCreation(
+            runtimeID: configuration.id, nativeCreatedAt: configuration.creationDate,
+            imageID: image.snapshot.id, spec: spec,
+            nativeConfiguration: JSONEncoder().encode(configuration)
+        )
+        try await store.beginContainerCreation(creation)
         var mountOptions: [String] = []
         for mount in spec.mounts {
             mountOptions += try await mountArguments(mount)
@@ -678,6 +689,7 @@ public extension AppleContainerRuntime {
         try await containerCreateClient.create(
             configuration: configuration, mountOptions: mountOptions, context: context
         )
+        return creation
     }
 
     private func containerCreateArguments(
@@ -874,7 +886,7 @@ public extension AppleContainerRuntime {
             + (mount.readOnly ? ",readonly" : "")
     }
 
-    private func recordContainerMetadata(
+    func recordContainerMetadata(
         snapshot: ContainerSnapshot,
         spec: ContainerSpec
     ) async throws {
@@ -1072,6 +1084,7 @@ public extension AppleContainerRuntime {
         operation: () async throws -> T
     ) async throws -> T {
         let resolved = snapshot.runtimeID.rawValue
+        try await requireCompletedCreation(id: resolved)
         let needsTransientStart = snapshot.state != .running
         if needsTransientStart {
             try await requireSuccess(

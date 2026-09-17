@@ -833,21 +833,23 @@ struct FakeAppleCLI {
         metadataStore: (any RuntimeMetadataStore)? = nil,
         useDirectProcessAPI: Bool = false,
         images: any AppleImageIdentityClient = FakeAppleImageIdentityClient(),
-        creator: (any AppleContainerCreateClient)? = nil
+        creator: (any AppleContainerCreateClient)? = nil,
+        inventory: (any AppleContainerInventoryClient)? = nil
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
             useDirectContainerAPI: creator != nil,
-            metadataStore: metadataStore,
+            metadataStore: metadataStore ?? (creator == nil ? nil : TestMetadataStore()),
             storageRoots: AppleContainerRuntime.StorageRoots(
                 volumes: root.appendingPathComponent("volumes", isDirectory: true),
                 transfers: root.appendingPathComponent("transfers", isDirectory: true)
             ),
             clients: AppleContainerRuntime.DirectClients(
                 api: ContainerClient(),
-                inventory: LiveAppleContainerInventoryClient(client: ContainerClient()),
+                inventory: inventory ?? (creator as? any AppleContainerInventoryClient)
+                    ?? LiveAppleContainerInventoryClient(client: ContainerClient()),
                 files: LiveAppleContainerFileClient(client: ContainerClient()),
                 networks: AppleNetworkClientAdapter(),
                 images: images,

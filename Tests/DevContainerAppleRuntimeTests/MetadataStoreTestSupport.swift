@@ -18,15 +18,41 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-actor TestMetadataStore: RuntimeMetadataStore {
+actor TestMetadataStore: RuntimeCreationStore {
     private let recordDelay: Duration?
     private var values: [String: RuntimeContainerMetadata] = [:]
     private var listCount = 0
     private var lookupCount = 0
     private var records = 0
+    private var creations: [String: RuntimeContainerCreation] = [:]
+    private let failCreationCompletion: Bool
 
-    init(recordDelay: Duration? = nil) {
+    init(recordDelay: Duration? = nil, failCreationCompletion: Bool = false) {
         self.recordDelay = recordDelay
+        self.failCreationCompletion = failCreationCompletion
+    }
+
+    func beginContainerCreation(_ creation: RuntimeContainerCreation) throws {
+        guard creations[creation.runtimeID] == nil else { throw MetadataTestError.writeFailed }
+        creations[creation.runtimeID] = creation
+    }
+
+    func pendingContainerCreation(id: String) -> RuntimeContainerCreation? {
+        creations[id]
+    }
+
+    func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
+        guard !failCreationCompletion, creations[metadata.runtimeID.rawValue]?.operationID == operationID else {
+            throw MetadataTestError.writeFailed
+        }
+        records += 1
+        values[metadata.runtimeID.rawValue] = metadata
+        creations[metadata.runtimeID.rawValue] = nil
+    }
+
+    func discardContainerCreation(id: String, operationID: UUID) throws {
+        guard creations[id]?.operationID == operationID else { throw MetadataTestError.writeFailed }
+        creations[id] = nil
     }
 
     func recordContainerMetadata(

@@ -84,6 +84,8 @@ component's machine-readable version output.
 
 The September 2026 Bazel requalification has found a specific gap with released devcontainer 1.0.1 and stock Apple Container 1.4.1: inspection by the original OCI configuration digest returns 404 before E02 creates its guest. Configuration-digest lookup and descriptor-bound native creation are implemented in the development branch with focused tests, not release certification. Live SDK transport, alias-safe image mutations and the complete parity cycle remain open. See the [retained attempt evidence](docs/bazel-test-harness.md#approved-helpers-and-first-stock-protocol-pass). Do not extend the historical 1.1.0 matrix above to this newer runtime combination.
 
+Draft creation recovery uses schema 4 and requires `RuntimeCreationStore` for direct native creation. It retains uncertain operations and blocks launch/exec/archive/rename of the affected incarnation without unsafe automatic deletion. Schema-2/3 migration is supported; schema-3 binaries cannot open the upgraded state. Operator reconciliation and live interrupted-create proof are still outstanding, so this is not a completed recovery/parity claim. [Native creation recovery](DESIGN.md#native-creation-recovery) specifies the exact scope and rollback rule.
+
 Current `main` builds two explicit dependency graphs. These are compile and
 hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
 runtime workflow did not produce complete lane evidence, so the release

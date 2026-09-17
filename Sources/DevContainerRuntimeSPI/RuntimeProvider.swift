@@ -66,6 +66,41 @@ public protocol RuntimeMetadataStore: Sendable {
     func removeContainerMetadata(id: String) async throws
 }
 
+/// Write-ahead identity for a native create whose acknowledgement may be lost.
+/// This is not successful container metadata and must survive provider restart.
+public struct RuntimeContainerCreation: Codable, Equatable, Sendable {
+    public let operationID: UUID
+    public let runtimeID: String
+    public let nativeCreatedAt: Date
+    public let imageID: String
+    public let spec: ContainerSpec
+    public let nativeConfiguration: Data
+
+    public init(
+        operationID: UUID = UUID(), runtimeID: String, nativeCreatedAt: Date,
+        imageID: String, spec: ContainerSpec, nativeConfiguration: Data
+    ) {
+        self.operationID = operationID
+        self.runtimeID = runtimeID
+        self.nativeCreatedAt = nativeCreatedAt
+        self.imageID = imageID
+        self.spec = spec
+        self.nativeConfiguration = nativeConfiguration
+    }
+}
+
+/// Implementations must durably persist intent before returning and atomically
+/// publish metadata with intent removal. In-memory stores are for tests only.
+/// Ordinary metadata writes must reject a pending creation in the same storage
+/// transaction. Discard is an explicit reconciliation primitive, not permission
+/// to clear intent merely because name-based deletion or lookup succeeded.
+public protocol RuntimeCreationStore: RuntimeMetadataStore {
+    func beginContainerCreation(_ creation: RuntimeContainerCreation) async throws
+    func pendingContainerCreation(id: String) async throws -> RuntimeContainerCreation?
+    func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) async throws
+    func discardContainerCreation(id: String, operationID: UUID) async throws
+}
+
 public protocol ImageRuntime: Sendable {
     func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot]
     func inspectImage(reference: String, context: RuntimeRequestContext) async throws -> ImageSnapshot
