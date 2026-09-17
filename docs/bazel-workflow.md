@@ -114,6 +114,8 @@ References: [rules_swift](https://github.com/bazelbuild/rules_swift), [Bazel cac
 
 ## Remaining migration gates
 
+Runner provisioning was approved on 17 September 2026. The dedicated trusted lane is being introduced through private `stephenlclarke/container-build` PR 1. Public fork workflows cannot select that private registration; reviewed source pins and owner-only manual dispatch are required. This does not yet replace the public protected checks or claim OS-account isolation.
+
 1. Qualify uncached host integration, manifest/graph drift checks and immutable release input snapshots; propagate shared native rules to the other family repositories.
 2. Meet native coverage acceptance against the actual maintained scope, full sanitizers/leak harnesses, and current Sonar reporting.
 3. Complete the runtime closure, reference-bundle distribution and artifact-only adapters around the verified GitHub acquisition path. Reference products must not be rebuilt. Keep real runtime tests and fresh quiet-host benchmarks outside stale test-cache reuse.

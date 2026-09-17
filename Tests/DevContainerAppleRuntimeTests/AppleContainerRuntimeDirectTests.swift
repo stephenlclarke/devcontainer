@@ -804,14 +804,16 @@ private func directRuntime(
         useDirectProcessAPI: false,
         useDirectContainerAPI: true,
         metadataStore: nil,
-        volumeRoot: fixture.root.appendingPathComponent("volumes"),
+        storageRoots: AppleContainerRuntime.StorageRoots(
+            volumes: fixture.root.appendingPathComponent("volumes"),
+            transfers: fixture.root.appendingPathComponent("transfers")
+        ),
         clients: AppleContainerRuntime.DirectClients(
             api: ContainerClient(),
             inventory: inventory,
             files: files,
             networks: networks
-        ),
-        transferRoot: fixture.root.appendingPathComponent("transfers")
+        )
     )
 }
 

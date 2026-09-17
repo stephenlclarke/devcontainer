@@ -494,7 +494,10 @@ private final class HandoffRuntimeFixture {
             useDirectProcessAPI: false,
             useDirectContainerAPI: false,
             metadataStore: nil,
-            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true),
+            storageRoots: AppleContainerRuntime.StorageRoots(
+                volumes: root.appendingPathComponent("volumes", isDirectory: true),
+                transfers: root.appendingPathComponent("transfers", isDirectory: true)
+            ),
             clients: AppleContainerRuntime.DirectClients(
                 api: ContainerClient(),
                 inventory: EmptyInventoryClient(),

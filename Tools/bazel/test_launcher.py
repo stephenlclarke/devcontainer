@@ -25,6 +25,19 @@ def invoke(function: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class LauncherTests(unittest.TestCase):
+    def test_test_wrapper_declares_only_validated_ssd_scratch(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            for temporary, status in [(directory, 0), ("/tmp", 2)]:
+                result = subprocess.run(
+                    ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")),
+                     "/usr/bin/printenv", "DEVCONTAINER_TEST_SCRATCH_ROOT"],
+                    env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": temporary},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, status)
+                if status == 0:
+                    self.assertEqual(result.stdout.strip(), "/Volumes/SSD/cf/bazel/")
+
     def test_real_argument_assembly_handles_empty_arrays_on_system_bash(self) -> None:
         for command, targets in [("query", ["//:product"]), ("info", []), ("coverage", ["//:unit", "--config=stock"])]:
             with self.subTest(command=command):

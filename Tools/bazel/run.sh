@@ -193,6 +193,7 @@ verify_digest() {
 main() {
     local command="${1:---help}" repo config_root config metadata expected actual mount internal
     local executable partial invocation bazel_args=() pinned_version part profile workspace_key
+    local first_argument second_argument
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
@@ -202,6 +203,8 @@ main() {
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
     validate_arguments "$@" || return
     profile="$(runtime_profile "$@")" || return
+    first_argument="${1:-}"
+    second_argument="${2:-}"
     repo="$(cd "$(dirname "$SELF_PATH")/../.." && pwd -P)"
     read -r pinned_version < "$repo/.bazelversion"
     [[ "$pinned_version" == "$BAZEL_VERSION" ]] || { error 'Bazel version and verified bootstrap checksum disagree.'; return 2; }
@@ -242,19 +245,19 @@ main() {
         return
     fi
     if [[ "$command" == acquire-releases ]]; then
-        [[ $# == 1 || ( $# == 2 && "$2" == --offline ) ]] || { error 'acquire-releases requires LOCK [--offline].'; return 2; }
+        [[ $# == 1 || ( $# == 2 && "$second_argument" == --offline ) ]] || { error 'acquire-releases requires LOCK [--offline].'; return 2; }
         clean_environment /usr/bin/lockf -k -t 300 "$SSD_ROOT/locks/reference-store.lock" \
             /usr/bin/python3 "$repo/Tools/bazel/release_inputs.py" "$@"
         return
     fi
     if [[ "$command" == restore-candidate ]]; then
         [[ $# == 1 ]] || { error 'restore-candidate requires one retained invocation ID.'; return 2; }
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" --restore-candidate "$1"
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/retain_evidence.py" --restore-candidate "$first_argument"
         return
     fi
     if [[ "$command" == coverage-report ]]; then
         [[ $# == 1 ]] || { error 'coverage-report requires one retained invocation ID.'; return 2; }
-        clean_environment /usr/bin/python3 "$repo/Tools/bazel/coverage_report.py" "$1"
+        clean_environment /usr/bin/python3 "$repo/Tools/bazel/coverage_report.py" "$first_argument"
         return
     fi
     if [[ "$command" == test-tools ]]; then

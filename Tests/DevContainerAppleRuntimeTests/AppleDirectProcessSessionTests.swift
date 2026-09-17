@@ -34,13 +34,12 @@ struct AppleDirectProcessSessionTests {
         #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
         #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
 
-        Darwin.close(copiedDescriptor)
         let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
-        #expect(nullDescriptor >= 0)
-        if nullDescriptor != copiedDescriptor {
-            #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
-            Darwin.close(nullDescriptor)
-        }
+        try #require(nullDescriptor >= 0)
+        // Atomically replace the still-owned descriptor: closing it first lets
+        // another concurrent test claim that number before dup2 overwrites it.
+        #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
+        Darwin.close(nullDescriptor)
 
         copies = nil
         #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
@@ -51,16 +50,10 @@ struct AppleDirectProcessSessionTests {
     @Test
     func `XPC transfer closes earlier copies when a later descriptor is invalid`() throws {
         let valid = Pipe()
-        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
-        #expect(nullDescriptor >= 0)
-        let invalidDescriptor = fcntl(nullDescriptor, F_DUPFD_CLOEXEC, 1024)
-        #expect(invalidDescriptor >= 0)
-        Darwin.close(nullDescriptor)
         let invalid = FileHandle(
-            fileDescriptor: invalidDescriptor,
+            fileDescriptor: Int32.max,
             closeOnDealloc: false
         )
-        Darwin.close(invalidDescriptor)
 
         #expect(throws: POSIXError.self) {
             _ = try AppleXPCFileHandleTransfer.copies(

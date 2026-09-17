@@ -67,6 +67,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let temporary: TemporaryDirectory?
     }
 
+    struct StorageRoots {
+        let volumes: URL?
+        let transfers: URL?
+    }
+
     struct DirectClients {
         let api: ContainerClient
         let inventory: any AppleContainerInventoryClient
@@ -146,14 +151,13 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             useDirectProcessAPI: useDirectProcessAPI,
             useDirectContainerAPI: useDirectContainerAPI,
             metadataStore: metadataStore,
-            volumeRoot: volumeRoot,
+            storageRoots: StorageRoots(volumes: volumeRoot, transfers: transferRoot),
             clients: DirectClients(
                 api: apiClient,
                 inventory: LiveAppleContainerInventoryClient(client: apiClient),
                 files: LiveAppleContainerFileClient(client: apiClient),
                 networks: AppleNetworkClientAdapter()
-            ),
-            transferRoot: transferRoot
+            )
         )
     }
 
@@ -163,9 +167,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectProcessAPI: Bool,
         useDirectContainerAPI: Bool,
         metadataStore: (any RuntimeMetadataStore)?,
-        volumeRoot: URL?,
-        clients: DirectClients,
-        transferRoot: URL? = nil
+        storageRoots: StorageRoots,
+        clients: DirectClients
     ) throws {
         let resolved = executable.standardizedFileURL
         guard resolved.isFileURL, FileManager.default.isExecutableFile(atPath: resolved.path) else {
@@ -185,9 +188,9 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         fileClient = clients.files
         networkClient = clients.networks
         self.metadataStore = metadataStore
-        self.transferRoot = transferRoot ?? Self.transferDirectory
+        transferRoot = storageRoots.transfers ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
-            root: volumeRoot ?? Self.defaultVolumeRoot
+            root: storageRoots.volumes ?? Self.defaultVolumeRoot
         )
     }
 }
