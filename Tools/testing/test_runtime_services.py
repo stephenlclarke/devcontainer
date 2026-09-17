@@ -232,9 +232,29 @@ class RuntimeServicesTests(unittest.TestCase):
         row = {"pid": 10, "parent": 1, "group": 10, "started": "original", "program": "/bin/bash", "labels": [label]}
         runtime.original_processes = [row]
         self.inventory.return_value = {10: row}
-        runtime.require_original_processes_stopped(allow_registered=True)
+        with patch.object(self.launchd, "process_id", return_value=10):
+            runtime.require_original_processes_stopped(allow_registered=True)
         self.launchd.jobs.pop(label)
         with self.assertRaisesRegex(ValueError, "owned original"):
+            runtime.require_original_processes_stopped(allow_registered=True)
+
+    def test_restored_definition_does_not_exempt_stale_root_or_detached_descendant(self):
+        runtime = self.runtime()
+        runtime.start()
+        runtime.restore()
+        label = "com.stephenlclarke.container-family-ci"
+        original = {"pid": 10, "parent": 1, "group": 10, "started": "original", "program": "/original/api", "labels": [label]}
+        child = dict(original, pid=11, started="child")
+        replacement = dict(original, pid=20, started="replacement")
+        self.inventory.return_value = {10: original, 11: child, 20: replacement}
+        with patch.object(self.launchd, "process_id", return_value=20):
+            for survivor in (original, child):
+                runtime.original_processes = [survivor]
+                with self.subTest(pid=survivor["pid"]), self.assertRaisesRegex(ProcessSurvivors, "original service"):
+                    runtime.require_original_processes_stopped(allow_registered=True)
+            # A captured descendant that really belongs to the current tree is allowed.
+            self.inventory.return_value[11] = dict(child, parent=20)
+            runtime.original_processes = [child]
             runtime.require_original_processes_stopped(allow_registered=True)
 
     def test_asynchronous_process_shutdown_waits_but_never_retries_other_failures(self):

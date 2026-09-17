@@ -217,7 +217,7 @@ class RecoveryTests(unittest.TestCase):
                 recovery_idle(self.launchd, self.switch.prior, self.root)
 
     def test_captured_survivor_blocks_report_and_apply_before_service_mutation(self):
-        row = {"pid": 42, "started": "captured", "program": "/original/container-apiserver", "labels": [API]}
+        row = {"pid": 42, "parent": 1, "group": 42, "started": "captured", "program": "/original/container-apiserver", "labels": [API]}
         records = self.journal.records()
         records["original-processes.plist"] = plistlib.dumps([row])
         self.journal.path.unlink()
@@ -235,8 +235,26 @@ class RecoveryTests(unittest.TestCase):
         # The same recorded process is allowed when its original registration
         # has actually been restored, not merely because its PID was captured.
         self.switch.restore()
-        with patch("runtime_services.process_inventory", return_value={42: row}):
+        with patch("runtime_services.process_inventory", return_value={42: row}), \
+                patch.object(self.launchd, "process_id", return_value=42):
             self.assertEqual(self.run_recovery(apply=False)["status"], "ready-to-restore")
+        replacement = dict(row, pid=43, started="replacement")
+        self.inventory.return_value = {42: row, 43: replacement}
+        with patch("runtime_services.process_inventory", return_value=self.inventory.return_value), \
+                patch.object(self.launchd, "process_id", return_value=43):
+            before = list(self.launchd.mutations)
+            for apply in (False, True):
+                with self.subTest(replaced=True, apply=apply), self.assertRaisesRegex(ValueError, "original service"):
+                    self.run_recovery(apply=apply)
+                self.assertEqual(self.launchd.mutations, before)
+            # A crash after verified root removal must recheck closure too.
+            self.journal.put("recovery-cleanup-authorized.json", cleanup_receipt(self.owner, self.root))
+            shutil.rmtree(self.root)
+            for apply in (False, True):
+                with self.subTest(root_removed=True, apply=apply), self.assertRaisesRegex(ValueError, "original service"):
+                    self.run_recovery(apply=apply)
+                self.assertTrue(self.guard.path.exists())
+                self.assertEqual(self.launchd.mutations, before)
 
     def test_unregistered_or_identity_changed_runner_listener_blocks_recovery(self):
         row = {"pid": 42, "started": "listener", "program": "/runner/Runner.Listener"}

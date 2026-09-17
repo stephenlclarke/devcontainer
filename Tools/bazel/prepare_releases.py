@@ -138,7 +138,7 @@ def retain_receipt(path: Path, receipt: dict) -> None:
     else:
         with tempfile.TemporaryDirectory(dir=path.parent, prefix="prepare-receipt-") as temporary:
             staged = Path(temporary) / "receipt"
-            with staged.open("x") as output:
+            with os.fdopen(os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
                 output.write(canonical(receipt))
                 output.flush()
                 os.fsync(output.fileno())

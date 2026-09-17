@@ -14,7 +14,8 @@ import stat
 
 from case_evidence import CaseStore, canonical, digest, validate_identity
 from host_runtime import HostGuard, runtime_lease
-from runtime_services import ControlledRuntime, capture_owned_processes, process_inventory, require_idle, require_owned_volume
+from runtime_services import (ControlledRuntime, capture_owned_processes, process_inventory,
+                              require_captured_processes_stopped, require_idle, require_owned_volume)
 from service_journal import ServiceJournal
 from service_switch import Launchd, canonical_file
 
@@ -139,6 +140,9 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
         raise ValueError("Recorded API executable is outside prepared releases or unavailable")
     backend = launchd or Launchd()
     switch = journal.recover_switch(backend, root)
+    original_processes = plistlib.loads(records["original-processes.plist"])
+    if not isinstance(original_processes, list):
+        raise ValueError("Invalid original process record")
     for original in switch.prior:
         switch.check_original(original)
     if not root.exists():
@@ -151,6 +155,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
                 for item in switch.prior):
             raise ValueError("Original services changed after recovery cleanup")
         recovery_idle(backend, switch.prior, root)
+        require_captured_processes_stopped(backend, switch.prior, original_processes, allow_registered=True)
         if any(Path(item["program"]).is_relative_to(executable.parent.parent) for item in process_inventory().values()):
             raise ValueError("Selected runtime process survived recovery cleanup")
         if apply:
@@ -169,9 +174,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
         raise ValueError("Recovery directory identity changed")
     runtime = ControlledRuntime(root, owner, executable, journal.path.parent, launchd=backend)
     runtime.journal, runtime.switch = journal, switch
-    runtime.original_processes = plistlib.loads(records["original-processes.plist"])
-    if not isinstance(runtime.original_processes, list):
-        raise ValueError("Invalid original process record")
+    runtime.original_processes = original_processes
     recovery_idle(backend, switch.prior, root)
     runtime.require_original_processes_stopped(allow_registered=True)
     switch.owned_survivors({item["label"]: item for item in switch.prior})

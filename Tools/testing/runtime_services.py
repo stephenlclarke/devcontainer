@@ -94,6 +94,25 @@ def require_idle(programs: list[str]) -> None:
         raise ValueError("Active worker, container command or guest prevents runtime selection")
 
 
+def require_captured_processes_stopped(launchd, services, captured, *, allow_registered=False):
+    """An unchanged plist alone cannot authorize a surviving old process."""
+    current = process_inventory()
+    allowed = {}
+    if allow_registered:
+        registered = [item for item in services if launchd.inspect(item["label"]) ==
+                      {key: item[key] for key in ("label", "path", "program")}]
+        allowed = {item["pid"]: item for item in capture_owned_processes(launchd, registered)}
+    for prior in captured:
+        actual = current.get(prior["pid"])
+        # exec/setsid do not end ownership; a new start identity establishes PID reuse.
+        if actual is not None and actual["started"] == prior["started"]:
+            owner = allowed.get(prior["pid"])
+            if (owner is not None and all(owner[key] == actual[key] for key in ("started", "program"))
+                    and set(owner["labels"]) & set(prior["labels"])):
+                continue
+            raise ProcessSurvivors("An owned original service process survived removal")
+
+
 def authorised_roots(launchd: Launchd, home: Path) -> dict[str, Path]:
     """Known family services only; never derive authority from a loaded plist."""
     roots = {label: home / "Library/Application Support/com.apple.container" for label in BASE_SERVICES}
@@ -215,17 +234,8 @@ class ControlledRuntime:
             raise ProcessSurvivors("An outgoing provider, runtime consumer or CI listener survived service removal")
 
     def require_original_processes_stopped(self, *, allow_registered=False):
-        current = process_inventory()
-        for prior in self.original_processes:
-            actual = current.get(prior["pid"])
-            # exec/setsid change executable/group without ending ownership.
-            # Only a different start identity establishes PID reuse here.
-            if actual is not None and actual["started"] == prior["started"]:
-                if allow_registered and any(
-                        self.launchd.inspect(label) == {key: original[key] for key in ("label", "path", "program")}
-                        for label in prior["labels"] for original in self.switch.prior if original["label"] == label):
-                    continue  # A partial prepare may leave an original registered and untouched.
-                raise ProcessSurvivors("An owned original service process survived removal")
+        require_captured_processes_stopped(self.launchd, self.switch.prior if self.switch else [],
+                                          self.original_processes, allow_registered=allow_registered)
 
     def verify(self):
         if self.service is None or require_api_service(self.executable) != self.service:
