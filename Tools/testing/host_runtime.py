@@ -43,6 +43,12 @@ def require_api_service(executable: Path) -> dict:
     pid = field("pid")
     if not pid.isdigit() or int(pid) <= 0:
         raise ValueError("Selected released API service is not running")
+    # launchd reports running while xpcproxy is still preparing exec. Its
+    # configured program is not evidence that the selected binary has started.
+    process = subprocess.run(["/bin/ps", "-p", pid, "-o", "comm="], capture_output=True, timeout=5,
+                             env={"PATH": "/usr/bin:/bin"}, check=False)
+    if process.returncode != 0 or process.stdout.decode("utf-8", errors="strict").strip() != str(executable):
+        raise ValueError("Selected released API executable has not started")
     return {"service": service, "program": program, "pid": int(pid)}
 
 

@@ -87,6 +87,8 @@ With ownership enabled, `3d9e076fd0ff1561432c5ee01be611c57b96f2d7` registered th
 
 ## Upstream-first scenario reuse
 
+The subsequent run at `3dc902bdf3257c4fcbc928b86b365a608a86d401` (campaign `released-e01-controlled-20260917d`, invocation `6d8a302a-9673-465b-947d-c42a880cb35b`) passed `/_ping` but timed out on `/version` after 5.002 seconds. Automatic cleanup passed in 0.598 seconds. No native API log was created; the recorded launchd PID appeared in unified logs as `xpcproxy`, so registration plus launchd's `running` state was insufficient startup evidence. Admission now also verifies that the live PID's executable is the selected released API binary. This rejects a launch intermediary, another binary, or an exited process; it does not claim application readiness. The focused Bazel harness passed (`fa224434-7942-4a9c-ad14-35c33b57e227`) and an independent source review found no actionable issue in this readiness correction. The failed case remains immutable; stock E01 is not yet qualified.
+
 The replacement should import version-pinned upstream scenarios and assertions wherever possible, rather than inventing an independent definition of Docker or Dev Containers behaviour. The 17 September inspection identified these concrete sources:
 
 | Source | Reuse boundary | Necessary adaptation |

@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, require_api_service, runtime_lease
 
@@ -23,13 +24,25 @@ class HostRuntimeTests(unittest.TestCase):
         executable = self.root / "container-apiserver"
         output = f"job = {{\n\tprogram = {executable}\n\tstate = running\n\tpid = 42\n\tenvironment = {{\n\t\tSECRET = hidden\n\t}}\n}}\n"
         with patch("host_runtime.subprocess.run") as run:
-            run.return_value.returncode, run.return_value.stdout = 0, output.encode()
+            run.side_effect = [SimpleNamespace(returncode=0, stdout=output.encode()),
+                               SimpleNamespace(returncode=0, stdout=(str(executable) + "\n").encode())]
             actual = require_api_service(executable)
             self.assertEqual(actual, {"service": f"gui/{os.getuid()}/com.apple.container.apiserver",
                                       "program": str(executable), "pid": 42})
-            self.assertEqual(run.call_args.args[0][0:2], ["/bin/launchctl", "print"])
+            self.assertEqual(run.call_args_list[0].args[0][0:2], ["/bin/launchctl", "print"])
+            self.assertEqual(run.call_args.args[0], ["/bin/ps", "-p", "42", "-o", "comm="])
             self.assertEqual(run.call_args.kwargs["timeout"], 5)
             self.assertEqual(run.call_args.kwargs["env"], {"PATH": "/usr/bin:/bin"})
+
+    def test_registered_running_job_does_not_admit_xpcproxy_wrong_binary_or_exited_process(self):
+        executable = self.root / "container-apiserver"
+        output = f"\tprogram = {executable}\n\tstate = running\n\tpid = 42\n".encode()
+        for status, image in ((0, b"/usr/libexec/xpcproxy\n"), (0, b"/other/container-apiserver\n"), (1, b"")):
+            with self.subTest(status=status, image=image), patch("host_runtime.subprocess.run") as run:
+                run.side_effect = [SimpleNamespace(returncode=0, stdout=output),
+                                   SimpleNamespace(returncode=status, stdout=image)]
+                with self.assertRaisesRegex(ValueError, "executable has not started"):
+                    require_api_service(executable)
 
     def test_api_service_admission_rejects_mixed_stopped_missing_and_ambiguous_services(self):
         executable = self.root / "container-apiserver"
