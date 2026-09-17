@@ -10,6 +10,8 @@ sh_test(
         "case_evidence.py",
         "campaign_identity.py",
         "test_campaign_identity.py",
+        "campaign_report.py",
+        "test_campaign_report.py",
         "test_case_evidence.py",
         "engine_probe.py",
         "test_engine_probe.py",

@@ -46,6 +46,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
+.PHONY: bazel-parity-report
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-prepare-guest-kernel
 .PHONY: bazel-prepare-docker-oracle
@@ -67,6 +68,10 @@ bazel-test-tools:
 
 bazel-harness:
 	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests
+
+bazel-parity-report:
+	@test -n "$(CAMPAIGN)" || { printf 'Set CAMPAIGN explicitly.\n' >&2; exit 2; }
+	@Tools/bazel/run.sh parity-report "$(CAMPAIGN)" $(if $(CASE_FIXTURE),--fixture="$(CASE_FIXTURE)") --format="$${REPORT_FORMAT:-json}"
 
 bazel-prepare-guest-images:
 	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)

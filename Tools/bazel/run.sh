@@ -32,6 +32,7 @@ usage() {
     printf '       %s prepare-guest-images LOCK [--offline] (digest-pinned OCI data; no Docker, VM or build)\n' "$SCRIPT_NAME"
     printf '       %s prepare-docker-cli LOCK [--offline] (pinned public GitHub bottle; no install, VM or build)\n' "$SCRIPT_NAME"
     printf '       %s recover-runtime [--apply --case ID] (report or restore a journalled service transaction)\n' "$SCRIPT_NAME"
+    printf '       %s parity-report CAMPAIGN [--fixture ID] [--format json|markdown|junit] (read-only sealed evidence)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
 }
@@ -230,7 +231,7 @@ main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|recover-runtime|cleanup|restore-candidate|prepare-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|prepare-guest-images|prepare-docker-cli|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|recover-runtime|parity-report|cleanup|restore-candidate|prepare-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|prepare-guest-images|prepare-docker-cli|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -276,6 +277,10 @@ main() {
     ensure_directory "$config_root" || return
     if [[ "$command" == recover-runtime ]]; then
         clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/recover_runtime.py" "$@"
+        return
+    fi
+    if [[ "$command" == parity-report ]]; then
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/campaign_report.py" "$@"
         return
     fi
     if [[ "$command" == cleanup ]]; then
