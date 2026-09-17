@@ -83,6 +83,22 @@ class CaseStore:
         self.path = path
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, identity BLOB NOT NULL, result BLOB, sha256 TEXT)")
+            db.execute("CREATE TABLE IF NOT EXISTS artifacts (case_id TEXT, name TEXT, bytes BLOB NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(case_id, name))")
+
+    def attach(self, identity: dict, name: str, data: bytes) -> None:
+        """Retain owned-resource records and diagnostics before disposable cleanup."""
+        key = validate_identity(identity)
+        if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", name) or len(data) > 8 * 1024**2:
+            raise ValueError("Invalid or oversized case artifact")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            admitted = db.execute("SELECT result FROM cases WHERE id=?", (key,)).fetchone()
+            if admitted is None or admitted[0] is not None:
+                raise ValueError("Artifacts require an active admitted case")
+            prior = db.execute("SELECT bytes, sha256 FROM artifacts WHERE case_id=? AND name=?", (key, name)).fetchone()
+            if prior is not None and prior != (data, digest(data)):
+                raise ValueError("Cannot overwrite case artifacts")
+            db.execute("INSERT OR IGNORE INTO artifacts VALUES (?, ?, ?, ?)", (key, name, data, digest(data)))
 
     @contextmanager
     def connect(self):
@@ -103,15 +119,25 @@ class CaseStore:
             if row is None:
                 db.execute("INSERT INTO cases (id, identity) VALUES (?, ?)", (key, canonical(identity)))
                 return None
-            return self.read_row(identity, row)
+            return self.read_row(identity, row, db)
 
     @staticmethod
-    def read_row(identity: dict, row: tuple) -> dict:
+    def sealed_digest(identity: dict, data: bytes, db) -> str:
+        manifest = {}
+        for name, content, sha256 in db.execute("SELECT name, bytes, sha256 FROM artifacts WHERE case_id=? ORDER BY name",
+                                             (validate_identity(identity),)):
+            if digest(content) != sha256:
+                raise ValueError("Corrupt case artifact")
+            manifest[name] = sha256
+        return digest(canonical({"resultSHA256": digest(data), "artifacts": manifest}))
+
+    @staticmethod
+    def read_row(identity: dict, row: tuple, db) -> dict:
         if row[0] != canonical(identity):
             raise ValueError("Stored identity differs from the requested case")
         if row[1] is None:
             raise ValueError("Unfinished case: reconcile worker and owned resources before a new attempt")
-        if digest(row[1]) != row[2]:
+        if CaseStore.sealed_digest(identity, row[1], db) != row[2]:
             raise ValueError("Corrupt case evidence")
         result = json.loads(row[1])
         validate_result(result)
@@ -127,11 +153,11 @@ class CaseStore:
             if row is None or row[0] != canonical(identity):
                 raise ValueError("Case must be admitted before results are sealed")
             if row[1] is not None:
-                self.read_row(identity, row)
+                self.read_row(identity, row, db)
                 if row[1] != data:
                     raise ValueError("Cannot overwrite a completed case, including a failure")
                 return
-            db.execute("UPDATE cases SET result=?, sha256=? WHERE id=?", (data, digest(data), key))
+            db.execute("UPDATE cases SET result=?, sha256=? WHERE id=?", (data, self.sealed_digest(identity, data, db), key))
 
 
 def compare_cases(records: list[dict], expected: dict[str, str]) -> dict:

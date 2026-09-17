@@ -3,6 +3,9 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
+    "prepare_releases.py",
+    "release_inputs.py",
+    "releases.lock.json",
     "candidate_archive.py",
     "build_identity.bzl",
     "rules-swift-sandbox-output.patch",

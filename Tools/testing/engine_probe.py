@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import socket
+import time
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -41,19 +42,34 @@ def request(path: Path, method: str, route: str, body: bytes | None = None, time
         connection.close()
 
 
-def engine_negotiation(path: Path) -> dict[str, str]:
+def engine_negotiation(path: Path, observe=None) -> dict[str, str]:
     """Preserve every existing E01 assertion using the actual Engine protocol."""
-    ping = request(path, "GET", "/_ping")
-    version_status, version_body = request(path, "GET", "/version")
+    def probe(method, route, body=None):
+        started = time.monotonic_ns()
+        event = {"method": method, "route": route}
+        try:
+            status, response = request(path, method, route, body)
+            event["status"] = status
+            return status, response
+        except (Exception, KeyboardInterrupt) as error:
+            event["error"] = type(error).__name__
+            raise
+        finally:
+            event["durationNS"] = time.monotonic_ns() - started
+            if observe is not None:
+                observe(event)
+
+    ping = probe("GET", "/_ping")
+    version_status, version_body = probe("GET", "/version")
     if version_status != 200:
         raise ValueError("Engine version negotiation failed")
     minimum = json.loads(version_body).get("MinAPIVersion")
     if not isinstance(minimum, str) or re.fullmatch(r"[0-9]+\.[0-9]+", minimum) is None:
         raise ValueError("Engine did not declare a valid minimum API version")
-    versioned = request(path, "GET", f"/v{minimum}/_ping")
-    head = request(path, "HEAD", "/_ping")
-    missing_status, missing_body = request(path, "GET", f"/v{minimum}/devcontainer-missing")
-    malformed_status, malformed_body = request(path, "POST", f"/v{minimum}/containers/create?name=bad", b"{")
+    versioned = probe("GET", f"/v{minimum}/_ping")
+    head = probe("HEAD", "/_ping")
+    missing_status, missing_body = probe("GET", f"/v{minimum}/devcontainer-missing")
+    malformed_status, malformed_body = probe("POST", f"/v{minimum}/containers/create?name=bad", b"{")
     values = {
         "api_prefix": versioned == (200, b"OK"),
         "error_envelope": missing_status == 404 and isinstance(json.loads(missing_body).get("message"), str),

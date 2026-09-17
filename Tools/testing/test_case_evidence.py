@@ -39,8 +39,10 @@ class CaseEvidenceTests(unittest.TestCase):
 
     def test_interrupted_case_is_not_implicitly_retried(self):
         self.store.begin(identity())
+        reopened = CaseStore(self.path)
+        request = identity()
         with self.assertRaisesRegex(ValueError, "reconcile worker"):
-            CaseStore(self.path).begin(identity())
+            reopened.begin(request)
         next_case = dict(identity(), fixture="E02-container-lifecycle")
         self.assertIsNone(self.store.begin(next_case))
 
@@ -49,21 +51,24 @@ class CaseEvidenceTests(unittest.TestCase):
         self.store.begin(identity())
         self.store.finish(identity(), failure)
         self.assertEqual(self.store.begin(identity()), failure)
+        request, success = identity(), result()
         with self.assertRaisesRegex(ValueError, "overwrite"):
-            self.store.finish(identity(), result())
+            self.store.finish(request, success)
         self.assertIsNone(self.store.begin(dict(identity(), campaign="new-explicit-campaign")))
 
     def test_completion_requires_admission(self):
+        request, completed = identity(), result()
         with self.assertRaisesRegex(ValueError, "admitted"):
-            self.store.finish(identity(), result())
+            self.store.finish(request, completed)
 
     def test_corrupt_evidence_and_symlinked_storage_are_rejected(self):
         self.store.begin(identity())
         self.store.finish(identity(), result())
         with sqlite3.connect(self.path) as db:
             db.execute("UPDATE cases SET result=?", (b"corrupt",))
+        request = identity()
         with self.assertRaisesRegex(ValueError, "Corrupt"):
-            self.store.begin(identity())
+            self.store.begin(request)
         link = self.path.with_name("link.sqlite")
         link.symlink_to(self.path)
         with self.assertRaisesRegex(ValueError, "symlinks"):
@@ -76,8 +81,9 @@ class CaseEvidenceTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate_identity(invalid)
         for key, value in [("campaign", "../outside"), ("lane", "unknown"), ("harnessSHA256", "main")]:
+            invalid = dict(identity(), **{key: value})
             with self.subTest(key=key), self.assertRaises(ValueError):
-                validate_identity(dict(identity(), **{key: value}))
+                validate_identity(invalid)
 
     def test_missing_cleanup_or_observations_cannot_pass(self):
         invalid = [dict(result(), observations={}), dict(result(), errors=["warning"]),
@@ -128,8 +134,9 @@ class CaseEvidenceTests(unittest.TestCase):
 
     def test_wrong_contract_is_rejected_before_admission_or_execution(self):
         probe = Mock()
+        request = identity()
         with self.assertRaisesRegex(ValueError, "admitted contract"):
-            run_case(self.store, identity(), {"wrong": "contract"}, probe, probe, probe)
+            run_case(self.store, request, {"wrong": "contract"}, probe, probe, probe)
         probe.assert_not_called()
         self.assertIsNone(self.store.begin(identity()))
 

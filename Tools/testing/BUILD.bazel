@@ -13,8 +13,33 @@ sh_test(
         "test_engine_probe.py",
         "run_tests.py",
         "test_run_tests.py",
+        "host_runtime.py",
+        "test_host_runtime.py",
+        "released_engine.py",
+        "test_released_engine.py",
+        "//Tools/bazel:prepare_releases.py",
+        "//Tools/bazel:release_inputs.py",
+        "//Tools/bazel:releases.lock.json",
         "//:Tests/Parity/fixtures/E01-engine-negotiation/contract.json",
     ],
     size = "small",
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "released_engine_negotiation",
+    srcs = ["released-engine.sh"],
+    data = [
+        "released_engine.py",
+        "host_runtime.py",
+        "case_evidence.py",
+        "engine_probe.py",
+        "//Tools/bazel:prepare_releases.py",
+        "//Tools/bazel:release_inputs.py",
+        "//Tools/bazel:releases.lock.json",
+        "//:Tests/Parity/fixtures/E01-engine-negotiation/contract.json",
+    ],
+    size = "medium",
+    tags = ["manual", "local", "no-sandbox", "no-cache"],
     visibility = ["//visibility:public"],
 )

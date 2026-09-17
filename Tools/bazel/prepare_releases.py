@@ -196,6 +196,24 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
             "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()}}
 
 
+def require_prepared(asset: dict, source: Path, root: Path, receipts: Path) -> dict:
+    """Runtime admission is read-only: never download, expand or repair a payload."""
+    for directory in (root, receipts):
+        if directory.resolve() != directory or not directory.is_dir():
+            raise ValueError("Preparation roots must be existing non-symlinked directories")
+    verify_object(source, asset)
+    specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"], "layout": layout(asset)}
+    key = hashlib.sha256(canonical(specification).encode()).hexdigest()
+    retained = receipts / (key + ".json")
+    if retained.is_symlink():
+        raise ValueError("Symlinked retained preparation receipt")
+    destination = root / key
+    receipt = validate_prepared(destination, specification, json.loads(retained.read_text()))
+    return {"assetSHA256": asset["sha256"], "preparationSHA256": key, "root": str(destination),
+            "inventorySHA256": hashlib.sha256(canonical(receipt["inventory"]).encode()).hexdigest(),
+            "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()}}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lock", type=Path)

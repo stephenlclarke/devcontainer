@@ -28,6 +28,22 @@ Run the focused native harness checks with `make bazel-harness`. Individual test
 
 ## Cutover requirements
 
+### First released-service integration target
+
+`make bazel-engine-case CAMPAIGN=<explicit-id> LANE=apple-stock` selects the manual, local, uncached `released_engine_negotiation` target. The enhanced alternative is `LANE=container-compose`. Both use only preprepared release payloads; missing or changed assets fail admission without downloads, extraction or builds. The first adapter explicitly supports the reviewed devcontainer 1.0.1 command interface and does not pass newer service flags to an older binary. This is E01 metadata/protocol integration, not a full guest-runtime campaign or a substitute for the Docker oracle. Docker-lane admission and the other 18 adapters remain unfinished.
+
+The case binds the complete release lock, extracted inventories, actual command versions, OS/architecture, harness and expected observations. Setup and cleanup have separate timings from the conformance operation. The process receives an isolated SSD home/temp directory and a minimal environment. Whole-phase deadlines supplement socket timeouts. Bazel SIGTERM enters cleanup; an interrupted process creation is recorded as uncertain, never reported as no child. The internally retained case seal binds both the result and the exact name/digest inventory of attached diagnostics and ownership records, so missing or changed attachments cannot be reused as a passing result.
+
+Stock Apple Container 1.4.1 connects to the fixed per-user `com.apple.container.apiserver` service; changing `HOME` does not isolate that XPC service. Admission therefore checks that launchd has a running API server at the exact selected prepared-release executable, fingerprints its PID, and rechecks the same identity at cleanup. An unrelated Homebrew service, missing service or stopped service is rejected before launching the test. Only those selected identity fields are retained, never launchd's full environment. This read-only check does not provision the service or establish the complete guest/runtime closure. Transactional service selection and restoration remain required before unattended live cutover.
+
+Each protocol request retains its method, route, status or safe exception class, and monotonic duration in `requests.json`, bound into the case seal. Request/response bodies and exception text are not included. This identifies the exact failing endpoint without rerunning a failed case or exposing operator credentials.
+
+The adapter acquires the existing per-user Compose runtime lock. Its established `/private/tmp/container-compose-runtime-<uid>.lock` inode remains the shared IPC coordination point; payloads and disposable work stay on SSD. Before launching a service, the adapter writes an internal `runtime-admission.json` ownership marker. It clears that marker only after verified process cleanup, evidence retention, input revalidation and owned-root removal. A surviving descendant, uncertain spawn, hard-killed worker or other unverified cleanup leaves the marker and blocks all later admissions through the new adapter, even with a different campaign ID. Do not delete the marker or invent a fresh campaign to bypass it.
+
+Automatic hard-kill/resource reconciliation is not yet implemented. Legacy Compose/runtime entry points share the lock but do **not** enforce the new quarantine marker: while it exists, keep those entry points suspended too until the owned process/resources are reconciled. Family-wide guard integration is required before unattended live cutover. An ordinary terminal result can be reopened unchanged within its original campaign; failed results cannot be overwritten by a retry.
+
+### Full harness cutover
+
 The existing inventory contains 19 fixtures, each required in all three lanes: E01-E06 Engine semantics, D01-D07 devcontainer configuration/lifecycle/features, C01-C04 Compose projection, F01 failure recovery and V01 real VS Code. None may disappear because an adapter is incomplete. The release result must enumerate every expected fixture and assertion and reject omissions, skips, duplicate results or retry-only passes.
 
 Before removing old entry points:
@@ -46,6 +62,12 @@ The present work does not change a support claim, lower the 90% coverage target,
 Bazel invocation `f28f40cb-ef90-4bd2-815d-0613ca69ea52` passed both harness targets: 26 case/socket/JUnit tests and 13 release-preparation tests, with zero outer-suite failures, errors or skips. The helper suite passed 84 tests. These are development-worktree results, not immutable-head release qualification. Focused standard-library trace coverage measured 90% for `prepare_releases.py`; it is diagnostic evidence, not a SonarQube result or a substitute for integrating coverage into the new quality gate.
 
 All five real locked assets prepared offline and then reused with identical inventory hashes. Direct version checks reported devcontainer 1.0.1, stock Apple Container 1.4.1, container-compose 0.15.1 and Docker Compose v5.3.1. The enhanced Container shipped inside the Compose 0.15.1 release reports `homebrew-main-352-780a86b995ac`, Container commit `780a86b` and Containerization commit `7e066a3101bc84fa0f7231daf6a03aa9ef62a567`; its embedded runtime revision is not the enclosing Compose release commit. Live admission must bind those actual component identities. No services were started and these version checks are not runtime parity evidence.
+
+### First live attempt and diagnostic outcome
+
+Follow-up development-worktree validation passed 53 case/socket/process/JUnit tests and 14 release-preparation tests (Bazel invocation `0ddc3afb-a7ee-4d62-8ed6-aebc2d22f8f4`; preparation reused its unchanged passing result). The 87 workflow-helper tests and focused core Swift target passed, including SSD symlink rejection and the corrected legacy host-test opt-in (core invocation `7614812a-ec74-4a5a-b7ea-c5b484f5dc5c`). These are scoped implementation checks, not full product coverage or parity. Independent complete-source review found no additional actionable findings; exact-head hosted quality and broader cutover gates remain required.
+
+The first released E01 attempt (`released-e01-20260917a`, Bazel invocation `592dbc57-f4a2-4930-b76e-011e514c1164`) timed out after 5.003 seconds in the operation phase; setup took 0.531 seconds and verified cleanup took 0.254 seconds. Its immutable failure remains retained and is not stock parity evidence. Diagnosis found that the fixed API service pointed to the existing Homebrew enhanced runtime, not the prepared stock release; launchd reported exit 1 and repeated provider-binding/key mismatch errors. A bounded direct `system version` diagnostic also timed out after 10 seconds. This motivated the exact-service admission check above. No provider keys or existing state were removed, no service was replaced, and neither a new campaign nor a longer timeout is used to hide this failure.
 
 ## Upstream-first scenario reuse
 

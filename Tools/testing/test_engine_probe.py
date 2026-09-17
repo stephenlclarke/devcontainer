@@ -9,6 +9,7 @@ from socketserver import UnixStreamServer
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from engine_probe import engine_negotiation, request
 
@@ -79,6 +80,25 @@ class EngineProbeTests(unittest.TestCase):
         self.assertEqual(observed["ping"], "false")
         self.assertEqual(observed["api_prefix"], "false")
 
+    def test_trace_records_routes_status_and_duration_without_payloads(self):
+        events = []
+        engine_negotiation(self.socket, observe=events.append)
+        self.assertEqual(len(events), 6)
+        self.assertEqual(events[1]["route"], "/version")
+        self.assertEqual(events[-1]["status"], 400)
+        for event in events:
+            self.assertEqual(set(event), {"method", "route", "status", "durationNS"})
+            self.assertGreaterEqual(event["durationNS"], 0)
+
+    def test_timeout_trace_identifies_route_without_exception_text(self):
+        events = []
+        with patch("engine_probe.request", side_effect=[(200, b"OK"), TimeoutError("sensitive detail")]), \
+                self.assertRaises(TimeoutError):
+            engine_negotiation(self.socket, observe=events.append)
+        self.assertEqual(events[-1]["route"], "/version")
+        self.assertEqual(events[-1]["error"], "TimeoutError")
+        self.assertNotIn("sensitive", json.dumps(events))
+
     def test_matching_error_status_without_error_envelope_does_not_pass(self):
         self.server.error_body = b'{"other":"not a Docker error"}'
         observed = engine_negotiation(self.socket)
@@ -96,8 +116,9 @@ class EngineProbeTests(unittest.TestCase):
             request(self.socket, "GET", "/oversized")
 
     def test_missing_endpoint_does_not_start_or_download_anything(self):
+        missing = self.socket.with_name("missing")
         with self.assertRaises((FileNotFoundError, ConnectionRefusedError)):
-            engine_negotiation(self.socket.with_name("missing"))
+            engine_negotiation(missing)
 
     def test_nonresponsive_endpoint_times_out(self):
         idle = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

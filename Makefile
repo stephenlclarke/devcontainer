@@ -44,7 +44,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
-.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases
+.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
@@ -60,6 +60,10 @@ bazel-test-tools:
 
 bazel-harness:
 	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests
+
+bazel-engine-case:
+	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
+	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)"
 
 bazel-build:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
@@ -125,7 +129,7 @@ test-unit: swift-test
 test-contract: swift-test
 
 test-integration:
-	DEVCONTAINER_RUN_HOST_INTEGRATION=1 $(MAKE) swift-test
+	DEVCONTAINER_HOST_INTEGRATION=1 $(MAKE) swift-test
 
 swift-test:
 	@mkdir -p .build

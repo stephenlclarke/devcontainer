@@ -71,6 +71,17 @@ class PrepareReleasesTests(unittest.TestCase):
         self.assertEqual(self.prepare(), result)  # SSD eviction never loses the retained asset.
         self.assertEqual(len(list(self.prepared.iterdir())), 1)
 
+    def test_runtime_admission_never_recreates_missing_payloads(self):
+        self.archive()
+        with self.assertRaises(FileNotFoundError):
+            preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts)
+        prepared = self.prepare()
+        self.assertEqual(preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts), prepared)
+        shutil.rmtree(Path(prepared["root"]))
+        with self.assertRaisesRegex(ValueError, "root or receipt"):
+            preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts)
+        self.assertEqual(list(self.prepared.iterdir()), [])
+
     def test_raw_release_has_only_the_pinned_binary(self):
         self.source.write_bytes(b"released executable")
         self.asset.update(repository="docker/compose", name="docker-compose-darwin-aarch64",

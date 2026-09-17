@@ -13,18 +13,21 @@ public enum TestStorage {
         return directory
     }
 
-    /// Pure selection lets both build systems exercise valid and rejected roots
+    /// Explicit inputs let both build systems check canonical scratch roots
     /// without mutating process-wide environment during parallel tests.
     public static func resolve(environment: [String: String], fallback: String) -> URL? {
         let path = environment["TEST_TMPDIR"] ?? environment["TMPDIR"]
             ?? fallback
         guard path.hasPrefix("/") else { return nil }
-        let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
         if environment["BAZEL_TEST"] == "1" {
             guard let root = environment["DEVCONTAINER_TEST_SCRATCH_ROOT"], root.hasPrefix("/"), root != "/"
             else { return nil }
-            let rootPath = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL.path
-            guard rootPath != "/", directory.path.hasPrefix(rootPath + "/") else { return nil }
+            let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+            let rootPath = rootURL.resolvingSymlinksInPath().path
+            guard rootPath == rootURL.path, rootPath != "/",
+                  directory.path.hasPrefix(rootPath + "/") else { return nil }
         }
         return directory
     }

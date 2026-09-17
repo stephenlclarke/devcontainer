@@ -46,6 +46,23 @@ class LauncherTests(unittest.TestCase):
                 if status == 0:
                     self.assertEqual(result.stdout.strip(), "/Volumes/SSD/cf/bazel/")
 
+    def test_test_wrapper_rejects_scratch_symlink_outside_ssd(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            alias = Path(directory) / "escape"
+            alias.symlink_to("/private/tmp", target_is_directory=True)
+            result = subprocess.run(
+                ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")), "/usr/bin/true"],
+                env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": str(alias)}, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+
+    def test_legacy_integration_entry_point_selects_manifest_opt_in(self) -> None:
+        result = subprocess.run(["/usr/bin/make", "-n", "test-integration"], cwd=SCRIPT.parents[2],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("DEVCONTAINER_HOST_INTEGRATION=1", result.stdout)
+        self.assertNotIn("DEVCONTAINER_RUN_HOST_INTEGRATION", result.stdout)
+
     def test_real_argument_assembly_handles_empty_arrays_on_system_bash(self) -> None:
         for command, targets in [("query", ["//:product"]), ("info", []), ("coverage", ["//:unit", "--config=stock"])]:
             with self.subTest(command=command):

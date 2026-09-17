@@ -21,7 +21,8 @@ class ReportTests(unittest.TestCase):
     def test_class_fixture_errors_have_their_own_case_not_the_previous_test(self):
         class Successful(unittest.TestCase):
             def test_success(self):
-                self.assertTrue(True)
+                # Intentionally successful control case for fixture-error XML.
+                pass
 
         class SetupError(unittest.TestCase):
             @classmethod
@@ -65,7 +66,8 @@ class ReportTests(unittest.TestCase):
 
             @unittest.expectedFailure
             def test_unexpected_success(self):
-                self.assertTrue(True)
+                # Intentionally successful body to detect stale expected failures.
+                pass
 
             def test_subtest_failure(self):
                 with self.subTest(value=1):

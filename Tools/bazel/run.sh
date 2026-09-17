@@ -201,10 +201,10 @@ verify_digest() {
 
 # Resolve and enrol storage before allowing build or test tooling to start.
 main() {
-    local workspace=""
+    local workspace="" requested_workspace="${2:-}"
     if [[ "${1:-}" == --workspace ]]; then
-        [[ $# -ge 3 && "$2" == /* && -d "$2" ]] || { error '--workspace requires an absolute repository and a command.'; return 2; }
-        workspace="$(cd "$2" && pwd -P)"
+        [[ $# -ge 3 && "$requested_workspace" == /* && -d "$requested_workspace" ]] || { error '--workspace requires an absolute repository and a command.'; return 2; }
+        workspace="$(cd "$requested_workspace" && pwd -P)"
         shift 2
     fi
     local command="${1:---help}" repo config_root config metadata expected actual mount internal

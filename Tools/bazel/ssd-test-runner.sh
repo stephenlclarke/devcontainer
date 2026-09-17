@@ -9,6 +9,12 @@ set -euo pipefail
     printf 'Bazel test requires its own writable SSD temporary directory.\n' >&2
     exit 2
 }
+TEST_TMPDIR="$(cd "$TEST_TMPDIR" && pwd -P)"
+[[ "$TEST_TMPDIR" == /Volumes/SSD/cf/bazel/* && "$(cd /Volumes/SSD/cf/bazel && pwd -P)" == /Volumes/SSD/cf/bazel ]] || {
+    printf 'Bazel test scratch resolves outside its enrolled storage.\n' >&2
+    exit 2
+}
+export TEST_TMPDIR
 export TMPDIR="$TEST_TMPDIR" TMP="$TEST_TMPDIR" TEMP="$TEST_TMPDIR"
 export DEVCONTAINER_TEST_SCRATCH_ROOT=/Volumes/SSD/cf/bazel/
 if "$@"; then
