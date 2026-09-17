@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 
 from case_evidence import CaseStore, canonical
 from host_runtime import HostGuard, runtime_lease
+from service_journal import ServiceJournal
 import released_engine
 from released_engine import ReleasedCase, release_selection, write_junit
 from test_case_evidence import identity, result
@@ -113,6 +114,36 @@ class ReleasedEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "admitted"):
             self.store.attach(self.identity, "after.log", b"fixture")
 
+    def test_guest_entrypoint_binds_closure_and_revalidates_before_cleanup(self):
+        fixture = "E05-archive-copy"
+        inputs = {"kernel": {"sha256": "fixed"}, "workload": {"sha256": "fixed"}}
+        releases = [{"executables": {"devcontainer": "/released/devcontainer"}},
+                    {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}]
+        guard = HostGuard(self.root / "admission.json")
+        with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
+                patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
+                patch("released_engine.admit", return_value=releases), \
+                patch("released_engine.admit_guest", return_value=inputs) as admit_guest, \
+                patch("released_engine.version", return_value="fixture"), \
+                patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
+                patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
+                patch("released_engine.ReleasedCase") as factory, patch("sys.stdout", new_callable=io.StringIO), \
+                patch("sys.argv", ["released-engine", "--campaign=guest-entrypoint", "--lane=apple-stock", "--fixture=" + fixture]):
+            case = factory.return_value
+            case.operation.return_value = {"content": "true", "large_file": "true", "long_path": "true",
+                                           "mode": "0o750", "symlink": "true"}
+            case.cleanup.return_value = {"status": "passed", "remainingOwnedResources": []}
+            with self.assertRaises(SystemExit) as status:
+                released_engine.main()
+            self.assertEqual(status.exception.code, 0)
+            self.assertEqual(factory.call_args.kwargs["guest_inputs"], inputs)
+            self.assertEqual(factory.call_args.args[1]["fixture"], fixture)
+            revalidate = factory.call_args.args[4]
+            self.assertEqual(revalidate(), releases)
+            admit_guest.return_value = {"changed": True}
+            with self.assertRaisesRegex(ValueError, "guest inputs changed"):
+                revalidate()
+
     def test_completed_result_cannot_resume_with_missing_or_corrupt_artifacts(self):
         for index, mutation in enumerate(["DELETE FROM artifacts", "UPDATE artifacts SET bytes=x'00'",
                                           "UPDATE artifacts SET name='renamed.log'"]):
@@ -147,6 +178,94 @@ class ReleasedEngineTests(unittest.TestCase):
         with patch("released_engine.engine_negotiation", return_value={"ping": "true"}) as probe:
             self.assertEqual(case.operation(), {"ping": "true"})
         probe.assert_called_once_with(case.socket, observe=case.requests.append)
+
+    def test_guest_provision_and_operation_precede_verified_teardown(self):
+        case = self.case()
+        runtime = Mock(service={"pid": 42})
+        runtime.receipt.return_value = {"status": "restored"}
+        case.runtime_factory = Mock(return_value=runtime)
+        case.guest_inputs = {"fixture": "admitted data"}
+        ordering = []
+        with patch("released_engine.ReleasedGuest") as factory, \
+                patch.object(case.child, "start", side_effect=lambda *_, **__: ordering.append("engine-start")), \
+                patch.object(case.child, "stop", side_effect=lambda: ordering.append("engine-stop")), \
+                patch.object(case.child, "wait_ready"), patch.object(case.child, "process") as process:
+            process.pid = 43
+            guest = factory.return_value
+            guest.provision.side_effect = lambda: ordering.append("provision")
+            guest.cleanup.side_effect = lambda: ordering.append("guest-cleanup")
+            runtime.restore.side_effect = lambda: ordering.append("restore")
+            case.setup()
+            self.assertEqual(case.operation(), guest.operation.return_value)
+            self.assertEqual(case.cleanup()["status"], "passed")
+        self.assertEqual(ordering, ["provision", "engine-start", "guest-cleanup", "engine-stop", "restore"])
+
+    def test_uncertain_guest_cleanup_keeps_engine_provider_root_and_guard(self):
+        case = self.case()
+        with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), \
+                patch.object(case.child, "process") as process:
+            process.pid = 43
+            case.setup()
+        case.runtime = Mock()
+        case.guest = Mock()
+        case.guest.cleanup.side_effect = ValueError("uncertain guest")
+        with patch.object(case.child, "stop") as stop, self.assertRaisesRegex(ValueError, "uncertain guest"):
+            case.cleanup()
+        stop.assert_not_called()
+        case.runtime.restore.assert_not_called()
+        self.assertTrue(case.root.exists())
+        with self.assertRaisesRegex(ValueError, "quarantined"):
+            case.guard.check()
+        case.output.close()  # Fake Engine was never started; close only the test handle.
+
+    def test_provision_log_failure_or_large_output_cannot_lose_diagnostics_at_teardown(self):
+        for oversized in (False, True):
+            with self.subTest(oversized=oversized):
+                case = self.case()
+                case.identity = dict(case.identity, fixture="E05-archive-copy", campaign="log-" + str(oversized))
+                self.store.begin(case.identity)
+                runtime = Mock(service={"pid": 42})
+                runtime.receipt.return_value = {"status": "restored"}
+                case.runtime_factory, case.guest_inputs = Mock(return_value=runtime), {}
+                unavailable = [not oversized]
+                def start_runtime():
+                    runtime.journal = ServiceJournal(self.root / ("logs-" + str(oversized) + ".sqlite"),
+                                                     case.owner, create=True)
+                    put = runtime.journal.put
+                    def retain(name, data):
+                        if name == "guest-kernel.log" and unavailable[0]:
+                            raise OSError("log retention unavailable")
+                        put(name, data)
+                    runtime.journal.put = retain
+                runtime.start.side_effect = start_runtime
+                child = Mock()
+                child.process.pid, child.process.wait.return_value = 44, 0
+                payload = b"x" * (9 * 1024**2) if oversized else b"important setup diagnostic"
+                child.start.side_effect = lambda _a, _r, output, **_k: output.write(payload)
+                def provision(guest):
+                    guest.command("guest-kernel", ["system", "kernel", "set"])
+                with patch("guest_runtime.OwnedProcess", return_value=child), \
+                        patch("guest_runtime.ReleasedGuest.provision", new=provision), \
+                        patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), \
+                        patch.object(case.child, "stop"), patch.object(case.child, "process") as engine:
+                    engine.pid = 43
+                    if oversized:
+                        case.setup()
+                    else:
+                        with self.assertRaisesRegex(OSError, "log retention"):
+                            case.setup()
+                        with self.assertRaisesRegex(OSError, "log retention"):
+                            case.cleanup()
+                        self.assertTrue(case.root.exists())
+                        self.assertTrue(case.guard.path.exists())
+                        runtime.restore.assert_not_called()
+                        unavailable[0] = False
+                    self.assertEqual(case.cleanup()["status"], "passed")
+                self.assertFalse(case.root.exists())
+                self.assertFalse(case.guard.path.exists())
+                records = runtime.journal.records()
+                self.assertEqual(records["guest-kernel.log"], payload[:1024**2])
+                self.assertEqual(json.loads(records["guest-kernel-log.json"])["truncated"], oversized)
 
     def test_selected_runtime_is_started_then_restored_even_after_input_failure(self):
         case = self.case()

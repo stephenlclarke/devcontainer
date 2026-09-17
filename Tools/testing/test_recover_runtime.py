@@ -102,6 +102,23 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.journal.records()["service-container-apiserver.log"], b"private diagnostic fixture")
         self.assertEqual(self.run_recovery(), {"status": "clear", "changed": False})
 
+    def test_unreconciled_guest_refuses_both_report_and_apply_without_mutation(self):
+        self.journal.put("container-intent.json", canonical({"name": "owned-guest"}))
+        before = list(self.launchd.mutations)
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, "Guest resource needs explicit"):
+                self.run_recovery(apply=apply)
+            self.assertEqual(self.launchd.mutations, before)
+            self.assert_quarantined()
+
+    def test_unverified_provisioning_process_preserves_quarantine(self):
+        self.journal.put("guest-kernel-intent.json", b"{}")
+        before = list(self.launchd.mutations)
+        with self.assertRaisesRegex(ValueError, "process needs explicit"):
+            self.run_recovery()
+        self.assertEqual(self.launchd.mutations, before)
+        self.assert_quarantined()
+
     def test_recovery_accepts_internal_retained_executables(self):
         self.switch.restore()
         self.journal.path.unlink()

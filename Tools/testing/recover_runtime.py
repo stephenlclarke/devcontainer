@@ -18,6 +18,7 @@ from runtime_services import (ControlledRuntime, capture_owned_processes, proces
                               require_captured_processes_stopped, require_idle, require_owned_volume)
 from service_journal import ServiceJournal
 from service_switch import Launchd, canonical_file
+from guest_runtime import require_guest_cleanup
 
 
 def private_json(path: Path) -> dict:
@@ -130,6 +131,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     verify_case(retained, owner)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
+    require_guest_cleanup(records)
     context = json.loads(records.get("runtime-context.json", b"null"))
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):
         raise ValueError("No recorded runtime context; manual journal reconciliation required")

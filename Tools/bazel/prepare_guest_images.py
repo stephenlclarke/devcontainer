@@ -140,6 +140,24 @@ def prepare(image: dict, scratch: Path, retained: Path, *, offline=False, fetch=
         return dict(result, path=str(target))
 
 
+def require_image(image: dict, retained: Path) -> dict:
+    """Read-only runtime admission never repairs an interrupted publication."""
+    validate_image(image)
+    if (retained.resolve() != retained or not retained.is_dir() or
+            retained.stat().st_uid != os.getuid() or stat.S_IMODE(retained.stat().st_mode) != 0o700):
+        raise ValueError("Guest image admission requires private canonical storage")
+    key = hashlib.sha256(canonical(image).encode()).hexdigest()
+    target, receipt, pending = (retained / (key + suffix) for suffix in (".tar", ".json", ".pending.json"))
+    if pending.exists() or pending.is_symlink():
+        raise ValueError("Pending guest publication requires preparation recovery before admission")
+    private_file(receipt)
+    private_file(target)
+    result = verify_archive(target, image)
+    if json.loads(receipt.read_text()) != result:
+        raise ValueError("Sealed guest image changed; refusing admission")
+    return dict(result, path=str(target))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lock", type=Path)

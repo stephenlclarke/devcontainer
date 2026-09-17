@@ -49,6 +49,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-prepare-guest-kernel
 export CASE_ID
+export CASE_FIXTURE
 BAZEL_PROFILE ?= enhanced
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
@@ -73,7 +74,7 @@ bazel-prepare-guest-kernel:
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
-	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)"
+	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}"
 
 bazel-recover-runtime:
 	Tools/bazel/run.sh recover-runtime

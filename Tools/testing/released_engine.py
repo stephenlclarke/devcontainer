@@ -1,4 +1,4 @@
-"""One released Engine negotiation case with reversible, isolated service selection."""
+"""Released Engine cases with reversible, isolated service and guest selection."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from case_evidence import CaseStore, canonical, digest, run_case, validate_ident
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
 from runtime_services import ControlledRuntime, require_owned_volume
+from guest_runtime import FIXTURES, ReleasedGuest, admit_guest
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
@@ -74,7 +75,7 @@ def write_junit(identity: dict, result: dict, path: Path) -> None:
 
 class ReleasedCase:
     def __init__(self, store: CaseStore, identity: dict, releases: list[dict], parent: Path, revalidate, guard: HostGuard,
-                 *, runtime_factory=None):
+                 *, runtime_factory=None, guest_inputs=None):
         self.store, self.identity, self.releases = store, identity, releases
         self.parent, self.revalidate = parent, revalidate
         self.root = None
@@ -83,6 +84,7 @@ class ReleasedCase:
         self.guard, self.owner = guard, None
         self.requests = []
         self.runtime_factory, self.runtime = runtime_factory, None
+        self.guest_inputs, self.guest = guest_inputs, None
 
     def setup(self):
         self.root = Path(tempfile.mkdtemp(dir=self.parent, prefix="case-"))
@@ -97,20 +99,39 @@ class ReleasedCase:
             self.runtime = self.runtime_factory(self.root, self.owner)
             self.runtime.start()
             self.store.attach(self.identity, "api-service.json", canonical(self.runtime.service))
+        if self.guest_inputs is not None:
+            if self.runtime is None:
+                raise ValueError("Guest setup requires the controlled private runtime")
+            self.guest = ReleasedGuest(self.guest_inputs, self.identity["fixture"], self.root, self.owner,
+                                       self.runtime, self.releases[1]["executables"]["container"], self.socket,
+                                       observe=self.requests.append)
+            self.guest.provision()
+            if self.revalidate() != self.releases:
+                raise ValueError("Released runtime inputs changed during provisioning")
         self.output = (self.root / "engine.log").open("xb")
         engine = self.releases[0]["executables"]["devcontainer-engine"]
         container = self.releases[1]["executables"]["container"]
         self.store.attach(self.identity, "process-intent.json", canonical({"root": str(self.root), "program": engine}))
         self.child.start([engine, "--container", container, "--socket", str(self.socket),
-                          "--state", str(self.root / "state.sqlite")], self.root, self.output)
+                          "--state", str(self.root / "state.sqlite")], self.root, self.output,
+                         provider_install=Path(container).parent.parent)
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
 
     def operation(self):
+        if self.guest is not None:
+            return self.guest.operation()
         with deadline(45):
             return engine_negotiation(self.socket, observe=self.requests.append)
 
     def cleanup(self):
+        if self.guest is not None:
+            # Uncertain guest deletion leaves the Engine/provider running and
+            # the host quarantined; stopping them first would lose reconciliation.
+            try:
+                self.guest.cleanup()
+            finally:
+                self.store.attach(self.identity, "requests.json", canonical(self.requests))
         stopped = False
         try:
             try:
@@ -153,17 +174,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["apple-stock", "container-compose"])
+    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Apple cases require Apple silicon macOS")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
+    guest_locks = None
+    if args.fixture in FIXTURES:
+        guest_locks = [json.loads((repository / "Tools/bazel" / name).read_text())
+                       for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
     expected = {key: str(value).lower() for key, value in json.loads(
-        (repository / f"Tests/Parity/fixtures/{FIXTURE}/contract.json").read_text())["expected"].items()}
+        (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}
     harness = {str(path.relative_to(repository)): digest(path.read_bytes()) for path in [
         *sorted(Path(__file__).parent.glob("*.py")),
-        repository / "Tools/bazel/prepare_releases.py", repository / "Tools/bazel/release_inputs.py"]}
+        *[repository / "Tools/bazel" / name for name in
+          ("prepare_releases.py", "release_inputs.py", "prepare_guest_images.py", "oci_image_layout.py")]]}
     for root in (SSD, RETAINED):
         if not root.is_dir() or root.resolve() != root:
             raise ValueError("Missing or symlinked enrolled storage")
@@ -179,20 +206,26 @@ def main():
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED)
+        guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED) if guest_locks is not None else None
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
                    "apiProgram": str(api_server), "serviceSelection": "released-private-root-v1",
                    "versions": [version(Path(releases[0]["executables"]["devcontainer"])),
                                 version(Path(releases[1]["executables"]["container"]))]}
-        identity = {"campaign": args.campaign, "fixture": FIXTURE, "lane": args.lane,
+        if guest_inputs is not None:
+            runtime["guestInputs"] = guest_inputs
+        identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": args.lane,
                     "contractSHA256": digest(canonical(expected)), "harnessSHA256": digest(canonical(harness)),
-                    "releaseSetSHA256": digest(canonical(lock)), "runtimeSHA256": digest(canonical(runtime))}
+                    "releaseSetSHA256": digest(canonical([lock, guest_locks] if guest_locks else lock)),
+                    "runtimeSHA256": digest(canonical(runtime))}
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
+            if guest_locks is not None and admit_guest(*guest_locks, args.lane, RETAINED) != guest_inputs:
+                raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED)
 
         def runtime_factory(root, owner):
@@ -200,11 +233,12 @@ def main():
             journal_parent.mkdir(mode=0o700, exist_ok=True)
             return ControlledRuntime(root, owner, api_server, journal_parent)
 
-        case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory)
+        case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory,
+                            guest_inputs=guest_inputs)
         result = run_case(store, identity, expected, case.setup, case.operation, case.cleanup)
         if os.environ.get("XML_OUTPUT_FILE"):
             write_junit(identity, result, Path(os.environ["XML_OUTPUT_FILE"]))
-        print(canonical({"identity": identity, "result": result, "scope": "released-engine-negotiation-only"}).decode())
+        print(canonical({"identity": identity, "result": result, "scope": "released-engine-case-only"}).decode())
         raise SystemExit(0 if result["status"] == "passed" else 1)
 
 

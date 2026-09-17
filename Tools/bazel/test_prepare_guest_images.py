@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from prepare_guest_images import download, main, prepare, validate_image, verify_archive
+from prepare_guest_images import download, main, prepare, require_image, validate_image, verify_archive
 from release_inputs import canonical
 
 
@@ -70,6 +70,29 @@ class GuestImageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "offline"):
             self.prepare(offline=True)
         self.assertEqual(self.fetches, 0)
+
+    def test_runtime_admission_is_read_only_and_refuses_pending_or_changed_storage(self):
+        with self.assertRaises(FileNotFoundError):
+            require_image(self.image, self.retained)
+        first = self.prepare()
+        self.assertEqual(require_image(self.image, self.retained), first)
+        target = Path(first["path"])
+        pending = target.with_suffix(".pending.json")
+        pending.write_text(canonical({key: value for key, value in first.items() if key != "path"}))
+        pending.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "Pending"):
+            require_image(self.image, self.retained)
+        self.assertTrue(pending.exists())
+        pending.unlink()
+        receipt = target.with_suffix(".json")
+        receipt.write_text("{}")
+        with self.assertRaisesRegex(ValueError, "changed"):
+            require_image(self.image, self.retained)
+        self.retained.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "private canonical"):
+            require_image(self.image, self.retained)
+        self.retained.chmod(0o700)
+        self.assertEqual(self.fetches, 1)
 
     def test_sealed_payload_and_receipt_corruption_are_not_repaired(self):
         result = self.prepare()

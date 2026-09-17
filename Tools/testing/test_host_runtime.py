@@ -176,6 +176,21 @@ class HostRuntimeTests(unittest.TestCase):
                 process.stop()
             spawn.return_value.wait.assert_called_once()
 
+    def test_selected_provider_paths_do_not_inherit_operator_configuration(self):
+        process = OwnedProcess()
+        with patch.dict(os.environ, CONTAINER_APP_ROOT="/operator", CONTAINER_LOG_ROOT="/operator/logs"), \
+                patch("host_runtime.subprocess.Popen") as spawn:
+            process.start(["fixture"], self.root, None, provider_install=self.root)
+        environment = spawn.call_args.kwargs["env"]
+        self.assertEqual(environment["CONTAINER_APP_ROOT"], str(self.root / "container"))
+        self.assertEqual(environment["CONTAINER_INSTALL_ROOT"], str(self.root))
+        self.assertEqual(environment["CONTAINER_LOG_ROOT"], str(self.root / "container-logs"))
+        invalid = OwnedProcess()
+        with patch("host_runtime.subprocess.Popen") as spawn, self.assertRaisesRegex(ValueError, "canonical"):
+            invalid.start(["fixture"], self.root, None, provider_install=Path("relative"))
+        spawn.assert_not_called()
+        self.assertFalse(invalid.spawn_pending)
+
     def test_interrupted_spawn_is_not_mistaken_for_no_child(self):
         process = OwnedProcess()
         with patch("host_runtime.subprocess.Popen", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
