@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import time
 from urllib.parse import quote
 
 from archive_probe import archive_copy
@@ -23,22 +24,39 @@ OWNER_LABEL = "devcontainer.parity.case"
 class GuestFixture:
     """Create once; reconcile uncertain creation/deletion by exact ID and owner."""
 
-    def __init__(self, socket: Path, owner: str, image: str, api_version: str, journal):
+    def __init__(self, socket: Path, owner: str, image: str, api_version: str, journal,
+                 *, command: tuple[str, ...] = ("sleep", "300"), observe=None):
         if (re.fullmatch(r"[0-9a-f]{64}", owner) is None or
                 re.fullmatch(r"sha256:[0-9a-f]{64}", image) is None or
                 re.fullmatch(r"[0-9]+\.[0-9]+", api_version) is None or
                 not socket.is_absolute() or socket.resolve() != socket):
             raise ValueError("Guest fixture requires immutable case/image identities and API version")
+        if (not isinstance(command, tuple) or not command or len(command) > 32 or
+                any(not isinstance(item, str) or not item or "\0" in item for item in command)):
+            raise ValueError("Guest fixture requires an explicit command tuple")
         self.socket, self.journal = socket, journal
+        self.observe = observe
         self.owner, self.image, self.version = owner, image, api_version
         self.name = "cf-test-" + owner[:32]
         self.intent = {"name": self.name, "image": image, "labels": {OWNER_LABEL: owner},
-                       "socket": str(socket), "apiVersion": api_version}
+                       "socket": str(socket), "apiVersion": api_version, "command": list(command)}
         self.identifier = None
 
-    def call(self, method: str, route: str, body=None):
-        return request(self.socket, method, f"/v{self.version}{route}",
-                       canonical(body) if body is not None else None)
+    def call(self, method: str, route: str, body=None, *, timeout=5):
+        event = {"method": method, "route": f"/v{self.version}{route}"}
+        started = time.monotonic_ns()
+        try:
+            status, payload = request(self.socket, method, event["route"],
+                                      canonical(body) if body is not None else None, timeout=timeout)
+            event["status"] = status
+            return status, payload
+        except (Exception, KeyboardInterrupt) as error:
+            event["error"] = type(error).__name__
+            raise
+        finally:
+            event["durationNS"] = time.monotonic_ns() - started
+            if self.observe is not None:
+                self.observe(event)
 
     def inspect(self, resource: str):
         status, payload = self.call("GET", f"/containers/{resource}/json")
@@ -56,11 +74,16 @@ class GuestFixture:
         if (not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None or
                 value.get("Name") != "/" + self.name or not isinstance(config, dict) or
                 not isinstance(labels, dict) or labels.get(OWNER_LABEL) != self.owner or config.get("Image") != self.image or
+                config.get("Cmd") != self.intent["command"] or
                 value.get("Image") != self.image):
             raise ValueError("Guest resource ownership or image changed; refusing mutation")
         return identifier
 
     def setup(self):
+        self.create()
+        self.start()
+
+    def create(self):
         if "container-intent.json" in self.journal.records():
             raise ValueError("Guest creation already attempted; reconcile instead of retrying")
         status, payload = self.call("GET", f"/images/{self.image}/json")
@@ -69,7 +92,7 @@ class GuestFixture:
         if self.inspect(self.name) is not None:
             raise ValueError("Fixture name already exists; refusing adoption")
         self.journal.put("container-intent.json", canonical(self.intent))
-        body = {"Image": self.image, "Cmd": ["sleep", "300"], "Labels": self.intent["labels"],
+        body = {"Image": self.image, "Cmd": self.intent["command"], "Labels": self.intent["labels"],
                 "HostConfig": {"AutoRemove": False, "NetworkMode": "none"}}
         status, payload = self.call("POST", f"/containers/create?name={self.name}", body)
         value = json.loads(payload)
@@ -83,12 +106,33 @@ class GuestFixture:
         if actual is None or self.owned(actual) != identifier:
             raise ValueError("Created guest is not the admitted resource")
         self.identifier = identifier
+        return actual
+
+    def start(self):
+        if self.identifier is None:
+            raise ValueError("Guest start requires a verified created ID")
+        identifier = self.identifier
+        actual = self.inspect(identifier)
+        if actual is None or self.owned(actual) != identifier:
+            raise ValueError("Guest identity changed before start")
         status, _ = self.call("POST", f"/containers/{identifier}/start")
         if status != 204:
             raise ValueError("Guest start failed")
         actual = self.inspect(identifier)
         if actual is None or self.owned(actual) != identifier or actual.get("State", {}).get("Status") != "running":
             raise ValueError("Guest did not enter running state")
+
+    def remove(self):
+        """Exercise ordinary removal, separately from forceful failure cleanup."""
+        if self.identifier is None:
+            raise ValueError("Guest removal requires a verified created ID")
+        actual = self.inspect(self.identifier)
+        if actual is None or self.owned(actual) != self.identifier:
+            raise ValueError("Guest identity changed before removal")
+        self.journal.put("container-delete-intent.json", canonical({"id": self.identifier}))
+        status, _ = self.call("DELETE", f"/containers/{self.identifier}?v=true")
+        if status != 204 or self.inspect(self.identifier) is not None:
+            raise ValueError("Ordinary guest removal failed")
 
     def archive(self, *, observe=None):
         if self.identifier is None:

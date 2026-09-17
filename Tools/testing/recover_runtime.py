@@ -83,7 +83,7 @@ def recovery_idle(launchd, prior: list[dict], root: Path) -> None:
         previous = allowed.get(pid)
         if previous is not None and all(item[key] == previous[key] for key in ("started", "program")):
             continue
-        if program.is_relative_to(root) or program.name == "devcontainer-engine":
+        if program.is_relative_to(root) or program.name in {"devcontainer-engine", "Runner.Listener"}:
             raise ValueError("Live case client requires explicit process reconciliation; quarantine retained")
         others.append(item["program"])
     require_idle(others)
@@ -91,6 +91,7 @@ def recovery_idle(launchd, prior: list[dict], root: Path) -> None:
 
 def restore_only(runtime: ControlledRuntime) -> None:
     recovery_idle(runtime.launchd, runtime.switch.prior, runtime.root)
+    runtime.require_original_processes_stopped(allow_registered=True)
     runtime.restore()
     runtime.preserve_logs()
     # Immutable receipt stays separate from the original failed/interrupted case.
@@ -172,6 +173,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if not isinstance(runtime.original_processes, list):
         raise ValueError("Invalid original process record")
     recovery_idle(backend, switch.prior, root)
+    runtime.require_original_processes_stopped(allow_registered=True)
     switch.owned_survivors({item["label"]: item for item in switch.prior})
     if not apply:
         return {"status": "ready-to-restore", "caseID": key, "changed": False}

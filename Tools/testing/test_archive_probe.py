@@ -1,6 +1,7 @@
 """Real Unix HTTP and adversarial archive tests; no runtime or Docker CLI."""
 
 from http.server import BaseHTTPRequestHandler
+from copy import copy
 import io
 import json
 import os
@@ -119,10 +120,10 @@ class ArchiveProbeTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertEqual(observations(changed_archive(alter))["symlink"], "false")
 
-    def test_unexpected_paths_duplicates_missing_entries_and_invalid_root_fail(self):
-        for kind in ("traversal", "duplicate", "missing", "root"):
+    def test_unsafe_paths_duplicate_expected_paths_and_missing_files_fail(self):
+        for kind in ("traversal", "duplicate", "missing"):
             def alter(member, data):
-                if member.name != "archive":
+                if member.name != "archive/regular.txt":
                     return [(member, data)]
                 if kind == "missing":
                     return []
@@ -130,11 +131,38 @@ class ArchiveProbeTests(unittest.TestCase):
                     return [(member, data), (member, data)]
                 if kind == "traversal":
                     member.name = "../escape"
-                if kind == "root":
-                    member.type = tarfile.REGTYPE
                 return [(member, data)]
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 observations(changed_archive(alter))
+
+    def test_optional_directory_and_unrelated_safe_members_do_not_change_contract(self):
+        expected = observations(source_archive())
+        for kind in ("no-directory", "extra-file"):
+            def alter(member, data):
+                if member.name != "archive":
+                    return [(member, data)]
+                if kind == "no-directory":
+                    return []
+                extra = tarfile.TarInfo("archive/unrelated.txt")
+                extra.size = 5
+                return [(member, data), (extra, b"extra")]
+            with self.subTest(kind=kind):
+                self.assertEqual(observations(changed_archive(alter)), expected)
+
+    def test_equivalent_path_names_match_and_cannot_hide_duplicate_expected_files(self):
+        def prefixed(member, data):
+            member.name = "./" + member.name
+            return [(member, data)]
+        self.assertEqual(observations(changed_archive(prefixed)), observations(source_archive()))
+        for name in ("./archive/regular.txt", "archive//regular.txt"):
+            def duplicate(member, data):
+                if member.name != "archive/regular.txt":
+                    return [(member, data)]
+                alias = copy(member)
+                alias.name = name
+                return [(member, data), (alias, b"x" * len(data))]
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Duplicate expected"):
+                observations(changed_archive(duplicate))
 
     def test_malformed_and_oversized_archive_fail_closed(self):
         with self.assertRaises(tarfile.ReadError):

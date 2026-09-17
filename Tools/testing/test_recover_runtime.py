@@ -216,6 +216,44 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Live case"):
                 recovery_idle(self.launchd, self.switch.prior, self.root)
 
+    def test_captured_survivor_blocks_report_and_apply_before_service_mutation(self):
+        row = {"pid": 42, "started": "captured", "program": "/original/container-apiserver", "labels": [API]}
+        records = self.journal.records()
+        records["original-processes.plist"] = plistlib.dumps([row])
+        self.journal.path.unlink()
+        self.journal = ServiceJournal(self.journal.path, self.owner, create=True)
+        for name, payload in records.items():
+            self.journal.put(name, payload)
+        before = list(self.launchd.mutations)
+        self.inventory.return_value = {42: row}
+        with patch("runtime_services.process_inventory", return_value={42: row}):
+            for apply in (False, True):
+                with self.subTest(apply=apply), self.assertRaisesRegex(ValueError, "original service process survived"):
+                    self.run_recovery(apply=apply)
+                self.assertEqual(self.launchd.mutations, before)
+                self.assert_quarantined()
+        # The same recorded process is allowed when its original registration
+        # has actually been restored, not merely because its PID was captured.
+        self.switch.restore()
+        with patch("runtime_services.process_inventory", return_value={42: row}):
+            self.assertEqual(self.run_recovery(apply=False)["status"], "ready-to-restore")
+
+    def test_unregistered_or_identity_changed_runner_listener_blocks_recovery(self):
+        row = {"pid": 42, "started": "listener", "program": "/runner/Runner.Listener"}
+        self.inventory.return_value = {42: row}
+        before = list(self.launchd.mutations)
+        for apply in (False, True):
+            with self.subTest(apply=apply), self.assertRaisesRegex(ValueError, "Live case"):
+                self.run_recovery(apply=apply)
+            self.assertEqual(self.launchd.mutations, before)
+        self.switch.restore()
+        with patch("recover_runtime.capture_owned_processes", return_value=[row]), \
+                patch.object(self.launchd, "process_id", return_value=42):
+            recovery_idle(self.launchd, self.switch.prior, self.root)
+            self.inventory.return_value = {42: dict(row, started="replacement")}
+            with self.assertRaisesRegex(ValueError, "Live case"):
+                recovery_idle(self.launchd, self.switch.prior, self.root)
+
     def test_partial_root_deletion_resumes_only_for_the_same_directory(self):
         def partial_remove(root):
             (root / "owner.json").unlink()

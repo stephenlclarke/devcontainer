@@ -9,7 +9,7 @@ never extracts an untrusted response onto the host filesystem.
 from __future__ import annotations
 
 import io
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import tarfile
 import time
@@ -47,13 +47,19 @@ def observations(payload: bytes) -> dict[str, str]:
         raise ValueError("Archive response exceeds fixture limit")
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
         entries = {}
-        expected = {"archive", "archive/regular-link", *("archive/" + name for name in FILES)}
+        expected = {"archive/regular-link", *("archive/" + name for name in FILES)}
         for entry in archive:
-            if entry.name not in expected or entry.name in entries:
-                raise ValueError("Unexpected or duplicate archive entry")
-            entries[entry.name] = entry
-        if entries.keys() != expected or not entries["archive"].isdir():
-            raise ValueError("Archive response lacks the fixture directory or files")
+            path = PurePosixPath(entry.name)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError("Unsafe archive entry path")
+            name = path.as_posix()
+            if name not in expected:
+                continue  # E05 does not assert an exact tar inventory or root entry.
+            if name in entries:
+                raise ValueError("Duplicate expected archive entry")
+            entries[name] = entry
+        if entries.keys() != expected:
+            raise ValueError("Archive response lacks expected fixture files")
 
         def matches(name: str) -> bool:
             entry = entries["archive/" + name]
