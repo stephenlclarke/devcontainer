@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
-from case_evidence import CaseStore, canonical
+from case_evidence import CaseStore, canonical, compare_cases
 from host_runtime import HostGuard, runtime_lease
 from service_journal import ServiceJournal
 import released_engine
@@ -57,6 +57,32 @@ class ReleasedEngineTests(unittest.TestCase):
             self.assertEqual(released_engine.admit(lock, "apple-stock", self.root), [{"verified": True}] * 2)
         self.assertEqual(prepared.call_count, 2)
         self.assertTrue(all(call.args[2] == self.root / "prepared-releases" for call in prepared.call_args_list))
+
+    def test_candidate_admission_does_not_substitute_the_published_runtime(self):
+        lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
+        for lane, profile in [("apple-stock", "stock"), ("container-compose", "enhanced")]:
+            with patch("released_engine.admit_candidate", return_value={"scope": "local-candidate-integration-only"}) as local, \
+                    patch("released_engine.require_retained", return_value={"released": True}) as prepared:
+                selected = released_engine.admit(lock, lane, self.root, "candidate-invocation")
+                local.assert_called_once_with(self.root, "candidate-invocation", profile)
+                self.assertEqual(selected, [{"scope": "local-candidate-integration-only"}, {"released": True}])
+                self.assertEqual(prepared.call_count, 1)
+                self.assertNotEqual(prepared.call_args.args[0]["repository"], "stephenlclarke/devcontainer")
+
+    def test_candidate_evidence_cannot_compare_as_published_release_parity(self):
+        published = released_engine.release_set_identity({"lock": "published"}, None, None)
+        candidate = released_engine.release_set_identity({"lock": "published"}, None, {"candidateInvocation": "first"})
+        self.assertNotEqual(published, candidate)
+        self.assertNotEqual(candidate, released_engine.release_set_identity(
+            {"lock": "published"}, None, {"candidateInvocation": "second"}))
+        records = [{"identity": dict(self.identity, lane=lane, releaseSetSHA256=fingerprint), "result": result()}
+                   for lane, fingerprint in [("docker", published), ("apple-stock", candidate), ("container-compose", published)]]
+        with self.assertRaises(ValueError):
+            compare_cases(records, {"ping": "true"})
+        output = self.root / "candidate.xml"
+        write_junit(records[1]["identity"], result(), output, released_engine.CANDIDATE_SCOPE)
+        properties = {entry.attrib["name"]: entry.attrib["value"] for entry in ET.parse(output).findall("testcase/properties/property")}
+        self.assertEqual(properties["scope"], "local-candidate-integration-only")
 
     def test_version_probe_uses_minimal_environment_and_rejects_unexpected_output(self):
         with patch("released_engine.subprocess.run") as run:
@@ -162,13 +188,16 @@ class ReleasedEngineTests(unittest.TestCase):
 
     def test_setup_journals_owned_root_and_process_before_probe(self):
         case = self.case()
+        case.admission = {"scope": released_engine.CANDIDATE_SCOPE, "runtime": {"candidateInvocation": "fixture"}}
         with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), patch.object(case.child, "process") as process:
             process.pid = 42
             case.setup()
         self.assertEqual(json.loads((case.root / "owner.json").read_text())["identity"], self.identity)
         with self.store.connect() as database:
             names = [row[0] for row in database.execute("SELECT name FROM artifacts ORDER BY name")]
-        self.assertEqual(names, ["owner.json", "process-intent.json", "process.json"])
+            manifest = database.execute("SELECT bytes FROM artifacts WHERE name='admission.json'").fetchone()[0]
+        self.assertEqual(names, ["admission.json", "owner.json", "process-intent.json", "process.json"])
+        self.assertEqual(json.loads(manifest), case.admission)
         self.assertEqual(case.cleanup()["status"], "passed")
         self.assertFalse(case.root.exists())
 

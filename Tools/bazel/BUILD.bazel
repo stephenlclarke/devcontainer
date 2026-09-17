@@ -4,6 +4,8 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
     "prepare_releases.py",
+    "prepare_candidate.py",
+    "retain_evidence.py",
     "release_inputs.py",
     "releases.lock.json",
     "docker-oracle.lock.json",
@@ -31,6 +33,9 @@ sh_test(
         "prepare_releases.py",
         "release_inputs.py",
         "test_prepare_releases.py",
+        "prepare_candidate.py",
+        "test_prepare_candidate.py",
+        "retain_evidence.py",
         "prepare_guest_images.py",
         "test_prepare_guest_images.py",
         "oci_image_layout.py",

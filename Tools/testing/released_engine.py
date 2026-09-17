@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from prepare_releases import require_retained
+from prepare_candidate import admit_candidate, SCOPE as CANDIDATE_SCOPE
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from engine_probe import engine_negotiation, request
@@ -45,10 +46,12 @@ def release_selection(lock: dict, lane: str) -> list[dict]:
     return selected
 
 
-def admit(lock: dict, lane: str, retained: Path) -> list[dict]:
-    return [require_retained(asset, retained / "release-objects" / asset["sha256"],
+def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
+    assets = release_selection(lock, lane)
+    local = [admit_candidate(retained, candidate, "stock" if lane == "apple-stock" else "enhanced")] if candidate else []
+    return local + [require_retained(asset, retained / "release-objects" / asset["sha256"],
                              retained / "prepared-releases", retained / "prepared-receipts")
-            for asset in release_selection(lock, lane)]
+                    for asset in (assets[1:] if candidate else assets)]
 
 
 def version(command: Path) -> str:
@@ -59,13 +62,21 @@ def version(command: Path) -> str:
     return result.stdout.decode().strip()
 
 
-def write_junit(identity: dict, result: dict, path: Path) -> None:
+def release_set_identity(lock: dict, guest_locks, candidate: dict | None) -> str:
+    published = [lock, guest_locks] if guest_locks else lock
+    # Comparison intentionally ignores per-lane runtime fingerprints. Bind the
+    # development-only scope here so it cannot mix with a published campaign.
+    inputs = {"scope": CANDIDATE_SCOPE, "publishedInputs": published, "candidate": candidate} if candidate else published
+    return digest(canonical(inputs))
+
+
+def write_junit(identity: dict, result: dict, path: Path, scope: str = "released-engine-case-only") -> None:
     failed = result["status"] != "passed"
     suite = ET.Element("testsuite", name="released-engine", tests="1", failures=str(int(failed)), errors="0", skipped="0")
     case = ET.SubElement(suite, "testcase", name=identity["fixture"], classname=identity["lane"],
                          time=str(sum(result["durationsNS"].values()) / 1e9))
     properties = ET.SubElement(case, "properties")
-    for name, value in {**identity, **result["durationsNS"]}.items():
+    for name, value in {**identity, **result["durationsNS"], "scope": scope}.items():
         ET.SubElement(properties, "property", name=name, value=str(value))
     if failed:
         ET.SubElement(case, "failure", message=result["status"]).text = "\n".join(result["errors"])
@@ -75,7 +86,7 @@ def write_junit(identity: dict, result: dict, path: Path) -> None:
 
 class ReleasedCase:
     def __init__(self, store: CaseStore, identity: dict, releases: list[dict], parent: Path, revalidate, guard: HostGuard,
-                 *, runtime_factory=None, guest_inputs=None):
+                 *, runtime_factory=None, guest_inputs=None, admission=None):
         self.store, self.identity, self.releases = store, identity, releases
         self.parent, self.revalidate = parent, revalidate
         self.root = None
@@ -85,6 +96,7 @@ class ReleasedCase:
         self.requests = []
         self.runtime_factory, self.runtime = runtime_factory, None
         self.guest_inputs, self.guest = guest_inputs, None
+        self.admission = admission
 
     def setup(self):
         self.root = Path(tempfile.mkdtemp(dir=self.parent, prefix="case-"))
@@ -93,6 +105,8 @@ class ReleasedCase:
         (self.root / "owner.json").write_bytes(owner)
         # Durable ownership intent precedes launching any external process.
         self.store.attach(self.identity, "owner.json", owner)
+        if self.admission is not None:
+            self.store.attach(self.identity, "admission.json", canonical(self.admission))
         self.owner = json.loads(owner)
         self.guard.begin(self.owner)
         if self.runtime_factory is not None:
@@ -177,6 +191,7 @@ def main():
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["apple-stock", "container-compose"])
     parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -192,7 +207,8 @@ def main():
     harness = {str(path.relative_to(repository)): digest(path.read_bytes()) for path in [
         *sorted(Path(__file__).parent.glob("*.py")),
         *[repository / "Tools/bazel" / name for name in
-          ("prepare_releases.py", "release_inputs.py", "prepare_guest_images.py", "oci_image_layout.py")]]}
+          ("prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
+           "prepare_guest_images.py", "oci_image_layout.py")]]}
     for root in (SSD, RETAINED):
         if not root.is_dir() or root.resolve() != root:
             raise ValueError("Missing or symlinked enrolled storage")
@@ -207,7 +223,7 @@ def main():
     # payload/temp directory. Keeping the same inode serializes both workflows.
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
-        releases = admit(lock, args.lane, RETAINED)
+        releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
         guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED) if guest_locks is not None else None
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
@@ -219,7 +235,7 @@ def main():
             runtime["guestInputs"] = guest_inputs
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": args.lane,
                     "contractSHA256": digest(canonical(expected)), "harnessSHA256": digest(canonical(harness)),
-                    "releaseSetSHA256": digest(canonical([lock, guest_locks] if guest_locks else lock)),
+                    "releaseSetSHA256": release_set_identity(lock, guest_locks, releases[0] if args.candidate_invocation else None),
                     "runtimeSHA256": digest(canonical(runtime))}
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
@@ -228,19 +244,21 @@ def main():
                 raise ValueError("SSD ownership or volume identity changed during execution")
             if guest_locks is not None and admit_guest(*guest_locks, args.lane, RETAINED) != guest_inputs:
                 raise ValueError("Released guest inputs changed during execution")
-            return admit(lock, args.lane, RETAINED)
+            return admit(lock, args.lane, RETAINED, args.candidate_invocation)
 
         def runtime_factory(root, owner):
             journal_parent = RETAINED / "private-runtime"
             journal_parent.mkdir(mode=0o700, exist_ok=True)
             return ControlledRuntime(root, owner, api_server, journal_parent)
 
+        scope = CANDIDATE_SCOPE if args.candidate_invocation else "released-engine-case-only"
+        admission = {"scope": scope, "releaseLock": lock, "guestLocks": guest_locks, "runtime": runtime}
         case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory,
-                            guest_inputs=guest_inputs)
+                            guest_inputs=guest_inputs, admission=admission)
         result = run_case(store, identity, expected, case.setup, case.operation, case.cleanup)
         if os.environ.get("XML_OUTPUT_FILE"):
-            write_junit(identity, result, Path(os.environ["XML_OUTPUT_FILE"]))
-        print(canonical({"identity": identity, "result": result, "scope": "released-engine-case-only"}).decode())
+            write_junit(identity, result, Path(os.environ["XML_OUTPUT_FILE"]), scope)
+        print(canonical({"identity": identity, "result": result, "scope": scope}).decode())
         raise SystemExit(0 if result["status"] == "passed" else 1)
 
 

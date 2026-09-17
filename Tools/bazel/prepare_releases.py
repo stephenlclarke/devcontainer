@@ -26,6 +26,10 @@ KERNEL_BYTES = 30423552
 def layout(asset: dict) -> dict:
     """Only reviewed release layouts are admitted; never guess a missing binary."""
     repository, name = asset["repository"], asset["name"]
+    if repository == "local/devcontainer-candidate" and name == "candidate_archive.tar.gz":
+        return {"format": "tar", "executables": {
+            key: f"devcontainer-{asset['tag']}/bin/{key}"
+            for key in ("devcontainer", "devcontainer-engine", "devcontainer-compose")}}
     if (repository, asset["tag"], name) == ("kata-containers/kata-containers", "3.32.0", "kata-static-3.32.0-arm64.tar.zst"):
         return {"format": "kernel-zstd", "executables": {}, "files": {"kernel": "kernel/vmlinux"}}
     if repository == "stephenlclarke/devcontainer" and name == "devcontainer-release-arm64.tar.gz":

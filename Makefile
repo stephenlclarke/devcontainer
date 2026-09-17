@@ -44,7 +44,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
-.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case
+.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-prepare-guest-kernel
@@ -78,7 +78,10 @@ bazel-prepare-docker-oracle:
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
-	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}"
+	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)")
+
+bazel-prepare-candidate:
+	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)"
 
 bazel-recover-runtime:
 	Tools/bazel/run.sh recover-runtime
