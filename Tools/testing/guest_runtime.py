@@ -90,13 +90,17 @@ class ReleasedGuest:
     """Own setup commands and guest cleanup before the Engine/provider is stopped."""
 
     def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path,
-                 *, observe=None):
+                 *, observe=None, image_id: str | None = None):
         if fixture not in FIXTURES:
             raise ValueError("Unsupported released guest fixture")
         self.inputs, self.fixture, self.root = inputs, fixture, root
         self.owner, self.runtime, self.container, self.socket = owner, runtime, container, socket
         self.observe, self.guest, self.commands = observe, None, []
         self.pending_logs = {}
+        image = inputs["workload"]["image"]
+        self.image_id = image["config"] if image_id is None else image_id
+        if self.image_id not in {image["config"], image.get("manifest")}:
+            raise ValueError("Runtime image identity is outside the admitted OCI closure")
 
     def retain_logs(self):
         """A bounded private snapshot is required before disposable logs can go."""
@@ -158,7 +162,7 @@ class ReleasedGuest:
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         if self.fixture == "E06-network-volume":
             self.guest = NetworkVolumeFixture(self.socket, digest(canonical(self.owner["identity"])),
-                                              self.inputs["workload"]["image"]["config"], GUEST_API_VERSION, self.runtime.journal,
+                                              self.image_id, GUEST_API_VERSION, self.runtime.journal,
                                               self.root, observe=self.observe)
             with deadline(180):
                 return self.guest.operation()
@@ -166,7 +170,7 @@ class ReleasedGuest:
         if self.fixture == "E03-exec-streams":
             command = ("sleep", "600")
         self.guest = GuestFixture(self.socket, digest(canonical(self.owner["identity"])),
-                                  self.inputs["workload"]["image"]["config"], GUEST_API_VERSION, self.runtime.journal,
+                                  self.image_id, GUEST_API_VERSION, self.runtime.journal,
                                   command=command, observe=self.observe)
         with deadline(360 if self.fixture == "E03-exec-streams" else 90):
             if self.fixture == "E02-container-lifecycle":

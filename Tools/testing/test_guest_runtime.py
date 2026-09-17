@@ -41,6 +41,20 @@ class GuestRuntimeTests(unittest.TestCase):
             self.assertEqual(guest_runtime.require_guest_api(self.root / 'socket'),
                              {'requested': '1.53', 'minimum': '1.44', 'maximum': maximum})
 
+    def test_admitted_manifest_identity_is_preserved_without_rewriting_config_pin(self):
+        manifest = "sha256:" + "b" * 64
+        self.inputs["workload"]["image"]["manifest"] = manifest
+        case = ReleasedGuest(self.inputs, "E05-archive-copy", self.root, self.owner,
+                             self.runtime, "", self.root / "socket", image_id=manifest)
+        with patch('guest_runtime.GuestFixture') as factory:
+            case.operation()
+        self.assertEqual(factory.call_args.args[2], manifest)
+        self.assertEqual(self.inputs["workload"]["image"]["config"], "sha256:" + "a" * 64)
+        self.assertEqual(self.case.image_id, "sha256:" + "a" * 64)
+        with self.assertRaisesRegex(ValueError, "outside the admitted"):
+            ReleasedGuest(self.inputs, "E05-archive-copy", self.root, self.owner,
+                          self.runtime, "", self.root / "socket", image_id="sha256:" + "c" * 64)
+
     def test_invalid_or_incompatible_api_cannot_launch_guest(self):
         for status, value in ((500, {}), (200, []), (200, {}),
                               (200, {'MinAPIVersion': '1.54', 'ApiVersion': '1.54'}),

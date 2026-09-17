@@ -21,7 +21,8 @@ class DockerCaseTests(unittest.TestCase):
         self.parent = Path(temporary.name).resolve()
         self.store, self.guard, self.revalidate = Mock(), Mock(), Mock()
         self.inputs = {"tools": {"docker": "/prepared/docker"}, "pins": {},
-                       "workload": {"path": "/retained/image.tar", "image": {"config": "sha256:" + "a" * 64}}}
+                       "workload": {"path": "/retained/image.tar", "image": {"config": "sha256:" + "a" * 64,
+                                    "manifest": "sha256:" + "b" * 64}}}
         self.revalidate.return_value = self.inputs
         self.identity = {"fixture": "E02-container-lifecycle"}
         self.case = released_docker.DockerCase(self.store, self.identity, self.inputs, self.parent,
@@ -33,7 +34,8 @@ class DockerCaseTests(unittest.TestCase):
     def setup_case(self):
         with patch.object(released_docker, "DockerVM", return_value=self.vm), \
                 patch.object(released_docker, "ReleasedGuest", return_value=self.guest) as guest, \
-                patch.object(released_docker, "request", return_value=(200, canonical({"Id": "sha256:" + "a" * 64}))):
+                patch.object(released_docker, "request", return_value=(200, canonical({"Id": "sha256:" + "b" * 64,
+                    "Descriptor": {"digest": "sha256:" + "b" * 64}, "Os": "linux", "Architecture": "arm64"}))):
             self.case.setup()
         return guest
 
@@ -44,6 +46,7 @@ class DockerCaseTests(unittest.TestCase):
         arguments = self.vm.command.call_args.args[1]
         self.assertEqual(arguments[-4:], ["image", "load", "--input", "/retained/image.tar"])
         self.assertEqual(guest.call_args.args[2], self.case.root / "workspace")
+        self.assertEqual(guest.call_args.kwargs["image_id"], "sha256:" + "b" * 64)
         self.assertEqual(self.case.operation(), self.guest.operation.return_value)
         self.vm.verify.assert_called_once_with()
 
@@ -90,6 +93,17 @@ class DockerCaseTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "exact admitted"):
             self.case.setup()
         self.assertIsNone(self.case.guest)
+
+    def test_matching_image_id_does_not_hide_wrong_manifest_or_architecture(self):
+        identifier = "sha256:" + "b" * 64
+        for descriptor, architecture in (("sha256:" + "c" * 64, "arm64"), (identifier, "amd64")):
+            value = {"Id": identifier, "Descriptor": {"digest": descriptor}, "Os": "linux", "Architecture": architecture}
+            with patch.object(released_docker, "DockerVM", return_value=self.vm), \
+                    patch.object(released_docker, "request", return_value=(200, canonical(value))), \
+                    self.assertRaisesRegex(ValueError, "exact admitted"):
+                self.case.setup()
+            self.assertIsNone(self.case.guest)
+            self.assertEqual(json.loads(self.vm.journal.put.call_args.args[1])["inspection"], value)
 
     def test_changed_inputs_are_not_accepted_as_cleanup_success(self):
         self.setup_case()

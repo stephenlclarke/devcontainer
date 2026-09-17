@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from docker_vm import DockerVM, private_root
 from engine_probe import engine_negotiation, request
-from guest_runtime import FIXTURES, ReleasedGuest
+from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
 from host_runtime import HostGuard, cancellation, deadline, runtime_lease
 from prepare_docker_cli import prepare_cli
 from prepare_guest_images import require_image
@@ -64,12 +64,19 @@ class DockerCase:
         if self.identity["fixture"] in FIXTURES:
             self.vm.command("docker-workload-load", [self.inputs["tools"]["docker"], "--host", "unix://" + str(self.vm.socket),
                             "image", "load", "--input", self.inputs["workload"]["path"]], timeout=60)
-            identifier = self.inputs["workload"]["image"]["config"]
-            status, data = request(self.vm.socket, "GET", "/images/" + identifier + "/json")
-            if status != 200 or json.loads(data).get("Id") != identifier:
+            # Docker's containerd store exposes the OCI target digest as Id,
+            # not the config digest used by the classic image store. Both are
+            # authenticated by the retained single-platform archive's closure.
+            identifier = self.inputs["workload"]["image"]["manifest"]
+            status, data = request(self.vm.socket, "GET", "/v" + GUEST_API_VERSION + "/images/" + identifier + "/json")
+            inspection = json.loads(data)
+            self.vm.journal.put("docker-workload-inspect.json", canonical({"status": status, "inspection": inspection}))
+            if (status != 200 or inspection.get("Id") != identifier or
+                    inspection.get("Descriptor", {}).get("digest") != identifier or
+                    inspection.get("Os") != "linux" or inspection.get("Architecture") != "arm64"):
                 raise ValueError("Docker did not load the exact admitted workload image")
             self.guest = ReleasedGuest(self.inputs, self.identity["fixture"], self.root / "workspace", self.owner,
-                                       self.vm, "", self.vm.socket, observe=self.requests.append)
+                                       self.vm, "", self.vm.socket, observe=self.requests.append, image_id=identifier)
         if self.revalidate() != self.inputs:
             raise ValueError("Docker release inputs changed during setup")
 

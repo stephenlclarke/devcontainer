@@ -282,7 +282,8 @@ class ReleasedEngineTests(unittest.TestCase):
                 self.store.begin(case.identity)
                 runtime = Mock(service={"pid": 42})
                 runtime.receipt.return_value = {"status": "restored"}
-                case.runtime_factory, case.guest_inputs = Mock(return_value=runtime), {}
+                case.runtime_factory = Mock(return_value=runtime)
+                case.guest_inputs = {"workload": {"image": {"config": "sha256:" + "a" * 64}}}
                 unavailable = [not oversized]
                 def start_runtime():
                     runtime.journal = ServiceJournal(self.root / ("logs-" + str(oversized) + ".sqlite"),
