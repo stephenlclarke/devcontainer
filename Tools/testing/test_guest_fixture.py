@@ -9,7 +9,7 @@ from socketserver import UnixStreamServer
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
 from case_evidence import canonical
@@ -58,7 +58,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        # 204 clients can close as soon as headers arrive. Even sendall(b'')
+        # may raise EPIPE then; there is no response body to send.
+        if body:
+            self.wfile.write(body)
 
     do_GET = do_POST = do_PUT = do_DELETE = respond
 
@@ -87,6 +90,14 @@ class GuestFixtureTests(unittest.TestCase):
 
     def reopen(self):
         return GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal)
+
+    def test_empty_response_does_not_write_to_an_already_closed_client(self):
+        handler = Mock()
+        handler.dispatch.return_value = (204, b'')
+        handler.wfile.write.side_effect = BrokenPipeError('client closed after headers')
+        Handler.respond(handler)
+        handler.wfile.write.assert_not_called()
+        handler.end_headers.assert_called_once()
 
     def stop(self):
         self.server.shutdown()

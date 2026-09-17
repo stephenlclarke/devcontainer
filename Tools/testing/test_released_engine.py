@@ -25,6 +25,9 @@ class ReleasedEngineTests(unittest.TestCase):
         self.store = CaseStore(self.root / "cases.sqlite")
         self.identity = identity()
         self.store.begin(self.identity)
+        keychains = patch("released_engine.run_keychain", return_value={"status": "fixture-only"})
+        self.keychains = keychains.start()
+        self.addCleanup(keychains.stop)
 
     def test_junit_preserves_phase_timings_and_failures(self):
         output = self.root / "result.xml"
@@ -196,10 +199,12 @@ class ReleasedEngineTests(unittest.TestCase):
         with self.store.connect() as database:
             names = [row[0] for row in database.execute("SELECT name FROM artifacts ORDER BY name")]
             manifest = database.execute("SELECT bytes FROM artifacts WHERE name='admission.json'").fetchone()[0]
-        self.assertEqual(names, ["admission.json", "owner.json", "process-intent.json", "process.json"])
+        self.assertEqual(names, ["admission.json", "keychain-intent.json", "keychain-ready.json",
+                                 "owner.json", "process-intent.json", "process.json"])
         self.assertEqual(json.loads(manifest), case.admission)
         self.assertEqual(case.cleanup()["status"], "passed")
         self.assertFalse(case.root.exists())
+        self.assertEqual([call.args[1] for call in self.keychains.call_args_list], ["create", "delete"])
 
     def test_operation_uses_direct_engine_probe_with_deadline(self):
         case = self.case()
@@ -207,6 +212,28 @@ class ReleasedEngineTests(unittest.TestCase):
         with patch("released_engine.engine_negotiation", return_value={"ping": "true"}) as probe:
             self.assertEqual(case.operation(), {"ping": "true"})
         probe.assert_called_once_with(case.socket, observe=case.requests.append)
+
+    def test_failed_keychain_setup_cannot_launch_engine(self):
+        case = self.case()
+        self.keychains.side_effect = RuntimeError('keychain failure')
+        with patch.object(case.child, 'start') as start:
+            with self.assertRaisesRegex(RuntimeError, 'keychain failure'):
+                case.setup()
+            start.assert_not_called()
+        self.keychains.side_effect = None
+        self.assertEqual(case.cleanup()['status'], 'passed')
+
+    def test_failed_keychain_cleanup_keeps_owned_root_and_guard(self):
+        case = self.case()
+        with patch.object(case.child, 'start'), patch.object(case.child, 'wait_ready'), \
+                patch.object(case.child, 'process') as process:
+            process.pid = 42
+            case.setup()
+        self.keychains.side_effect = RuntimeError('keychain cleanup failure')
+        with self.assertRaisesRegex(RuntimeError, 'keychain cleanup failure'):
+            case.cleanup()
+        self.assertTrue(case.root.exists())
+        self.assertTrue(case.guard.path.exists())
 
     def test_guest_provision_and_operation_precede_verified_teardown(self):
         case = self.case()

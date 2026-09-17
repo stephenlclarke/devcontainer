@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from prepare_releases import require_retained
 from prepare_candidate import admit_candidate, SCOPE as CANDIDATE_SCOPE
+from private_keychain import run_keychain
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from engine_probe import engine_negotiation, request
@@ -97,6 +98,7 @@ class ReleasedCase:
         self.runtime_factory, self.runtime = runtime_factory, None
         self.guest_inputs, self.guest = guest_inputs, None
         self.admission = admission
+        self.keychain_intent = False
 
     def setup(self):
         self.root = Path(tempfile.mkdtemp(dir=self.parent, prefix="case-"))
@@ -123,6 +125,10 @@ class ReleasedCase:
             if self.revalidate() != self.releases:
                 raise ValueError("Released runtime inputs changed during provisioning")
         self.output = (self.root / "engine.log").open("xb")
+        self.store.attach(self.identity, "keychain-intent.json", canonical({"home": str(self.root)}))
+        self.keychain_intent = True
+        self.store.attach(self.identity, "keychain-ready.json", canonical(run_keychain(
+            self.root, "create", self.runtime.journal if self.runtime else None)))
         engine = self.releases[0]["executables"]["devcontainer-engine"]
         container = self.releases[1]["executables"]["container"]
         self.store.attach(self.identity, "process-intent.json", canonical({"root": str(self.root), "program": engine}))
@@ -167,6 +173,9 @@ class ReleasedCase:
             # Detect executable replacement before claiming successful cleanup.
             if self.revalidate() != self.releases:
                 raise ValueError("Released runtime inputs changed during execution")
+            if self.keychain_intent:
+                self.store.attach(self.identity, "keychain-cleanup.json", canonical(run_keychain(
+                    self.root, "delete", self.runtime.journal if self.runtime else None)))
         finally:
             # A diagnostics/retention failure must not prevent restoring the
             # operator's services after the child has verifiably stopped.

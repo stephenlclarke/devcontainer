@@ -19,6 +19,7 @@ from runtime_services import (ControlledRuntime, capture_owned_processes, proces
 from service_journal import ServiceJournal
 from service_switch import Launchd, canonical_file
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_resources_stopped
+from private_keychain import keychain_diagnostics, require_keychain_stopped, run_keychain
 
 
 def private_json(path: Path) -> dict:
@@ -92,10 +93,15 @@ def recovery_idle(launchd, prior: list[dict], root: Path) -> None:
 
 
 def restore_only(runtime: ControlledRuntime) -> None:
+    require_keychain_stopped(runtime.journal.records())
+    keychain_diagnostics(runtime.root, runtime.journal)
     recovery_idle(runtime.launchd, runtime.switch.prior, runtime.root)
     runtime.require_original_processes_stopped(allow_registered=True)
     runtime.restore()
     runtime.preserve_logs()
+    keychains = [runtime.root / "Library/Keychains" / name for name in ('login.keychain-db', 'login.keychain')]
+    if any(path.exists() or path.is_symlink() for path in keychains):
+        run_keychain(runtime.root, "delete", runtime.journal)
     # Immutable receipt stays separate from the original failed/interrupted case.
     runtime.journal.put("recovery-cleanup-authorized.json", cleanup_receipt(runtime.owner, runtime.root))
 
@@ -131,6 +137,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     verify_case(retained, owner)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
+    require_keychain_stopped(records)
     require_guest_resources_stopped(records)
     context = json.loads(records.get("runtime-context.json", b"null"))
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):

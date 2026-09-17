@@ -102,6 +102,48 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.journal.records()["service-container-apiserver.log"], b"private diagnostic fixture")
         self.assertEqual(self.run_recovery(), {"status": "clear", "changed": False})
 
+    def test_private_keychain_is_removed_before_root_and_failure_keeps_quarantine(self):
+        keychain = self.root / 'Library/Keychains/login.keychain-db'
+        keychain.parent.mkdir(parents=True)
+        keychain.write_text('fake keychain; no host API')
+        with patch('recover_runtime.run_keychain', side_effect=RuntimeError('injected cleanup failure')):
+            with self.assertRaisesRegex(RuntimeError, 'injected'):
+                self.run_recovery()
+        self.assert_quarantined()
+        with patch('recover_runtime.run_keychain', return_value={'status': 'deleted'}) as cleanup:
+            self.assertEqual(self.run_recovery()['status'], 'restored')
+        self.assertEqual(cleanup.call_args.args[:2], (self.root, 'delete'))
+        self.assertEqual(cleanup.call_args.args[2].path, self.journal.path)
+        self.assertFalse(self.root.exists())
+
+    def test_crash_after_keychain_spawn_blocks_recovery_even_with_empty_inventory(self):
+        self.journal.put('keychain-0001-intent.json', canonical({'arguments': ['private-helper']}))
+        before = list(self.launchd.mutations)
+        for has_pid in (False, True):
+            if has_pid:
+                self.journal.put('keychain-0001-process.json', canonical({'pid': 123}))
+            for apply in (False, True):
+                with self.assertRaisesRegex(ValueError, 'keychain helper needs explicit'):
+                    self.run_recovery(apply=apply)
+                self.assert_quarantined()
+                self.assertEqual(self.launchd.mutations, before)
+
+    def test_crash_during_recovery_keychain_delete_keeps_quarantine_on_resume(self):
+        path = self.root / 'Library/Keychains/login.keychain-db'
+        path.parent.mkdir(parents=True)
+        path.write_text('fixture')
+        def interrupted(_root, _action, journal):
+            journal.put('keychain-0001-intent.json', canonical({'arguments': ['delete-helper']}))
+            # Model deletion completing late after the worker loses its handle.
+            path.unlink()
+            raise RuntimeError('worker interrupted')
+        with patch('recover_runtime.run_keychain', side_effect=interrupted):
+            with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                self.run_recovery()
+        with self.assertRaisesRegex(ValueError, 'keychain helper needs explicit'):
+            self.run_recovery()
+        self.assert_quarantined()
+
     def test_unreconciled_guest_refuses_both_report_and_apply_without_mutation(self):
         self.journal.put("container-intent.json", canonical({"name": "owned-guest"}))
         before = list(self.launchd.mutations)
