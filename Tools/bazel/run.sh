@@ -27,7 +27,7 @@ usage() {
     printf 'Usage: %s configure|test-tools|restore-candidate ID|coverage-report ID|acquire-releases LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]\n' "$SCRIPT_NAME"
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
-    printf '       %s prepare-releases LOCK [--offline] (unpack releases on SSD, never install or build)\n' "$SCRIPT_NAME"
+    printf '       %s prepare-releases LOCK [--offline] (extract on SSD; retain executables internally; never install/build)\n' "$SCRIPT_NAME"
     printf '       %s recover-runtime [--apply --case ID] (report or restore a journalled service transaction)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"

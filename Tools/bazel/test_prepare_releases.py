@@ -82,6 +82,136 @@ class PrepareReleasesTests(unittest.TestCase):
             preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts)
         self.assertEqual(list(self.prepared.iterdir()), [])
 
+    def durable_root(self):
+        path = self.root / "durable-assets"
+        path.mkdir(mode=0o700)
+        return path
+
+    def test_retained_executables_match_release_and_survive_ssd_eviction(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(result["inventorySHA256"], prepared["inventorySHA256"])
+        self.assertEqual(result["preparationSHA256"], prepared["preparationSHA256"])
+        self.assertTrue(Path(result["executables"]["compose"]).is_relative_to(durable))
+        with patch.object(preparation, "durable_file", side_effect=AssertionError("must reuse sealed assets")):
+            self.assertEqual(preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts), result)
+        shutil.rmtree(Path(prepared["root"]))
+        self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), result)
+        self.assertEqual(len(list(durable.iterdir())), 1)
+
+    def test_pending_publication_refuses_admission_and_resumes_without_recopying_complete_files(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        original = preparation.durable_file
+        writes = []
+        def interrupt(path, source, *args, **kwargs):
+            writes.append(path.name)
+            if path.name == "compose-normalizer":
+                path.write_bytes(b"partial")
+                raise OSError("injected interruption")
+            return original(path, source, *args, **kwargs)
+        with patch.object(preparation, "durable_file", side_effect=interrupt), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        with self.assertRaisesRegex(ValueError, "unfinished"):
+            preparation.require_retained(self.asset, self.source, durable, self.receipts)
+        with patch.object(preparation, "durable_file", wraps=original) as copy:
+            result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+            self.assertNotIn("compose", [call.args[0].name for call in copy.call_args_list])
+        self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), result)
+
+    def test_sealed_retained_corruption_is_not_silently_repaired(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        command = Path(result["executables"]["compose"])
+        command.write_bytes(b"corruption")
+        with self.assertRaisesRegex(ValueError, "bytes or modes changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(command.read_bytes(), b"corruption")
+
+    def test_pending_foreign_files_links_or_marker_mismatch_are_never_overwritten(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        destination = durable / prepared["preparationSHA256"]
+        foreign = destination / "unregistered"
+        foreign.write_bytes(b"preserve")
+        with self.assertRaisesRegex(ValueError, "Unregistered"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(foreign.read_bytes(), b"preserve")
+        foreign.unlink()
+        target = destination / "compose/bin/compose"
+        target.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "link or special"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target.unlink()
+        pending = durable / (prepared["preparationSHA256"] + ".pending.json")
+        pending.write_text("different owner")
+        with self.assertRaisesRegex(ValueError, "ownership changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+
+    def test_pending_hardlinked_file_and_alias_root_fail_closed(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target = durable / prepared["preparationSHA256"] / "compose/bin/compose"
+        foreign = self.root / "foreign"
+        foreign.write_bytes(b"preserve")
+        os.link(foreign, target)
+        with self.assertRaisesRegex(ValueError, "privately owned"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(foreign.read_bytes(), b"preserve")
+        alias = self.root / "alias"
+        alias.symlink_to(durable)
+        with self.assertRaisesRegex(ValueError, "canonical directory"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, alias, self.receipts)
+
+    def test_private_parent_pending_alias_and_complete_hardlink_are_rejected(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        durable.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "must be private"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        durable.chmod(0o700)
+        pending = durable / (prepared["preparationSHA256"] + ".pending.json")
+        pending.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "aliases"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        pending.unlink()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target = durable / prepared["preparationSHA256"] / "compose/bin/compose"
+        foreign = self.root / "complete-linked-file"
+        foreign.write_bytes(b"fixture")
+        foreign.chmod(0o755)
+        os.link(foreign, target)
+        with self.assertRaisesRegex(ValueError, "file ownership changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+
+    def test_changed_source_during_copy_cannot_publish_executables(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        original = preparation.durable_file
+        def changed_source(path, source, *args, **kwargs):
+            original(path, source, *args, **kwargs)
+            if path.name == preparation.RECEIPT:
+                self.source.write_bytes(b"changed release archive")
+        with patch.object(preparation, "durable_file", side_effect=changed_source), self.assertRaises(ValueError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(len(list(durable.glob("*.pending.json"))), 1)
+        with self.assertRaisesRegex(ValueError, "unfinished"):
+            preparation.require_retained(self.asset, self.source, durable, self.receipts)
+
     def test_raw_release_has_only_the_pinned_binary(self):
         self.source.write_bytes(b"released executable")
         self.asset.update(repository="docker/compose", name="docker-compose-darwin-aarch64",

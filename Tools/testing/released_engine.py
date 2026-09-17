@@ -14,7 +14,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
-from prepare_releases import require_prepared
+from prepare_releases import require_retained
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from engine_probe import engine_negotiation, request
@@ -44,9 +44,9 @@ def release_selection(lock: dict, lane: str) -> list[dict]:
     return selected
 
 
-def admit(lock: dict, lane: str, retained: Path, ssd: Path) -> list[dict]:
-    return [require_prepared(asset, retained / "release-objects" / asset["sha256"],
-                             ssd / "prepared-releases", retained / "prepared-receipts")
+def admit(lock: dict, lane: str, retained: Path) -> list[dict]:
+    return [require_retained(asset, retained / "release-objects" / asset["sha256"],
+                             retained / "prepared-releases", retained / "prepared-receipts")
             for asset in release_selection(lock, lane)]
 
 
@@ -178,7 +178,7 @@ def main():
     # payload/temp directory. Keeping the same inode serializes both workflows.
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
-        releases = admit(lock, args.lane, RETAINED, SSD)
+        releases = admit(lock, args.lane, RETAINED)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
@@ -193,7 +193,7 @@ def main():
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
-            return admit(lock, args.lane, RETAINED, SSD)
+            return admit(lock, args.lane, RETAINED)
 
         def runtime_factory(root, owner):
             journal_parent = RETAINED / "private-runtime"

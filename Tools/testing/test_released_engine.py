@@ -52,9 +52,10 @@ class ReleasedEngineTests(unittest.TestCase):
 
     def test_admission_uses_only_existing_prepared_release_assets(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
-        with patch("released_engine.require_prepared", return_value={"verified": True}) as prepared:
-            self.assertEqual(released_engine.admit(lock, "apple-stock", self.root, self.root), [{"verified": True}] * 2)
+        with patch("released_engine.require_retained", return_value={"verified": True}) as prepared:
+            self.assertEqual(released_engine.admit(lock, "apple-stock", self.root), [{"verified": True}] * 2)
         self.assertEqual(prepared.call_count, 2)
+        self.assertTrue(all(call.args[2] == self.root / "prepared-releases" for call in prepared.call_args_list))
 
     def test_version_probe_uses_minimal_environment_and_rejects_unexpected_output(self):
         with patch("released_engine.subprocess.run") as run:

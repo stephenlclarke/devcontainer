@@ -1,4 +1,4 @@
-"""Prepare verified release binaries on SSD, without installation or compilation."""
+"""Extract on SSD and retain verified release executables as durable local assets."""
 
 from __future__ import annotations
 
@@ -214,6 +214,110 @@ def require_prepared(asset: dict, source: Path, root: Path, receipts: Path) -> d
             "executables": {name: str(destination / path) for name, path in specification["layout"]["executables"].items()}}
 
 
+def sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def durable_file(path: Path, source: Path | None, data: bytes | None = None, mode: int = 0o600) -> None:
+    """Write only registered pending asset files, never linked or foreign files."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        info = os.fstat(output.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            raise ValueError("Pending release file is not privately owned")
+        os.ftruncate(output.fileno(), 0)
+        if source is not None:
+            with source.open("rb") as incoming:
+                shutil.copyfileobj(incoming, output)
+        else:
+            output.write(data)
+        output.flush()
+        os.fchmod(output.fileno(), mode)
+        os.fsync(output.fileno())
+
+
+def require_retained(asset: dict, source: Path, root: Path, receipts: Path) -> dict:
+    specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"], "layout": layout(asset)}
+    key = hashlib.sha256(canonical(specification).encode()).hexdigest()
+    pending = root / (key + ".pending.json")
+    if pending.exists() or pending.is_symlink():
+        raise ValueError("Retained executable publication is unfinished")
+    return require_prepared(asset, source, root, receipts)
+
+
+def retain_prepared(asset: dict, source: Path, scratch: Path, root: Path, receipts: Path) -> dict:
+    """Publish into permanent asset slots; scratch/extraction stays on SSD.
+
+    The caller holds the reference-store lease. Pending intent precedes writes;
+    runtime admission rejects that intent until every byte and mode is durable.
+    Completed assets are immutable and never silently repaired or overwritten.
+    """
+    if root.resolve() != root or not root.is_dir():
+        raise ValueError("Retained executable root must be a canonical directory")
+    info = root.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("Retained executable root must be private")
+    prepared = require_prepared(asset, source, scratch, receipts)
+    key = prepared["preparationSHA256"]
+    original, destination = Path(prepared["root"]), root / key
+    receipt = json.loads((receipts / (key + ".json")).read_text())
+    intent = canonical({"preparationSHA256": key, "inventorySHA256": prepared["inventorySHA256"]}).encode()
+    pending = root / (key + ".pending.json")
+    if pending.is_symlink() or destination.is_symlink():
+        raise ValueError("Retained release paths must not be aliases")
+    if pending.exists():
+        info = pending.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or
+                stat.S_IMODE(info.st_mode) != 0o600 or pending.read_bytes() != intent):
+            raise ValueError("Pending release ownership changed")
+    elif destination.exists():
+        return require_retained(asset, source, root, receipts)
+    else:
+        with os.fdopen(os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as output:
+            output.write(intent)
+            output.flush()
+            os.fsync(output.fileno())
+        sync_directory(root)
+    destination.mkdir(mode=0o700, exist_ok=True)
+    if destination.stat().st_uid != os.getuid() or stat.S_IMODE(destination.stat().st_mode) != 0o700:
+        raise ValueError("Pending release directory ownership changed")
+    # Reject foreign residue before resuming owned, partially copied files.
+    existing = inventory(destination)
+    expected = receipt["inventory"]
+    if not existing.keys() <= expected.keys() or any(existing[name]["kind"] != expected[name]["kind"] for name in existing):
+        raise ValueError("Unregistered files in pending release")
+    for name, item in sorted(expected.items(), key=lambda pair: (pair[0].count("/"), pair[0])):
+        target = destination / name
+        if item["kind"] == "directory":
+            target.mkdir(exist_ok=True)
+            if target.stat().st_uid != os.getuid():
+                raise ValueError("Pending release directory is foreign")
+            target.chmod(item["mode"])
+        else:
+            if existing.get(name) == item:
+                with os.fdopen(os.open(target, os.O_RDONLY | os.O_NOFOLLOW), "rb") as durable:
+                    info = os.fstat(durable.fileno())
+                    if info.st_uid != os.getuid() or info.st_nlink != 1:
+                        raise ValueError("Pending release file ownership changed")
+                    os.fsync(durable.fileno())
+            else:
+                durable_file(target, original / name, mode=item["mode"])
+    durable_file(destination / RECEIPT, None, canonical(receipt).encode())
+    validate_prepared(destination, receipt["specification"], receipt)
+    # Detect source changes during copying, before publishing any executable.
+    require_prepared(asset, source, scratch, receipts)
+    for directory, _, _ in os.walk(destination, topdown=False):
+        sync_directory(Path(directory))
+    sync_directory(root)
+    pending.unlink()
+    sync_directory(root)
+    return require_retained(asset, source, root, receipts)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lock", type=Path)
@@ -224,11 +328,20 @@ def main() -> None:
     if retained.stat().st_dev != Path.home().stat().st_dev:
         raise ValueError("Release archives require internal retained storage")
     scratch = Path("/Volumes/SSD/cf/bazel")
+    executables = retained / "prepared-releases"
+    executables.mkdir(mode=0o700, exist_ok=True)
     acquired = acquire(json.loads(args.lock.read_text()), retained, scratch / "tmp", offline=args.offline)
     result = {"schemaVersion": 1, "scope": "prepared-binaries-only", "runtimeReady": False,
               "lockSHA256": acquired["lockSHA256"], "assets": []}
     for asset in acquired["assets"]:
-        result["assets"].append(prepare(asset, Path(asset["path"]), scratch / "prepared-releases", retained / "prepared-receipts"))
+        source, receipts = Path(asset["path"]), retained / "prepared-receipts"
+        specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"], "layout": layout(asset)}
+        key = hashlib.sha256(canonical(specification).encode()).hexdigest()
+        if (executables / key).exists() and not (executables / (key + ".pending.json")).exists():
+            result["assets"].append(require_retained(asset, source, executables, receipts))
+        else:
+            prepare(asset, source, scratch / "prepared-releases", receipts)
+            result["assets"].append(retain_prepared(asset, source, scratch / "prepared-releases", executables, receipts))
     print(json.dumps(result, sort_keys=True, indent=2))
 
 

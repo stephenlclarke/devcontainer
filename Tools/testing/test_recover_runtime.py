@@ -102,6 +102,23 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.journal.records()["service-container-apiserver.log"], b"private diagnostic fixture")
         self.assertEqual(self.run_recovery(), {"status": "clear", "changed": False})
 
+    def test_recovery_accepts_internal_retained_executables(self):
+        self.switch.restore()
+        self.journal.path.unlink()
+        self.exe = self.retained / "prepared-releases/fixture/bin/container-apiserver"
+        self.exe.parent.mkdir(parents=True)
+        self.exe.write_bytes(b"retained released executable")
+        self.journal = ServiceJournal(self.journal.path, self.owner, create=True)
+        self.journal.put("runtime-context.json", canonical({"apiExecutable": str(self.exe)}))
+        self.journal.put("original-processes.plist", plistlib.dumps([]))
+        self.switch = ServiceSwitch(self.launchd, snapshot(self.launchd, {API: self.base}), self.root, self.journal.put)
+        self.switch.prepare()
+        self.selected.write_bytes(plistlib.dumps({"Label": API, "ProgramArguments": [str(self.exe), "start"]}))
+        self.switch.install(self.selected)
+        self.assertEqual(self.run_recovery()["status"], "restored")
+        self.assertEqual(self.launchd.jobs, self.original)
+        self.assertFalse(self.root.exists())
+
     def test_wrong_case_confirmation_refuses_mutation(self):
         before = list(self.launchd.mutations)
         with self.assertRaisesRegex(ValueError, "exact case ID"):

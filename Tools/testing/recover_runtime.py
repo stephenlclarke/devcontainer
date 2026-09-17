@@ -132,7 +132,8 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):
         raise ValueError("No recorded runtime context; manual journal reconciliation required")
     executable = Path(context["apiExecutable"])
-    if (executable.name != "container-apiserver" or not executable.is_relative_to(ssd / "prepared-releases") or
+    allowed = (ssd / "prepared-releases", retained / "prepared-releases")
+    if (executable.name != "container-apiserver" or not any(executable.is_relative_to(path) for path in allowed) or
             executable.resolve() != executable or not executable.is_file()):
         raise ValueError("Recorded API executable is outside prepared releases or unavailable")
     backend = launchd or Launchd()

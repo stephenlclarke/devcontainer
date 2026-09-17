@@ -77,6 +77,7 @@ The acquisition set pins devcontainer 1.0.1, Apple's signed Container 1.4.1 inst
 | Source and tracked design | Internal repository/worktree |
 | SSD enrollment | `~/Library/Application Support/ContainerFamily/retained/workflow/ssd-volume.uuid` |
 | Tool downloads, repository cache, action cache, Bazel outputs | `/Volumes/SSD/cf/bazel/` |
+| Verified reusable release executable trees | `~/Library/Application Support/ContainerFamily/retained/workflow/prepared-releases/` |
 | Test scratch | Bazel-assigned `TEST_TMPDIR` under the enrolled SSD root |
 | Per-invocation build events | Printed `invocations/run.*/events.json` on SSD |
 | Long-term build/test evidence | `~/Library/Application Support/ContainerFamily/retained/workflow/bazel-evidence.sqlite`, deduplicated by SHA-256 in transactional records |
