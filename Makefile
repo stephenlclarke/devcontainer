@@ -82,7 +82,7 @@ bazel-prepare-docker-cli:
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
-	Tools/bazel/run.sh test //Tools/testing:released_engine_negotiation --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)")
+	Tools/bazel/run.sh test //Tools/testing:$(if $(filter docker,$(LANE)),released_docker_engine,released_engine_negotiation) --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)")
 
 bazel-prepare-candidate:
 	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)"

@@ -13,3 +13,5 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 ## Resolution and remaining risk
 
 See [implementation status](bazel-workflow.md) and [PR 83](PR-83.md). The complete native graph, transactional evidence/candidate retention, archive restore, pinned GitHub binary acquisition and owned invocation cleanup are implemented. Host and quality qualification, complete artifact-only parity, durable release effects, family adoption, broader cleanup and CI cutover remain explicit gates.
+
+The Docker reference now has retained published tool/image/client inputs and an opt-in Bazel VM adapter with the shared Engine assertions. Its component tests cover ownership, cleanup and evidence, but live qualification, interrupted-VM recovery and unified cross-lane comparison identity are still required. A component pass is not a Docker parity or stable-release completion claim.

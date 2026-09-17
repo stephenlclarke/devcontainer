@@ -26,6 +26,10 @@ sh_test(
         "run_tests.py",
         "test_run_tests.py",
         "host_runtime.py",
+        "docker_vm.py",
+        "released_docker.py",
+        "test_released_docker.py",
+        "test_docker_vm.py",
         "test_host_runtime.py",
         "private_keychain.py",
         "test_private_keychain.py",
@@ -42,6 +46,10 @@ sh_test(
         "//Tools/bazel:prepare_candidate.py",
         "//Tools/bazel:retain_evidence.py",
         "//Tools/bazel:prepare_releases.py",
+        "//Tools/bazel:prepare_docker_cli.py",
+        "//Tools/bazel:docker-cli.lock.json",
+        "//Tools/bazel:docker-oracle.lock.json",
+        "//:Tests/Parity/manifest.json",
         "//Tools/bazel:release_inputs.py",
         "//Tools/bazel:releases.lock.json",
         "//Tools/bazel:guest-kernel.lock.json",
@@ -58,13 +66,14 @@ sh_test(
     visibility = ["//visibility:public"],
 )
 
-sh_test(
-    name = "released_engine_negotiation",
-    srcs = ["released-engine.sh"],
-    data = [
+filegroup(
+    name = "released_engine_inputs",
+    srcs = [
         "//Tools/bazel:prepare_candidate.py",
         "//Tools/bazel:retain_evidence.py",
         "released_engine.py",
+        "released_docker.py",
+        "docker_vm.py",
         "host_runtime.py",
         "private_keychain.py",
         "service_switch.py",
@@ -79,6 +88,10 @@ sh_test(
         "lifecycle_probe.py",
         "archive_probe.py",
         "//Tools/bazel:prepare_releases.py",
+        "//Tools/bazel:prepare_docker_cli.py",
+        "//Tools/bazel:docker-cli.lock.json",
+        "//Tools/bazel:docker-oracle.lock.json",
+        "//:Tests/Parity/manifest.json",
         "//Tools/bazel:release_inputs.py",
         "//Tools/bazel:releases.lock.json",
         "//Tools/bazel:guest-kernel.lock.json",
@@ -91,10 +104,28 @@ sh_test(
         "//:Tests/Parity/fixtures/E05-archive-copy/contract.json",
         "//:Tests/Parity/fixtures/E06-network-volume/contract.json",
     ],
+)
+
+sh_test(
+    name = "released_engine_negotiation",
+    srcs = ["released-engine.sh"],
+    data = [":released_engine_inputs"],
     size = "medium",
     # Setup/probe/cleanup have shorter independent deadlines. Preserve enough
     # outer time for owned-resource reconciliation after a setup timeout.
     timeout = "long",
+    tags = ["manual", "local", "no-sandbox", "no-cache"],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "released_docker_engine",
+    srcs = ["released-engine.sh"],
+    data = [":released_engine_inputs"],
+    size = "large",
+    # VM boot plus E03 and verified shutdown allow >900 seconds in total.
+    # Individual commands/operations retain their much shorter deadlines.
+    timeout = "eternal",
     tags = ["manual", "local", "no-sandbox", "no-cache"],
     visibility = ["//visibility:public"],
 )
