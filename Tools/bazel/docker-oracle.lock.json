@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "scope": "published Docker oracle inputs only; isolated VM admission and live qualification pending",
+  "expectedVersions": {
+    "colima": "0.10.3",
+    "lima": "2.2.0",
+    "dockerEngine": "29.5.2"
+  },
+  "assets": [
+    {
+      "repository": "abiosoft/colima",
+      "tag": "v0.10.3",
+      "releaseID": 334467717,
+      "tagObject": "00f6c297e92a82c04a4ab507db0a61435650d7e8",
+      "commit": "00f6c297e92a82c04a4ab507db0a61435650d7e8",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 438456725,
+      "name": "colima-Darwin-arm64",
+      "architecture": "arm64",
+      "size": 15656320,
+      "sha256": "980ad8bf61a4ca370243f4cb41401a61276dcd2c2502bee7b9b86f9250169f34"
+    },
+    {
+      "repository": "lima-vm/lima",
+      "tag": "v2.2.0",
+      "releaseID": 357433572,
+      "tagObject": "867a7134156d04d59af41207d7a77a8e8c04eb99",
+      "commit": "de0816ea4bdc5267b428ab21025889b8dd785526",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 484813994,
+      "name": "lima-2.2.0-Darwin-arm64.tar.gz",
+      "architecture": "arm64",
+      "size": 37586365,
+      "sha256": "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3"
+    },
+    {
+      "repository": "abiosoft/colima-core",
+      "tag": "v0.10.4",
+      "releaseID": 333691676,
+      "tagObject": "078088ada3cce8835b8c42710ab44d17a935b195",
+      "commit": "078088ada3cce8835b8c42710ab44d17a935b195",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 437242106,
+      "name": "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz",
+      "architecture": "arm64",
+      "size": 332354401,
+      "sha256": "1fc0354f4f99734ce3886628cc7af8b0437c1a1d391b126bd09cba0df35ee53f"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ exports_files([
     "prepare_releases.py",
     "release_inputs.py",
     "releases.lock.json",
+    "docker-oracle.lock.json",
     "guest-kernel.lock.json",
     "guest-images.lock.json",
     "prepare_guest_images.py",

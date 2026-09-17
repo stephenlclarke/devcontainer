@@ -266,6 +266,108 @@ class PrepareReleasesTests(unittest.TestCase):
         self.assertEqual(command.read_bytes(), self.source.read_bytes())
         self.assertEqual(command.stat().st_mode & 0o777, 0o755)
 
+    def oracle_asset(self, repository, tag, name):
+        self.asset = {"repository": repository, "tag": tag, "name": name,
+                      "size": self.source.stat().st_size, "sha256": sha256(self.source)}
+
+    def lima_archive(self, *, target="../../lima/templates", kind=tarfile.SYMTYPE,
+                     include_link=True, extra=None):
+        with tarfile.open(self.source, "w:gz") as archive:
+            for name, mode in [("bin/limactl", 0o755), ("bin/lima", 0o755),
+                               ("share/lima/lima-guestagent.Linux-aarch64.gz", 0o644),
+                               ("share/lima/templates/default.yaml", 0o644)]:
+                entry = tarfile.TarInfo(name)
+                entry.mode, entry.size = mode, 7
+                archive.addfile(entry, io.BytesIO(b"fixture"))
+            if include_link:
+                entry = tarfile.TarInfo("./share/doc/lima/templates")
+                entry.type, entry.linkname = kind, target
+                archive.addfile(entry)
+            if extra is not None:
+                archive.addfile(extra)
+        self.oracle_asset("lima-vm/lima", "v2.2.0", "lima-2.2.0-Darwin-arm64.tar.gz")
+
+    def test_colima_raw_binary_uses_its_own_reviewed_path(self):
+        self.source.write_bytes(b"released colima")
+        self.oracle_asset("abiosoft/colima", "v0.10.3", "colima-Darwin-arm64")
+        result = self.prepare()
+        command = Path(result["executables"]["colima"])
+        self.assertEqual(command.relative_to(result["root"]).as_posix(), "bin/colima")
+        self.assertEqual(command.read_bytes(), self.source.read_bytes())
+        self.assertEqual(command.stat().st_mode & 0o777, 0o755)
+        self.assertFalse((Path(result["root"]) / "bin/docker-compose").exists())
+
+    def test_vm_image_remains_compressed_nonexecutable_data_and_reuses_retention(self):
+        self.source.write_bytes(b"compressed published disk image fixture")
+        self.oracle_asset("abiosoft/colima-core", "v0.10.4", "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz")
+        result = self.prepare()
+        self.assertEqual(result["executables"], {})
+        image = Path(result["files"]["disk-image"])
+        self.assertEqual(image.read_bytes(), self.source.read_bytes())
+        self.assertEqual(image.stat().st_mode & 0o777, 0o600)
+        durable = self.durable_root()
+        retained = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        shutil.rmtree(Path(result["root"]))
+        with patch.object(preparation, "copy_raw", side_effect=AssertionError("must not recopy")):
+            self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), retained)
+
+    def test_lima_omits_only_the_exact_documentation_alias(self):
+        self.lima_archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        self.assertFalse((root / "share/doc/lima/templates").exists())
+        self.assertEqual(Path(result["files"]["guest-agent"]).read_bytes(), b"fixture")
+        self.assertEqual((root / "share/lima/templates/default.yaml").read_bytes(), b"fixture")
+        receipt = json.loads((root / preparation.RECEIPT).read_text())
+        self.assertEqual(receipt["specification"]["layout"]["omittedLinks"],
+                         {"share/doc/lima/templates": "../../lima/templates"})
+        with patch.object(preparation, "unpack_tar", side_effect=AssertionError("must reuse")):
+            self.assertEqual(self.prepare(), result)
+
+    def test_lima_missing_changed_or_nonlink_documentation_alias_is_rejected(self):
+        for options in ({"include_link": False}, {"target": "/outside"},
+                        {"kind": tarfile.REGTYPE}, {"kind": tarfile.LNKTYPE}):
+            with self.subTest(options=options):
+                self.lima_archive(**options)
+                with self.assertRaisesRegex(ValueError, "documentation link"):
+                    self.prepare()
+                self.assertEqual(list(self.prepared.iterdir()), [])
+                self.assertEqual(list(self.receipts.iterdir()), [])
+
+    def test_lima_exception_does_not_admit_other_links_or_duplicate_members(self):
+        for name in ("bin/alias", "share/doc/lima/templates", "../outside"):
+            with self.subTest(name=name):
+                extra = tarfile.TarInfo(name)
+                extra.type, extra.linkname = tarfile.SYMTYPE, "../../lima/templates"
+                self.lima_archive(extra=extra)
+                with self.assertRaises(ValueError):
+                    self.prepare()
+                self.assertEqual(list(self.prepared.iterdir()), [])
+        # The generic extractor retains its no-link policy.
+        self.lima_archive()
+        with self.assertRaisesRegex(ValueError, "only files and directories"):
+            preparation.unpack_tar(self.source, self.prepared)
+
+    def test_oracle_layouts_are_version_specific(self):
+        for repository, tag, name in [
+            ("abiosoft/colima", "v0.10.4", "colima-Darwin-arm64"),
+            ("lima-vm/lima", "v2.3.0", "lima-2.2.0-Darwin-arm64.tar.gz"),
+            ("abiosoft/colima-core", "v0.10.3", "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz"),
+        ]:
+            with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, "reviewed layout"):
+                preparation.layout({"repository": repository, "tag": tag, "name": name})
+
+    def test_invalid_raw_layout_and_unknown_format_fail_before_publication(self):
+        self.source.write_bytes(b"fixture")
+        self.oracle_asset("abiosoft/colima", "v0.10.3", "colima-Darwin-arm64")
+        for layout in ({"format": "raw", "executables": {}},
+                       {"format": "unknown", "executables": {}}):
+            with self.subTest(layout=layout), patch.object(preparation, "layout", return_value=layout), \
+                    self.assertRaises(ValueError):
+                self.prepare()
+            self.assertEqual(list(self.prepared.iterdir()), [])
+            self.assertEqual(list(self.receipts.iterdir()), [])
+
     def test_package_expansion_not_installation_and_exact_layout(self):
         self.source.write_bytes(b"signed package fixture")
         self.asset.update(repository="apple/container", tag="1.4.1", name="container-1.4.1-installer-signed.pkg",

@@ -44,6 +44,17 @@ def layout(asset: dict) -> dict:
                 "container-apiserver": "Payload/bin/container-apiserver"}}
     if repository == "docker/compose" and name == "docker-compose-darwin-aarch64":
         return {"format": "raw", "executables": {"docker-compose": "bin/docker-compose"}}
+    if (repository, asset["tag"], name) == ("abiosoft/colima", "v0.10.3", "colima-Darwin-arm64"):
+        return {"format": "raw", "executables": {"colima": "bin/colima"}}
+    if (repository, asset["tag"], name) == ("lima-vm/lima", "v2.2.0", "lima-2.2.0-Darwin-arm64.tar.gz"):
+        return {"format": "tar", "executables": {"limactl": "bin/limactl", "lima": "bin/lima"},
+                "files": {"guest-agent": "share/lima/lima-guestagent.Linux-aarch64.gz"},
+                # Documentation alias only. Never materialize archive links or
+                # relax the regular-file rule for any runtime payload.
+                "omittedLinks": {"share/doc/lima/templates": "../../lima/templates"}}
+    if (repository, asset["tag"], name) == (
+            "abiosoft/colima-core", "v0.10.4", "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz"):
+        return {"format": "raw-data", "executables": {}, "files": {"disk-image": "images/" + name}}
     raise ValueError("No reviewed layout for this published asset")
 
 
@@ -56,9 +67,11 @@ def member_path(name: str) -> Path:
     return Path(*path.parts)
 
 
-def unpack_tar(source: Path, destination: Path) -> None:
+def unpack_tar(source: Path, destination: Path, omitted_links: dict | None = None) -> None:
     """No links, device nodes, owner restoration or implicit tar extraction."""
     seen = set()
+    omitted_links = omitted_links or {}
+    omitted = set()
     size = 0
     with tarfile.open(source, "r:gz") as archive:
         for entry in archive:
@@ -68,6 +81,11 @@ def unpack_tar(source: Path, destination: Path) -> None:
             if path == Path(".") or path in seen or len(seen) >= MAX_FILES:
                 raise ValueError("Duplicate or excessive release archive members")
             seen.add(path)
+            if path.as_posix() in omitted_links:
+                if not entry.issym() or entry.linkname != omitted_links[path.as_posix()] or entry.size != 0:
+                    raise ValueError("Reviewed documentation link changed")
+                omitted.add(path.as_posix())
+                continue
             if not (entry.isdir() or entry.isfile()) or entry.size < 0:
                 raise ValueError("Release archive must contain only files and directories")
             size += entry.size
@@ -82,6 +100,20 @@ def unpack_tar(source: Path, destination: Path) -> None:
                     shutil.copyfileobj(incoming, output)
                 # Retain executable semantics, never setuid/setgid or world write.
                 target.chmod(0o755 if entry.mode & 0o111 else 0o644)
+    if omitted != set(omitted_links):
+        raise ValueError("Reviewed documentation link is missing")
+
+
+def copy_raw(source: Path, destination: Path, specification: dict) -> None:
+    """Copy one reviewed raw asset; VM archives remain non-executable data."""
+    executable = specification["format"] == "raw"
+    paths = specification["executables" if executable else "files"]
+    if len(paths) != 1:
+        raise ValueError("Raw release layout requires exactly one destination")
+    target = destination / member_path(next(iter(paths.values())))
+    target.parent.mkdir(parents=True)
+    shutil.copyfile(source, target)
+    target.chmod(0o755 if executable else 0o600)
 
 
 def expand_package(source: Path, destination: Path) -> None:
@@ -201,14 +233,13 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
             else:
                 staged.mkdir()
                 if kind == "tar":
-                    unpack_tar(source, staged)
+                    unpack_tar(source, staged, specification["layout"].get("omittedLinks"))
                 elif kind == "kernel-zstd":
                     unpack_kernel(source, staged)
+                elif kind in ("raw", "raw-data"):
+                    copy_raw(source, staged, specification["layout"])
                 else:
-                    command = staged / "bin/docker-compose"
-                    command.parent.mkdir()
-                    shutil.copyfile(source, command)
-                    command.chmod(0o755)
+                    raise ValueError("Unsupported release preparation format")
             receipt = {"specification": specification, "inventory": inventory(staged)}
             with (staged / RECEIPT).open("x") as output:
                 output.write(canonical(receipt))

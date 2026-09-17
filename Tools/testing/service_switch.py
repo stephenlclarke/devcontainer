@@ -265,5 +265,8 @@ class ServiceSwitch:
                 self.record("restore-original", original["label"])
                 self.launchd.bootstrap(Path(original["path"]))
                 current = self.launchd.inspect(original["label"])
+            # launchd reopens the path during bootstrap. Matching label/path/
+            # program alone cannot detect a replaced environment or Mach service.
+            self.check_original(original)
             if current != expected:
                 raise ValueError("Original service restoration is not verified")

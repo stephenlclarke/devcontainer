@@ -196,6 +196,47 @@ class ServiceSwitchTests(unittest.TestCase):
         self.switch.restore()
         self.assert_restored()
 
+    def test_restore_rejects_plist_replaced_during_bootstrap_with_same_identity(self):
+        self.switch.prepare()
+        original_bootstrap = self.launchd.bootstrap
+
+        def replace_before_bootstrap(path):
+            definition = plistlib.loads(path.read_bytes())
+            definition["EnvironmentVariables"] = {"CHANGED": "yes"}
+            path.write_bytes(plistlib.dumps(definition))
+            original_bootstrap(path)
+
+        with patch.object(self.launchd, "bootstrap", side_effect=replace_before_bootstrap), \
+                self.assertRaisesRegex(ValueError, "Original service definition changed"):
+            self.switch.restore()
+        self.assertFalse(any(event == b"restored\nall\n" for event in self.events.values()))
+        self.assertEqual(len(self.launchd.jobs), 1)
+        # The unchanged public identity must not make a repeated restore pass.
+        mutations = len(self.launchd.mutations)
+        with self.assertRaisesRegex(ValueError, "Original service definition changed"):
+            self.switch.restore()
+        self.assertEqual(len(self.launchd.mutations), mutations)
+
+    def test_restore_revalidates_already_registered_original_after_inspection(self):
+        self.switch.prepare()
+        self.switch.restore()
+        inspect = self.launchd.inspect
+        original = self.prior[0]
+
+        def change_after_inspect(label):
+            value = inspect(label)
+            if label == original["label"]:
+                definition = plistlib.loads(original["payload"])
+                definition["MachServices"] = {"different.service": True}
+                Path(original["path"]).write_bytes(plistlib.dumps(definition))
+            return value
+
+        count = len(self.launchd.mutations)
+        with patch.object(self.launchd, "inspect", side_effect=change_after_inspect), \
+                self.assertRaisesRegex(ValueError, "Original service definition changed"):
+            self.switch.restore_originals()
+        self.assertEqual(len(self.launchd.mutations), count)
+
     def test_fresh_worker_recovers_from_authenticated_snapshot_and_sequence(self):
         self.switch.prepare()
         self.switch.install(self.selected)

@@ -48,6 +48,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-prepare-guest-kernel
+.PHONY: bazel-prepare-docker-oracle
 export CASE_ID
 export CASE_FIXTURE
 BAZEL_PROFILE ?= enhanced
@@ -71,6 +72,9 @@ bazel-prepare-guest-images:
 
 bazel-prepare-guest-kernel:
 	Tools/bazel/run.sh prepare-releases Tools/bazel/guest-kernel.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-docker-oracle:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/docker-oracle.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
