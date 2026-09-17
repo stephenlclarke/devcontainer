@@ -18,6 +18,21 @@ from service_journal import ServiceJournal, digest
 from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, snapshot
 
 
+class ProcessSurvivors(ValueError):
+    """Expected asynchronous shutdown is incomplete, never a passing cleanup."""
+
+
+def wait_stopped(probe, seconds: float = 15):
+    """Wait only for process/registration disappearance, not a failed case retry."""
+    with deadline(seconds):
+        while True:
+            try:
+                probe()
+                return
+            except ProcessSurvivors:
+                time.sleep(0.05)
+
+
 def process_inventory() -> dict[int, dict]:
     result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,pgid=,lstart=,comm="], check=True, capture_output=True,
                             timeout=5, env={"PATH": "/usr/bin:/bin"})
@@ -125,18 +140,18 @@ class ControlledRuntime:
         self.original_processes = []
 
     def start(self):
-        require_idle(process_programs())
         prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
+        self.original_processes = capture_owned_processes(self.launchd, prior)
+        self.require_idle_before_selection(prior)
         definition = selected_definition(self.root, self.executable)
         path = self.journal_parent / (digest(str(self.root).encode()) + ".sqlite")
         self.journal = ServiceJournal(path, self.owner, create=True)
-        self.original_processes = capture_owned_processes(self.launchd, prior)
         self.journal.put("original-processes.plist", plistlib.dumps(self.original_processes))
         self.switch = ServiceSwitch(self.launchd, prior, self.root, self.journal.put)
-        require_idle(process_programs())
+        self.require_idle_before_selection(prior)
         self.switch.prepare()
         # A listener/helper that survived removal may not overlap this lane.
-        self.require_workers_stopped()
+        wait_stopped(self.require_workers_stopped)
         self.switch.install(definition)
         with deadline(25):
             while True:
@@ -153,14 +168,37 @@ class ControlledRuntime:
                     time.sleep(0.05)
         self.journal.put("service-ready.plist", plistlib.dumps(self.service))
 
+    def require_idle_before_selection(self, prior):
+        # Homebrew's registered one-shot `container system start` is itself an
+        # authorised service to quiesce, not an unrelated user CLI. Exempt only
+        # its captured root process; never exempt active Actions workers, child
+        # workloads, or another CLI with the same executable name.
+        administrative = set()
+        for item in prior:
+            if item["label"] == "sh.brew.container":
+                arguments = plistlib.loads(item["payload"]).get("ProgramArguments", [])
+                if arguments[1:] == ["system", "start"]:
+                    pid = self.launchd.process_id(item["label"])
+                    if pid is not None:
+                        administrative.add(pid)
+        current = process_inventory()
+        exempt = {item["pid"] for item in self.original_processes if item["pid"] in administrative
+                  and item["pid"] in current and current[item["pid"]]["started"] == item["started"]
+                  and current[item["pid"]]["program"] == item["program"]}
+        require_idle([item["program"] for pid, item in current.items() if pid not in exempt])
+
     def require_workers_stopped(self):
+        if self.launchd.labels() & {item["label"] for item in self.switch.prior}:
+            raise ProcessSurvivors("Original service registrations are still being removed")
+        # A captured administrative CLI is still ours while it exits. Classify
+        # its live identity before applying the unrelated-command idle gate.
+        self.require_original_processes_stopped()
         programs = process_programs()
         require_idle(programs)
         outgoing = {Path(item["program"]).resolve() for item in self.switch.prior if item["label"] in BASE_SERVICES}
         if any(Path(program).name in {"Runner.Listener", "devcontainer-engine"} or Path(program).resolve() in outgoing
                for program in programs):
-            raise ValueError("An outgoing provider, runtime consumer or CI listener survived service removal")
-        self.require_original_processes_stopped()
+            raise ProcessSurvivors("An outgoing provider, runtime consumer or CI listener survived service removal")
 
     def require_original_processes_stopped(self, *, allow_registered=False):
         current = process_inventory()
@@ -173,7 +211,7 @@ class ControlledRuntime:
                         self.launchd.inspect(label) == {key: original[key] for key in ("label", "path", "program")}
                         for label in prior["labels"] for original in self.switch.prior if original["label"] == label):
                     continue  # A partial prepare may leave an original registered and untouched.
-                raise ValueError("An owned original service process survived removal")
+                raise ProcessSurvivors("An owned original service process survived removal")
 
     def verify(self):
         if self.service is None or require_api_service(self.executable) != self.service:
@@ -182,7 +220,7 @@ class ControlledRuntime:
     def restore(self):
         if self.switch is None:
             return
-        self.switch.restore(before_originals=self.require_selected_stopped)
+        self.switch.restore(before_originals=lambda: wait_stopped(self.require_selected_stopped))
 
     def require_selected_stopped(self):
         install = self.executable.parent.parent
@@ -191,7 +229,7 @@ class ControlledRuntime:
         if any(Path(program).is_relative_to(install) or Path(program).is_relative_to(self.root)
                or Path(program).resolve() in unregistered
                for program in process_programs()):
-            raise ValueError("Runtime processes survived service removal")
+            raise ProcessSurvivors("Runtime processes survived service removal")
         self.require_original_processes_stopped(allow_registered=True)
 
     def receipt(self) -> dict:

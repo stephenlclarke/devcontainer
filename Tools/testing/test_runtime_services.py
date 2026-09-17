@@ -6,10 +6,10 @@ import plistlib
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from runtime_services import (ControlledRuntime, authorised_roots, capture_owned_processes, process_inventory,
-                              process_programs, require_idle, selected_definition)
+from runtime_services import (ControlledRuntime, ProcessSurvivors, authorised_roots, capture_owned_processes, process_inventory,
+                              process_programs, require_idle, selected_definition, wait_stopped)
 from service_switch import API, BASE_SERVICES
 from test_service_switch import FakeLaunchd
 
@@ -41,6 +41,7 @@ class RuntimeServicesTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         self.ready = patch("runtime_services.require_api_service", return_value={"pid": 42}).start()
         self.inventory = patch("runtime_services.process_inventory", return_value={}).start()
+        patch("runtime_services.wait_stopped", side_effect=lambda probe: probe()).start()
 
     def register(self, directory, label):
         path = directory / (label + ".plist")
@@ -92,6 +93,8 @@ class RuntimeServicesTests(unittest.TestCase):
         runtime = self.runtime()
         count = len(self.launchd.mutations)
         self.processes.return_value = ["/runner/bin/Runner.Worker"]
+        self.inventory.return_value = {1: {"pid": 1, "parent": 0, "group": 1, "started": "fixture",
+                                           "program": "/runner/bin/Runner.Worker"}}
         with self.assertRaisesRegex(ValueError, "Active worker"):
             runtime.start()
         runtime.restore()
@@ -219,6 +222,57 @@ class RuntimeServicesTests(unittest.TestCase):
         self.launchd.jobs.pop(label)
         with self.assertRaisesRegex(ValueError, "owned original"):
             runtime.require_original_processes_stopped(allow_registered=True)
+
+    def test_asynchronous_process_shutdown_waits_but_never_retries_other_failures(self):
+        probe = Mock(side_effect=[ProcessSurvivors("still stopping"), None])
+        with patch("runtime_services.time.sleep") as pause:
+            wait_stopped(probe)
+        self.assertEqual(probe.call_count, 2)
+        pause.assert_called_once_with(0.05)
+        invalid = Mock(side_effect=ValueError("changed ownership"))
+        with self.assertRaisesRegex(ValueError, "changed ownership"):
+            wait_stopped(invalid)
+        invalid.assert_called_once()
+        blocked = Mock(side_effect=ProcessSurvivors("still stopping"))
+        with self.assertRaises(TimeoutError):
+            wait_stopped(blocked, seconds=0.02)
+
+    def test_lingering_original_registration_blocks_new_provider(self):
+        runtime = self.runtime()
+        runtime.start()
+        self.launchd.jobs["com.stephenlclarke.container-family-ci"] = self.original_jobs["com.stephenlclarke.container-family-ci"]
+        with self.assertRaisesRegex(ProcessSurvivors, "registrations"):
+            runtime.require_workers_stopped()
+        runtime.restore()
+
+    def test_only_captured_homebrew_autostart_is_exempt_from_cli_idle_check(self):
+        runtime = self.runtime()
+        row = {"pid": 10, "parent": 1, "group": 10, "started": "original", "program": "/released/container"}
+        runtime.original_processes = [row]
+        self.inventory.return_value = {10: row}
+        prior = [{"label": "sh.brew.container", "payload": plistlib.dumps(
+            {"ProgramArguments": ["/released/container", "system", "start"]})}]
+        with patch.object(self.launchd, "process_id", return_value=10):
+            runtime.require_idle_before_selection(prior)
+            self.inventory.return_value = {10: row, 20: dict(row, pid=20)}
+            with self.assertRaisesRegex(ValueError, "Active"):
+                runtime.require_idle_before_selection(prior)
+            self.inventory.return_value = {10: dict(row, started="reused")}
+            with self.assertRaisesRegex(ValueError, "Active"):
+                runtime.require_idle_before_selection(prior)
+
+    def test_captured_administrative_cli_is_waited_for_after_removal(self):
+        runtime = self.runtime()
+        runtime.start()
+        # The selected fake registration is irrelevant to original shutdown.
+        self.launchd.jobs.clear()
+        row = {"pid": 10, "parent": 1, "group": 10, "started": "original", "program": "/released/container",
+               "labels": ["sh.brew.container"]}
+        runtime.original_processes = [row]
+        self.inventory.side_effect = [{10: row}, {}]
+        with patch("runtime_services.time.sleep") as pause:
+            wait_stopped(runtime.require_workers_stopped)
+        pause.assert_called_once_with(0.05)
 
 
 if __name__ == "__main__":
