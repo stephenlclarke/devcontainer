@@ -19,6 +19,7 @@ from prepare_candidate import admit_candidate, SCOPE as CANDIDATE_SCOPE
 from private_keychain import run_keychain
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
+from campaign_identity import published_fingerprints
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
 from runtime_services import ControlledRuntime, require_owned_volume
@@ -217,11 +218,7 @@ def main():
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
     expected = {key: str(value).lower() for key, value in json.loads(
         (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}
-    harness = {str(path.relative_to(repository)): digest(path.read_bytes()) for path in [
-        *sorted(Path(__file__).parent.glob("*.py")),
-        *[repository / "Tools/bazel" / name for name in
-          ("prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
-           "prepare_guest_images.py", "oci_image_layout.py")]]}
+    fingerprints = published_fingerprints(repository)
     for root in (SSD, RETAINED):
         if not root.is_dir() or root.resolve() != root:
             raise ValueError("Missing or symlinked enrolled storage")
@@ -248,9 +245,10 @@ def main():
             runtime["guestInputs"] = guest_inputs
             runtime["guestAPIVersion"] = GUEST_API_VERSION
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": args.lane,
-                    "contractSHA256": digest(canonical(expected)), "harnessSHA256": digest(canonical(harness)),
-                    "releaseSetSHA256": release_set_identity(lock, guest_locks, releases[0] if args.candidate_invocation else None),
+                    "contractSHA256": digest(canonical(expected)), **fingerprints,
                     "runtimeSHA256": digest(canonical(runtime))}
+        if args.candidate_invocation:
+            identity["releaseSetSHA256"] = release_set_identity(fingerprints, None, releases[0])
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         def revalidate():

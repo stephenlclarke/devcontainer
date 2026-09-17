@@ -8,6 +8,8 @@ sh_test(
     srcs = ["test-evidence.sh"],
     data = [
         "case_evidence.py",
+        "campaign_identity.py",
+        "test_campaign_identity.py",
         "test_case_evidence.py",
         "engine_probe.py",
         "test_engine_probe.py",
@@ -80,6 +82,7 @@ filegroup(
         "service_journal.py",
         "runtime_services.py",
         "case_evidence.py",
+        "campaign_identity.py",
         "engine_probe.py",
         "exec_probe.py",
         "network_volume_probe.py",

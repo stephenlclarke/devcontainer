@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
+from campaign_identity import published_fingerprints
 from docker_vm import DockerVM, private_root
 from engine_probe import engine_negotiation, request
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
@@ -135,12 +136,8 @@ def run_docker(args):
                 raise ValueError("Docker oracle SSD identity changed")
             return admit_docker(locks[0], locks[1], pins, locks[2], SSD, RETAINED)
         inputs = revalidate()
-        harness = {str(path.relative_to(repository)): digest(path.read_bytes()) for path in [
-            *sorted(Path(__file__).parent.glob("*.py")), *[repository / "Tools/bazel" / name for name in
-            ("prepare_releases.py", "prepare_docker_cli.py", "prepare_guest_images.py", "release_inputs.py", "oci_image_layout.py")]]}
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": "docker",
-                    "contractSHA256": digest(canonical(expected)), "harnessSHA256": digest(canonical(harness)),
-                    "releaseSetSHA256": digest(canonical({"dockerInputs": locks, "pins": pins})),
+                    "contractSHA256": digest(canonical(expected)), **published_fingerprints(repository),
                     "runtimeSHA256": digest(canonical({"inputs": inputs, "volume": volume,
                                                        "machine": platform.machine(), "os": platform.mac_ver()[0]}))}
         validate_identity(identity)
