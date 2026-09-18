@@ -113,7 +113,7 @@ func `docker image response defaults encode`() throws {
         virtualSize: 1
     )
     #expect(summary.containers == -1)
-    #expect(summary.labels.isEmpty)
+    #expect(summary.labels == ["fixture": "true"])
     #expect(summary.parentID.isEmpty)
     #expect(summary.sharedSize == -1)
     let config = DockerImageConfig(

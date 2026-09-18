@@ -841,8 +841,8 @@ extension DockerRouter {
             imageID: snapshot.imageID ?? "",
             command: (snapshot.spec.entrypoint + snapshot.spec.command).joined(separator: " "),
             created: Int64(snapshot.createdAt.timeIntervalSince1970),
-            state: snapshot.state.rawValue,
-            status: snapshot.state.rawValue,
+            state: dockerContainerState(snapshot.state),
+            status: dockerContainerState(snapshot.state),
             ports: snapshot.spec.ports.map {
                 DockerPortSummary(
                     address: $0.hostAddress,
@@ -854,6 +854,11 @@ extension DockerRouter {
             labels: labels,
             mounts: snapshot.spec.mounts.map(mountSummary)
         )
+    }
+
+    func dockerContainerState(_ state: RuntimeContainerState) -> String {
+        // Keep native state vocabulary internal; Docker clients require exited.
+        state == .stopped ? "exited" : state.rawValue
     }
 
     func containerInspect(
@@ -874,7 +879,7 @@ extension DockerRouter {
             args: args,
             name: "/\(snapshot.spec.name)",
             state: DockerContainerState(
-                status: snapshot.state.rawValue,
+                status: dockerContainerState(snapshot.state),
                 running: running,
                 pid: running ? 1 : 0,
                 exitCode: snapshot.exitCode ?? 0,
