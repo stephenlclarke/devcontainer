@@ -103,6 +103,24 @@ class BuildImagesTests(unittest.TestCase):
                 self.fixture.prepare()
         self.assertNotIn('e04-images-intent.json', self.journal.records())
 
+    def test_containerd_local_output_digest_is_bound_to_exact_owned_repository_and_id(self):
+        self.fixture.prepare()
+        self.fixture.start()
+        image = self.output()
+        image['RepoDigests'] = [tag_for(OWNER).split(':')[0] + '@' + image['Id']]
+        image['Descriptor'] = {'digest': image['Id'], 'mediaType': 'application/vnd.oci.image.manifest.v1+json'}
+        self.fixture.response(200, SUCCESS)
+        self.reopen().cleanup()
+        self.assertEqual(list(self.server.images), [BASE])
+
+    def test_owned_repository_digest_needs_matching_content_descriptor(self):
+        image = self.output()
+        image['RepoDigests'] = [tag_for(OWNER).split(':')[0] + '@' + image['Id']]
+        for descriptor in (None, {}, {'digest': 'sha256:' + 'f' * 64}):
+            image['Descriptor'] = descriptor
+            with self.subTest(descriptor=descriptor), self.assertRaisesRegex(ValueError, 'repository digest'):
+                self.fixture.identity(image, False)
+
     def test_both_intents_precede_build_and_cleanup_is_exact_and_repeatable(self):
         self.submitted()
         self.fixture.start(failing=True)
@@ -205,6 +223,86 @@ class BuildImagesTests(unittest.TestCase):
         self.fixture.cleanup()
         self.assert_no_delete()
         self.assertIn("e04-images-removed.json", self.journal.records())
+
+    def test_recovery_plan_is_read_only_and_authenticates_completed_response(self):
+        self.submitted()
+        records = self.journal.records()
+        self.assertEqual(self.fixture.recovery_plan(), [self.fixture.identity(self.output(), False)])
+        self.assertEqual(records, self.journal.records())
+        self.assert_no_delete()
+        for name, payload in (("e04-built-response.jsonl", b'{}\n'),
+                              ("e04-built-completed.json", b'{}'),
+                              ("e04-built-started.json", b'{}')):
+            with patch.object(self.fixture.journal, "records", return_value={**records, name: payload}), self.assertRaises(ValueError):
+                self.fixture.recovery_plan()
+        for omitted in ("e04-built-completed.json", "e04-built-started.json"):
+            with patch.object(self.fixture.journal, "records", return_value={k: v for k, v in records.items() if k != omitted}), \
+                    self.assertRaises(ValueError):
+                self.fixture.recovery_plan()
+
+    def intermediate_build(self):
+        self.fixture.prepare()
+        self.fixture.start()
+        self.output()
+        parent = self.image
+        for token in ('e', 'f'):
+            identifier = 'sha256:' + token * 64
+            self.server.images[identifier] = {'Id': identifier, 'RepoTags': [], 'RepoDigests': [],
+                'Containers': 0, 'Parent': parent, 'ParentId': parent, 'Descriptor': {'digest': identifier},
+                'Config': {'Labels': {OWNER_LABEL: OWNER}}}
+            parent = identifier
+        payload = b'\n \n{"stream":" ---> eeeeeeeeeeee\\n"}\n\n{"stream":" ---> ffffffffffff\\n"}\n\n'
+        self.fixture.response(200, payload)
+
+    def test_classic_intermediates_are_reported_read_only_and_removed_child_first(self):
+        self.intermediate_build()
+        before = self.journal.records()
+        plan = self.fixture.intermediate_plan()
+        self.assertEqual([value['id'] for value in plan], ['sha256:' + 'f' * 64, 'sha256:' + 'e' * 64])
+        self.assertEqual(self.journal.records(), before)
+        self.assert_no_delete()
+        self.fixture.cleanup()
+        self.assertEqual(list(self.server.images), [BASE])
+        deletes = [route for method, route in self.server.routes if method == 'DELETE']
+        self.assertEqual(len(deletes), 3)
+        self.assertIn('f' * 64, deletes[1])
+        self.assertIn('e' * 64, deletes[2])
+        self.reopen().cleanup()
+
+    def test_unverified_shared_or_used_intermediate_is_not_removed(self):
+        self.intermediate_build()
+        identifier = 'sha256:' + 'f' * 64
+        original = copy.deepcopy(self.server.images[identifier])
+        for field, value in (('RepoTags', ['foreign:tag']), ('RepoDigests', [BASE]), ('Containers', 1),
+                             ('Descriptor', {'digest': self.image}), ('Parent', 'changed')):
+            self.server.images[identifier] = {**original, field: value}
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.fixture.intermediate_plan()
+            self.assert_no_delete()
+        self.server.images[identifier] = original
+        original_inspect = self.fixture.inspect
+        with patch.object(self.fixture, 'inspect', side_effect=lambda reference: (
+                {**original, 'Config': {'Labels': {OWNER_LABEL: 'foreign'}}} if reference == identifier
+                else original_inspect(reference))), self.assertRaisesRegex(ValueError, 'identity changed'):
+            self.fixture.intermediate_plan()
+        with patch.object(self.fixture, 'inspect', return_value=None), self.assertRaises(ValueError):
+            self.fixture.intermediate_plan()
+
+    def test_intermediate_lost_delete_response_resumes_without_rebuilding(self):
+        self.intermediate_build()
+        original = self.client.call
+
+        def interrupted(method, route, *args, **kwargs):
+            result = original(method, route, *args, **kwargs)
+            if method == 'DELETE' and 'f' * 64 in route:
+                raise TimeoutError('lost intermediate deletion response')
+            return result
+
+        with patch.object(self.client, 'call', side_effect=interrupted), self.assertRaises(TimeoutError):
+            self.fixture.cleanup()
+        self.reopen().cleanup()
+        self.assertEqual(len(self.server.delete_records), 3)
+        self.assertEqual(list(self.server.images), [BASE])
 
     def test_context_or_runtime_mismatch_rejected_before_requests(self):
         self.fixture.prepare()

@@ -4,6 +4,8 @@ The unreleased native Bazel candidate tests failed image-build progress, in-band
 
 The opt-in E04 adapter uses published, digest-verified builder images and isolated runtime state. Its negative build requires a unique guest execution marker and exit code 1, so setup failures cannot pass as expected command failures. Output images and the private builder have separate ownership journals; uncertain completion preserves quarantine. Component tests pass, but full live qualification and interrupted-build recovery remain release gates.
 
+Completed Docker builds can be reconciled with the report-first Bazel runtime recovery command. Apply requires the exact case ID and verifies the original tools, VM processes, terminal responses and image ownership before scoped cleanup. Recovery never rebuilds an image or changes a failed test into a pass. Unknown build completion and interrupted VM shutdown remain quarantined.
+
 The hosted-safe suite contains unit, contract, state-recovery, malformed-input,
 archive-safety, and HTTP wire tests. Aggregate first-party Swift line coverage
 must remain at or above 90 percent. Address Sanitizer and Thread Sanitizer run

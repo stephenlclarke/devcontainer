@@ -172,6 +172,10 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
         raise ValueError("Recovery root is not a canonical owned case directory")
     verify_case(retained, owner)
     if docker:
+        journal = ServiceJournal(retained / "private-runtime" / (digest(canonical(owner)) + ".sqlite"), owner)
+        if "docker-vm-closed.json" not in journal.records():
+            from recover_build import recover_completed_build
+            return recover_completed_build(retained, ssd, owner, guard, journal, apply=apply)
         return recover_closed_docker(retained, owner, guard, apply=apply)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
