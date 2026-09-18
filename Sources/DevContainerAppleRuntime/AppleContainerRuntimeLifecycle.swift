@@ -640,47 +640,65 @@ public extension AppleContainerRuntime {
         id: String,
         context: RuntimeRequestContext
     ) async throws -> Int32 {
+        var observedExit: (snapshot: ContainerSnapshot, exit: ContainerExit)?
         while !Task.isCancelled {
+            try context.checkActive()
             do {
                 let snapshot = try await inspectContainer(id: id, context: context)
+                if let previous = observedExit?.snapshot,
+                   previous.runtimeID != snapshot.runtimeID
+                   || previous.dockerID != snapshot.dockerID
+                   || previous.createdAt != snapshot.createdAt
+                   || previous.startedAt != snapshot.startedAt
+                {
+                    observedExit = nil
+                }
                 if wasStarted(id: id, snapshot: snapshot),
                    let exit = containerExits[snapshot.runtimeID.rawValue]
                 {
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                    observedExit = (snapshot, exit)
+                    if snapshot.state == .stopped {
+                        try await finishStoppedContainerWait(snapshot, context: context)
+                        return exit.code
                     }
-                    return exit.code
                 }
                 if wasStarted(id: id, snapshot: snapshot),
                    let exit = try await waitForRegisteredContainerExit(
                        id: snapshot.runtimeID.rawValue
                    )
                 {
-                    return exit.code
+                    observedExit = (snapshot, exit)
+                    // Apple's process wait completes before its exit monitor
+                    // finishes native teardown. Reinspect that authority before
+                    // exposing a completed Docker wait followed by running/0.
+                    continue
                 }
                 if snapshot.state == .stopped, wasStarted(id: id, snapshot: snapshot) {
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
                     let exitCode = snapshot.exitCode ?? 0
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
-                    }
+                    try await finishStoppedContainerWait(snapshot, context: context)
                     return exitCode
                 }
             } catch let error as DevContainerError where error.code == .notFound {
                 if requestedContainers[id] == nil {
-                    return 0
+                    // Auto-removal can win the native-state poll and discard
+                    // cached metadata. Keep this waiter's authenticated exit.
+                    return observedExit?.exit.code ?? 0
                 }
             }
             try await Task.sleep(for: .milliseconds(200))
         }
         throw DevContainerError(.cancelled, message: "container wait was cancelled")
+    }
+
+    private func finishStoppedContainerWait(
+        _ snapshot: ContainerSnapshot,
+        context: RuntimeRequestContext
+    ) async throws {
+        await portForwarding.stop(containerID: snapshot.runtimeID.rawValue)
+        try await synchronizeNetworkHosts(context: context)
+        if snapshot.spec.autoRemove {
+            scheduleAutomaticRemoval(id: snapshot.runtimeID.rawValue)
+        }
     }
 
     private func recordContainerExit(_ exit: ContainerExit, id: String) {
