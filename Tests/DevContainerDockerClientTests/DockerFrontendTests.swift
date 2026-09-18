@@ -54,7 +54,8 @@ struct DockerFrontendTests {
     func `inspect aliases use one escaped resource and preserve raw numeric data`(kind: String) async throws {
         let command = try DockerFrontendCommand.parse(["inspect", "--type", kind, "registry/x@sha256:a?/#"])
         #expect(try DockerFrontendCommand.parse([kind, "inspect", "registry/x@sha256:a?/#"]) == command)
-        #expect(try DockerFrontendCommand.parse(["inspect", "--type=\(kind)", "--", "registry/x@sha256:a?/#"]) == command)
+        #expect(try DockerFrontendCommand
+            .parse(["inspect", "--type=\(kind)", "--", "registry/x@sha256:a?/#"]) == command)
         let transport = RecordingFrontendTransport(#"{"Id":"abc","Created":9007199254740993}"#)
         let output = try await DockerFrontend(version: "1").execute(command, transport: transport)
         #expect(output == Data("[{\"Id\":\"abc\",\"Created\":9007199254740993}]\n".utf8))

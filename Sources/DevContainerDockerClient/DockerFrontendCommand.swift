@@ -22,11 +22,12 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     case info
     case inspect(kind: String, name: String)
     case containers(all: Bool, truncate: Bool, filters: [String: [String]])
+    case exec(DockerExecCommand)
 
     public static func parse(_ arguments: [String]) throws -> Self {
         var options = DockerFrontendArguments(arguments)
         guard let command = options.next() else {
-            throw DockerFrontendError.usage("expected a command; supported: version, info, inspect, ps")
+            throw DockerFrontendError.usage("expected a command; supported: version, info, inspect, ps, exec")
         }
         switch command {
         case "-v", "--version":
@@ -44,16 +45,22 @@ public enum DockerFrontendCommand: Equatable, Sendable {
         case "inspect":
             return try inspect(&options, kind: nil)
         case "image", "container":
-            guard options.next() == "inspect" else {
-                throw DockerFrontendError.usage("unsupported \(command) subcommand")
-            }
-            return try inspect(&options, kind: command)
+            return try inspectAlias(command, options: &options)
         case "ps":
             return try containers(&options)
+        case "exec":
+            return try .exec(DockerExecCommand.parse(&options))
         default:
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")
         }
+    }
+
+    private static func inspectAlias(_ command: String, options: inout DockerFrontendArguments) throws -> Self {
+        guard options.next() == "inspect" else {
+            throw DockerFrontendError.usage("unsupported \(command) subcommand")
+        }
+        return try inspect(&options, kind: command)
     }
 
     private static func validateVersionFormat(_ format: String?) throws {

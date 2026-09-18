@@ -12,6 +12,34 @@ import Testing
 
 struct DockerFrontendSocketTests {
     @Test
+    func `real executable sends interactive input and separates Engine output without Docker`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let server = ContainerUnixHTTPServer(
+            responder: FrontendTestResponder(), socketPath: socket, logger: Logger(label: "frontend-exec-test")
+        )
+        try await server.start()
+        do {
+            let result = try await FrontendExecutable.run(
+                ["exec", "-i", "-u", "root", "-w", "/work", "box", "/bin/sh"],
+                socket: socket, input: Data("printf hello\n".utf8)
+            )
+            #expect(result.exitCode == 7)
+            #expect(result.standardOutput == Data("printf hello\n".utf8))
+            #expect(result.standardError == Data("stderr\n".utf8))
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    }
+
+    @Test
     func `frontend reaches the selected private socket and preserves server failures`() async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(
@@ -63,7 +91,11 @@ struct DockerFrontendSocketTests {
 }
 
 private enum FrontendExecutable {
-    static func run(_ arguments: [String], socket: String? = nil) async throws -> CapturedProcessResult {
+    static func run(
+        _ arguments: [String],
+        socket: String? = nil,
+        input: Data? = nil
+    ) async throws -> CapturedProcessResult {
         let environment = ProcessInfo.processInfo.environment
         let executable: URL = if let runfile = environment["DEVCONTAINER_DOCKER_TEST_RUNFILE"],
                                  let directory = environment["TEST_SRCDIR"],
@@ -83,7 +115,7 @@ private enum FrontendExecutable {
         ) {
             try await ProcessRunner.captured(
                 executable: executable, arguments: arguments,
-                environment: childEnvironment, maximumOutputBytes: 65536
+                environment: childEnvironment, input: input, maximumOutputBytes: 65536
             )
         }
     }
@@ -93,9 +125,53 @@ private final class FrontendTestBundle: NSObject {}
 
 private struct FrontendTestResponder: DockerHTTPResponder {
     func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        if request.method == .post, request.target == "/containers/box/exec" {
+            return .text(#"{"Id":"c9e1deac-d20d-4b9a-ace8-4456740fed63"}"#, contentType: "application/json")
+        }
+        if request.method == .get, request.target == "/exec/c9e1deac-d20d-4b9a-ace8-4456740fed63/json" {
+            return .text(
+                #"{"ID":"c9e1deac-d20d-4b9a-ace8-4456740fed63","Running":false,"ExitCode":7}"#,
+                contentType: "application/json"
+            )
+        }
+        if request.method == .post, request.target == "/exec/c9e1deac-d20d-4b9a-ace8-4456740fed63/start" {
+            return DockerHTTPResponse(
+                status: 200,
+                headers: ["Connection": "Upgrade", "Upgrade": "tcp"],
+                body: .hijack(FrontendEchoSession(), terminal: false)
+            )
+        }
         if request.method == .get, request.target == "/version" {
             return .text(#"{"Version":"selected-test-engine"}"#, contentType: "application/json")
         }
         return .text(#"{"message":"image not found"}"#, status: 404, contentType: "application/json")
+    }
+}
+
+private actor FrontendEchoSession: DockerHijackSession {
+    nonisolated let frames: AsyncThrowingStream<DockerStreamFrame, any Error>
+    private let continuation: AsyncThrowingStream<DockerStreamFrame, any Error>.Continuation
+    private var input = Data()
+
+    init() {
+        (frames, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    func write(_ data: Data) {
+        input.append(data)
+    }
+
+    func closeStandardInput() {
+        continuation.yield(.init(channel: .standardOutput, data: input))
+        continuation.yield(.init(channel: .standardError, data: Data("stderr\n".utf8)))
+        continuation.finish()
+    }
+
+    func wait() -> Int32 {
+        7
+    }
+
+    func cancel() {
+        continuation.finish()
     }
 }

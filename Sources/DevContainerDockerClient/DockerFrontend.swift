@@ -10,10 +10,12 @@ public protocol DockerFrontendTransport: Sendable {
 
 /// Reuses the shared current-user-only socket client; never discovers or launches Docker.
 public struct UnixDockerFrontendTransport: DockerFrontendTransport {
-    private let client: ContainerUnixHTTPClient
+    let client: ContainerUnixHTTPClient
+    let duplexClient: ContainerUnixHTTPClient
 
-    public init(socketPath: String) throws {
-        client = try ContainerUnixHTTPClient(socketPath: socketPath, timeoutSeconds: 30)
+    public init(socketPath: String, timeoutSeconds: Int = 30) throws {
+        client = try ContainerUnixHTTPClient(socketPath: socketPath, timeoutSeconds: min(30, timeoutSeconds))
+        duplexClient = try ContainerUnixHTTPClient(socketPath: socketPath, timeoutSeconds: timeoutSeconds)
     }
 
     public func send(_ request: DockerHTTPRequest) async throws -> Data {
@@ -23,9 +25,11 @@ public struct UnixDockerFrontendTransport: DockerFrontendTransport {
 
 public struct DockerFrontend: Sendable {
     public let version: String
+    let executionTimeout: Duration
 
-    public init(version: String) {
+    public init(version: String, executionTimeout: Duration = .seconds(86400)) {
         self.version = version
+        self.executionTimeout = executionTimeout
     }
 
     public var versionOutput: Data {
@@ -34,6 +38,8 @@ public struct DockerFrontend: Sendable {
 
     public func execute(_ command: DockerFrontendCommand, transport: any DockerFrontendTransport) async throws -> Data {
         switch command {
+        case .exec:
+            throw DockerFrontendError.usage("exec requires the streaming execution entry point")
         case .clientVersion:
             return versionOutput
         case let .version(format):

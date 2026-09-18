@@ -31,7 +31,17 @@ struct DockerFrontendInvocationTests {
         #expect(invocation.command == .clientVersion)
     }
 
-    @Test(arguments: ["tcp://localhost:2375", "ssh://host", "unix://relative", "unix:///", "", "unix:///a/../b", "unix:///a/./b", "unix:///a\0b", "unix:///" + String(repeating: "a", count: 104)])
+    @Test(arguments: [
+        "tcp://localhost:2375",
+        "ssh://host",
+        "unix://relative",
+        "unix:///",
+        "",
+        "unix:///a/../b",
+        "unix:///a/./b",
+        "unix:///a\0b",
+        "unix:///" + String(repeating: "a", count: 104)
+    ])
     func `remote ambiguous and unsafe endpoints are rejected`(host: String) {
         #expect(throws: DockerFrontendError.self) {
             try DockerFrontendInvocation(arguments: ["version"], environment: ["DOCKER_HOST": host])
