@@ -12,6 +12,8 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+Creating an archive alone does not prove that its installed layout runs or that its bytes survive the test workflow. Native package verification now authenticates the actual extracted products and executes safe CLI/provider-fixture checks on SSD, retaining archive bytes and test evidence under one invocation. Uncertain process cleanup must preserve both the private home and extracted package. This remains unsigned local package proof; Homebrew installation and complete distribution qualification remain required.
+
 Native consumer CLI component tests could pass without emitting LLVM coverage because their sanitized child environment discarded profiling output and the shell target did not declare the executable for export. The shared evidence contract now supports a separate exact unit-plus-CLI inventory, preserving unit-only history and binding the selected inventory at the 90% gate. Compose owns the executable instrumentation and additive target inventory; no source exclusions or lower thresholds are introduced.
 
 See [implementation status](bazel-workflow.md) and [PR 83](PR-83.md). The complete native graph, transactional evidence/candidate retention, archive restore, pinned GitHub binary acquisition and owned invocation cleanup are implemented. Host and quality qualification, complete artifact-only parity, durable release effects, family adoption, broader cleanup and CI cutover remain explicit gates.

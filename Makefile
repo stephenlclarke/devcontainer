@@ -115,7 +115,7 @@ bazel-build-timings:
 	else Tools/bazel/run.sh build-timings "$(INVOCATION)"; fi
 
 bazel-package:
-	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) --config=release //:candidate_archive
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:candidate_archive //Tools/bazel:package_smoke
 
 bazel-acquire-releases:
 	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
@@ -131,9 +131,9 @@ bazel-cleanup:
 bazel-checkpoint:
 	Tools/bazel/run.sh test-tools
 	Tools/bazel/run.sh coverage --config=stock //:unit //:product
-	Tools/bazel/run.sh build --config=stock --config=release //:candidate_archive
+	Tools/bazel/run.sh test --config=stock --config=release //:candidate_archive //Tools/bazel:package_smoke
 	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product
-	Tools/bazel/run.sh build --config=release //:candidate_archive
+	Tools/bazel/run.sh test --config=release //:candidate_archive //Tools/bazel:package_smoke
 	Tools/bazel/run.sh cleanup --apply
 
 all: workflow

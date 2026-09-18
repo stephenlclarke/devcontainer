@@ -57,3 +57,24 @@ sh_test(
     env = {"TEST_BINARIES_FOR_LLVM_COV": "$(location //:DevContainerVersionGenerator)"},
     visibility = ["//visibility:public"],
 )
+
+sh_test(
+    name = "package_smoke",
+    srcs = ["tests/package-smoke.sh"],
+    args = [
+        "$(location //Tools/testing:run_tests.py)",
+        "$(location package_checks/test_archive.py)",
+        "$(location //:candidate_archive_payload)",
+        "$(location //:candidate_archive_receipt)",
+    ],
+    data = [
+        "package_checks/test_archive.py",
+        "package_checks/test_harness.py",
+        "package_checks/cli_process.py",
+        "//Tools/testing:run_tests.py",
+        "//:candidate_archive_payload",
+        "//:candidate_archive_receipt",
+    ],
+    size = "small",
+    visibility = ["//visibility:public"],
+)

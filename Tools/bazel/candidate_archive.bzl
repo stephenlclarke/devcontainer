@@ -33,7 +33,10 @@ def _candidate_archive_impl(ctx):
         progress_message = "Archiving native devcontainer candidate (no signing or publishing)",
         env = {"PYTHONDONTWRITEBYTECODE": "1"},
     )
-    return [DefaultInfo(files = depset([archive, receipt]))]
+    return [
+        DefaultInfo(files = depset([archive, receipt])),
+        OutputGroupInfo(archive = depset([archive]), receipt = depset([receipt])),
+    ]
 
 candidate_archive = rule(
     implementation = _candidate_archive_impl,

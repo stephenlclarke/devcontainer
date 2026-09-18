@@ -30,6 +30,18 @@ config_setting(
     define_values = {"runtime_profile": "stock"},
 )
 
+filegroup(
+    name = "candidate_archive_payload",
+    srcs = [":candidate_archive"],
+    output_group = "archive",
+)
+
+filegroup(
+    name = "candidate_archive_receipt",
+    srcs = [":candidate_archive"],
+    output_group = "receipt",
+)
+
 RUNTIME_COPTS = select({
     ":stock_runtime": [],
     "//conditions:default": ["-DDEVCONTAINER_ENHANCED_RUNTIME"],
