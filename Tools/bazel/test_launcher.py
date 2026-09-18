@@ -133,13 +133,20 @@ class LauncherTests(unittest.TestCase):
     def test_release_identity_comes_from_the_captured_source_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             root = Path(directory)
-            (root / "inputs-before.json").write_text('{"commit":"' + "a" * 40 + '"}')
-            result = subprocess.run(
-                ["/bin/bash", "-c", 'source "$1"; clean_environment() { printf "%s\\0" "$@"; }; run_bazel /repo build "$2" /pinned-bazel stock --config=release //:candidate_archive',
-                 "test", str(SCRIPT), str(root)], capture_output=True, text=True, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("--define=DEVCONTAINER_COMMIT=" + "a" * 40, result.stdout.split("\0"))
-            self.assertIn("--define=DEVCONTAINER_BUILD_LANE=candidate", result.stdout.split("\0"))
+            for dirty in ("false", "true", "null"):
+                (root / "inputs-before.json").write_text('{"commit":"' + "a" * 40 + '","dirty":' + dirty + '}')
+                result = subprocess.run(
+                    ["/bin/bash", "-c", 'source "$1"; clean_environment() { printf "%s\\0" "$@"; }; run_bazel /repo build "$2" /pinned-bazel stock --config=release //:candidate_archive',
+                     "test", str(SCRIPT), str(root)], capture_output=True, text=True, check=False)
+                with self.subTest(dirty=dirty):
+                    if dirty == "null":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, "")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("--define=DEVCONTAINER_COMMIT=" + "a" * 40, result.stdout.split("\0"))
+                        self.assertIn("--define=DEVCONTAINER_BUILD_LANE=candidate", result.stdout.split("\0"))
+                        self.assertIn("--define=DEVCONTAINER_SOURCE_DIRTY=" + dirty, result.stdout.split("\0"))
 
     def test_release_info_diagnostic_does_not_require_a_build_snapshot(self) -> None:
         result = subprocess.run(
@@ -152,7 +159,8 @@ class LauncherTests(unittest.TestCase):
     def test_indirect_targets_and_source_identity_overrides_are_rejected(self) -> None:
         for arguments in [("--target_pattern_file=/tmp/targets",), ("--target_pattern_file", "/tmp/targets"),
                           ("--define=DEVCONTAINER_COMMIT=forged",), ("--define", "DEVCONTAINER_COMMIT=forged"),
-                          ("--define=DEVCONTAINER_BUILD_LANE=release",), ("--define", "DEVCONTAINER_BUILD_LANE=release")]:
+                          ("--define=DEVCONTAINER_BUILD_LANE=release",), ("--define", "DEVCONTAINER_BUILD_LANE=release"),
+                          ("--define=DEVCONTAINER_SOURCE_DIRTY=false",), ("--define", "DEVCONTAINER_SOURCE_DIRTY=false")]:
             with self.subTest(arguments=arguments):
                 self.assertEqual(invoke("validate_arguments", *arguments).returncode, 2)
 

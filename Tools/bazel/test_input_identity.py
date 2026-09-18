@@ -4,12 +4,33 @@ import os
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 
-from input_identity import file_identity, tooling_identity, verify
+from input_identity import file_identity, source_identity, tooling_identity, verify
 
 
 class InputIdentityTests(unittest.TestCase):
+    def test_hidden_untracked_sources_still_make_identity_dirty(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            root = Path(directory)
+
+            def git(*arguments: str) -> None:
+                subprocess.run(["/usr/bin/git", "-C", str(root), *arguments], check=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            git("init")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture")
+            git("config", "status.showUntrackedFiles", "no")
+            self.assertFalse(source_identity(root)["dirty"])
+            source = root / "Sources" / "New.swift"
+            source.parent.mkdir()
+            source.write_text("public struct New {}\n")
+            identity = source_identity(root)
+            self.assertIn("Sources/New.swift", identity["files"])
+            self.assertTrue(identity["dirty"])
+
     def test_external_tooling_requires_exact_consumer_lock(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             root = Path(directory)

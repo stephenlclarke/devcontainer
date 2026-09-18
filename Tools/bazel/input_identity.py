@@ -42,7 +42,7 @@ def source_identity(root: Path) -> dict:
     return {
         "schema": 1,
         "commit": git("rev-parse", "HEAD").decode().strip(),
-        "dirty": bool(git("status", "--porcelain")),
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=all")),
         "files": files,
     }
 

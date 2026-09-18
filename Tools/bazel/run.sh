@@ -76,6 +76,8 @@ validate_arguments() {
                 error 'Indirect Bazel argument files are not supported.'; return 2 ;;
             --define=DEVCONTAINER_COMMIT*|DEVCONTAINER_COMMIT=*|--define=DEVCONTAINER_BUILD_LANE*|DEVCONTAINER_BUILD_LANE=*)
                 error 'Build source identity is supplied by the captured invocation, not caller overrides.'; return 2 ;;
+            --define=DEVCONTAINER_SOURCE_DIRTY*|DEVCONTAINER_SOURCE_DIRTY=*)
+                error 'Build cleanliness is supplied by the captured invocation, not caller overrides.'; return 2 ;;
             --define=runtime_profile*|runtime_profile=*)
                 error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
             --override_module*|--override_repository*|--inject_repository*|--lockfile_mode*|--registry*|--module_mirrors*|--experimental_downloader_config*|--enable_bzlmod*|--noenable_bzlmod*|--enable_workspace*|--noenable_workspace*)
@@ -146,10 +148,13 @@ run_bazel() {
     while IFS= read -r -d '' part; do bazel_args+=("$part"); done < <(execution_arguments "$@")
     for part in "$@"; do
         if [[ "$part" == --config=release && "$command" =~ ^(build|test|coverage|cquery|aquery)$ ]]; then
-            local source_commit
+            local source_commit source_dirty
             source_commit="$(/usr/bin/plutil -extract commit raw "$invocation/inputs-before.json")" || return
             [[ "$source_commit" =~ ^[a-f0-9]{40}$ ]] || { error 'Release build requires captured source identity.'; return 2; }
-            bazel_args+=("--define=DEVCONTAINER_COMMIT=$source_commit" --define=DEVCONTAINER_BUILD_LANE=candidate)
+            source_dirty="$(/usr/bin/plutil -extract dirty raw "$invocation/inputs-before.json")" || return
+            [[ "$source_dirty" == true || "$source_dirty" == false ]] || { error 'Release build requires captured source cleanliness.'; return 2; }
+            bazel_args+=("--define=DEVCONTAINER_COMMIT=$source_commit" --define=DEVCONTAINER_BUILD_LANE=candidate
+                "--define=DEVCONTAINER_SOURCE_DIRTY=$source_dirty")
             break
         fi
     done
