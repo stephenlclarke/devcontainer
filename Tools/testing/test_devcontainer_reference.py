@@ -120,6 +120,9 @@ class ReferenceTests(unittest.TestCase):
                          ["devcontainer-image-pull", "devcontainer-up", "devcontainer-exec"])
         self.assertEqual([entry[2] for entry in self.commands], [120, 120, 60])
         self.assertEqual(self.commands[0][1][-1], IMAGE)
+        self.assertIn("--log-format", self.commands[1][1])
+        self.assertNotIn("--log-format", self.commands[2][1])
+        self.assertEqual(self.commands[2][1][-3:], ["--", "/bin/sh", WORKSPACE + "/probe.sh"])
         for _, arguments, _ in self.commands[1:]:
             self.assertEqual(arguments[:4], ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.vm.socket),
                                              "/prepared/node", "/prepared/devcontainer.js"])

@@ -90,9 +90,12 @@ class DevcontainerReference(GuestFixture):
 
     def arguments(self, command: str) -> list[str]:
         tools = self.inputs["devcontainers"]
-        return ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.socket), tools["node"], tools["cli"], command,
+        arguments = ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.socket), tools["node"], tools["cli"], command,
                 "--docker-path", self.inputs["tools"]["docker"], "--workspace-folder", str(self.workspace),
-                "--id-label", OWNER_LABEL + "=" + self.owner, "--log-format", "json"]
+                "--id-label", OWNER_LABEL + "=" + self.owner]
+        # JSON mode wraps exec's raw output into stderr log events. Only up
+        # uses it; exec retains the ordinary stdout contract of the old fixture.
+        return arguments + (["--log-format", "json"] if command == "up" else [])
 
     def owned(self, value: dict) -> str:
         identifier = value.get("Id")
@@ -140,7 +143,7 @@ class DevcontainerReference(GuestFixture):
         actual = self.find()
         if actual is None or self.owned(actual) != self.identifier:
             raise ValueError("CLI result does not match the owned D01 resource")
-        output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["/bin/sh", WORKSPACE + "/probe.sh"],
+        output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["--", "/bin/sh", WORKSPACE + "/probe.sh"],
                                  timeout=60, separate_output=True)
         return observations(output)
 
