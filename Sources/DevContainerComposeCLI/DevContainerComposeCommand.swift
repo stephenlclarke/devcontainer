@@ -69,12 +69,18 @@ enum DevContainerComposeCommand {
             environment: environment,
             socket: selection.socket
         )
+        // Reject a missing selected frontend before recording project ownership.
+        // Never fall back to a different orchestration tool or runtime.
+        try requireExecutable(child.executable)
         let claim = try await claimIfNeeded(
             envelope: envelope,
             provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: selection.socket
+            backend: selection.backend,
+            execution: ComposeExecutionEnvironment(
+                paths: paths,
+                environment: environment,
+                socket: selection.socket
+            )
         )
 
         let result: Int32
@@ -229,9 +235,8 @@ enum DevContainerComposeCommand {
     private static func claimIfNeeded(
         envelope: ComposeCommandEnvelope,
         provider: ComposeProviderKind,
-        paths: Paths,
-        environment: [String: String],
-        socket: String
+        backend: BackendProvider,
+        execution: ComposeExecutionEnvironment
     ) async throws -> ComposeProjectClaim? {
         guard envelope.mutating else {
             return nil
@@ -239,13 +244,12 @@ enum DevContainerComposeCommand {
         let projectName = try await resolvedProjectName(
             envelope: envelope,
             provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: socket
+            paths: execution.paths,
+            environment: execution.environment,
+            socket: execution.socket
         )
         let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
-        let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
-        let store = try SQLiteStateStore(path: paths.state)
+        let store = try SQLiteStateStore(path: execution.paths.state)
         return ComposeProjectClaim(
             key: projectKey,
             store: store,

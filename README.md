@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+In current source, Compose project ownership follows the selected runtime backend, independently of the selected Compose frontend. Switching frontends cannot migrate an existing runtime claim. A missing selected frontend fails before creating project state, without trying Docker as a fallback. This correction does not change the published compatibility matrix or remove the remaining Docker client dependencies.
+
 The opt-in [native Bazel build](docs/bazel-workflow.md) builds all three executables and runs the unit suites against either stock Apple or enhanced dependencies. Use `make bazel-configure` once, then `make bazel-build` and `make bazel-unit`; add `BAZEL_PROFILE=stock` for the stock graph. `make bazel-package` creates an unsigned native candidate and tests its extracted executable/plugin layout, provenance and explicit native Compose-provider handoff without installing or starting services. Scratch and caches stay on the enrolled external SSD; test evidence and candidate archives are retained together on internal storage, with authenticated restore that requires no rebuild. Runtime parity, signing and release publication have not yet moved to this workflow.
 
 Use `make bazel-coverage-report INVOCATION=ID` to export a retained unit run's LCOV and Sonar XML without rerunning tests. `Tools/bazel/run.sh coverage-report ID --minimum-percent 90` also checks the raw measured percentage and fails below the target, while leaving the report available for diagnosis. The receipt identifies the tested commit/profile; exporting historical coverage does not make it current-head quality evidence. The shared checker also supports Compose's reviewed profile-specific test and production-source inventories.

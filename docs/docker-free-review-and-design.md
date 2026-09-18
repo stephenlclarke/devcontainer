@@ -97,6 +97,8 @@ fail-closed resolver with command, environment, configuration, and default
 precedence. Separating enhanced runtime naming from Compose orchestration
 remains outstanding.
 
+The Compose wrapper now uses the resolved backend for project ownership instead of deriving it from frontend choice. Cross-product component tests exercise both frontends with both backends, reject migration of an existing claim and prove a missing native frontend creates no state or Docker fallback. Runtime-distribution binding and the DF-01 Docker-free client cutover remain unfinished; the default and Homebrew Docker dependencies are deliberately unchanged until that client path is qualified.
+
 **Acceptance:** configure a non-default socket and enhanced executable, then confirm every public command and service reports the same effective selection. Switching distributions with owned resources fails until the designed down/recreate or migration procedure completes. A mislabeled fork cannot enter the stock test lane.
 
 ### DF-05 - P1: selecting a CLI does not prove direct API calls use the same runtime

@@ -372,6 +372,8 @@ Advanced Docker `--mount` fields such as bind propagation, consistency modes, vo
 
 The state database records which backend owns a project. This prevents stock and optional provider operations from silently mutating the same project.
 
+In current development source, the runtime backend owns the project independently of which Compose frontend is selected. Changing only the frontend does not migrate ownership. A missing selected executable fails before a claim is created and does not fall back to Docker; install or explicitly configure the intended frontend before retrying. This does not expand the certified release combinations.
+
 The dispatcher applies Docker Compose's project-name precedence before recording that ownership. Valid inherited options such as `--env-file`, `--profile`, `--parallel`, and `--progress` are normalized whether they appear before or after the subcommand; an unknown option in the global position fails explicitly instead of running an unclaimed mutation. Commands that can change resources, including `cp`, `exec`, `scale`, `watch`, and `wait` (which can remove the project with `--down-project`), require the same durable claim as `up` and `down`. A successful `down` or `wait --down-project` releases the claim after the provider removes the project.
 
 Inspect a claim:

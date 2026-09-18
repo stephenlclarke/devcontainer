@@ -433,6 +433,8 @@ the service database. Secrets are not accepted in configuration files.
 `container devcontainer doctor --format json` emits a machine-readable backend
 fingerprint and capability report.
 
+The Compose wrapper records project ownership from the resolved runtime backend, not from the orchestration frontend. Both frontend choices preserve the same runtime claim and reject a conflicting existing claim before executing a mutation. The selected frontend must be executable before project state is created; a missing native executable never triggers a Docker fallback. These checks establish configuration and state consistency, not runtime-service identity qualification.
+
 ## Observability
 
 Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time. Comparable or better performance (`<=1.00x` Docker) is the objective, and any completed result above `2.50x` requires further investigation. Non-completion and missing or invalid timing evidence fail the gate; a completed timing ratio alone does not alter functional parity. The full target and current implementation gaps are defined in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). There is no outbound telemetry in the initial product.

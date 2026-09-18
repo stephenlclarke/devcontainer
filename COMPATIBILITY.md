@@ -60,6 +60,8 @@ or another implementation module.
 
 ## Pinned 1.0.1 release provenance
 
+Current development source separates Compose frontend choice from runtime ownership and rejects missing frontend executables before claiming state. Component tests cover both frontend choices with both runtime backends and reject cross-runtime claim migration. These tests do not certify additional frontend/runtime combinations; the immutable 1.0.1 matrix below remains the release claim.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each

@@ -36,6 +36,8 @@ same configuration. Command options take precedence over environment
 variables, which take precedence over the file. The context command changes
 only the current shell. It does not replace Docker's global context.
 
+In current development source, Compose claims the resolved runtime backend independently of frontend selection. A conflicting existing claim is rejected, and a missing frontend fails before creating project state without falling back to Docker. Component coverage of these choices does not expand the certified release matrix or remove the Docker client dependency.
+
 ## Run the official CLI
 
 ```console
