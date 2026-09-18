@@ -83,7 +83,15 @@ class ArchiveProbeTests(unittest.TestCase):
             self.assertGreaterEqual(event["durationNS"], 0)
 
     def test_deterministic_archive_retains_exact_mode_not_just_permissions(self):
-        self.assertEqual(source_archive(), source_archive())
+        # Different wall clocks must not alter the reproducible fixture bytes.
+        with patch("archive_probe.time.time", return_value=1_000):
+            earlier = source_archive()
+        with patch("archive_probe.time.time", return_value=2_000):
+            later = source_archive()
+        self.assertEqual(earlier, later)
+        with tarfile.open(fileobj=io.BytesIO(earlier), mode="r:") as archive:
+            for member in archive:
+                self.assertEqual((member.mtime, member.uid, member.gid), (0, 0, 0))
         def alter(member, data):
             if member.name == "archive/regular.txt":
                 member.mode = 0o4750
