@@ -64,6 +64,8 @@ Current development source separates Compose frontend choice from runtime owners
 
 The candidate native-create path also distinguishes failed local preparation from uncertain runtime submission. Mount/kernel failures do not create pending container intent, while failures after journalling retain it. Component tests do not substitute for live creation/recovery qualification.
 
+The candidate image-build path preserves completed builder progress and emits an in-band Docker build error only after recording failed reconciliation. Preflight, cancellation and abandonment remain failures. Stock/enhanced component checks do not replace live E04 builder/failure-phase qualification or change the historical release matrix below.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each

@@ -1290,10 +1290,26 @@ public extension AppleContainerRuntime {
         }
         arguments.append(buildInput.contextRoot.path)
         let result = try await command(arguments)
-        try requireSuccess(result, operation: "image build")
-        return AsyncThrowingStream { continuation in
-            continuation.yield(result.standardOutput)
-            continuation.finish()
+        return imageBuildResultStream(result)
+    }
+
+    private func imageBuildResultStream(
+        _ result: AppleCommandResult
+    ) -> AsyncThrowingStream<Data, any Error> {
+        AsyncThrowingStream { continuation in
+            if !result.standardOutput.isEmpty {
+                continuation.yield(result.standardOutput)
+            }
+            if !result.standardError.isEmpty {
+                continuation.yield(result.standardError)
+            }
+            do {
+                try requireSuccess(result, operation: "image build")
+                continuation.finish()
+            } catch {
+                // Once the builder has run, its failure belongs to the stream.
+                continuation.finish(throwing: error)
+            }
         }
     }
 

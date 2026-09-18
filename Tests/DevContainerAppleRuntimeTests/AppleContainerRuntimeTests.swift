@@ -1114,6 +1114,10 @@ struct FakeAppleCLI {
               printf '%s\n' prepared-feature-context >> "$LOG"
             fi
             printf '%s\\n' 'build-progress'
+            if [ "$mode" = build-failure ]; then
+              printf '%s\\n' 'build command failed' >&2
+              exit 17
+            fi
             ;;
           "start fixture")
             if [ "$state" = created ]; then

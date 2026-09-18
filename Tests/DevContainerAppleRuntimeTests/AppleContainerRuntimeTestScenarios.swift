@@ -27,6 +27,25 @@ private struct RuntimeTarEntry {
 }
 
 extension AppleContainerRuntimeTests {
+    @Test
+    func `failed image build preserves progress before its terminal stream error`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try fixture.setMode("build-failure")
+        let runtime = try fixture.runtime()
+        let stream = try await runtime.buildImage(
+            request: ImageBuildRequest(context: minimalTar(), dockerfile: "file.txt"),
+            context: RuntimeRequestContext()
+        )
+        var output = Data()
+        await #expect(throws: DevContainerError.self) {
+            for try await chunk in stream {
+                output.append(chunk)
+            }
+        }
+        #expect(String(data: output, encoding: .utf8) == "build-progress\nbuild command failed\n")
+    }
+
     func assertContainerInventory(
         _ runtime: AppleContainerRuntime,
         context: RuntimeRequestContext
