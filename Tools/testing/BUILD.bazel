@@ -21,6 +21,8 @@ sh_test(
         "test_network_volume_probe.py",
         "archive_probe.py",
         "test_archive_probe.py",
+        "build_probe.py",
+        "test_build_probe.py",
         "guest_fixture.py",
         "test_guest_fixture.py",
         "guest_runtime.py",
