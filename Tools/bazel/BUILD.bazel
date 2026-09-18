@@ -16,6 +16,7 @@ exports_files([
     "prepare_docker_cli.py",
     "guest-kernel.lock.json",
     "guest-images.lock.json",
+    "builder-images.lock.json",
     "prepare_guest_images.py",
     "oci_image_layout.py",
     "candidate_archive.py",

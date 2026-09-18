@@ -213,9 +213,12 @@ def main():
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None
+    builder_lock = None
     if args.fixture in FIXTURES:
         guest_locks = [json.loads((repository / "Tools/bazel" / name).read_text())
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
+        if args.fixture == "E04-image-build":
+            builder_lock = json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
     expected = {key: str(value).lower() for key, value in json.loads(
         (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}
     fingerprints = published_fingerprints(repository)
@@ -234,7 +237,7 @@ def main():
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
-        guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED) if guest_locks is not None else None
+        guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock) if guest_locks is not None else None
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
@@ -254,7 +257,7 @@ def main():
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
-            if guest_locks is not None and admit_guest(*guest_locks, args.lane, RETAINED) != guest_inputs:
+            if guest_locks is not None and admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock) != guest_inputs:
                 raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED, args.candidate_invocation)
 
@@ -264,7 +267,8 @@ def main():
             return ControlledRuntime(root, owner, api_server, journal_parent)
 
         scope = CANDIDATE_SCOPE if args.candidate_invocation else "released-engine-case-only"
-        admission = {"scope": scope, "releaseLock": lock, "guestLocks": guest_locks, "runtime": runtime}
+        admission = {"scope": scope, "releaseLock": lock, "guestLocks": guest_locks,
+                     "builderLock": builder_lock, "runtime": runtime}
         case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory,
                             guest_inputs=guest_inputs, admission=admission)
         result = run_case(store, identity, expected, case.setup, case.operation, case.cleanup)

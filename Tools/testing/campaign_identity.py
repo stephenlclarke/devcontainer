@@ -11,6 +11,7 @@ RELEASE_INPUTS = (
     "Tools/bazel/docker-cli.lock.json",
     "Tools/bazel/guest-kernel.lock.json",
     "Tools/bazel/guest-images.lock.json",
+    "Tools/bazel/builder-images.lock.json",
     "Tests/Parity/manifest.json",
 )
 PREPARATION_HELPERS = (
@@ -18,6 +19,7 @@ PREPARATION_HELPERS = (
     "prepare_guest_images.py", "oci_image_layout.py", "prepare_docker_cli.py",
 )
 RUNTIME_HELPERS = (
+    "build_probe.py", "build_images.py", "build_fixture.py", "build_runtime.py",
     "archive_probe.py", "campaign_identity.py", "case_evidence.py", "docker_vm.py",
     "engine_probe.py", "exec_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",

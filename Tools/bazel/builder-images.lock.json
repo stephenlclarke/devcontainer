@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "E04 released linux-arm64 builders; selected leaf digests, no rebuild",
+  "images": [
+    {
+      "name": "stock-builder",
+      "repository": "ghcr.io/apple/container-builder-shim/builder",
+      "manifest": "sha256:98a8ea792db26cc4b4e619e3413240fbc110245eae7c3f5d53ed07f50f143dbf",
+      "config": "sha256:c2f96bc9694771e4b6ac8e16ea3d539bfe42cadf580afdebfde6f48448d1cb1f",
+      "reference": "ghcr.io/apple/container-builder-shim/builder:0.13.1"
+    },
+    {
+      "name": "enhanced-builder",
+      "repository": "ghcr.io/stephenlclarke/container-builder-shim/builder",
+      "manifest": "sha256:1ae61d79ea5808de443ea6ad20b8aac28b602c155562111c34f4b41668a5f023",
+      "config": "sha256:adc2f0d84972b408eb9072acc174caf5ad837089c99d0f1676750e1e8c34c33b",
+      "reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:current-34334330512-5373d9b4363c"
+    }
+  ]
+}

@@ -21,9 +21,11 @@ from release_inputs import sha256, validate_lock
 from exec_probe import exec_streams
 from network_volume_probe import NetworkVolumeFixture
 from engine_probe import request
+from build_fixture import BuildFixture
+from build_runtime import ReleasedBuilder, admit_builder
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E05-archive-copy", "E06-network-volume"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -57,7 +59,7 @@ def diagnostic_snapshot(path: Path) -> tuple[bytes, bytes]:
     return payload, canonical({"bytes": len(payload), "sha256": digest(payload), "truncated": len(data) > len(payload)})
 
 
-def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path) -> dict:
+def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, *, builder_lock=None) -> dict:
     """Missing enhanced inputs fail before any host-service or store mutation."""
     names = {"apple-stock": "stock-vminit", "container-compose": "enhanced-vminit"}
     if lane not in names:
@@ -81,9 +83,12 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path) 
     asset = assets[0]
     kernel = require_retained(asset, retained / "release-objects" / asset["sha256"],
                               retained / "prepared-releases", retained / "prepared-receipts")
-    return {"kernel": kernel,
-            "initialization": require_image(by_name[names[lane]], retained / "guest-images"),
-            "workload": require_image(by_name["alpine-workload"], retained / "guest-images")}
+    result = {"kernel": kernel,
+              "initialization": require_image(by_name[names[lane]], retained / "guest-images"),
+              "workload": require_image(by_name["alpine-workload"], retained / "guest-images")}
+    if builder_lock is not None:
+        result["builder"] = admit_builder(builder_lock, lane, retained)
+    return result
 
 
 class ReleasedGuest:
@@ -96,6 +101,7 @@ class ReleasedGuest:
         self.inputs, self.fixture, self.root = inputs, fixture, root
         self.owner, self.runtime, self.container, self.socket = owner, runtime, container, socket
         self.observe, self.guest, self.commands = observe, None, []
+        self.builder = None
         self.pending_logs = {}
         image = inputs["workload"]["image"]
         self.image_id = image["config"] if image_id is None else image_id
@@ -114,7 +120,7 @@ class ReleasedGuest:
             journal.put(name + "-log.json", metadata)
             del self.pending_logs[name]
 
-    def command(self, name: str, arguments: list[str]):
+    def command(self, name: str, arguments: list[str], *, timeout=60):
         """Journal before spawning; do not retry uncertain commands or expose their logs."""
         journal = self.runtime.journal
         journal.put(name + "-intent.json", canonical({"arguments": arguments}))
@@ -130,7 +136,7 @@ class ReleasedGuest:
                     child.start([self.container, *arguments], self.root, output,
                                 provider_install=Path(self.container).parent.parent)
                     journal.put(name + "-process.json", canonical({"pid": child.process.pid}))
-                    code = child.process.wait(timeout=60)
+                    code = child.process.wait(timeout=timeout)
                     if code != 0:
                         raise RuntimeError("Released guest provisioning command failed")
                 finally:
@@ -140,6 +146,9 @@ class ReleasedGuest:
         finally:
             self.retain_logs()
         self.runtime.verify()
+        if name.startswith("guest-builder-list-") and json.loads(journal.records()[name + "-log.json"])["truncated"]:
+            raise ValueError("Provisioning output exceeds the retained diagnostic bound")
+        return journal.records()[name + ".log"]
 
     def provision(self):
         self.runtime.journal.put("guest-inputs.json", canonical(self.inputs))
@@ -155,11 +164,25 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
+        if self.fixture == "E04-image-build":
+            self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
+            with deadline(300):
+                self.builder.provision()
         self.runtime.journal.put("guest-provisioned.json", canonical({"inputsSHA256": digest(canonical(self.inputs))}))
 
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
+        if self.fixture == "E04-image-build":
+            if self.container and self.builder is None:
+                raise ValueError("Apple image builds require an admitted private builder")
+            image = self.inputs["workload"]["image"]
+            self.guest = BuildFixture(self.socket, digest(canonical(self.owner["identity"])), self.image_id,
+                                      GUEST_API_VERSION, self.runtime.journal,
+                                      image["repository"] + "@" + image["manifest"], observe=self.observe,
+                                      before_submit=self.builder.verify_for_build if self.builder else None)
+            with deadline(390):
+                return self.guest.operation()
         if self.fixture == "E06-network-volume":
             self.guest = NetworkVolumeFixture(self.socket, digest(canonical(self.owner["identity"])),
                                               self.image_id, GUEST_API_VERSION, self.runtime.journal,
@@ -186,15 +209,28 @@ class ReleasedGuest:
         for child in self.commands:
             child.stop()
         self.retain_logs()
+        result = {"status": "passed", "remainingOwnedResources": []}
         if self.guest is not None:
             self.runtime.verify()
             with deadline(45):
-                return self.guest.cleanup()
-        return {"status": "passed", "remainingOwnedResources": []}
+                result = self.guest.cleanup()
+        if self.builder is not None:
+            self.runtime.verify()
+            with deadline(130):
+                self.builder.cleanup()
+        return result
 
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    for prefix in ("e04-images", "e04-builder"):
+        if prefix + "-intent.json" in records:
+            removed = json.loads(records.get(prefix + "-removed.json", b"null"))
+            expected = {"absent": True}
+            if prefix == "e04-builder":
+                expected["intentSHA256"] = digest(records[prefix + "-intent.json"])
+            if removed != expected:
+                raise ValueError("Image-build resources need explicit reconciliation before service recovery")
     if "network-volume-intent.json" in records:
         removed = json.loads(records.get("network-volume-removed.json", b"null"))
         if removed != {"intentSHA256": digest(records["network-volume-intent.json"]), "absent": True}:
@@ -205,7 +241,9 @@ def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
         if removed != {"name": intent["name"], "absent": True}:
             raise ValueError("Guest resource needs explicit reconciliation before service recovery")
     steps = []
-    for name in PROVISION_STEPS:
+    builder_steps = [name.removesuffix("-intent.json") for name in records
+                     if name.startswith("guest-builder-") and name.endswith("-intent.json")]
+    for name in (*PROVISION_STEPS, *sorted(builder_steps)):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:

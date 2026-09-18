@@ -7,7 +7,7 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
-from build_probe import build_context, build_output, build_route, owned_image, tag_for
+from build_probe import build_context, build_output, build_route, failure_marker, owned_image, require_failed_run, tag_for
 from guest_fixture import OWNER_LABEL
 
 
@@ -28,7 +28,8 @@ class BuildProbeTests(unittest.TestCase):
                 self.assertIn(f'LABEL {OWNER_LABEL}="{OWNER}"\n', content)
                 self.assertIn("ARG PARITY_VALUE\n", content)
                 if failing:
-                    self.assertIn("RUN false\n", content)
+                    self.assertIn("; false\n", content)
+                    self.assertIn(failure_marker(OWNER), content)
                     self.assertNotIn('devcontainer.parity="true"', content)
                 else:
                     self.assertIn('RUN test "$PARITY_VALUE" = expected\n', content)
@@ -47,6 +48,19 @@ class BuildProbeTests(unittest.TestCase):
             self.assertEqual(query["rm"], ["true"])
             self.assertEqual(query["forcerm"], ["true"])
         self.assertNotEqual(tag_for(OWNER), tag_for(OWNER, failing=True))
+
+    def test_failed_run_requires_execution_not_command_listing_or_setup_failure(self):
+        marker = failure_marker(OWNER)
+        for stream in (marker + "\n", "#5 0.123 " + marker + "\n"):
+            for error in ('process did not complete successfully: exit code: 1', 'returned a non-zero code: 1'):
+                payload = json.dumps({"stream": stream}).encode() + b'\n' + json.dumps({"error": error}).encode()
+                require_failed_run(payload, OWNER)
+        for stream, error in (("RUN printf '%s' " + marker, "exit code: 1"),
+                              (marker, "builder unavailable"), (marker, "exit code: 10"),
+                              ("#5 CACHED " + marker, "exit code: 1"), ("", marker + " exit code: 1")):
+            payload = json.dumps({"stream": stream}).encode() + b'\n' + json.dumps({"error": error}).encode()
+            with self.subTest(stream=stream), self.assertRaisesRegex(ValueError, 'intended RUN'):
+                require_failed_run(payload, OWNER)
 
     def test_mutable_bases_and_dockerfile_injection_are_rejected(self):
         for base in ("alpine:latest", "scratch", BASE + "\nRUN true", "../alpine@sha256:" + "b" * 64):

@@ -25,6 +25,10 @@ sh_test(
         "test_build_probe.py",
         "build_images.py",
         "test_build_images.py",
+        "build_fixture.py",
+        "test_build_fixture.py",
+        "build_runtime.py",
+        "test_build_runtime.py",
         "guest_fixture.py",
         "test_guest_fixture.py",
         "guest_runtime.py",
@@ -65,11 +69,13 @@ sh_test(
         "//Tools/bazel:releases.lock.json",
         "//Tools/bazel:guest-kernel.lock.json",
         "//Tools/bazel:guest-images.lock.json",
+        "//Tools/bazel:builder-images.lock.json",
         "//Tools/bazel:prepare_guest_images.py",
         "//Tools/bazel:oci_image_layout.py",
         "//:Tests/Parity/fixtures/E01-engine-negotiation/contract.json",
         "//:Tests/Parity/fixtures/E02-container-lifecycle/contract.json",
         "//:Tests/Parity/fixtures/E03-exec-streams/contract.json",
+        "//:Tests/Parity/fixtures/E04-image-build/contract.json",
         "//:Tests/Parity/fixtures/E05-archive-copy/contract.json",
         "//:Tests/Parity/fixtures/E06-network-volume/contract.json",
     ],
@@ -80,6 +86,12 @@ sh_test(
 filegroup(
     name = "released_engine_inputs",
     srcs = [
+        "build_probe.py",
+        "build_images.py",
+        "build_fixture.py",
+        "build_runtime.py",
+        "//Tools/bazel:builder-images.lock.json",
+        "//:Tests/Parity/fixtures/E04-image-build/contract.json",
         "//Tools/bazel:prepare_candidate.py",
         "//Tools/bazel:retain_evidence.py",
         "released_engine.py",
@@ -124,9 +136,9 @@ sh_test(
     srcs = ["released-engine.sh"],
     data = [":released_engine_inputs"],
     size = "medium",
-    # Setup/probe/cleanup have shorter independent deadlines. Preserve enough
-    # outer time for owned-resource reconciliation after a setup timeout.
-    timeout = "long",
+    # E04's sequential setup/build/cleanup budgets exceed 900 seconds. Keep
+    # all shorter phase deadlines and reserve outer time for owned teardown.
+    timeout = "eternal",
     tags = ["manual", "local", "no-sandbox", "no-cache"],
     visibility = ["//visibility:public"],
 )

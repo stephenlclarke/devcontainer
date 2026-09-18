@@ -27,6 +27,7 @@ exports_files([
     "Tests/Parity/fixtures/E01-engine-negotiation/contract.json",
     "Tests/Parity/fixtures/E02-container-lifecycle/contract.json",
     "Tests/Parity/fixtures/E03-exec-streams/contract.json",
+    "Tests/Parity/fixtures/E04-image-build/contract.json",
     "Tests/Parity/fixtures/E05-archive-copy/contract.json",
     "Tests/Parity/fixtures/E06-network-volume/contract.json",
 ])

@@ -41,6 +41,43 @@ class GuestRuntimeTests(unittest.TestCase):
             self.assertEqual(guest_runtime.require_guest_api(self.root / 'socket'),
                              {'requested': '1.53', 'minimum': '1.44', 'maximum': maximum})
 
+    def test_build_requires_apple_builder_but_docker_uses_its_owned_vm(self):
+        self.inputs['workload']['image'].update(repository='docker.io/library/alpine', manifest='sha256:' + 'b' * 64)
+        case = ReleasedGuest(self.inputs, 'E04-image-build', self.root, self.owner, self.runtime,
+                             '/released/container', self.root / 'socket')
+        with self.assertRaisesRegex(ValueError, 'admitted private builder'):
+            case.operation()
+        for container in ('/released/container', ''):
+            case.container = container
+            case.builder = Mock() if container else None
+            with patch('guest_runtime.BuildFixture') as fixture, patch('guest_runtime.deadline') as deadline:
+                self.assertEqual(case.operation(), fixture.return_value.operation.return_value)
+                self.assertEqual(fixture.call_args.args[5], 'docker.io/library/alpine@sha256:' + 'b' * 64)
+                deadline.assert_called_once_with(390)
+                self.assertEqual(case.cleanup(), fixture.return_value.cleanup.return_value)
+                if case.builder:
+                    self.assertEqual(fixture.call_args.kwargs['before_submit'], case.builder.verify_for_build)
+                    case.builder.cleanup.assert_called_once()
+
+    def test_uncertain_image_cleanup_prevents_builder_shutdown(self):
+        self.case.guest, self.case.builder = Mock(), Mock()
+        self.case.guest.cleanup.side_effect = ValueError('uncertain build')
+        with self.assertRaisesRegex(ValueError, 'uncertain build'):
+            self.case.cleanup()
+        self.case.builder.cleanup.assert_not_called()
+
+    def test_recovery_requires_both_build_output_and_builder_closure(self):
+        for prefix in ('e04-images', 'e04-builder'):
+            intent = canonical({'owner': 'test'})
+            records = {prefix + '-intent.json': intent}
+            with self.assertRaisesRegex(ValueError, 'explicit reconciliation'):
+                require_guest_cleanup(records)
+            removed = {'absent': True}
+            if prefix == 'e04-builder':
+                removed['intentSHA256'] = guest_runtime.digest(intent)
+            records[prefix + '-removed.json'] = canonical(removed)
+            require_guest_cleanup(records)
+
     def test_admitted_manifest_identity_is_preserved_without_rewriting_config_pin(self):
         manifest = "sha256:" + "b" * 64
         self.inputs["workload"]["image"]["manifest"] = manifest

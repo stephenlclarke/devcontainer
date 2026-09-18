@@ -35,7 +35,7 @@ def build_context(base: str, owner: str, *, failing: bool = False) -> bytes:
         raise ValueError("Build base must be a digest-pinned image reference")
     instructions = (f"FROM {base}\nARG PARITY_VALUE\n"
                     f'LABEL {OWNER_LABEL}="{owner}"\n')
-    instructions += ("RUN false\n" if failing else
+    instructions += (f"RUN printf '%s\\n' {failure_marker(owner)}; false\n" if failing else
                      'RUN test "$PARITY_VALUE" = expected\nLABEL devcontainer.parity="true"\nCMD ["true"]\n')
     payload = instructions.encode("ascii")
     output = io.BytesIO()
@@ -44,6 +44,32 @@ def build_context(base: str, owner: str, *, failing: bool = False) -> bytes:
         member.mode, member.size = 0o644, len(payload)
         archive.addfile(member, io.BytesIO(payload))
     return output.getvalue()
+
+
+def failure_marker(owner: str) -> str:
+    tag_for(owner)
+    return "cf-e04-executed-" + owner
+
+
+def require_failed_run(payload: bytes, owner: str) -> None:
+    """Require guest execution, not merely a printed Dockerfile or a setup error."""
+    result = build_output(200, payload)
+    marker = re.escape(failure_marker(owner))
+    executed = False
+    exit_one = False
+    for line in payload.splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line, object_pairs_hook=unique_object)
+        # Classic builder emits the bare line; BuildKit prefixes step/time.
+        # Do not accept a command listing, cached step, or marker in an error.
+        for output in record.get("stream", "").splitlines():
+            executed |= re.fullmatch(r"(?:#[0-9]+ [0-9]+(?:\.[0-9]+)? )?" + marker, output.strip()) is not None
+        if error_record(record):
+            message = record.get("error", record.get("errorDetail", {}).get("message", ""))
+            exit_one |= re.search(r"(?:exit code|non-zero code):\s*1(?:\D|$)", message) is not None
+    if not result.failed or not executed or not exit_one:
+        raise ValueError("Failed build did not prove the intended RUN execution and exit code 1")
 
 
 def build_route(owner: str, *, failing: bool = False) -> str:

@@ -48,6 +48,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-parity-report
 .PHONY: bazel-prepare-guest-images
+.PHONY: bazel-prepare-builders
 .PHONY: bazel-prepare-guest-kernel
 .PHONY: bazel-prepare-docker-oracle
 .PHONY: bazel-prepare-docker-cli
@@ -76,6 +77,9 @@ bazel-parity-report:
 
 bazel-prepare-guest-images:
 	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-builders:
+	Tools/bazel/run.sh prepare-guest-images Tools/bazel/builder-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
 
 bazel-prepare-guest-kernel:
 	Tools/bazel/run.sh prepare-releases Tools/bazel/guest-kernel.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
