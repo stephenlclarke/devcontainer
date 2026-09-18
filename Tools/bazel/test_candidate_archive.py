@@ -67,6 +67,18 @@ class CandidateTests(unittest.TestCase):
         self.assertNotEqual(previous, sha256(self.archive))
         self.assertEqual(json.loads(self.receipt.read_text())["commit"], "a" * 40)
 
+    def test_empty_product_licenses_preserve_other_product_notices(self) -> None:
+        licensed = {"license_text": str(self.root / "LICENSE")}
+        Path(self.manifest["licenses"]).write_text(json.dumps([
+            {"top_level_target": "//:devcontainer", "licenses": [licensed]},
+            {"top_level_target": "//:devcontainer-compose", "licenses": []},
+            {"top_level_target": "//:devcontainer-engine", "licenses": [licensed]},
+        ]))
+        self.build()
+        with tarfile.open(self.archive) as archive:
+            notices = archive.extractfile("devcontainer-1.2.3/share/devcontainer/THIRD-PARTY-NOTICES.txt").read().decode()
+        self.assertEqual(notices.count("fixture LICENSE"), 1)
+
     def test_rejects_missing_product_wrong_architecture_and_empty_licenses(self) -> None:
         binary = self.manifest["binaries"].pop("devcontainer")
         with self.assertRaisesRegex(ValueError, "three native products"):

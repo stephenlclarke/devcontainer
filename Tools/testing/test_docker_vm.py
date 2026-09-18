@@ -304,8 +304,9 @@ class DockerVMTests(unittest.TestCase):
                 self.closed_check({**records, key: payload})
         plan = json.loads(records["docker-plan.json"])
         for field in ("environment", "start"):
+            invalid_records = {**records, "docker-plan.json": canonical({**plan, field: None})}
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "admitted runtime"):
-                self.closed_check({**records, "docker-plan.json": canonical({**plan, field: None})})
+                self.closed_check(invalid_records)
 
     def test_closed_recovery_rejects_live_socket_and_uncertain_socket_error(self):
         records = self.closed_records()

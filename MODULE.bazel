@@ -10,6 +10,14 @@ bazel_dep(name = "rules_license", version = "1.0.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "rules_apple", version = "4.3.3", repo_name = "build_bazel_rules_apple")
 
+# Upstream PR #161 preserves the target identity for empty licence providers.
+single_version_override(
+    module_name = "rules_license",
+    version = "1.0.0",
+    patches = ["//Tools/bazel:rules-license-empty-provider.patch"],
+    patch_strip = 1,
+)
+
 swift_deps = use_extension("//Tools/bazel:dependencies.bzl", "dependencies")
 swift_deps.lockfiles(
     enhanced = "//:Package.resolved",

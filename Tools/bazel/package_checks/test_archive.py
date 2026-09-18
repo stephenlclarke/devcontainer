@@ -147,6 +147,13 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(info["lane"], "candidate")
         self.assertEqual(info["buildType"], "release")
 
+    def test_notices_include_cli_and_engine_dependencies(self):
+        notices = (self.root / "share/devcontainer/THIRD-PARTY-NOTICES.txt").read_text()
+        for dependency in ("swift_argument_parser", "container", "containerization", "swift_nio"):
+            with self.subTest(dependency=dependency):
+                self.assertIn("external/+dependencies+swiftpkg_" + dependency + "/LICENSE", notices)
+        self.assertIn("Apache License", notices)
+
     def test_plugin_layout_executes_same_version(self):
         output, _ = self.invoke(PLUGIN + "/bin/devcontainer", "--version")
         self.assertEqual(output.strip(), self.receipt["version"])

@@ -18,6 +18,7 @@ exports_files([
     "candidate_archive.py",
     "build_identity.bzl",
     "rules-swift-sandbox-output.patch",
+    "rules-license-empty-provider.patch",
     "tests/FrameworkTests.swift",
 ])
 
@@ -37,6 +38,9 @@ sh_test(
         "test_prepare_releases.py",
         "prepare_candidate.py",
         "test_prepare_candidate.py",
+        "candidate_archive.py",
+        "test_candidate_archive.py",
+        "//:Tools/release/create-reproducible-archive.py",
         "retain_evidence.py",
         "prepare_guest_images.py",
         "test_prepare_guest_images.py",
