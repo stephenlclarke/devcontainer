@@ -24,7 +24,7 @@ The application opened this session in `/Users/sclarke/Documents/devcontainer`, 
 | `container-compose` local checkout | `dbbf85d8afbefd6156b5692c9801ad14b3706cad`, branch `docs/refresh-apple-handoff-map`; reuse inspection, not a release certification |
 | Stephen's `container` local main | `e653616e62ab7763c3a7d10e88c365d6dca7e0c4` |
 | Stephen's `containerization` local main | `bd8130fea851f6ee264f00fc684e2543a7d2faa3` |
-| `container-engine-api` local checkout | `84830606abf971110071248e087a80ff4abb86d4`, also the devcontainer dependency pin |
+| `container-engine-api` local checkout | `84830606abf971110071248e087a80ff4abb86d4`, the review-time devcontainer dependency pin |
 | `container-builder-shim` local checkout | `5373d9b4363c6e536dc6401199da269c7045abf9` |
 | Latest official Apple Container release checked | [1.4.1](https://github.com/apple/container/releases/tag/1.4.1), published 9 September; tag commit `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` |
 | Current parity manifest | Apple `1.1.0`, Compose `0.10.1`, Dev Containers CLI `0.88.0`; these are older certification inputs, not the current source graph |

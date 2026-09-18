@@ -88,14 +88,15 @@ let package = Package(
         .library(name: "DevContainerTestSupport", targets: ["DevContainerTestSupport"]),
         .executable(name: "devcontainer", targets: ["DevContainerCLI"]),
         .executable(name: "devcontainer-engine", targets: ["DevContainerService"]),
-        .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"])
+        .executable(name: "devcontainer-compose", targets: ["DevContainerComposeCLI"]),
+        .executable(name: "devcontainer-docker", targets: ["DevContainerDockerCLI"])
     ],
     dependencies: [
         dependency(
             name: "container-engine-api",
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "84830606abf971110071248e087a80ff4abb86d4"
+            revision: "58772d295fc044f080a966dc710b46b88392594d"
         ),
         runtimeDependency(
             name: "container",
@@ -120,6 +121,27 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],
     targets: [
+        .target(
+            name: "DevContainerDockerClient",
+            dependencies: [
+                .product(name: "ContainerEngineWire", package: "container-engine-api"),
+                .product(name: "ContainerUnixHTTPClient", package: "container-engine-api")
+            ]
+        ),
+        .executableTarget(
+            name: "DevContainerDockerCLI",
+            dependencies: ["DevContainerDockerClient", "DevContainerCore", "DevContainerModel"]
+        ),
+        .testTarget(
+            name: "DevContainerDockerClientTests",
+            dependencies: [
+                "DevContainerDockerClient", "DevContainerDockerCLI", "DevContainerTestStorage",
+                "DevContainerProcess", "DevContainerModel",
+                .product(name: "ContainerEngineWire", package: "container-engine-api"),
+                .product(name: "ContainerUnixHTTPServer", package: "container-engine-api"),
+                .product(name: "Logging", package: "swift-log")
+            ]
+        ),
         .target(name: "DevContainerTestStorage"),
         .executableTarget(
             name: "DevContainerVersionGenerator",

@@ -175,6 +175,36 @@ swift_library(
 )
 
 swift_library(
+    name = "DevContainerDockerClient",
+    srcs = glob(["Sources/DevContainerDockerClient/*.swift"]),
+    module_name = "DevContainerDockerClient",
+    deps = [
+        "@swiftpkg_container_engine_api//:ContainerEngineWire",
+        "@swiftpkg_container_engine_api//:ContainerUnixHTTPClient",
+    ],
+)
+
+swift_binary(
+    name = "devcontainer-docker",
+    srcs = glob(["Sources/DevContainerDockerCLI/*.swift"]),
+    copts = ["-parse-as-library"],
+    deps = [":DevContainerDockerClient", ":DevContainerCore", ":DevContainerModel"],
+)
+
+swift_test(
+    name = "DevContainerDockerClientTests",
+    srcs = glob(["Tests/DevContainerDockerClientTests/*.swift"]),
+    module_name = "DevContainerDockerClientTests",
+    data = [":devcontainer-docker"],
+    env = {"DEVCONTAINER_DOCKER_TEST_RUNFILE": "$(rootpath :devcontainer-docker)"},
+    deps = [
+        ":DevContainerProcess", ":DevContainerModel",
+        ":DevContainerDockerClient", "@swiftpkg_container_engine_api//:ContainerEngineWire",
+        "@swiftpkg_container_engine_api//:ContainerUnixHTTPServer", "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_library(
     name = "DevContainerAppleRuntime",
     srcs = glob(["Sources/DevContainerAppleRuntime/*.swift"]),
     module_name = "DevContainerAppleRuntime",
@@ -357,6 +387,7 @@ swift_test(
 test_suite(
     name = "source_tests",
     tests = [
+        ":DevContainerDockerClientTests",
         ":DevContainerCLITests", ":DevContainerProcessTests", ":DevContainerCoreTests",
         ":DevContainerDockerAPITests", ":DevContainerComposeProviderTests", ":DevContainerComposeCLITests",
         ":DevContainerAppleRuntimeTests", ":DevContainerServiceTests", ":DevContainerModelTests", ":DevContainerStateTests",
