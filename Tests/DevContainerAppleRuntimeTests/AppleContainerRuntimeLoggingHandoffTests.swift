@@ -503,8 +503,7 @@ private final class HandoffRuntimeFixture {
                 inventory: EmptyInventoryClient(),
                 files: EmptyFileClient(),
                 networks: EmptyNetworkClient(),
-                loggingRecords: records,
-                loggingHandoffClientOverride: handoffOverride
+                logging: .init(records: records, handoff: handoffOverride)
             )
         )
     }

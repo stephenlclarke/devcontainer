@@ -183,8 +183,9 @@ class GuestFixtureTests(unittest.TestCase):
         with patch.object(self.fixture, "call", side_effect=lose_response), self.assertRaises(TimeoutError):
             self.fixture.setup()
         self.assertNotIn("container-created.json", self.journal.records())
+        reopened = self.reopen()
         with self.assertRaisesRegex(ValueError, "reconcile"):
-            self.reopen().setup()
+            reopened.setup()
         self.assertEqual(self.reopen().cleanup()["status"], "passed")
         self.assertIsNone(self.server.guest)
 

@@ -76,15 +76,14 @@ class Handler(helpers.Handler):
 
 class ExecTests(unittest.TestCase):
     reopen = helpers.GuestFixtureTests.reopen
-
-    def stop(self):
-        helpers.GuestFixtureTests.stop(self)
-        self.assertEqual(self.server_errors, [])
+    stop = helpers.GuestFixtureTests.stop
 
     def setUp(self):
+        self.server_errors = []
+        # LIFO cleanup joins the server before checking its collected errors.
+        self.addCleanup(self.assertEqual, self.server_errors, [])
         with patch.object(helpers, "Handler", Handler):
             helpers.GuestFixtureTests.setUp(self)
-        self.server_errors = []
         self.server.handle_error = lambda *_: self.server_errors.append(sys.exc_info()[1])
         self.server.execs, self.server.starts = {}, []
         self.server.inspect_override, self.server.completed_override = {}, {}
@@ -232,15 +231,17 @@ class ExecTransportTests(unittest.TestCase):
         for payload in bad:
             connection = Mock()
             connection.recv.return_value = payload + b"\r\n\r\n"
+            deadline = time.monotonic() + 1
             with self.subTest(payload=payload), self.assertRaises(ValueError):
-                upgrade(connection, "/exec/id/start", b"{}", time.monotonic() + 1)
+                upgrade(connection, "/exec/id/start", b"{}", deadline)
 
     def test_unterminated_and_oversized_headers_fail_boundedly(self):
         for payload in (b"", b"x" * 4096):
             connection = Mock()
             connection.recv.return_value = payload
+            deadline = time.monotonic() + 1
             with self.subTest(payload=bool(payload)), self.assertRaises(ValueError):
-                upgrade(connection, "/exec/id/start", b"{}", time.monotonic() + 1)
+                upgrade(connection, "/exec/id/start", b"{}", deadline)
 
     def pair(self):
         left, right = socket.socketpair()
@@ -250,16 +251,19 @@ class ExecTransportTests(unittest.TestCase):
 
     def test_whole_connection_timeout_and_write_half_close(self):
         left, right = self.pair()
+        deadline = time.monotonic() + 0.02
         with self.assertRaises(TimeoutError):
-            duplex(left, b"", b"", time.monotonic() + 0.02)
+            duplex(left, b"", b"", deadline)
         self.assertEqual(right.recv(1), b"")
 
     def test_excess_output_and_early_eof_do_not_pass(self):
         left, right = self.pair()
         right.sendall(b"x" * 128)
+        deadline = time.monotonic() + 1
         with patch("exec_probe.MAX_OUTPUT", 64), self.assertRaisesRegex(ValueError, "exceeds"):
-            duplex(left, b"", b"", time.monotonic() + 1)
+            duplex(left, b"", b"", deadline)
         left, right = self.pair()
         right.shutdown(socket.SHUT_WR)
+        deadline = time.monotonic() + 1
         with self.assertRaisesRegex(ValueError, "before input"):
-            duplex(left, b"", BINARY_INPUT, time.monotonic() + 1)
+            duplex(left, b"", BINARY_INPUT, deadline)

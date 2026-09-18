@@ -98,10 +98,12 @@ class DockerVMTests(unittest.TestCase):
         self.assertIsNone(docker_vm.inspect_instance(b"", self.root, allow_absent=True))
         for value in ({}, dict(self.instance(), name="operator"), dict(self.instance(), arch="x86_64"),
                       dict(self.instance(), errors=["broken"]), self.instance("Broken")):
+            payload = canonical(value)
             with self.assertRaises(ValueError):
-                docker_vm.inspect_instance(canonical(value), self.root)
+                docker_vm.inspect_instance(payload, self.root)
+        duplicate = canonical(self.instance()) + b"\n" + canonical(self.instance())
         with self.assertRaises(ValueError):
-            docker_vm.inspect_instance(canonical(self.instance()) + b"\n" + canonical(self.instance()), self.root)
+            docker_vm.inspect_instance(duplicate, self.root)
 
     def test_engine_version_never_accepts_bridge_or_changed_oracle(self):
         value = {"Version": "29.5.2", "GitCommit": "568f755", "ApiVersion": "1.54", "Os": "linux", "Arch": "arm64"}
@@ -172,18 +174,21 @@ class DockerVMTests(unittest.TestCase):
             docker_vm.verify_pid_files(self.root, self.tools, {})
         for arguments in (self.host_arguments().replace(str(self.root), "/another-root"),
                           self.tools["limactl"] + " unrelated " + str(self.root) + "/lima"):
+            processes = {321: self.process()}
             with self.assertRaisesRegex(ValueError, "exact owned"):
-                docker_vm.verify_pid_files(self.root, self.tools, {321: self.process()}, arguments=lambda _: arguments)
+                docker_vm.verify_pid_files(self.root, self.tools, processes, arguments=lambda _: arguments)
         pidfile.chmod(0o666)
+        processes = {321: self.process()}
         with self.assertRaisesRegex(ValueError, "Unsafe"):
-            docker_vm.verify_pid_files(self.root, self.tools, {321: self.process()})
+            docker_vm.verify_pid_files(self.root, self.tools, processes)
 
     def test_unknown_pid_file_is_never_signalling_authority(self):
         directory = self.root / "lima/foreign"
         directory.mkdir(parents=True)
         (directory / "ha.pid").write_text("321")
+        processes = {321: self.process()}
         with self.assertRaisesRegex(ValueError, "Unsafe"):
-            docker_vm.verify_pid_files(self.root, self.tools, {321: self.process()})
+            docker_vm.verify_pid_files(self.root, self.tools, processes)
 
     def test_failed_start_without_capture_never_signals(self):
         self.vm.configure()
@@ -246,8 +251,9 @@ class DockerVMTests(unittest.TestCase):
         directory.mkdir(parents=True)
         (directory / "ha.pid").write_text("321")
         (directory / "vz.pid").write_text("322")
+        processes = {321: self.process(), 322: self.process(322)}
         with self.assertRaisesRegex(ValueError, "authenticated hostagent"):
-            docker_vm.verify_pid_files(self.root, self.tools, {321: self.process(), 322: self.process(322)},
+            docker_vm.verify_pid_files(self.root, self.tools, processes,
                                        arguments=lambda _: self.host_arguments())
 
     def test_shutdown_accepts_reused_pid_but_rejects_surviving_incarnation(self):

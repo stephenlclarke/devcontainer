@@ -172,24 +172,28 @@ class GuestImageTests(unittest.TestCase):
     def test_missing_or_corrupted_layer_is_rejected_by_compose_validator(self):
         layer = "blobs/sha256/" + self.layer["digest"].split(":")[1]
         self.files[layer] = b"corrupt"
+        corrupted = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "mismatch"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(corrupted, self.image)
         del self.files[layer]
+        missing = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "missing"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(missing, self.image)
 
     def test_archive_and_member_count_bounds(self):
         path = self.archive(self.root)
         with patch("prepare_guest_images.LIMIT", 1), self.assertRaisesRegex(ValueError, "bound"):
             verify_archive(path, self.image)
         self.files.update({f"extra-{n}": b"" for n in range(130)})
+        excessive = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "inventory"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(excessive, self.image)
 
     def test_oversized_json_is_rejected(self):
         self.files["index.json"] += b" " * (1024**2)
+        oversized = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "metadata"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(oversized, self.image)
 
     def test_publication_rechecks_copied_bytes(self):
         from prepare_guest_images import durable_file

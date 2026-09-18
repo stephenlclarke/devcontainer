@@ -72,6 +72,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let transfers: URL?
     }
 
+    struct LoggingClients {
+        let records: (any AppleContainerLoggingRecordClient)?
+        let handoff: (any AppleContainerLoggingHandoffClient)?
+    }
+
     struct DirectClients {
         let api: ContainerClient
         let inventory: any AppleContainerInventoryClient
@@ -89,8 +94,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             networks: any AppleNetworkClient,
             images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
             creator: (any AppleContainerCreateClient)? = nil,
-            loggingRecords: (any AppleContainerLoggingRecordClient)? = nil,
-            loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)? = nil
+            logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
         ) {
             self.api = api
             self.inventory = inventory
@@ -98,9 +102,9 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             self.networks = networks
             self.images = images
             self.creator = creator ?? LiveAppleContainerCreateClient(client: api)
-            self.loggingRecords = loggingRecords
+            loggingRecords = logging.records
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
-            self.loggingHandoffClientOverride = loggingHandoffClientOverride
+            loggingHandoffClientOverride = logging.handoff
         }
     }
 

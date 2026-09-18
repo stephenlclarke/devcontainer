@@ -96,8 +96,9 @@ class CampaignReportTests(unittest.TestCase):
         self.report()
         self.assertEqual(self.database.read_bytes(), before)
         missing = self.root / "absent.sqlite"
+        selected = set(self.fixtures)
         with self.assertRaises(FileNotFoundError):
-            campaign_report.read_records(missing, "campaign-1", set(self.fixtures))
+            campaign_report.read_records(missing, "campaign-1", selected)
         self.assertFalse(missing.exists())
 
     def test_unfinished_corrupt_and_ambiguous_cases_fail_closed(self):
@@ -159,13 +160,14 @@ class CampaignReportTests(unittest.TestCase):
         for selection in (["unknown"], self.fixtures[:1] * 2):
             with self.assertRaisesRegex(ValueError, "selected fixture"):
                 self.report(selection)
+        selected = set(self.fixtures)
         for campaign in ("../escape", ""):
             with self.assertRaisesRegex(ValueError, "Invalid campaign"):
-                campaign_report.read_records(self.database, campaign, set(self.fixtures))
+                campaign_report.read_records(self.database, campaign, selected)
         alias = self.root / "alias.sqlite"
         alias.symlink_to(self.database)
         with self.assertRaisesRegex(ValueError, "private canonical"):
-            campaign_report.read_records(alias, "campaign-1", set(self.fixtures))
+            campaign_report.read_records(alias, "campaign-1", selected)
         self.database.chmod(0o644)
         with self.assertRaisesRegex(ValueError, "private canonical"):
             self.report()

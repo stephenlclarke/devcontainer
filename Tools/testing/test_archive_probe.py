@@ -140,8 +140,9 @@ class ArchiveProbeTests(unittest.TestCase):
                 if kind == "traversal":
                     member.name = "../escape"
                 return [(member, data)]
+            payload = changed_archive(alter)
             with self.subTest(kind=kind), self.assertRaises(ValueError):
-                observations(changed_archive(alter))
+                observations(payload)
 
     def test_optional_directory_and_unrelated_safe_members_do_not_change_contract(self):
         expected = observations(source_archive())
@@ -169,8 +170,9 @@ class ArchiveProbeTests(unittest.TestCase):
                 alias = copy(member)
                 alias.name = name
                 return [(member, data), (alias, b"x" * len(data))]
+            payload = changed_archive(duplicate)
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Duplicate expected"):
-                observations(changed_archive(duplicate))
+                observations(payload)
 
     def test_malformed_and_oversized_archive_fail_closed(self):
         with self.assertRaises(tarfile.ReadError):

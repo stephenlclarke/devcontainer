@@ -147,8 +147,10 @@ class GuestRuntimeTests(unittest.TestCase):
                 child.process.wait.side_effect = code
             else:
                 child.process.wait.return_value = code
-            with patch("guest_runtime.OwnedProcess", return_value=child), self.assertRaises(Exception):
-                self.case.command("command-" + str(index), ["image", "load"])
+            expected_error = subprocess.TimeoutExpired if isinstance(code, Exception) else RuntimeError
+            name = "command-" + str(index)
+            with patch("guest_runtime.OwnedProcess", return_value=child), self.assertRaises(expected_error):
+                self.case.command(name, ["image", "load"])
             child.stop.assert_called_once()
             self.assertIn("command-" + str(index) + ".log", self.journal.records())
 
@@ -159,8 +161,9 @@ class GuestRuntimeTests(unittest.TestCase):
         with patch("guest_runtime.OwnedProcess", return_value=child), self.assertRaisesRegex(ValueError, "still live"):
             self.case.command("guest-kernel", ["system", "kernel", "set"])
         self.assertNotIn("guest-kernel-stopped.json", self.journal.records())
+        records = self.journal.records()
         with self.assertRaisesRegex(ValueError, "process needs explicit"):
-            require_guest_cleanup(self.journal.records())
+            require_guest_cleanup(records)
 
     def test_archive_and_lifecycle_use_shared_guest_ownership_then_cleanup(self):
         for fixture in ("E05-archive-copy", "E02-container-lifecycle"):
