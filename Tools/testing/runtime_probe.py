@@ -6,6 +6,7 @@ retains its process lifetime and bounded diagnostics privately for recovery.
 
 import json
 from pathlib import Path
+import subprocess
 import time
 
 from case_evidence import canonical, digest
@@ -58,6 +59,10 @@ def probe_api(root: Path, executable: Path, journal, verify) -> None:
             child.start(arguments, root, output, provider_install=executable.parent.parent)
             journal.put(NAME + "-process.json", canonical({"pid": child.process.pid}))
             code = child.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # The case store distinguishes timeouts from other failed setup.
+            # Never export subprocess command/output fields in public evidence.
+            raise TimeoutError("Selected API readiness deadline expired") from None
         finally:
             child.stop()
             journal.put(NAME + "-stopped.json", canonical({

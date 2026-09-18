@@ -8,9 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from case_evidence import canonical, digest
+from case_evidence import CaseStore, canonical, digest, run_case
 from runtime_probe import NAME, probe_api, probe_diagnostics, require_probe_stopped
 from service_journal import ServiceJournal
+from test_case_evidence import identity
 
 
 class RuntimeProbeTests(unittest.TestCase):
@@ -69,13 +70,28 @@ class RuntimeProbeTests(unittest.TestCase):
         child.process.wait.side_effect = subprocess.TimeoutExpired("fixture", 10)
         verify = Mock()
         with patch("runtime_probe.OwnedProcess", return_value=child):
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with self.assertRaises(TimeoutError):
                 probe_api(root, cli, journal, verify)
         child.start.assert_called_once()
         child.stop.assert_called_once()
         require_probe_stopped(journal.records())
         self.assertEqual(journal.records()[NAME + ".log"], b"startup stalled\n")
         self.assertNotIn(NAME + "-ready.json", journal.records())
+
+    def test_case_report_classifies_startup_deadline_as_timeout_not_generic_failure(self):
+        root, cli, journal, child = self.fixture()
+        child.process.wait.side_effect = subprocess.TimeoutExpired("fixture", 10)
+        store = CaseStore(root / "cases.sqlite")
+        operation = Mock()
+        cleanup = Mock(return_value={"status": "passed", "remainingOwnedResources": []})
+        with patch("runtime_probe.OwnedProcess", return_value=child):
+            result = run_case(store, identity(), {"ping": "true"},
+                              lambda: probe_api(root, cli, journal, Mock()), operation, cleanup)
+        self.assertEqual(result["status"], "timeout")
+        self.assertEqual(result["errors"], ["setup: TimeoutError"])
+        self.assertEqual(result["durationsNS"]["operation"], 0)
+        operation.assert_not_called()
+        cleanup.assert_called_once()
 
     def test_uncertain_spawn_or_surviving_child_preserves_quarantine(self):
         for interrupted in (False, True):
