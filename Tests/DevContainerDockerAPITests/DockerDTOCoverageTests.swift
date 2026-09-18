@@ -106,6 +106,7 @@ func `docker image response defaults encode`() throws {
     let summary = DockerImageSummary(
         created: 1,
         id: "sha256:fixture",
+        labels: ["fixture": "true"],
         repoDigests: [],
         repoTags: ["fixture:latest"],
         size: 1,

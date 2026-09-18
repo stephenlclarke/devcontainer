@@ -28,6 +28,9 @@ class ReleasedEngineTests(unittest.TestCase):
         keychains = patch("released_engine.run_keychain", return_value={"status": "fixture-only"})
         self.keychains = keychains.start()
         self.addCleanup(keychains.stop)
+        incarnation = patch("released_engine.OwnedProcess.identity", return_value={"captured": "fixture"})
+        incarnation.start()
+        self.addCleanup(incarnation.stop)
 
     def test_junit_preserves_phase_timings_and_failures(self):
         output = self.root / "result.xml"
@@ -200,7 +203,7 @@ class ReleasedEngineTests(unittest.TestCase):
             names = [row[0] for row in database.execute("SELECT name FROM artifacts ORDER BY name")]
             manifest = database.execute("SELECT bytes FROM artifacts WHERE name='admission.json'").fetchone()[0]
         self.assertEqual(names, ["admission.json", "keychain-intent.json", "keychain-ready.json",
-                                 "owner.json", "process-intent.json", "process.json"])
+                                 "owner.json", "process-incarnation.json", "process-intent.json", "process.json"])
         self.assertEqual(json.loads(manifest), case.admission)
         self.assertEqual(case.cleanup()["status"], "passed")
         self.assertFalse(case.root.exists())

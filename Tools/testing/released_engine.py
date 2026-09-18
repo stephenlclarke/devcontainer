@@ -137,6 +137,7 @@ class ReleasedCase:
                           "--state", str(self.root / "state.sqlite")], self.root, self.output,
                          provider_install=Path(container).parent.parent)
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
+        self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
 
     def operation(self):

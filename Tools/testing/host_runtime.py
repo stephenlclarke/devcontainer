@@ -172,6 +172,18 @@ class OwnedProcess:
             env=environment)
         self.spawn_pending = False
 
+    def identity(self) -> dict:
+        """Capture an incarnation while the original, unreaped child handle exists."""
+        from runtime_services import process_inventory
+        if self.process is None or self.process.poll() is not None:
+            raise ValueError("Cannot capture an absent or exited child")
+        pid = self.process.pid
+        value = process_inventory().get(pid)
+        if (value is None or value["parent"] != os.getpid() or value["group"] != pid or
+                value["program"] != self.process.args[0] or self.process.poll() is not None):
+            raise ValueError("Child incarnation changed during capture")
+        return dict(value, arguments=list(self.process.args))
+
     def wait_ready(self, probe, seconds: float = 20) -> None:
         if self.process is None:
             raise ValueError("No process has been started")

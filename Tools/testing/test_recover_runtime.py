@@ -508,7 +508,7 @@ class RecoveryTests(unittest.TestCase):
             paths.home.return_value = fake_home
             main()
             self.assertEqual(json.loads(output.getvalue())["status"], "clear")
-            recovery.assert_called_once_with(retained, self.ssd, apply=False, expected_case=None)
+            recovery.assert_called_once_with(retained, self.ssd, apply=False, expected_case=None, build_resources=False)
             lease.assert_called_once()
             output.truncate(0)
             output.seek(0)

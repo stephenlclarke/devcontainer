@@ -55,6 +55,8 @@ sh_test(
         "test_runtime_services.py",
         "recover_runtime.py",
         "recover_build.py",
+        "recover_apple_build.py",
+        "test_recover_apple_build.py",
         "test_recover_build.py",
         "test_recover_runtime.py",
         "test_recover_docker.py",

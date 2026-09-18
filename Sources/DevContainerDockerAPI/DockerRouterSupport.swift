@@ -1165,6 +1165,7 @@ extension DockerRouter {
         DockerImageSummary(
             created: Int64(image.createdAt.timeIntervalSince1970),
             id: image.id,
+            labels: image.labels,
             repoDigests: image.references.filter { $0.contains("@sha256:") },
             repoTags: image.references.filter { !$0.contains("@sha256:") },
             size: image.size,

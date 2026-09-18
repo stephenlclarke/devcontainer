@@ -241,6 +241,11 @@ def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
         removed = json.loads(records.get("container-removed.json", b"null"))
         if removed != {"name": intent["name"], "absent": True}:
             raise ValueError("Guest resource needs explicit reconciliation before service recovery")
+    return require_guest_commands_stopped(records)
+
+
+def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
+    """Check helper closure independently of the workload resource lifecycle."""
     steps = []
     builder_steps = [name.removesuffix("-intent.json") for name in records
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]

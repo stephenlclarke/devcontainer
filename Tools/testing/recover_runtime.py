@@ -31,7 +31,7 @@ def private_json(path: Path) -> dict:
     return data
 
 
-def verify_case(retained: Path, owner: dict) -> None:
+def verify_case_evidence(retained: Path, owner: dict) -> dict:
     """Read existing evidence without creating, updating or completing a case."""
     path = retained / "runtime-cases.sqlite"
     info = path.lstat()
@@ -50,7 +50,8 @@ def verify_case(retained: Path, owner: dict) -> None:
             CaseStore.read_row(owner["identity"], row, db)
         artifacts = {}
         for name, data, checksum in db.execute(
-                "SELECT name,bytes,sha256 FROM artifacts WHERE case_id=? AND name IN ('process-intent.json','process.json')", (key,)):
+                "SELECT name,bytes,sha256 FROM artifacts WHERE case_id=? AND name IN "
+                "('process-intent.json','process.json','admission.json','api-service.json','process-incarnation.json')", (key,)):
             if digest(data) != checksum:
                 raise ValueError("Corrupt process ownership evidence")
             artifacts[name] = json.loads(data)
@@ -61,11 +62,17 @@ def verify_case(retained: Path, owner: dict) -> None:
             if (not isinstance(process, dict) or set(process) != {"pid", "root"} or
                     type(process["pid"]) is not int or process["pid"] <= 0 or process["root"] != owner["root"]):
                 raise ValueError("Invalid client process record")
-            # We have no durable start token for the legacy Engine handle. A
-            # reused PID is conservatively blocked, never signalled or adopted.
-            if any(item["pid"] == process["pid"] or item.get("group") == process["pid"]
-                   for item in process_inventory().values()):
-                raise ValueError("Recorded client PID or descendants require explicit reconciliation")
+        return artifacts
+
+
+def verify_case(retained: Path, owner: dict) -> None:
+    artifacts = verify_case_evidence(retained, owner)
+    process = artifacts.get("process.json")
+    # Resource-only reconciliation may read evidence while the client lives;
+    # service/root recovery still never adopts or signals a legacy PID.
+    if process is not None and any(item["pid"] == process["pid"] or item.get("group") == process["pid"]
+                                   for item in process_inventory().values()):
+        raise ValueError("Recorded client PID or descendants require explicit reconciliation")
 
 
 def recovery_idle(launchd, prior: list[dict], root: Path) -> None:
@@ -152,7 +159,8 @@ def recover_closed_docker(retained: Path, owner: dict, guard: HostGuard, *, appl
     return {"status": "restored", "caseID": key, "changed": True}
 
 
-def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None, launchd=None) -> dict:
+def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None, launchd=None,
+            build_resources: bool = False) -> dict:
     """Caller owns the family lease, including report-only inspection."""
     guard = HostGuard(retained / "runtime-admission.json")
     if not guard.path.exists() and not guard.path.is_symlink():
@@ -170,6 +178,9 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if (not root.is_absolute() or root.parent != live or not root.name.startswith(prefix) or
             live.resolve() != live or root.resolve() != root):
         raise ValueError("Recovery root is not a canonical owned case directory")
+    if build_resources:
+        from recover_apple_build import recover_resources
+        return recover_resources(retained, owner, guard, apply=apply)
     verify_case(retained, owner)
     if docker:
         journal = ServiceJournal(retained / "private-runtime" / (digest(canonical(owner)) + ".sqlite"), owner)
@@ -254,6 +265,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="restore only the explicitly named quarantined case")
     parser.add_argument("--case", help="exact case ID printed by the default report")
+    parser.add_argument("--build-resources", action="store_true",
+                        help="reconcile completed Apple build resources only; never signal the Engine or restore services")
     args = parser.parse_args()
     os.umask(0o077)
     retained = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
@@ -265,7 +278,8 @@ def main() -> None:
         raise ValueError("Recovery requires the enrolled SSD and separate canonical internal evidence")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")):
         try:
-            print(canonical(recover(retained, ssd, apply=args.apply, expected_case=args.case)).decode())
+            print(canonical(recover(retained, ssd, apply=args.apply, expected_case=args.case,
+                                    build_resources=args.build_resources)).decode())
         except (Exception, KeyboardInterrupt) as error:
             # Do not leak file paths from original definitions or exception text.
             print(canonical({"status": "quarantined", "error": type(error).__name__, "changed": "not-confirmed"}).decode())

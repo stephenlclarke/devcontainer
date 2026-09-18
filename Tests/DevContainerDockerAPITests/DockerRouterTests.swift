@@ -890,6 +890,45 @@ func `daemon information head requests and invalid inputs use Docker semantics`(
 }
 
 @Test
+func `image inventory applies label predicates and exposes original labels`() async throws {
+    let runtime = InMemoryRuntime()
+    for (identifier, labels) in [
+        ("owned", ["owner": "case", "empty": "", "value": "a=b"]),
+        ("foreign", ["owner": "other", "empty": "not-empty"]),
+        ("base", [:])
+    ] {
+        await runtime.seedImage(ImageSnapshot(
+            id: "sha256:" + identifier, references: [identifier + ":latest"],
+            createdAt: Date(), size: 42, labels: labels
+        ))
+    }
+    let router = DockerRouter(runtime: runtime)
+    for (filters, expected) in [
+        (["owner=case"], ["sha256:owned"]),
+        (["owner"], ["sha256:foreign", "sha256:owned"]),
+        (["empty="], ["sha256:owned"]),
+        (["value=a=b", "owner=case"], ["sha256:owned"]),
+        (["owner=missing"], []),
+        (["owner=case", "owner=other"], []),
+        ([""], [])
+    ] {
+        let encoded = try JSONSerialization.data(withJSONObject: ["label": filters])
+        let filterJSON = try #require(String(data: encoded, encoding: .utf8))
+        let query = try #require(filterJSON.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+        let request = DockerHTTPRequest(method: .get, target: "/images/json?filters=" + query)
+        let response = await router.respond(to: request)
+        #expect(response.status == 200)
+        let values = try #require(JSONSerialization.jsonObject(with: bytes(response)) as? [[String: Any]])
+        #expect(values.compactMap { $0["Id"] as? String }.sorted() == expected)
+        for value in values {
+            #expect((value["Labels"] as? [String: String])?["owner"] != nil)
+        }
+    }
+    let invalid = await router.respond(to: DockerHTTPRequest(method: .get, target: "/images/json?filters=%5B%5D"))
+    #expect(invalid.status == 400)
+}
+
+@Test
 func `advanced container exec archive and stream routes are compatible`() async throws {
     let runtime = InMemoryRuntime()
     await runtime.seedImage(

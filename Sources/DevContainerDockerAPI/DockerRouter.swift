@@ -541,6 +541,7 @@ extension DockerRouter {
     private func imageResponse(_ route: DockerRoute) async throws -> DockerHTTPResponse? {
         if let response = try await imageReadResponse(
             method: route.request.method,
+            target: route.target,
             path: route.path,
             context: route.context
         ) {
@@ -1157,13 +1158,20 @@ extension DockerRouter {
 
     private func imageReadResponse(
         method: DockerHTTPMethod,
+        target: ParsedTarget,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if method == .get, path == "/images/json" {
-            return try await .json(
-                runtime.listImages(context: context).map(imageSummary)
-            )
+            let labels = try parseFilters(target.first("filters"))["label"] ?? []
+            let images = try await runtime.listImages(context: context)
+            return try .json(images.filter { image in
+                labels.allSatisfy { predicate in
+                    let parts = predicate.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                    guard let actual = image.labels[String(parts[0])] else { return false }
+                    return parts.count == 1 || actual == parts[1]
+                }
+            }.map(imageSummary))
         }
         if method == .get,
            let reference = identifier(in: path, prefix: "/images/", suffix: "/json")

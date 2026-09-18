@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, require_api_service, runtime_lease
@@ -19,6 +19,41 @@ class HostRuntimeTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
+
+    def test_live_child_incarnation_is_captured_before_handle_is_lost(self):
+        process = OwnedProcess()
+        with (self.root / "child.log").open("xb") as output:
+            process.start(["/bin/sleep", "30"], self.root, output)
+            try:
+                identity = process.identity()
+                self.assertEqual(identity["pid"], process.process.pid)
+                self.assertEqual(identity["group"], process.process.pid)
+                self.assertEqual(identity["parent"], os.getpid())
+                self.assertEqual(identity["program"], "/bin/sleep")
+                self.assertEqual(identity["arguments"], ["/bin/sleep", "30"])
+                self.assertTrue(identity["started"])
+            finally:
+                process.stop()
+        with self.assertRaisesRegex(ValueError, "absent or exited"):
+            process.identity()
+
+    def test_capture_refuses_absent_replaced_or_exiting_children(self):
+        process = OwnedProcess()
+        with self.assertRaisesRegex(ValueError, "absent or exited"):
+            process.identity()
+        process.process = Mock(pid=42, args=["/owned/engine"])
+        process.process.poll.return_value = None
+        identity = {"pid": 42, "parent": os.getpid(), "group": 42,
+                    "started": "original", "program": "/owned/engine"}
+        for mutation in (None, {"parent": 1}, {"group": 1}, {"program": "/replacement"}):
+            inventory = {} if mutation is None else {42: {**identity, **mutation}}
+            with patch("runtime_services.process_inventory", return_value=inventory), \
+                    self.assertRaisesRegex(ValueError, "incarnation"):
+                process.identity()
+        process.process.poll.side_effect = [None, 0]
+        with patch("runtime_services.process_inventory", return_value={42: identity}), \
+                self.assertRaisesRegex(ValueError, "incarnation"):
+            process.identity()
 
     def test_api_service_admission_requires_exact_running_release_and_redacts_environment(self):
         executable = self.root / "container-apiserver"

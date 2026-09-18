@@ -864,7 +864,7 @@ struct DockerImageSummary: Encodable {
     let containers: Int = -1
     let created: Int64
     let id: String
-    let labels: [String: String] = [:]
+    let labels: [String: String]
     let parentID = ""
     let repoDigests: [String]
     let repoTags: [String]
