@@ -17,12 +17,17 @@ from guest_fixture import OWNER_LABEL
 class BuildImages:
     """Journal both output names before mutation; remove only verified identities."""
 
-    def __init__(self, client, journal, owner: str, base: str):
+    def __init__(self, client, journal, owner: str, base: str, *, private_named_cleanup: bool = False):
         self.client, self.journal, self.owner = client, journal, owner
+        self.private_named_cleanup = private_named_cleanup
         self.intent = {"owner": owner, "base": base, "image": client.image,
                        "socket": str(client.socket), "apiVersion": client.version,
                        "contexts": {self.role(failing): digest(build_context(base, owner, failing=failing))
                                     for failing in (False, True)}}
+        if private_named_cleanup:
+            # Only the exclusive, disposable Apple store may use named removal.
+            # Persist the mode so recovery can never downgrade ID deletion.
+            self.intent["deletionMode"] = "private-native-tag"
 
     @staticmethod
     def role(failing: bool) -> str:
@@ -95,6 +100,8 @@ class BuildImages:
         return result
 
     def identity(self, value, failing):
+        if self.private_named_cleanup:
+            return self.named_identity(value, failing)
         observed = owned_image(value, self.owner, failing=failing)
         if observed["id"] == self.intent["image"]:
             raise ValueError("Build output aliases the admitted base image")
@@ -109,6 +116,32 @@ class BuildImages:
                 raise ValueError("Build output acquired a foreign or unverified repository digest; refusing deletion")
         return observed
 
+    def named_identity(self, value, failing):
+        """Bind an exclusive Apple tag to both config and manifest identities."""
+        tag = tag_for(self.owner, failing=failing)
+        tags = value.get("RepoTags")
+        if tags not in ([tag], ["docker.io/library/" + tag]):
+            raise ValueError("Private build image has foreign or shared tags")
+        observed = owned_image({**value, "RepoTags": [tag]}, self.owner, failing=failing)
+        if observed["id"] == self.intent["image"]:
+            raise ValueError("Build output aliases the admitted base image")
+        references = value.get("RepoDigests")
+        repositories = (tag.rsplit(":", 1)[0], "docker.io/library/" + tag.rsplit(":", 1)[0])
+        if (not isinstance(references, list) or len(references) != 1 or
+                not isinstance(references[0], str) or "@" not in references[0]):
+            raise ValueError("Private build image lacks one verified repository digest")
+        repository, manifest = references[0].split("@", 1)
+        if repository not in repositories or re.fullmatch(r"sha256:[0-9a-f]{64}", manifest) is None:
+            raise ValueError("Private build image has a foreign or invalid repository digest")
+        return {**observed, "nativeTag": tags[0], "manifestReference": references[0],
+                "deletionMode": "private-native-tag"}
+
+    def references_absent(self, observed):
+        references = [observed["id"], observed["tag"]]
+        if self.private_named_cleanup:
+            references.extend([observed["nativeTag"], observed["manifestReference"]])
+        return all(self.inspect(reference) is None for reference in references)
+
     def known_identity(self, failing: bool, records):
         created = json.loads(records.get(self.key(failing, "created"), b"null"))
         deleting = json.loads(records.get(self.key(failing, "delete"), b"null"))
@@ -122,7 +155,7 @@ class BuildImages:
         known = self.known_identity(failing, records)
         actual = self.inspect(tag)
         if actual is None:
-            if known is not None and self.inspect(known["id"]) is not None:
+            if known is not None and not self.references_absent(known):
                 raise ValueError("Build output lost its tag but still exists")
             return None
         if (self.key(failing, "completed") not in records or
@@ -134,6 +167,10 @@ class BuildImages:
         by_id = self.inspect(observed["id"])
         if by_id is None or self.identity(by_id, failing) != observed:
             raise ValueError("Build tag and ID disagree")
+        if self.private_named_cleanup:
+            by_manifest = self.inspect(observed["manifestReference"])
+            if by_manifest is None or self.identity(by_manifest, failing) != observed:
+                raise ValueError("Build tag and manifest disagree")
         return observed
 
     def recovery_plan(self):
@@ -165,17 +202,19 @@ class BuildImages:
             if self.key(failing, "removed") not in records:
                 self.journal.put(self.key(failing, "removed"), canonical({"absent": True}))
             return
-        tag = tag_for(self.owner, failing=failing)
         self.journal.put(self.key(failing, "delete"), canonical(observed))
         # No force deletion, parent pruning or daemon-wide image/cache cleanup.
-        status, _ = self.client.call("DELETE", "/images/" + quote(observed["id"], safe="") +
+        reference = observed["nativeTag"] if self.private_named_cleanup else observed["id"]
+        status, _ = self.client.call("DELETE", "/images/" + quote(reference, safe="") +
                                      "?force=false&noprune=true")
-        if status not in {200, 404} or self.inspect(observed["id"]) is not None or self.inspect(tag) is not None:
+        if status not in {200, 404} or not self.references_absent(observed):
             raise ValueError("Build output deletion is unverified")
         self.journal.put(self.key(failing, "removed"), canonical(observed))
 
     def cleanup(self):
         records = self.records()
+        if self.private_named_cleanup:
+            self.recovery_plan()
         for failing in (False, True):
             if self.key(failing, "started") in records and self.key(failing, "completed") not in records:
                 raise ValueError("Build completion is uncertain; preserve runtime")
@@ -210,6 +249,8 @@ class BuildImages:
             identifier = value.get("Id") if isinstance(value, dict) else None
             if identifier in outputs:
                 continue  # Already authenticated as an exact tagged output.
+            if self.private_named_cleanup:
+                raise ValueError("Unreferenced private build image remains; preserve runtime")
             if (not isinstance(identifier, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", identifier) is None or
                     identifier == self.intent["image"] or
                     not any(identifier.removeprefix("sha256:").startswith(prefix) for prefix in identifiers) or

@@ -1449,9 +1449,13 @@ public extension AppleContainerRuntime {
     func removeImage(
         reference: String,
         force: Bool,
-        context _: RuntimeRequestContext
+        context: RuntimeRequestContext
     ) async throws {
         try Self.requireNamedImageMutation(reference)
+        if useDirectContainerAPI {
+            try await removeNamedImage(reference: reference, force: force, context: context)
+            return
+        }
         var arguments = ["image", "delete"]
         if force {
             arguments.append("--force")

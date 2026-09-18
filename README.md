@@ -158,7 +158,7 @@ The opt-in [native Bazel build](docs/bazel-workflow.md) builds all three executa
 
 In the unreleased candidate, `devcontainer configure` preserves existing settings omitted from the command, including strict compatibility. Use `--strict` or `--no-strict` to change that setting explicitly; new configurations remain strict by default. Changing only the socket no longer silently resets stored strictness. Backend and Compose frontend choices remain independent.
 
-The candidate also preserves progress from failed Apple image builds and returns a Docker-compatible error record without recording success. Preflight rejection, cancellation and abandonment remain distinct failures. [Component tests](docs/bazel-test-harness.md#image-build-component-not-yet-live) cover this in both profiles; live E04 build parity and stable publication are still required.
+The candidate also preserves progress from failed Apple image builds and returns a Docker-compatible error record without recording success. Preflight rejection, cancellation and abandonment remain distinct failures. [Component tests](docs/bazel-test-harness.md#image-build-contract) cover this in both profiles; live E04 build parity and stable publication are still required.
 
 The opt-in E04 harness now downloads the published builder images with `make bazel-prepare-builders` (`OFFLINE=1` for verified reuse), submits owned image builds, checks the intended failing command actually ran, and verifies scoped cleanup. It does not rebuild reference runtimes or modify your Container configuration. Interrupted builds with uncertain completion remain quarantined; complete live parity and unattended recovery qualification are still pending.
 

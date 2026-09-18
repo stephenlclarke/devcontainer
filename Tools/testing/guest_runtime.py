@@ -180,7 +180,8 @@ class ReleasedGuest:
             self.guest = BuildFixture(self.socket, digest(canonical(self.owner["identity"])), self.image_id,
                                       GUEST_API_VERSION, self.runtime.journal,
                                       image["repository"] + "@" + image["manifest"], observe=self.observe,
-                                      before_submit=self.builder.verify_for_build if self.builder else None)
+                                      before_submit=self.builder.verify_for_build if self.builder else None,
+                                      private_named_cleanup=bool(self.container))
             with deadline(390):
                 return self.guest.operation()
         if self.fixture == "E06-network-volume":

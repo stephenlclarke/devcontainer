@@ -1,5 +1,6 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
+import ContainerAPIClient
 import ContainerizationError
 @testable import DevContainerAppleRuntime
 import DevContainerModel
@@ -11,6 +12,10 @@ struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
     static let digest = "sha256:" + String(repeating: "b", count: 64)
     var result = Self.digest
 
+    func deleteNamedReference(_: String) async throws {
+        throw DevContainerError(.unsupportedCapability, message: "This identity-only fixture cannot delete images")
+    }
+
     func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String {
         #expect(["fixture:latest", "fixture:alias"].contains(reference))
         let description = try #require(JSONSerialization.jsonObject(with: descriptor) as? [String: Any])
@@ -21,7 +26,71 @@ struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
     }
 }
 
+private actor NamedImageDeletionClient: AppleImageIdentityClient {
+    var references: [String] = []
+    let failure: Bool
+
+    init(failure: Bool = false) {
+        self.failure = failure
+    }
+
+    func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String {
+        try await FakeAppleImageIdentityClient().configurationDigest(
+            reference: reference, descriptor: descriptor, platform: platform
+        )
+    }
+
+    func deleteNamedReference(_ reference: String) throws {
+        if failure {
+            throw ContainerizationError(.internalError, message: "Injected image deletion failure")
+        }
+        references.append(reference)
+    }
+}
+
 extension AppleContainerRuntimeTests {
+    @Test func `named image deletion uses the native reference without CLI garbage collection`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let client = NamedImageDeletionClient()
+        let runtime = try fixture.runtime(
+            images: client, creator: LiveAppleContainerCreateClient(client: ContainerClient())
+        )
+        try await runtime.removeImage(
+            reference: "docker.io/library/fixture:latest", force: false, context: RuntimeRequestContext()
+        )
+        #expect(await client.references == ["fixture:latest"])
+        #expect(try !(fixture.log()).contains("image delete"))
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.removeImage(reference: FakeAppleImageIdentityClient.digest, force: true, context: .init())
+        }
+        #expect(await client.references.count == 1)
+    }
+
+    @Test func `native image deletion preserves missing protected and failed request boundaries`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let client = NamedImageDeletionClient(failure: true)
+        let runtime = try fixture.runtime(
+            images: client, creator: LiveAppleContainerCreateClient(client: ContainerClient())
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.removeImage(reference: "fixture:latest", force: true, context: .init())
+        }
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.removeImage(
+                reference: "fixture:latest", force: false, context: .init(deadline: .distantPast)
+            )
+        }
+        try fixture.setImageInventory([])
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.removeImage(reference: "protected:latest", force: false, context: .init())
+        }
+        try await runtime.removeImage(reference: "missing:latest", force: true, context: .init())
+        #expect(await client.references.isEmpty)
+        #expect(try !(fixture.log()).contains("image delete"))
+    }
+
     @Test func `image config digest lookup never substitutes mutable mutation aliases`() async throws {
         let fixture = try FakeAppleCLI()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -107,7 +176,9 @@ extension AppleContainerRuntimeTests {
         let runtime = try fixture.runtime()
         let images = try await runtime.listImages(context: RuntimeRequestContext())
         #expect(images.count == 1)
-        #expect(images.first?.references == ["fixture:alias", "fixture:latest"])
+        #expect(images.first?.references == [
+            "fixture:alias", "fixture:latest", "fixture@sha256:" + String(repeating: "c", count: 64)
+        ])
         #expect(images.first?.id == FakeAppleImageIdentityClient.digest)
         #expect(try await runtime.inspectImage(
             reference: "fixture:alias", context: RuntimeRequestContext()
@@ -130,6 +201,36 @@ extension AppleContainerRuntimeTests {
         }
         try fixture.setImageInventory([])
         #expect(try await runtime.listImages(context: RuntimeRequestContext()).isEmpty)
+    }
+
+    @Test func `repository digest references preserve registry ports and manifest identity`() throws {
+        let digest = "sha256:" + String(repeating: "c", count: 64)
+        #expect(try AppleContainerRuntime.repositoryDigestReference("docker.io/library/alpine:3.22.5", digest: digest)
+            == "docker.io/library/alpine@" + digest)
+        #expect(try AppleContainerRuntime.repositoryDigestReference("registry.test:5000/path/image:tag", digest: digest)
+            == "registry.test:5000/path/image@" + digest)
+        #expect(try AppleContainerRuntime.repositoryDigestReference("fixture@" + digest, digest: digest)
+            == "fixture@" + digest)
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime.repositoryDigestReference("fixture:latest", digest: "sha256:bad")
+        }
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime.repositoryDigestReference("", digest: digest)
+        }
+    }
+
+    @Test func `image inventory rejects malformed selected manifest digest`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var record = imageRecord("fixture:latest")
+        var variants = try #require(record["variants"] as? [[String: Any]])
+        variants[0]["digest"] = "sha256:invalid"
+        record["variants"] = variants
+        try fixture.setImageInventory([record])
+        let runtime = try fixture.runtime()
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.listImages(context: RuntimeRequestContext())
+        }
     }
 
     @Test func `live identity client rejects malformed metadata before XPC`() async throws {

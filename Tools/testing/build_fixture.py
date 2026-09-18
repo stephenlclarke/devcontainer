@@ -11,11 +11,12 @@ from guest_fixture import GuestFixture
 class BuildFixture(GuestFixture):
     """No container creation here; builder admission belongs to the runtime owner."""
 
-    def __init__(self, socket, owner, image, api_version, journal, base, *, observe=None, before_submit=None):
+    def __init__(self, socket, owner, image, api_version, journal, base, *, observe=None, before_submit=None,
+                 private_named_cleanup=False):
         super().__init__(socket, owner, image, api_version, journal, observe=observe)
         self.base = base
         self.before_submit = before_submit
-        self.images = BuildImages(self, journal, owner, base)
+        self.images = BuildImages(self, journal, owner, base, private_named_cleanup=private_named_cleanup)
 
     def submit(self, *, failing=False):
         body = build_context(self.base, self.owner, failing=failing)

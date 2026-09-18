@@ -38,13 +38,14 @@ class Handler(helpers.Handler):
         reference = unquote(path.removeprefix("/images/").removesuffix("/json"))
         image = server.images.get(reference)
         if image is None:
-            image = next((item for item in server.images.values() if item["Id"] == reference), None)
+            image = next((item for item in server.images.values() if item["Id"] == reference or
+                          reference in item.get("RepoTags", []) or reference in item.get("RepoDigests", [])), None)
         if self.command == "GET":
             return (200, image) if image is not None else (404, {"message": "missing"})
         if self.command == "DELETE":
             server.delete_records.append(server.journal.records())
             if not server.ignore_delete:
-                server.images = {key: value for key, value in server.images.items() if value["Id"] != reference}
+                server.images = {key: value for key, value in server.images.items() if value is not image}
             return 200, [{"Deleted": reference}]
         return 400, {"message": "unexpected request"}
 
@@ -89,6 +90,123 @@ class BuildImagesTests(unittest.TestCase):
 
     def assert_no_delete(self):
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+
+    def named_fixture(self):
+        return BuildImages(self.client, self.journal, OWNER, BASE, private_named_cleanup=True)
+
+    def named_output(self):
+        image = self.output()
+        image["RepoTags"] = ["docker.io/library/" + tag_for(OWNER)]
+        image["RepoDigests"] = [image["RepoTags"][0].rsplit(":", 1)[0] + "@sha256:" + "f" * 64]
+        return image
+
+    def test_private_named_cleanup_records_mode_and_deletes_only_the_native_tag(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        image = self.named_output()
+        fixture.response(200, SUCCESS)
+        observed = fixture.recovery_plan()[0]
+        self.assertEqual(observed["manifestReference"], image["RepoDigests"][0])
+        self.assertNotEqual(observed["manifestReference"].split("@")[1], observed["id"])
+        different_mode = self.reopen()
+        with self.assertRaisesRegex(ValueError, "another transaction"):
+            different_mode.cleanup()
+        self.assert_no_delete()
+        self.named_fixture().cleanup()
+        self.named_fixture().cleanup()
+        deletes = [route for method, route in self.server.routes if method == "DELETE"]
+        self.assertEqual(deletes, ["/v1.53/images/docker.io%2Flibrary%2F" + tag_for(OWNER).replace(":", "%3A") +
+                                  "?force=false&noprune=true"])
+        self.assertEqual(list(self.server.images), [BASE])
+
+    def test_private_manifest_replacement_with_same_config_prevents_deletion(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        image = self.named_output()
+        fixture.response(200, SUCCESS)
+        image["RepoDigests"] = [image["RepoDigests"][0].replace("f" * 64, "e" * 64)]
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            fixture.cleanup()
+        self.assert_no_delete()
+
+    def test_private_cleanup_requires_manifest_lookup_agreement(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        image = self.named_output()
+        fixture.response(200, SUCCESS)
+        inspect = fixture.inspect
+        for replacement in (None, {**image, "Id": "sha256:" + "e" * 64}):
+            def changed(reference):
+                return replacement if reference == image["RepoDigests"][0] else inspect(reference)
+            with patch.object(fixture, "inspect", side_effect=changed), self.assertRaisesRegex(ValueError, "manifest disagree"):
+                fixture.cleanup()
+        self.assert_no_delete()
+
+    def test_private_cleanup_rejects_shared_foreign_invalid_or_missing_references(self):
+        fixture = self.named_fixture()
+        image = self.named_output()
+        for tags in ([], [tag_for(OWNER), "foreign:latest"], ["foreign.example/" + tag_for(OWNER)]):
+            with self.subTest(tags=tags), self.assertRaisesRegex(ValueError, "tags"):
+                fixture.identity({**image, "RepoTags": tags}, False)
+        for references in (None, [], "bad", [None], ["no-digest"], image["RepoDigests"] * 2,
+                           ["foreign@sha256:" + "f" * 64], [tag_for(OWNER).split(":")[0] + "@sha256:bad"]):
+            with self.subTest(references=references), self.assertRaisesRegex(ValueError, "digest"):
+                fixture.identity({**image, "RepoDigests": references}, False)
+        with self.assertRaisesRegex(ValueError, "base image"):
+            fixture.identity({**image, "Id": self.image}, False)
+        familiar = {**image, "RepoTags": [tag_for(OWNER)],
+                    "RepoDigests": [image["RepoDigests"][0].removeprefix("docker.io/library/")]}
+        self.assertEqual(fixture.identity(familiar, False)["nativeTag"], tag_for(OWNER))
+        self.assert_no_delete()
+
+    def test_private_cleanup_retains_unknown_completion_and_never_switches_mode(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        self.named_output()
+        same_mode = self.named_fixture()
+        different_mode = self.reopen()
+        with self.assertRaisesRegex(ValueError, "uncertain"):
+            same_mode.cleanup()
+        with self.assertRaisesRegex(ValueError, "another transaction"):
+            different_mode.cleanup()
+        self.assert_no_delete()
+
+    def test_private_cleanup_reconciles_lost_delete_response_but_not_remaining_content(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        self.named_output()
+        fixture.response(200, SUCCESS)
+        call = self.client.call
+        def interrupted(method, route):
+            result = call(method, route)
+            if method == "DELETE":
+                raise TimeoutError("lost reply")
+            return result
+        with patch.object(self.client, "call", side_effect=interrupted), self.assertRaises(TimeoutError):
+            fixture.cleanup()
+        self.named_fixture().cleanup()
+        self.assertEqual(sum(method == "DELETE" for method, _ in self.server.routes), 1)
+
+    def test_private_cleanup_refuses_unnamed_intermediates_and_unverified_deletion(self):
+        fixture = self.named_fixture()
+        fixture.prepare()
+        fixture.start()
+        image = self.named_output()
+        fixture.response(200, SUCCESS)
+        self.server.ignore_delete = True
+        with self.assertRaisesRegex(ValueError, "unverified"):
+            fixture.cleanup()
+        self.server.ignore_delete = False
+        self.server.images["intermediate"] = {**image, "Id": "sha256:" + "e" * 64,
+                                               "RepoTags": [], "RepoDigests": []}
+        with self.assertRaisesRegex(ValueError, "Unreferenced"):
+            fixture.cleanup()
+        self.assertIn("intermediate", self.server.images)
 
     def test_docker_hub_official_digest_display_is_the_same_admitted_reference(self):
         self.server.images[BASE]['RepoDigests'] = [BASE.removeprefix('docker.io/library/')]
