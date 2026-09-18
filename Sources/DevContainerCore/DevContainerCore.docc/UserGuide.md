@@ -87,6 +87,8 @@ device, resource, hostname, or advanced mount behavior.
 
 ## Diagnostics
 
+In the unreleased candidate, `doctor` validates output format before running any probe and gives each runtime/Compose command a five-second deadline with owned-process cleanup. Socket metadata checks are not HTTP health checks; an absent socket is a warning. Candidate service cleanup also covers startup/waiter failure and cancellation. These component-tested changes do not expand the certified release matrix.
+
 ```console
 devcontainer diagnostics \
   --container /usr/local/bin/container \

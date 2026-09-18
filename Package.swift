@@ -141,10 +141,7 @@ let package = Package(
         ),
         .target(
             name: "DevContainerProcess",
-            dependencies: [
-                "DevContainerModel",
-                .product(name: "ContainerizationOS", package: "containerization")
-            ]
+            dependencies: ["DevContainerModel"]
         ),
         .target(
             name: "DevContainerState",
@@ -266,7 +263,12 @@ let package = Package(
         ),
         .testTarget(
             name: "DevContainerProcessTests",
-            dependencies: ["DevContainerProcess", "DevContainerTestStorage"]
+            dependencies: ["DevContainerProcess", "DevContainerTestStorage", "DevContainerProcessProbe"]
+        ),
+        .executableTarget(
+            name: "DevContainerProcessProbe",
+            dependencies: ["DevContainerProcess"],
+            path: "Tools/process-test-probe"
         ),
         .testTarget(
             name: "DevContainerStateTests",

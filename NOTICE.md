@@ -8,6 +8,8 @@ This project is licensed under the Apache License, Version 2.0.
 
 The project interoperates with, but is independent of, Apple container, the Dev Containers project, Docker, Microsoft Visual Studio Code, and container-compose. Product and project names remain the property of their respective owners.
 
+`Sources/DevContainerProcess/ProcessCommand.swift` adapts the Apache-2.0 POSIX launcher from [container-compose](https://github.com/stephenlclarke/container-compose/blob/a28bb4586532a6b44f79a8beeea965c083477ed8/Sources/ComposeCore/ComposeProcessCommand.swift). Copyright 2026 container-compose project authors; attribution is retained in the adapted source. Changes specialize it for macOS, preserve exact executable paths and null default streams, suspend interactive children until terminal handoff, and separate exit observation from interruption-safe process reaping.
+
 Release archives include `THIRD-PARTY-NOTICES.txt`, containing the complete
 root license and notice texts for every exact SwiftPM dependency, and
 `devcontainer.spdx.json`, identifying those reviewed dependencies and their

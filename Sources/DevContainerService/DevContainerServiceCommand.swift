@@ -242,33 +242,21 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 )
             )
         }
-        try await server.start()
         let signals = Self.terminationSignals()
-        try await withThrowingTaskGroup(of: ServiceCompletion.self) { group in
-            group.addTask {
-                try await server.wait()
-                return .serverClosed
-            }
-            group.addTask {
-                for await signalNumber in signals {
-                    return .signal(signalNumber)
-                }
-                return .signal(SIGTERM)
-            }
-
-            if case let .signal(signalNumber) = try await group.next() {
+        try await ServiceLifecycle(
+            start: { try await server.start() },
+            wait: { try await server.wait() },
+            shutdownRuntime: { await runtime.shutdown() },
+            shutdownServer: { try await server.shutdown() }
+        ).run(
+            signals: signals,
+            onSignal: { signalNumber in
                 logger.info(
                     "Engine shutdown requested",
                     metadata: ["signal": .stringConvertible(signalNumber)]
                 )
             }
-            await runtime.shutdown()
-            try await server.shutdown()
-            group.cancelAll()
-            while try await group.next() != nil {
-                // Drain cancelled child tasks before leaving the structured scope.
-            }
-        }
+        )
     }
 
     private static let stockRouteIdentifiers = [
@@ -323,11 +311,6 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             terminate.resume()
         }
     }
-}
-
-private enum ServiceCompletion: Sendable {
-    case serverClosed
-    case signal(Int32)
 }
 
 private enum ServiceServer: Sendable {

@@ -508,6 +508,8 @@ Stopping the compatibility service does not delete containers, images, networks,
 
 ## Diagnostics and support
 
+The unreleased candidate gives each external `doctor` probe a five-second deadline and reaps owned processes before continuing. An invalid `--format` fails before execution. A socket check only inspects its ownership, file type and permissions: it does not connect or prove that HTTP requests succeed, and an absent socket is reported as a warning. Runtime/client launch errors are returned without the dependency's fork-based teardown path. The candidate also releases runtime resources on service-start failure and releases runtime/server resources on waiter failure or cancellation. Component tests cover these paths without a live runtime or Keychain; live service and release qualification remain separate gates.
+
 Create a privacy-redacted archive:
 
 ```console

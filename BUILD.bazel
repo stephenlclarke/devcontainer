@@ -109,7 +109,7 @@ swift_library(
     name = "DevContainerProcess",
     srcs = glob(["Sources/DevContainerProcess/*.swift"]),
     module_name = "DevContainerProcess",
-    deps = [":DevContainerModel", "@swiftpkg_containerization//:ContainerizationOS"],
+    deps = [":DevContainerModel"],
 )
 
 swift_library(
@@ -235,10 +235,19 @@ swift_test(
     deps = [":DevContainerCLI", ":DevContainerCore", ":DevContainerModel", ":DevContainerState"],
 )
 
+swift_binary(
+    name = "DevContainerProcessProbe",
+    testonly = True,
+    srcs = ["Tools/process-test-probe/main.swift"],
+    deps = [":DevContainerProcess"],
+)
+
 swift_test(
     name = "DevContainerProcessTests",
     srcs = glob(["Tests/DevContainerProcessTests/*.swift"]),
     module_name = "DevContainerProcessTests",
+    data = [":DevContainerProcessProbe"],
+    env = {"DEVCONTAINER_PROCESS_TEST_RUNFILE": "$(rootpath :DevContainerProcessProbe)"},
     deps = [":DevContainerProcess"],
 )
 
@@ -290,7 +299,9 @@ swift_test(
 
 swift_test(
     name = "DevContainerServiceTests",
-    srcs = ["Tests/DevContainerServiceTests/DefaultPathsTests.swift"],
+    srcs = glob(["Tests/DevContainerServiceTests/*.swift"], exclude = [
+        "Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
+    ]),
     module_name = "DevContainerServiceTests",
     copts = RUNTIME_COPTS,
     deps = [

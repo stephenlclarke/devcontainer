@@ -14,7 +14,6 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import ContainerizationOS
 import Darwin
 import DevContainerModel
 import Foundation
@@ -94,7 +93,7 @@ public enum ProcessRunner {
         let standardInput = input.map { _ in Pipe() }
         let standardOutput = Pipe()
         let standardError = Pipe()
-        var command = configuredCommand(
+        let command = configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -139,16 +138,16 @@ public enum ProcessRunner {
         let runningCommand = command
         let waitTask = Task.detached {
             try await performThrowingBlocking {
-                try runningCommand.wait()
+                try runningCommand.waitUntilExit()
             }
         }
         return try await withTaskCancellationHandler {
             do {
                 try await inputTask.value
-                let exitCode = try await waitTask.value
-                termination.didExit()
+                try await waitTask.value
                 let output = await outputTask.value
                 let error = await errorTask.value
+                let exitCode = try termination.reap { try runningCommand.wait() }
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
                 return CapturedProcessResult(
@@ -161,9 +160,9 @@ public enum ProcessRunner {
             } catch {
                 termination.cancel()
                 _ = try? await waitTask.value
-                termination.didExit()
                 _ = await outputTask.value
                 _ = await errorTask.value
+                _ = try? termination.reap { try runningCommand.wait() }
                 throw error
             }
         } onCancel: {
@@ -179,7 +178,7 @@ public enum ProcessRunner {
     ) async throws -> Int32 {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
-        var command = configuredCommand(
+        let command = configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -190,30 +189,28 @@ public enum ProcessRunner {
         command.stderr = FileHandle.standardError
         let ownsTerminal = isatty(STDIN_FILENO) == 1
         let parentProcessGroup = ownsTerminal ? getpgrp() : nil
-        command.attrs.setForegroundPGroup = ownsTerminal
+        defer { restoreForegroundProcessGroup(parentProcessGroup) }
+        command.attributes.setForegroundProcessGroup = ownsTerminal
         let termination = OwnedProcessTermination()
         try command.start()
         termination.didLaunch(processGroup: command.pid)
         let runningCommand = command
         let waitTask = Task.detached {
             try await performThrowingBlocking {
-                try runningCommand.wait()
+                try runningCommand.waitUntilExit()
             }
         }
         return try await withTaskCancellationHandler {
-            defer {
-                restoreForegroundProcessGroup(parentProcessGroup)
-            }
             do {
-                let exitCode = try await waitTask.value
-                termination.didExit()
+                try await waitTask.value
+                let exitCode = try termination.reap { try runningCommand.wait() }
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
                 return exitCode
             } catch {
                 termination.cancel()
                 _ = try? await waitTask.value
-                termination.didExit()
+                _ = try? termination.reap { try runningCommand.wait() }
                 throw error
             }
         } onCancel: {
@@ -226,15 +223,15 @@ public enum ProcessRunner {
         arguments: [String],
         environment: [String: String],
         workingDirectory: URL?
-    ) -> Command {
-        var command = Command(
+    ) -> ProcessCommand {
+        let command = ProcessCommand(
             executable.path,
             arguments: arguments,
             environment: environment.sorted { $0.key < $1.key }
                 .map { "\($0.key)=\($0.value)" },
             directory: workingDirectory?.path
         )
-        command.attrs.setPGroup = true
+        command.attributes.setProcessGroup = true
         return command
     }
 
@@ -350,65 +347,65 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     }
 
     public func didLaunch(processGroup: pid_t) {
-        let cancelImmediately = lock.withLock {
+        lock.withLock {
             self.processGroup = processGroup
             running = true
-            return cancellationRequested
-        }
-        if cancelImmediately {
-            beginTermination(processGroup)
+            if cancellationRequested {
+                beginTermination(processGroup)
+            }
         }
     }
 
     public func didExit() {
-        lock.withLock {
-            running = false
-            escalation?.cancel()
-            escalation = nil
-            processGroup = nil
+        lock.withLock { clearOwnership() }
+    }
+
+    /// Caller first observes WNOWAIT exit and finishes draining inherited pipes.
+    /// Reaping and clearing ownership are atomic relative to group signalling.
+    func reap(_ operation: () throws -> Int32) throws -> Int32 {
+        try lock.withLock {
+            guard running else { throw POSIXError(.ECHILD) }
+            defer { clearOwnership() }
+            return try operation()
         }
+    }
+
+    private func clearOwnership() {
+        running = false
+        escalation?.cancel()
+        escalation = nil
+        processGroup = nil
     }
 
     public func cancel() {
-        let processGroup = lock.withLock { () -> pid_t? in
+        lock.withLock {
             guard !cancellationRequested else {
-                return nil
+                return
             }
             cancellationRequested = true
-            return running ? self.processGroup : nil
-        }
-        if let processGroup {
-            beginTermination(processGroup)
+            if running, let processGroup {
+                beginTermination(processGroup)
+            }
         }
     }
 
+    /// Called only while ownership is locked; the leader has not been reaped.
     private func beginTermination(_ processGroup: pid_t) {
         _ = Darwin.kill(-processGroup, SIGTERM)
         let work = DispatchWorkItem { [weak self] in
             self?.forceTerminate(processGroup)
         }
-        let shouldSchedule = lock.withLock {
-            guard running, self.processGroup == processGroup else {
-                return false
-            }
-            escalation = work
-            return true
-        }
-        if shouldSchedule {
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.gracePeriod,
-                execute: work
-            )
-        }
+        escalation = work
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + Self.gracePeriod,
+            execute: work
+        )
     }
 
     private func forceTerminate(_ processGroup: pid_t) {
-        let stillOwned = lock.withLock {
-            running && self.processGroup == processGroup
+        lock.withLock {
+            guard running, self.processGroup == processGroup else { return }
+            _ = Darwin.kill(-processGroup, SIGKILL)
         }
-        guard stillOwned else {
-            return
-        }
-        _ = Darwin.kill(-processGroup, SIGKILL)
     }
 }
