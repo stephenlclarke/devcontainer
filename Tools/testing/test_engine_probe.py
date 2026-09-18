@@ -1,6 +1,7 @@
 """Real Unix-socket integration tests of the Docker-independent E01 probe."""
 
 from http.server import BaseHTTPRequestHandler
+import http.client
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,13 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(self.server.ping_status, b"OK")
         elif self.path == "/oversized":
             self.reply(200, b"x" * 65537)
+        elif self.path == "/truncated-build":
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            # A complete JSON record is still an incomplete HTTP response.
+            self.wfile.write(b'{"stream":"Step 1 complete"}\n')
+            self.close_connection = True
         else:
             self.reply(404, self.server.error_body)
 
@@ -114,6 +122,13 @@ class EngineProbeTests(unittest.TestCase):
     def test_large_reply_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "64 KiB"):
             request(self.socket, "GET", "/oversized")
+
+    def test_truncated_content_length_is_not_a_completed_build_response(self):
+        with self.assertRaises(http.client.IncompleteRead):
+            request(self.socket, "GET", "/truncated-build")
+
+    def test_exact_response_bound_accepts_complete_body(self):
+        self.assertEqual(request(self.socket, "GET", "/_ping", max_bytes=2), (200, b"OK"))
 
     def test_missing_endpoint_does_not_start_or_download_anything(self):
         missing = self.socket.with_name("missing")

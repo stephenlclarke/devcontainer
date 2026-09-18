@@ -27,7 +27,7 @@ class UnixHTTPConnection(http.client.HTTPConnection):
 
 def request(path: Path, method: str, route: str, body: bytes | None = None, timeout: float = 5,
             *, content_type: str = "application/json", max_bytes: int = 65536) -> tuple[int, bytes]:
-    """Bound response size; the enclosing Bazel case supplies its total deadline."""
+    """Require complete bounded HTTP framing; the Bazel case owns the total deadline."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= 16 * 1024**2:
         raise ValueError("Invalid Engine response limit")
     connection = UnixHTTPConnection(path, timeout)
@@ -38,6 +38,10 @@ def request(path: Path, method: str, route: str, body: bytes | None = None, time
         data = response.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise ValueError(f"Engine response exceeds {max_bytes / 1024:g} KiB")
+        # read(amt) permits early EOF for Content-Length responses. Valid JSON
+        # before that EOF must not become proof that a mutating request finished.
+        if response.length not in (None, 0):
+            raise http.client.IncompleteRead(data, response.length)
         return response.status, data
     except socket.timeout as error:
         raise TimeoutError("Engine negotiation request timed out") from error
