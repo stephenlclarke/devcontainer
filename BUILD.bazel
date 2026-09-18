@@ -248,7 +248,7 @@ swift_test(
     module_name = "DevContainerProcessTests",
     data = [":DevContainerProcessProbe"],
     env = {"DEVCONTAINER_PROCESS_TEST_RUNFILE": "$(rootpath :DevContainerProcessProbe)"},
-    deps = [":DevContainerProcess"],
+    deps = [":DevContainerProcess", ":DevContainerModel"],
 )
 
 swift_test(

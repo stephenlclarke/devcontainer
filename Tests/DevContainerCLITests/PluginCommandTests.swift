@@ -14,12 +14,92 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ArgumentParser
+import Darwin
 @testable import DevContainerCLI
+import DevContainerModel
 import DevContainerTestStorage
 import Foundation
 import Testing
 
+/// Short deadline probes need their launch window, not contention with this
+/// suite's other synchronous CLI calls on Swift Testing's shared executor.
+@Suite(.serialized)
 struct PluginCommandTests {
+    @Test
+    func `parsed plug-in commands preserve registration lifecycle without runtime discovery`() throws {
+        let fixture = try PluginRegistrationFixture()
+        let options = [
+            "--plugin",
+            fixture.source.path,
+            "--install-root",
+            fixture.installRoot.path,
+            "--container",
+            fixture.root.appendingPathComponent("absent").path
+        ]
+        let steps: [(String, PluginRegistrationStatus)] = [
+            ("register", .registered), ("status", .registered), ("unregister", .missing), ("status", .missing)
+        ]
+        for (action, expected) in steps {
+            var command = try DevContainerCommand.parseAsRoot(["plugin", action] + options)
+            try command.run()
+            #expect(try fixture.registration().status() == expected)
+        }
+    }
+
+    @Test
+    func `installation discovery executes the exact status probe and preserves errors`() throws {
+        let fixture = try PluginRegistrationFixture()
+        let executable = try fixture.runtimeScript("""
+        test "$*" = 'system status --format json' || exit 99
+        printf '{"installRoot":"/fixture/runtime"}'
+        """)
+        #expect(try ContainerInstallRootResolver.resolve(container: executable).path == "/fixture/runtime")
+        try fixture.runtimeScript("printf 'fixture failure' >&2; exit 7")
+        do {
+            _ = try ContainerInstallRootResolver.resolve(container: executable)
+            Issue.record("Failed status must not produce an installation root")
+        } catch let error as DevContainerError {
+            #expect(error.code == .runtimeUnavailable)
+            #expect(error.message == "fixture failure")
+        }
+    }
+
+    @Test
+    func `installation discovery deadline reaps its process and preserves earlier deadlines`() throws {
+        let fixture = try PluginRegistrationFixture()
+        let executable = try fixture.runtimeScript("printf '%s' $$ > \"$0.pid\"; exec /bin/sleep 2")
+        let started = ContinuousClock.now
+        do {
+            _ = try ContainerInstallRootResolver.resolve(container: executable, timeout: 0.3)
+            Issue.record("Stalled installation probe must fail")
+        } catch let error as DevContainerError {
+            #expect(error.code == .deadlineExceeded)
+        }
+        #expect(started.duration(to: .now) < .milliseconds(1500))
+        let pidFile = executable.appendingPathExtension("pid")
+        let pid = try #require(pid_t(String(contentsOf: pidFile, encoding: .utf8)))
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1 && errno == ESRCH)
+        try FileManager.default.removeItem(at: pidFile)
+        try RuntimeRequestScope.$context.withValue(RuntimeRequestContext(deadline: .distantPast)) {
+            do {
+                _ = try ContainerInstallRootResolver.resolve(container: executable)
+                Issue.record("An expired caller deadline must not be extended")
+            } catch let error as DevContainerError {
+                #expect(error.code == .deadlineExceeded)
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: pidFile.path))
+    }
+
+    @Test(arguments: [0.0, -1.0, Double.infinity, Double.nan])
+    func `invalid installation probe timeouts fail before launch`(timeout: Double) {
+        #expect(throws: ValidationError.self) {
+            try ContainerInstallRootResolver.resolve(container: URL(fileURLWithPath: "/absent"), timeout: timeout)
+        }
+    }
+
     @Test
     func `root command exposes plug-in management`() {
         #expect(
@@ -166,5 +246,13 @@ private final class PluginRegistrationFixture {
 
     func registration() throws -> PluginRegistration {
         try PluginRegistration(source: source, installRoot: installRoot)
+    }
+
+    @discardableResult
+    func runtimeScript(_ body: String) throws -> URL {
+        let executable = root.appendingPathComponent("runtime")
+        try Data(("#!/bin/sh\n" + body + "\n").utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return executable
     }
 }

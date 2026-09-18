@@ -150,13 +150,21 @@ struct PluginRegistration {
 }
 
 enum ContainerInstallRootResolver {
-    static func resolve(container: URL) throws -> URL {
-        let result = try ProcessRunner.capturedSync(
-            executable: container,
-            arguments: ["system", "status", "--format", "json"],
-            environment: CLIPaths.safeEnvironment,
-            maximumOutputBytes: 1024 * 1024
-        )
+    static func resolve(container: URL, timeout: TimeInterval = 5) throws -> URL {
+        guard timeout.isFinite, timeout > 0 else {
+            throw ValidationError("installation probe timeout must be finite and positive")
+        }
+        var context = RuntimeRequestScope.context ?? RuntimeRequestContext()
+        let deadline = Date().addingTimeInterval(timeout)
+        context.deadline = min(context.deadline ?? deadline, deadline)
+        let result = try RuntimeRequestScope.$context.withValue(context) {
+            try ProcessRunner.capturedSync(
+                executable: container,
+                arguments: ["system", "status", "--format", "json"],
+                environment: CLIPaths.safeEnvironment,
+                maximumOutputBytes: 1024 * 1024
+            )
+        }
         guard result.exitCode == 0 else {
             throw DevContainerError(
                 .runtimeUnavailable,
@@ -211,6 +219,8 @@ struct PluginCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "plugin",
         abstract: "Explicitly manage Apple container CLI plug-in registration",
+        discussion: "Installation discovery has a five-second deadline and reaps its owned probe before returning. "
+            + "An explicit --install-root bypasses discovery.",
         subcommands: [
             PluginRegisterCommand.self,
             PluginUnregisterCommand.self,

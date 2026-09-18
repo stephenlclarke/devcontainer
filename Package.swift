@@ -263,7 +263,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DevContainerProcessTests",
-            dependencies: ["DevContainerProcess", "DevContainerTestStorage", "DevContainerProcessProbe"]
+            dependencies: ["DevContainerProcess", "DevContainerModel", "DevContainerTestStorage", "DevContainerProcessProbe"]
         ),
         .executableTarget(
             name: "DevContainerProcessProbe",

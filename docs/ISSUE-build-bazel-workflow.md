@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Synchronous external probes also lost the caller's request context when dispatching detached work. A finite regression proves an expired request still launches a command and a running request ignores its deadline. Plug-in registration's automatic install-root query had no bound at all. Preserve request identity and deadlines across that bridge, cancel/drain/reap on timeout, and enforce a five-second discovery bound without extending an earlier caller deadline. Explicit install-root registration must remain independent of runtime availability.
+
 Unattended diagnostics exposed missing per-probe deadlines and output-format validation after external execution. A combined regression run additionally reproduced a fork/exec failure deadlock: the child entered `exit -> __cxa_finalize_ranges -> ostream::flush -> fflush -> flockfile`, while the parent awaited launch completion. The actual failed run is retained as `836e7845-7ac4-47d5-8b56-72df2305a9f8`; only its owned test parent and stuck child were terminated after sampling. Reusing Compose's POSIX-spawn primitive avoids that post-fork teardown and keeps stock Apple compatibility independent of a dependency patch. Service lifetime regressions separately demonstrate skipped cleanup on startup, waiter failure and cancellation; those paths must release resources and preserve the primary failure.
 
 Native CLI coverage also exposed an unintended configuration reset: updating only the socket enabled strict compatibility even when the saved setting was false. Treat omitted strictness as no update, preserve the secure default for new files, and prove the real parser/run boundary plus durable backend claims without launching a runtime.

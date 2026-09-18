@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import Darwin
+import DevContainerModel
 @testable import DevContainerProcess
 import DevContainerTestStorage
 import Foundation
@@ -22,6 +23,76 @@ import Testing
 
 @Suite(.serialized)
 struct ProcessRunnerTests {
+    @Test
+    func `cancelling a synchronous caller cancels and reaps its running child`() async throws {
+        let marker = TestStorage.temporaryDirectory.appendingPathComponent("sync-cancel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let task = Task.detached {
+            try ProcessRunner.capturedSync(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "printf '%s' $$ > \"$1\"; exec /bin/sleep 2", "sh", marker.path],
+                environment: [:]
+            )
+        }
+        for _ in 0 ..< 200 where !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let started = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(started.duration(to: .now) < .milliseconds(1500))
+        let pid = try #require(pid_t(String(contentsOf: marker, encoding: .utf8)))
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test
+    func `synchronous capture preserves expired caller deadline before launch`() throws {
+        let marker = TestStorage.temporaryDirectory.appendingPathComponent("deadline-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let context = RuntimeRequestContext(correlationID: "sync-expired", deadline: .distantPast)
+        try RuntimeRequestScope.$context.withValue(context) {
+            do {
+                _ = try ProcessRunner.capturedSync(
+                    executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: ["-c", "printf unsafe > \"$1\"", "sh", marker.path],
+                    environment: [:]
+                )
+                Issue.record("Expired synchronous request must fail before launch")
+            } catch let error as DevContainerError {
+                #expect(error.code == .deadlineExceeded)
+                #expect(error.correlationID == "sync-expired")
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test
+    func `synchronous capture enforces deadline and reaps its child`() throws {
+        let marker = TestStorage.temporaryDirectory.appendingPathComponent("sync-pid-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let context = RuntimeRequestContext(correlationID: "sync-running", deadline: Date().addingTimeInterval(0.3))
+        let started = ContinuousClock.now
+        try RuntimeRequestScope.$context.withValue(context) {
+            do {
+                // Finite sleep bounds the unfixed regression without an outer retry.
+                _ = try ProcessRunner.capturedSync(
+                    executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: ["-c", "printf '%s' $$ > \"$1\"; exec /bin/sleep 2", "sh", marker.path],
+                    environment: [:]
+                )
+                Issue.record("Running synchronous request must respect its deadline")
+            } catch let error as DevContainerError {
+                #expect(error.code == .deadlineExceeded)
+                #expect(error.correlationID == "sync-running")
+            }
+        }
+        #expect(started.duration(to: .now) < .milliseconds(1500))
+        let pid = try #require(pid_t(String(contentsOf: marker, encoding: .utf8)))
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1 && errno == ESRCH)
+    }
+
     @Test
     func `interactive child owns the terminal before reading and restores its parent`() async throws {
         let environment = ProcessInfo.processInfo.environment

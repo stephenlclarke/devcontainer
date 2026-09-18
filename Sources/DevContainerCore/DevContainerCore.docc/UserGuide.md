@@ -87,6 +87,8 @@ device, resource, hostname, or advanced mount behavior.
 
 ## Diagnostics
 
+Current source also bounds `plugin register`, `plugin status` and `plugin unregister` installation discovery to five seconds, preserving any earlier request deadline and reaping the owned probe. Use `--install-root` to skip discovery for an offline installation. This change is not in the published 1.0.1 binary.
+
 In the unreleased candidate, `doctor` validates output format before running any probe and gives each runtime/Compose command a five-second deadline with owned-process cleanup. Socket metadata checks are not HTTP health checks; an absent socket is a warning. Candidate service cleanup also covers startup/waiter failure and cancellation. These component-tested changes do not expand the certified release matrix.
 
 ```console

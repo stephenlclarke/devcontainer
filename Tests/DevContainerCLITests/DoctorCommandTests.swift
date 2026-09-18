@@ -8,6 +8,9 @@ import DevContainerTestStorage
 import Foundation
 import Testing
 
+/// Preserve the short deadline/owned-PID assertions without overlapping this
+/// suite's many external probes during their startup window.
+@Suite(.serialized)
 struct DoctorCommandTests {
     @Test
     func `missing runtime reports failure without executing commands`() async throws {

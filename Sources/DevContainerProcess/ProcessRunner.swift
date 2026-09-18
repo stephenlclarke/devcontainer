@@ -49,13 +49,17 @@ public enum ProcessRunner {
         input: Data? = nil,
         maximumOutputBytes: Int? = nil
     ) throws -> CapturedProcessResult {
+        try Task.checkCancellation()
+        let context = RuntimeRequestScope.context
         let semaphore = DispatchSemaphore(value: 0)
         let result = SynchronousProcessResult()
-        Task.detached {
+        let operation = Task.detached {
             do {
-                try await result.store(
-                    .success(
-                        captured(
+                // Detached work avoids blocking the caller's executor, but must
+                // explicitly retain its request identity and bounded lifetime.
+                let capturedResult = try await RuntimeRequestScope.$context.withValue(context) {
+                    try await RuntimeRequestScope.withDeadline {
+                        try await captured(
                             executable: executable,
                             arguments: arguments,
                             environment: environment,
@@ -63,14 +67,22 @@ public enum ProcessRunner {
                             input: input,
                             maximumOutputBytes: maximumOutputBytes
                         )
-                    )
-                )
+                    }
+                }
+                result.store(.success(capturedResult))
             } catch {
                 result.store(.failure(error))
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        // Synchronous callers cannot install an async cancellation handler.
+        // Forward their cancellation while still waiting for owned cleanup.
+        while semaphore.wait(timeout: .now() + .milliseconds(50)) == .timedOut {
+            if Task.isCancelled {
+                operation.cancel()
+            }
+        }
+        try Task.checkCancellation()
         return try result.load().get()
     }
 

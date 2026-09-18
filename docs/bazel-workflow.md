@@ -6,6 +6,8 @@ This is an opt-in native product build, not yet the replacement release system. 
 
 `//:unit` runs all ten deterministic source test targets for either profile. Exact discovered counts and coverage belong to each retained invocation's XML and report, not a fixed historical count in this guide. `//:bazel_qualification` remains a smaller compiler/framework/generator diagnostic and must not substitute for the unit suite. Native executable modules are compiled once and shared with their importing tests. Third-party packages retain their declared Swift language settings; Swift 6 and warnings-as-errors apply to project code.
 
+The product-owned `Tools/bazel/evidence-policy.json` uses the shared validator's existing schema 1. It retains all ten unit targets and their previous minima/source probes, raises CLI/process discovery minima to 38/15 for the bounded plug-in/process regressions and requires ProcessRunner execution. Consumer inventory updates therefore do not change shared executable tooling or weaken the 90% coverage gate. Historical receipts without this policy remain historical; they cannot satisfy a current policy-bound gate.
+
 ## Run locally
 
 Requirements: Apple silicon, full Xcode (validated with Xcode 27 / Swift 6.4), an external volume mounted at `/Volumes/SSD`, Python 3.9 or newer for helper tests, and network access for the first verified tool/dependency download.

@@ -295,6 +295,7 @@ The stable formula installs this project with upstream Docker CLI and Docker
 Compose protocol-client dependencies; it does not install a container runtime.
 Plug-in registration is an explicit, reversible symlink into the active
 runtime's reported install root, and it never replaces a foreign registration.
+Current source builds bound installation discovery to five seconds and reap a stalled probe before returning; `--install-root` skips discovery. This improvement is not yet in the published 1.0.1 release.
 `container-compose` remains an explicit optional installation and provider
 choice. See [INSTALL.md](INSTALL.md) for stock/custom runtime selection,
 service management, upgrades, verification, troubleshooting, and removal.
