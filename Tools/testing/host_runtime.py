@@ -13,6 +13,18 @@ import stat
 import subprocess
 import time
 
+from case_evidence import canonical, digest
+
+
+def cleanup_receipt(owner: dict, root: Path) -> bytes:
+    """Bind interrupted root removal to its original filesystem incarnation."""
+    info = root.stat()
+    # Birth time survives partial deletion; ctime does not. Include it to reject
+    # replacement directories even if an inode is later reused.
+    identity = {"device": info.st_dev, "inode": info.st_ino,
+                "birthtimeNS": getattr(info, "st_birthtime_ns", int(info.st_birthtime * 1e9))}
+    return canonical({"ownerSHA256": digest(canonical(owner)), "rootIdentity": identity})
+
 
 def require_api_service(executable: Path) -> dict:
     """Reject inherited/mixed providers before a released case touches XPC.

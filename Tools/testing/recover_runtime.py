@@ -13,13 +13,14 @@ import sqlite3
 import stat
 
 from case_evidence import CaseStore, canonical, digest, validate_identity
-from host_runtime import HostGuard, runtime_lease
+from host_runtime import HostGuard, cleanup_receipt, runtime_lease
 from runtime_services import (ControlledRuntime, capture_owned_processes, process_inventory,
                               require_captured_processes_stopped, require_idle, require_owned_volume)
 from service_journal import ServiceJournal
 from service_switch import Launchd, canonical_file
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_resources_stopped
 from private_keychain import keychain_diagnostics, require_keychain_stopped, run_keychain
+from docker_vm import require_closed_vm
 
 
 def private_json(path: Path) -> dict:
@@ -106,16 +107,47 @@ def restore_only(runtime: ControlledRuntime) -> None:
     runtime.journal.put("recovery-cleanup-authorized.json", cleanup_receipt(runtime.owner, runtime.root))
 
 
-def root_identity(root: Path) -> dict:
+def recover_closed_docker(retained: Path, owner: dict, guard: HostGuard, *, apply: bool) -> dict:
+    """Finish an interrupted cleanup, without rerunning a case or stopping a VM."""
+    root = Path(owner["root"])
+    key = validate_identity(owner["identity"])
+    journal = ServiceJournal(retained / "private-runtime" / (digest(canonical(owner)) + ".sqlite"), owner)
+    records = journal.records()
+    require_closed_vm(root, owner, records)
+    receipt_name = "docker-cleanup-authorized.json"
+    receipt = records.get(receipt_name)
+    if not root.exists():
+        authorization = json.loads(receipt or b"null")
+        if (not isinstance(authorization, dict) or authorization.get("ownerSHA256") != digest(canonical(owner)) or
+                "rootIdentity" not in authorization):
+            raise ValueError("Missing Docker root has no verified recovery cleanup receipt")
+        if apply:
+            guard.clear(owner)
+        return {"status": "restored" if apply else "ready-to-clear", "caseID": key, "changed": apply}
     info = root.stat()
-    # macOS birth time remains stable through partial recursive deletion, unlike
-    # ctime. It distinguishes replacement even when an inode is later reused.
-    return {"device": info.st_dev, "inode": info.st_ino,
-            "birthtimeNS": getattr(info, "st_birthtime_ns", int(info.st_birthtime * 1e9))}
-
-
-def cleanup_receipt(owner: dict, root: Path) -> bytes:
-    return canonical({"ownerSHA256": digest(canonical(owner)), "rootIdentity": root_identity(root)})
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("Docker recovery root must remain a user-owned mode 0700 directory")
+    expected = cleanup_receipt(owner, root)
+    if receipt is not None and receipt != expected:
+        raise ValueError("Docker recovery directory identity changed")
+    marker = root / "owner.json"
+    if marker.exists() or marker.is_symlink():
+        if private_json(marker) != owner:
+            raise ValueError("Docker recovery ownership marker changed")
+    elif receipt != expected:
+        raise ValueError("Missing Docker marker has no matching partial-cleanup receipt")
+    if not apply:
+        return {"status": "ready-to-remove-stopped-docker", "caseID": key, "changed": False}
+    # The original shutdown retained private diagnostics before sealing closed.
+    # Authorize root removal durably so either half of cleanup can be resumed.
+    journal.put(receipt_name, expected)
+    require_closed_vm(root, owner, journal.records())
+    if (private_json(guard.path) != owner or root.resolve() != root or cleanup_receipt(owner, root) != expected or
+            ((marker.exists() or marker.is_symlink()) and private_json(marker) != owner)):
+        raise ValueError("Docker recovery ownership changed before cleanup")
+    shutil.rmtree(root)
+    guard.clear(owner)
+    return {"status": "restored", "caseID": key, "changed": True}
 
 
 def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None, launchd=None) -> dict:
@@ -131,10 +163,14 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
         raise ValueError("Apply requires the exact case ID from the recovery report")
     root = Path(owner["root"])
     live = ssd / "live"
-    if (not root.is_absolute() or root.parent != live or not root.name.startswith("case-") or
+    docker = owner["identity"]["lane"] == "docker"
+    prefix = "docker-" if docker else "case-"
+    if (not root.is_absolute() or root.parent != live or not root.name.startswith(prefix) or
             live.resolve() != live or root.resolve() != root):
         raise ValueError("Recovery root is not a canonical owned case directory")
     verify_case(retained, owner)
+    if docker:
+        return recover_closed_docker(retained, owner, guard, apply=apply)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
     require_keychain_stopped(records)

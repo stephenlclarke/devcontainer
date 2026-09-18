@@ -17,7 +17,7 @@ from campaign_identity import published_fingerprints
 from docker_vm import DockerVM, private_root
 from engine_probe import engine_negotiation, request
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
-from host_runtime import HostGuard, cancellation, deadline, runtime_lease
+from host_runtime import HostGuard, cancellation, cleanup_receipt, deadline, runtime_lease
 from prepare_docker_cli import prepare_cli
 from prepare_guest_images import require_image
 from prepare_releases import require_retained
@@ -104,6 +104,13 @@ class DockerCase:
             raise ValueError("Docker release inputs changed during execution")
         if self.root is not None:
             private_root(self.root, self.owner)
+            # Persist before removal: a crash during rmtree or before guard.clear
+            # must remain recoverable without restarting the VM or fixture.
+            authorization = cleanup_receipt(self.owner, self.root)
+            self.vm.journal.put("docker-cleanup-authorized.json", authorization)
+            private_root(self.root, self.owner)
+            if cleanup_receipt(self.owner, self.root) != authorization:
+                raise ValueError("Docker root changed before cleanup")
             shutil.rmtree(self.root)
         if self.owner is not None:
             self.guard.clear(self.owner)

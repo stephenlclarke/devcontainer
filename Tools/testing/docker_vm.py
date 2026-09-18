@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import stat
 import subprocess
 import time
@@ -128,6 +129,58 @@ def verify_pid_files(root: Path, tools: dict, inventory: dict, *, arguments=proc
 def same_incarnation(first: dict, second: dict) -> bool:
     # Survives exec/reparenting; does not mistake PID reuse for a surviving VM.
     return first["pid"] == second["pid"] and first["started"] == second["started"]
+
+
+def require_unreachable_socket(path: Path) -> None:
+    """A listening peer is enough to refuse cleanup; never wait for HTTP data."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(1)
+        try:
+            connection.connect(str(path))
+        except (ConnectionRefusedError, FileNotFoundError):
+            return
+    raise ValueError("Docker oracle socket is still reachable")
+
+
+def require_closed_vm(root: Path, owner: dict, records: dict, *, inventory=None) -> None:
+    """Admit cleanup recovery only after durable, verified VM shutdown.
+
+    This never adopts a process, invokes Colima or signals a PID. An interrupted
+    startup/shutdown still requires explicit reconciliation, not a guessed retry.
+    """
+    if records.get("docker-vm-closed.json") != canonical({"verifiedStopped": True}):
+        raise ValueError("Docker VM has no verified shutdown receipt; reconciliation required")
+    plan = json.loads(records.get("docker-plan.json", b"null"))
+    if (not isinstance(plan, dict) or plan.get("owner") != owner or
+            plan.get("socket") != str(root / "colima" / PROFILE / "docker.sock") or
+            not isinstance(plan.get("tools"), dict)):
+        raise ValueError("Docker recovery plan identity is missing or changed")
+    tools = plan["tools"]
+    if plan.get("environment") != environment(root, tools) or plan.get("start") != start_arguments(tools, root):
+        raise ValueError("Docker recovery plan differs from the admitted runtime")
+    current = (inventory or process_inventory)()
+    require_idle([item["program"] for item in current.values()])
+    if scoped_processes(root, tools, current):
+        raise ValueError("Docker VM processes remain; preserving quarantine")
+    for name, data in records.items():
+        if name in {"docker-vm-processes.json", "docker-vm-stop-processes.json", "docker-vm-pids.json"}:
+            for captured in json.loads(data).values():
+                survivor = current.get(captured["pid"])
+                if survivor is not None and same_incarnation(captured, survivor):
+                    raise ValueError("Captured Docker VM process survived shutdown")
+        elif name.startswith("docker-") and name.endswith("-intent.json"):
+            stem = name.removesuffix("-intent.json")
+            if stem + "-exit.json" not in records:
+                raise ValueError("Docker VM command has no durable exit receipt")
+            process = json.loads(records.get(stem + "-process.json", b"null"))
+            if not isinstance(process, dict) or type(process.get("pid")) is not int or process["pid"] <= 0:
+                raise ValueError("Docker VM command process record is missing or invalid")
+            # Legacy command receipts have no start token. PID reuse therefore
+            # blocks conservatively; it can never authorize a signal or deletion.
+            if any(item["pid"] == process["pid"] or item.get("group") == process["pid"]
+                   for item in current.values()):
+                raise ValueError("Recorded Docker command or process group remains")
+    require_unreachable_socket(Path(plan["socket"]))
 
 
 def require_socket_paths(root: Path):
@@ -298,12 +351,7 @@ class DockerVM:
                 any((str(pid) in captured_processes and same_incarnation(captured_processes[str(pid)], item)) or
                     item.get("group") in groups for pid, item in remaining.items())):
             raise ValueError("Docker VM processes remain; preserving quarantine")
-        try:
-            request(self.socket, "GET", "/_ping", timeout=1)
-        except (ConnectionError, FileNotFoundError):
-            pass
-        else:
-            raise ValueError("Docker oracle socket is still reachable")
+        require_unreachable_socket(self.socket)
         self.retain_logs()
         self.journal.put("docker-vm-closed.json", canonical({"verifiedStopped": True}))
 

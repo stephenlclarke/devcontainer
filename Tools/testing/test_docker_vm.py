@@ -205,7 +205,7 @@ class DockerVMTests(unittest.TestCase):
         self.journal.put("docker-vm-pids.json", b"{}")
         with patch.object(self.vm, "command", side_effect=[b"", canonical(self.instance("Stopped"))]), \
                 patch.object(docker_vm, "scoped_processes", return_value={}), \
-                patch.object(docker_vm, "request", side_effect=FileNotFoundError), patch.object(self.vm, "retain_logs"):
+                patch.object(docker_vm, "require_unreachable_socket"), patch.object(self.vm, "retain_logs"):
             self.vm.stop()
         self.assertEqual(json.loads(self.journal.records()["docker-vm-closed.json"]), {"verifiedStopped": True})
 
@@ -271,7 +271,7 @@ class DockerVMTests(unittest.TestCase):
         self.inventory.side_effect = [{}, {}, {321: dict(survivor, started="later")}]
         with patch.object(self.vm, "command", side_effect=[b"", canonical(self.instance("Stopped"))]), \
                 patch.object(docker_vm, "scoped_processes", return_value={}), \
-                patch.object(docker_vm, "request", side_effect=ConnectionRefusedError), patch.object(self.vm, "retain_logs"):
+                patch.object(docker_vm, "require_unreachable_socket"), patch.object(self.vm, "retain_logs"):
             self.vm.stop()
         self.assertIn("docker-vm-closed.json", self.journal.records())
 
@@ -285,6 +285,89 @@ class DockerVMTests(unittest.TestCase):
                 patch.object(self.vm, "command") as command, self.assertRaisesRegex(ValueError, "incarnation"):
             self.vm.stop()
         command.assert_not_called()
+
+    def closed_records(self):
+        self.vm.configure()
+        self.journal.put("docker-vm-closed.json", canonical({"verifiedStopped": True}))
+        return self.journal.records()
+
+    def closed_check(self, records):
+        with patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "require_unreachable_socket"):
+            docker_vm.require_closed_vm(self.root, self.owner, records, inventory=self.inventory)
+
+    def test_closed_recovery_requires_authentic_plan_and_shutdown_receipt(self):
+        records = self.closed_records()
+        self.closed_check(records)
+        for key, payload in (("docker-vm-closed.json", b"{}"), ("docker-plan.json", b"{}")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.closed_check({**records, key: payload})
+        plan = json.loads(records["docker-plan.json"])
+        for field in ("environment", "start"):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "admitted runtime"):
+                self.closed_check({**records, "docker-plan.json": canonical({**plan, field: None})})
+
+    def test_closed_recovery_rejects_live_socket_and_uncertain_socket_error(self):
+        records = self.closed_records()
+        with patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "require_unreachable_socket", side_effect=ValueError("reachable")), \
+                self.assertRaisesRegex(ValueError, "reachable"):
+            docker_vm.require_closed_vm(self.root, self.owner, records, inventory=self.inventory)
+        with patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "require_unreachable_socket", side_effect=TimeoutError), self.assertRaises(TimeoutError):
+            docker_vm.require_closed_vm(self.root, self.owner, records, inventory=self.inventory)
+
+    def test_shutdown_socket_probe_never_waits_for_nonresponding_http_peer(self):
+        connection = Mock()
+        with patch.object(docker_vm.socket, "socket") as factory, patch.object(docker_vm, "request") as http:
+            factory.return_value.__enter__.return_value = connection
+            with self.assertRaisesRegex(ValueError, "reachable"):
+                docker_vm.require_unreachable_socket(self.root / "docker.sock")
+            connection.settimeout.assert_called_once_with(1)
+            connection.connect.assert_called_once_with(str(self.root / "docker.sock"))
+            connection.recv.assert_not_called()
+            connection.sendall.assert_not_called()
+            http.assert_not_called()
+            for error in (FileNotFoundError, ConnectionRefusedError):
+                connection.connect.side_effect = error
+                docker_vm.require_unreachable_socket(self.root / "docker.sock")
+            for error in (TimeoutError, PermissionError, ConnectionResetError):
+                connection.connect.side_effect = error
+                with self.subTest(error=error), self.assertRaises(error):
+                    docker_vm.require_unreachable_socket(self.root / "docker.sock")
+
+    def test_closed_recovery_rejects_captured_survivor_even_after_exec(self):
+        records = self.closed_records()
+        for name in ("docker-vm-processes.json", "docker-vm-stop-processes.json", "docker-vm-pids.json"):
+            evidence = {**records, name: canonical({"321": self.process()})}
+            self.inventory.return_value = {321: dict(self.process(), program="/bin/changed", group=1)}
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "survived shutdown"):
+                self.closed_check(evidence)
+            self.inventory.return_value = {321: dict(self.process(), program="/bin/changed", started="later")}
+            self.closed_check(evidence)
+
+    def test_closed_recovery_rejects_uncertain_commands_and_legacy_pid_reuse(self):
+        records = {**self.closed_records(), "docker-command-intent.json": b"{}"}
+        with self.assertRaisesRegex(ValueError, "exit receipt"):
+            self.closed_check(records)
+        records["docker-command-exit.json"] = b'{"code":0}'
+        with self.assertRaisesRegex(ValueError, "process record"):
+            self.closed_check(records)
+        records["docker-command-process.json"] = canonical({"pid": 321})
+        self.closed_check(records)
+        for process in (self.process(program="/bin/changed"), dict(self.process(322, program="/bin/changed"), group=321)):
+            self.inventory.return_value = {process["pid"]: process}
+            with self.subTest(process=process), self.assertRaisesRegex(ValueError, "process group"):
+                self.closed_check(records)
+
+    def test_closed_recovery_rejects_new_scoped_process_and_busy_worker(self):
+        records = self.closed_records()
+        with patch.object(docker_vm, "scoped_processes", return_value={"321": self.process()}), \
+                self.assertRaisesRegex(ValueError, "processes remain"):
+            docker_vm.require_closed_vm(self.root, self.owner, records, inventory=self.inventory)
+        self.inventory.return_value = {321: self.process(program="/runner/Runner.Worker")}
+        with self.assertRaisesRegex(ValueError, "Active worker"):
+            self.closed_check(records)
 
 
 if __name__ == "__main__":

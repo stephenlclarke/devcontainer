@@ -49,6 +49,7 @@ sh_test(
         "test_runtime_services.py",
         "recover_runtime.py",
         "test_recover_runtime.py",
+        "test_recover_docker.py",
         "released_engine.py",
         "test_released_engine.py",
         "//Tools/bazel:prepare_candidate.py",

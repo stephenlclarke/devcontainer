@@ -60,6 +60,17 @@ class DockerCaseTests(unittest.TestCase):
         self.assertEqual(events, ["guest", "vm", "clear"])
         self.assertFalse(self.case.root.exists())
         self.assertIn("docker-journal.json", [call.args[1] for call in self.store.attach.call_args_list])
+        self.assertEqual(self.vm.journal.put.call_args.args[0], "docker-cleanup-authorized.json")
+        authorization = json.loads(self.vm.journal.put.call_args.args[1])
+        self.assertIn("rootIdentity", authorization)
+
+    def test_cleanup_authorization_failure_preserves_root_and_guard(self):
+        self.setup_case()
+        self.vm.journal.put.side_effect = OSError("retention failed")
+        with self.assertRaisesRegex(OSError, "retention failed"):
+            self.case.cleanup()
+        self.assertTrue(self.case.root.exists())
+        self.guard.clear.assert_not_called()
 
     def test_uncertain_guest_cleanup_preserves_running_vm_and_quarantine(self):
         self.setup_case()

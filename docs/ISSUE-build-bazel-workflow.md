@@ -12,6 +12,8 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+Docker shutdown could be verified while a later crash during scratch deletion or guard clearance left no supported recovery path. Recovery now recognizes the Docker journal separately, verifies process/socket closure again, and uses a durable directory-identity authorization written before normal or resumed deletion. It preserves failed-case evidence and refuses uncertain startup/shutdown rather than rerunning the VM. Full live interrupted-process reconciliation is still required.
+
 Creating an archive alone does not prove that its installed layout runs or that its bytes survive the test workflow. Native package verification now authenticates the actual extracted products and executes safe CLI/provider-fixture checks on SSD, retaining archive bytes and test evidence under one invocation. Uncertain process cleanup must preserve both the private home and extracted package. This remains unsigned local package proof; Homebrew installation and complete distribution qualification remain required.
 
 Native consumer CLI component tests could pass without emitting LLVM coverage because their sanitized child environment discarded profiling output and the shell target did not declare the executable for export. The shared evidence contract now supports a separate exact unit-plus-CLI inventory, preserving unit-only history and binding the selected inventory at the 90% gate. Compose owns the executable instrumentation and additive target inventory; no source exclusions or lower thresholds are introduced.
