@@ -151,11 +151,13 @@ class BuildImagesTests(unittest.TestCase):
     def test_unknown_completion_preserves_even_an_absent_output(self):
         self.fixture.prepare()
         self.fixture.start()
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "uncertain"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.output()
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "uncertain"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assert_no_delete()
 
     def test_response_requires_submission_and_rejection_is_not_completion(self):
@@ -212,8 +214,9 @@ class BuildImagesTests(unittest.TestCase):
             changed = copy.deepcopy(original)
             changed[field] = value
             self.server.images[tag_for(OWNER)] = changed
+            recovered = self.reopen()
             with self.subTest(field=field), self.assertRaises(ValueError):
-                self.reopen().cleanup()
+                recovered.cleanup()
         self.assert_no_delete()
 
     def test_lost_delete_response_is_reconciled_without_rebuilding(self):
@@ -243,8 +246,9 @@ class BuildImagesTests(unittest.TestCase):
     def test_conflicting_creation_and_deletion_journals_preserve_the_image(self):
         self.submitted()
         self.journal.put("e04-built-delete.json", b'{"id":"sha256:other"}')
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "identities disagree"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assert_no_delete()
 
     def test_id_inspection_must_agree_with_tag_before_deletion(self):
@@ -264,8 +268,9 @@ class BuildImagesTests(unittest.TestCase):
         image = self.server.images.pop(tag_for(OWNER))
         image["RepoTags"] = []
         self.server.images["untagged"] = image
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "lost its tag"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assert_no_delete()
 
     def test_intermediate_residue_blocks_cleanup_without_broad_pruning(self):
@@ -277,20 +282,23 @@ class BuildImagesTests(unittest.TestCase):
         self.assertIn("intermediate", self.server.images)
         self.assertNotIn("e04-images-removed.json", self.journal.records())
         self.assertEqual(len(self.server.delete_records), 1)
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "closed"):
-            self.reopen().start(failing=True)
+            recovered.start(failing=True)
         self.assertNotIn("e04-failed-started.json", self.journal.records())
         self.output()
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "removed build output"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assertEqual(len(self.server.delete_records), 1)
 
     def test_closed_transaction_reappearing_output_is_never_deleted(self):
         self.submitted()
         self.fixture.cleanup()
         self.output()
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "removed build output"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assertEqual(len(self.server.delete_records), 1)
 
     def test_lost_delete_then_residue_does_not_allow_output_readoption(self):
@@ -302,8 +310,9 @@ class BuildImagesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "residue"):
             self.fixture.cleanup()
         self.output()
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "removed build output"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assert_no_delete()
 
 
