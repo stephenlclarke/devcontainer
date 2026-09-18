@@ -15,10 +15,12 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
 from campaign_identity import published_fingerprints
 from docker_vm import DockerVM, private_root
+from devcontainer_reference import DevcontainerReference, FIXTURE as DEVCONTAINER_FIXTURE, fixture_inputs
 from engine_probe import engine_negotiation, request
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
 from host_runtime import HostGuard, cancellation, cleanup_receipt, deadline, runtime_lease
 from prepare_docker_cli import prepare_cli
+from prepare_devcontainers_cli import prepare_cli as prepare_devcontainers
 from prepare_guest_images import require_image
 from prepare_releases import require_retained
 from release_inputs import validate_lock
@@ -26,7 +28,8 @@ from runtime_services import require_owned_volume
 from service_journal import ServiceJournal
 
 
-def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, scratch: Path, retained: Path) -> dict:
+def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, scratch: Path, retained: Path,
+                 *, fixture=None, repository=None) -> dict:
     expected = {"abiosoft/colima": "v0.10.3", "lima-vm/lima": "v2.2.0", "abiosoft/colima-core": "v0.10.4"}
     assets = validate_lock(oracle_lock)
     if len(assets) != 3 or {asset["repository"]: asset["tag"] for asset in assets} != expected:
@@ -41,8 +44,14 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
     matches = [image for image in images.get("images", []) if image.get("name") == "alpine-workload"]
     if len(matches) != 1:
         raise ValueError("Docker workload image is missing or ambiguous")
-    return {"assets": prepared, "client": client, "tools": tools, "pins": pins,
-            "workload": require_image(matches[0], retained / "guest-images")}
+    result = {"assets": prepared, "client": client, "tools": tools, "pins": pins,
+              "workload": require_image(matches[0], retained / "guest-images")}
+    if fixture == DEVCONTAINER_FIXTURE:
+        reference_lock = json.loads((repository / "Tools/bazel/devcontainers-cli.lock.json").read_text())
+        reference = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["devcontainersCli"]
+        result["devcontainers"] = prepare_devcontainers(reference_lock, reference, scratch, retained, offline=True)
+        result["devcontainerFixture"] = fixture_inputs(repository)
+    return result
 
 
 class DockerCase:
@@ -62,6 +71,9 @@ class DockerCase:
         journal = ServiceJournal(self.journal_parent / (digest(canonical(self.owner)) + ".sqlite"), self.owner, create=True)
         self.vm = DockerVM(self.root, self.owner, self.inputs["tools"], self.inputs["pins"], journal)
         self.vm.start()
+        if self.identity["fixture"] == DEVCONTAINER_FIXTURE:
+            self.guest = DevcontainerReference(self.vm, self.inputs, self.owner, observe=self.requests.append)
+            self.guest.setup()
         if self.identity["fixture"] in FIXTURES:
             self.vm.command("docker-workload-load", [self.inputs["tools"]["docker"], "--host", "unix://" + str(self.vm.socket),
                             "image", "load", "--input", self.inputs["workload"]["path"]], timeout=60)
@@ -141,7 +153,8 @@ def run_docker(args):
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("Docker oracle SSD identity changed")
-            return admit_docker(locks[0], locks[1], pins, locks[2], SSD, RETAINED)
+            return admit_docker(locks[0], locks[1], pins, locks[2], SSD, RETAINED,
+                                fixture=args.fixture, repository=repository)
         inputs = revalidate()
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": "docker",
                     "contractSHA256": digest(canonical(expected)), **published_fingerprints(repository),

@@ -98,6 +98,15 @@ class DockerCaseTests(unittest.TestCase):
         with patch.object(released_docker, "engine_negotiation", return_value={"verified": "true"}):
             self.assertEqual(self.case.operation(), {"verified": "true"})
 
+    def test_d01_uses_official_cli_adapter_not_engine_negotiation(self):
+        self.identity["fixture"] = "D01-image-config"
+        with patch.object(released_docker, "DevcontainerReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.assertEqual(self.case.operation(), self.guest.operation.return_value)
+
     def test_setup_rejects_different_loaded_image(self):
         with patch.object(released_docker, "DockerVM", return_value=self.vm), \
                 patch.object(released_docker, "request", return_value=(200, b'{"Id":"wrong"}')), \
@@ -131,14 +140,21 @@ class DockerAdmissionTests(unittest.TestCase):
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
         assets = [dict(executables={"colima": "/colima"}), dict(executables={"limactl": "/limactl"},
                   files={"guest-agent": "/agent"}), dict(executables={}, files={"disk-image": "/image"})]
-        with patch.object(released_docker, "require_retained", side_effect=assets) as retained, \
+        with patch.object(released_docker, "require_retained", side_effect=assets + assets) as retained, \
                 patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}) as cli, \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}) as reference, \
                 patch.object(released_docker, "require_image", return_value={"verified": True}):
             inputs = released_docker.admit_docker(lock, {}, {}, {"images": [{"name": "alpine-workload"}]},
                                                   Path("/scratch"), Path("/retained"))
-        self.assertEqual(retained.call_count, 3)
+            reference.assert_not_called()
+            d01 = released_docker.admit_docker(lock, {}, {}, {"images": [{"name": "alpine-workload"}]},
+                                               Path("/scratch"), Path("/retained"), fixture="D01-image-config", repository=repository)
+        self.assertEqual(retained.call_count, 6)
         self.assertEqual(set(inputs["tools"]), {"colima", "limactl", "guest-agent", "disk-image", "docker"})
         self.assertEqual(cli.call_args.kwargs, {"offline": True})
+        self.assertEqual(reference.call_args.kwargs, {"offline": True})
+        self.assertEqual(d01["devcontainers"], {"verified": True})
+        self.assertIn("DEVCONTAINER_PARITY", d01["devcontainerFixture"]["probe"])
 
     def test_unreviewed_release_set_is_rejected_before_preparation(self):
         with patch.object(released_docker, "validate_lock", return_value=[]), \

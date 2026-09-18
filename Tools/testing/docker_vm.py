@@ -20,6 +20,12 @@ from runtime_services import process_inventory, require_idle
 
 PROFILE = "parity"
 INSTANCE = "colima-" + PROFILE
+DEVCONTAINER_COMMANDS = {"devcontainer-image-pull", "devcontainer-up", "devcontainer-exec"}
+
+
+def command_record(name: str, suffix: str) -> bool:
+    """One command inventory for retention, process recovery and root disposal."""
+    return name.endswith(suffix) and (name.startswith("docker-") or name.removesuffix(suffix) in DEVCONTAINER_COMMANDS)
 
 
 def private_root(root: Path, owner: dict) -> None:
@@ -168,10 +174,12 @@ def require_closed_vm(root: Path, owner: dict, records: dict, *, inventory=None)
                 survivor = current.get(captured["pid"])
                 if survivor is not None and same_incarnation(captured, survivor):
                     raise ValueError("Captured Docker VM process survived shutdown")
-        elif name.startswith("docker-") and name.endswith("-intent.json"):
+        elif command_record(name, "-intent.json"):
             stem = name.removesuffix("-intent.json")
             if stem + "-exit.json" not in records:
                 raise ValueError("Docker VM command has no durable exit receipt")
+            if stem in DEVCONTAINER_COMMANDS and (stem + ".log" not in records or stem + "-log.json" not in records):
+                raise ValueError("D01 command diagnostics are not retained")
             process = json.loads(records.get(stem + "-process.json", b"null"))
             if not isinstance(process, dict) or type(process.get("pid")) is not int or process["pid"] <= 0:
                 raise ValueError("Docker VM command process record is missing or invalid")
@@ -358,7 +366,7 @@ class DockerVM:
     def retain_logs(self):
         records = self.journal.records()
         for name in records:
-            if name.startswith("docker-") and name.endswith("-exit.json"):
+            if command_record(name, "-exit.json"):
                 stem = name.removesuffix("-exit.json")
                 payload, metadata = diagnostic_snapshot(self.root / (stem + ".log"))
                 self.journal.put(stem + ".log", payload)

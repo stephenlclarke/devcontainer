@@ -7,7 +7,7 @@ import sqlite3
 
 from build_images import BuildImages
 from case_evidence import canonical, digest, validate_identity
-from docker_vm import DockerVM, environment, pid_roles, private_root, scoped_processes, start_arguments, verify_pid_files
+from docker_vm import DockerVM, command_record, environment, pid_roles, private_root, scoped_processes, start_arguments, verify_pid_files
 from guest_fixture import GuestFixture
 from guest_runtime import GUEST_API_VERSION
 from host_runtime import deadline
@@ -27,7 +27,8 @@ def recovery_inputs(retained: Path, ssd: Path, owner: dict) -> dict:
                          (validate_identity(owner["identity"]),)).fetchone()
     if row is None or digest(row[0]) != row[1]:
         raise ValueError("Docker recovery admission is missing or corrupt")
-    inputs = admit_docker(locks[0], locks[1], pins, locks[2], ssd, retained)
+    inputs = admit_docker(locks[0], locks[1], pins, locks[2], ssd, retained,
+                         fixture=owner["identity"]["fixture"], repository=repository)
     if canonical(inputs) != row[0]:
         raise ValueError("Docker recovery release inputs differ from the original case")
     return inputs
@@ -50,12 +51,13 @@ def verify_running(vm: DockerVM) -> None:
     require_idle([item["program"] for item in current.values()
                   if Path(item["program"]).name != "com.apple.Virtualization.VirtualMachine"])
     for name, data in records.items():
-        if not name.startswith("docker-") or not name.endswith("-intent.json"):
+        if not command_record(name, "-intent.json"):
             continue
         stem = name.removesuffix("-intent.json")
         exited = json.loads(records.get(stem + "-exit.json", b"null"))
         process = json.loads(records.get(stem + "-process.json", b"null"))
-        if (not isinstance(exited, dict) or exited.get("code") != 0 or
+        if (not isinstance(exited, dict) or type(exited.get("code")) is not int or
+                (name.startswith("docker-") and exited["code"] != 0) or
                 not isinstance(process, dict) or type(process.get("pid")) is not int or process["pid"] <= 0):
             raise ValueError("Docker recovery command lacks a successful durable exit")
         if any(item["pid"] == process["pid"] or item.get("group") == process["pid"] for item in current.values()):
@@ -98,5 +100,31 @@ def recover_completed_build(retained: Path, ssd: Path, owner: dict, guard, journ
         images.cleanup()
         vm.stop()
     # The common closed-VM path verifies shutdown again before root removal.
+    from recover_runtime import recover_closed_docker
+    return recover_closed_docker(retained, owner, guard, apply=True)
+
+
+def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard, journal, *, apply: bool) -> dict:
+    """Reconcile completed CLI commands; never replay up/exec or alter results."""
+    from devcontainer_reference import DevcontainerReference, FIXTURE
+    if owner["identity"]["fixture"] != FIXTURE:
+        raise ValueError("Not a D01 recovery transaction")
+    key = validate_identity(owner["identity"])
+    inputs = recovery_inputs(retained, ssd, owner)
+    vm = DockerVM(Path(owner["root"]), owner, inputs["tools"], inputs["pins"], journal)
+    fixture = DevcontainerReference(vm, inputs, owner)
+    with deadline(45):
+        verify_running(vm)
+        identifier = fixture.recovery_plan()
+    if not apply:
+        return {"status": "ready-to-clean-completed-devcontainer", "caseID": key,
+                "changed": False, "container": identifier}
+    with deadline(150):
+        if json.loads(guard.path.read_bytes()) != owner or recovery_inputs(retained, ssd, owner) != inputs:
+            raise ValueError("D01 recovery ownership or inputs changed")
+        verify_running(vm)
+        journal.put("d01-recovery-authorized.json", canonical({"caseID": key, "cleanupOnly": True}))
+        fixture.remove_owned()
+        vm.stop()
     from recover_runtime import recover_closed_docker
     return recover_closed_docker(retained, owner, guard, apply=True)

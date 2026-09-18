@@ -26,7 +26,7 @@ class BuildRecoveryTests(unittest.TestCase):
         (self.retained / "private-runtime").mkdir(mode=0o700)
         self.root = self.ssd / "live/docker-fixture"
         self.root.mkdir(mode=0o700, parents=True)
-        self.identity = {"campaign": "recovery", "fixture": "E04-image-build", "lane": "docker",
+        self.identity = {"campaign": "recovery", "fixture": getattr(self, "fixture_name", "E04-image-build"), "lane": "docker",
                          **{key: "a" * 64 for key in ("harnessSHA256", "runtimeSHA256", "releaseSetSHA256", "contractSHA256")}}
         self.owner = {"root": str(self.root), "identity": self.identity}
         self.key = validate_identity(self.identity)
@@ -178,6 +178,72 @@ class BuildRecoveryTests(unittest.TestCase):
         self.journal.put("docker-vm-stop-intent.json", b"{}")
         with self.assertRaisesRegex(ValueError, "Interrupted Docker shutdown"):
             recover_build.verify_running(self.vm)
+
+
+class DevcontainerRecoveryTests(unittest.TestCase):
+    fixture_name = "D01-image-config"
+    setUp = BuildRecoveryTests.setUp
+    invoke = BuildRecoveryTests.invoke
+    running_records = BuildRecoveryTests.running_records
+
+    def patches(self):
+        stack = ExitStack()
+        stack.enter_context(patch.object(recover_build, "recovery_inputs", return_value=self.inputs))
+        stack.enter_context(patch.object(recover_build, "DockerVM", return_value=self.vm))
+        stack.enter_context(patch.object(recover_build, "verify_running"))
+        self.fixture = Mock()
+        self.fixture.recovery_plan.return_value = "a" * 64
+        stack.enter_context(patch("devcontainer_reference.DevcontainerReference", return_value=self.fixture))
+        return stack
+
+    def test_report_and_apply_cleanup_only_preserve_failed_result(self):
+        with self.patches(), patch.object(self.vm, "stop") as stop, \
+                patch("recover_runtime.recover_closed_docker", return_value={"status": "clear"}) as finish:
+            report = self.invoke()
+            self.assertEqual(report["status"], "ready-to-clean-completed-devcontainer")
+            self.assertFalse(report["changed"])
+            self.fixture.remove_owned.assert_not_called()
+            stop.assert_not_called()
+            self.assertEqual(self.invoke(True), {"status": "clear"})
+            self.fixture.remove_owned.assert_called_once_with()
+            stop.assert_called_once_with()
+            finish.assert_called_once()
+            self.assertEqual(finish.call_args.args[:2], (self.retained, self.owner))
+            self.assertEqual(finish.call_args.args[2].path, self.guard.path)
+            self.assertEqual(finish.call_args.kwargs, {"apply": True})
+            self.assertEqual(self.store.begin(self.identity), self.result)
+            self.assertIn("d01-recovery-authorized.json", self.journal.records())
+
+    def test_uncertain_ownership_and_changed_inputs_never_stop_vm(self):
+        with self.patches(), patch.object(self.vm, "stop") as stop:
+            self.fixture.recovery_plan.side_effect = ValueError("uncertain")
+            with self.assertRaisesRegex(ValueError, "uncertain"):
+                self.invoke(True)
+            self.fixture.remove_owned.assert_not_called()
+            stop.assert_not_called()
+        with self.patches(), patch.object(recover_build, "recovery_inputs", side_effect=[self.inputs, {}]), \
+                self.assertRaisesRegex(ValueError, "inputs changed"):
+            self.invoke(True)
+        self.fixture.remove_owned.assert_not_called()
+        self.assertTrue(self.guard.path.exists())
+
+    def test_cli_completion_requires_process_absence_even_after_nonzero_exit(self):
+        pids, process = self.running_records()
+        self.journal.put("devcontainer-up-intent.json", b"{}")
+        with patch.object(recover_build, "verify_pid_files", return_value=pids), \
+                patch.object(recover_build, "scoped_processes", return_value={"321": process}), \
+                patch.object(self.vm, "verify"):
+            with self.assertRaisesRegex(ValueError, "durable exit"):
+                recover_build.verify_running(self.vm)
+            self.journal.put("devcontainer-up-process.json", canonical({"pid": 789}))
+            self.journal.put("devcontainer-up-exit.json", canonical({"code": 1}))
+            recover_build.verify_running(self.vm)
+            # HTTP resource deletion intent is not an external command receipt.
+            self.journal.put("devcontainer-delete-intent.json", canonical({"id": "a" * 64}))
+            recover_build.verify_running(self.vm)
+            self.vm.inventory.return_value[789] = dict(process, pid=789)
+            with self.assertRaisesRegex(ValueError, "process remains"):
+                recover_build.verify_running(self.vm)
 
 
 if __name__ == "__main__":

@@ -9,18 +9,21 @@ RELEASE_INPUTS = (
     "Tools/bazel/releases.lock.json",
     "Tools/bazel/docker-oracle.lock.json",
     "Tools/bazel/docker-cli.lock.json",
+    "Tools/bazel/devcontainers-cli.lock.json",
     "Tools/bazel/guest-kernel.lock.json",
     "Tools/bazel/guest-images.lock.json",
     "Tools/bazel/builder-images.lock.json",
     "Tests/Parity/manifest.json",
+    "Tests/Parity/fixtures/D01-image-config/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/D01-image-config/probe.sh",
 )
 PREPARATION_HELPERS = (
     "prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
-    "prepare_guest_images.py", "oci_image_layout.py", "prepare_docker_cli.py",
+    "prepare_guest_images.py", "oci_image_layout.py", "prepare_docker_cli.py", "prepare_devcontainers_cli.py",
 )
 RUNTIME_HELPERS = (
     "build_probe.py", "build_images.py", "build_fixture.py", "build_runtime.py",
-    "archive_probe.py", "campaign_identity.py", "case_evidence.py", "docker_vm.py",
+    "archive_probe.py", "campaign_identity.py", "case_evidence.py", "docker_vm.py", "devcontainer_reference.py",
     "engine_probe.py", "exec_probe.py", "fault_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",

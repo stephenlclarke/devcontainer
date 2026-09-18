@@ -201,7 +201,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES), "D01-image-config"], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -211,6 +211,8 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
+    if args.fixture == "D01-image-config":
+        raise ValueError("D01 candidate frontend is not implemented; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None

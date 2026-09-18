@@ -190,7 +190,9 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if docker:
         journal = ServiceJournal(retained / "private-runtime" / (digest(canonical(owner)) + ".sqlite"), owner)
         if "docker-vm-closed.json" not in journal.records():
-            from recover_build import recover_completed_build
+            from recover_build import recover_completed_build, recover_completed_devcontainer
+            if owner["identity"]["fixture"] == "D01-image-config":
+                return recover_completed_devcontainer(retained, ssd, owner, guard, journal, apply=apply)
             return recover_completed_build(retained, ssd, owner, guard, journal, apply=apply)
         return recover_closed_docker(retained, owner, guard, apply=apply)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)

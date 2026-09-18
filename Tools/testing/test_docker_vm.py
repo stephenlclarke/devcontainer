@@ -131,6 +131,24 @@ class DockerVMTests(unittest.TestCase):
         self.assertFalse(self.vm.uncertain)
         self.assertEqual(json.loads(self.journal.records()["docker-fail-exit.json"])["code"], 1)
 
+    def test_reference_cli_success_and_failure_logs_survive_root_removal(self):
+        self.vm.configure()
+        for name in sorted(docker_vm.DEVCONTAINER_COMMANDS):
+            if name == "devcontainer-up":
+                with self.assertRaisesRegex(RuntimeError, "failed"):
+                    self.vm.command(name, ["/bin/sh", "-c", "printf 'CLI failure'; exit 1"])
+            else:
+                self.vm.command(name, ["/usr/bin/printf", "CLI success"])
+        self.vm.retain_logs()
+        for name in docker_vm.DEVCONTAINER_COMMANDS:
+            (self.root / (name + ".log")).unlink()
+        records = self.journal.records()
+        for name in docker_vm.DEVCONTAINER_COMMANDS:
+            expected = b"CLI failure" if name == "devcontainer-up" else b"CLI success"
+            self.assertEqual(records[name + ".log"], expected)
+            self.assertFalse(json.loads(records[name + "-log.json"])["truncated"])
+        self.assertFalse(docker_vm.command_record("devcontainer-delete-intent.json", "-intent.json"))
+
     def test_interrupted_spawn_preserves_quarantine_and_never_stops_unknown_pid(self):
         self.vm.configure()
         with patch.object(docker_vm.subprocess, "Popen", side_effect=KeyboardInterrupt), \
@@ -368,6 +386,22 @@ class DockerVMTests(unittest.TestCase):
             docker_vm.require_closed_vm(self.root, self.owner, records, inventory=self.inventory)
         self.inventory.return_value = {321: self.process(program="/runner/Runner.Worker")}
         with self.assertRaisesRegex(ValueError, "Active worker"):
+            self.closed_check(records)
+
+    def test_closed_cli_requires_exit_process_and_retained_diagnostics(self):
+        records = {**self.closed_records(), "devcontainer-up-intent.json": b"{}"}
+        with self.assertRaisesRegex(ValueError, "exit receipt"):
+            self.closed_check(records)
+        records["devcontainer-up-exit.json"] = b'{"code":1}'
+        with self.assertRaisesRegex(ValueError, "diagnostics"):
+            self.closed_check(records)
+        records.update({"devcontainer-up.log": b"failure", "devcontainer-up-log.json": b"{}"})
+        with self.assertRaisesRegex(ValueError, "process record"):
+            self.closed_check(records)
+        records["devcontainer-up-process.json"] = canonical({"pid": 321})
+        self.closed_check(records)
+        self.inventory.return_value = {321: self.process(program="/prepared/node")}
+        with self.assertRaisesRegex(ValueError, "process group"):
             self.closed_check(records)
 
 
