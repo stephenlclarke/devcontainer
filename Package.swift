@@ -346,6 +346,7 @@ let package = Package(
             name: "DevContainerServiceTests",
             dependencies: [
                 "DevContainerTestStorage",
+                "DevContainerProcess",
                 "DevContainerDockerAPI",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",

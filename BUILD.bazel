@@ -305,7 +305,7 @@ swift_test(
     module_name = "DevContainerServiceTests",
     copts = RUNTIME_COPTS,
     deps = [
-        ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerTestSupport",
+        ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerTestSupport",
         "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
         "@swiftpkg_container_engine_api//:ContainerEngineWire",
@@ -318,6 +318,7 @@ swift_test(
     srcs = [
         "Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
         "Tests/DevContainerServiceTests/ServiceTestExecutable.swift",
+        "Tests/DevContainerServiceTests/ServiceTestHTTP.swift",
     ],
     module_name = "DevContainerServiceIntegrationTests",
     copts = RUNTIME_COPTS,
@@ -328,7 +329,7 @@ swift_test(
     tags = ["manual", "local", "no-cache", "external", "integration"],
     timeout = "short",
     deps = [
-        ":DevContainerService", "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
+        ":DevContainerModel", ":DevContainerProcess", ":DevContainerService", "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI", "@swiftpkg_container_engine_api//:ContainerEngineWire",
     ],
 )

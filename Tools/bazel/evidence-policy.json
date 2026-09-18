@@ -16,7 +16,7 @@
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 97,
-        "//:DevContainerServiceTests": 5
+        "//:DevContainerServiceTests": 19
       },
       "required_sources": [
         "Sources/DevContainerModel/AtomicFile.swift",
@@ -43,7 +43,7 @@
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 108,
-        "//:DevContainerServiceTests": 5
+        "//:DevContainerServiceTests": 19
       },
       "required_sources": [
         "Sources/DevContainerModel/AtomicFile.swift",

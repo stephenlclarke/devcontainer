@@ -36,6 +36,12 @@ This placement follows the long-term asset policy. An SSD-resident stock API exe
 
 ## Cutover requirements
 
+### Bounded service HTTP probes
+
+The explicit `DevContainerServiceIntegrationTests` lane uses `ServiceTestHTTP`, backed by the existing `ProcessRunner`, rather than waiting for curl to exit before draining pipes. Each request has a five-second maximum (or an earlier enclosing deadline), drains stdout/stderr concurrently, retains at most 64 KiB per stream and rejects truncation, helper exit failure, malformed UTF-8/status and unexpected HTTP success requirements. Curl's implicit configuration and proxies are disabled; only the Unix socket is selected. Deadline return waits for owned child termination and reap. The bound does not mean abandoning cleanup at five seconds.
+
+The deterministic service suite includes fake-executable probes for large stdout/stderr, exact request arguments, malformed responses, failed helper exit despite HTTP 200 text, deadline/reap and expired-before-launch behavior. These are no-Keychain component tests, not live HTTP parity. The evidence policy now requires all 19 service test methods in both dependency profiles. Building the declared host-integration target proves compilation, not execution or Keychain approval. Host integration remains opt-in and still requires its own exact-head result.
+
 ### Published Docker oracle inputs
 
 `make bazel-prepare-docker-oracle` uses `Tools/bazel/docker-oracle.lock.json` with the existing leased GitHub acquisition and recoverable preparation path. It downloads published binaries, never source builds: Colima 0.10.3, Lima 2.2.0 (including the ARM64 Linux guest agent), and Colima-core 0.10.4's compressed Ubuntu 24.04 ARM64 Docker image. Extraction and copying use SSD scratch; verified reusable payloads and inventories remain internal. `OFFLINE=1` verifies and reuses the retained inputs. The image stays compressed, non-executable data; no VM, Docker context, service or existing Colima profile is created or changed.

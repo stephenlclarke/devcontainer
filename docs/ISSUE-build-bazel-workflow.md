@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The explicit host-service integration lane used a synchronous HTTP helper with no request timeout and waited for exit before draining pipes. A hanging service or oversized response could stall unattended tests. Reuse the existing deadline-aware process runner, bound both streams, reject truncation and malformed status, preserve tighter caller deadlines, and disable implicit curl configuration. Unit fixtures must prove helper failure and cleanup without accessing the operator's Keychain; the real host lane remains separate opt-in execution.
+
 Support-archive generation also used unbounded external probes and swallowed caller cancellation/deadline errors into a successful partial bundle. Red regression `4f8dba68-bf34-4c75-9d62-96c2fbf8c8a1` reproduces both. Bound probes while preserving useful best-effort results for ordinary failures; cancellation and enclosing deadline expiry must stop collection, reap subprocesses and remove owned staging.
 
 Compose bridge project-name and volume discovery had unbounded subprocess lifetimes and output capture; cancellation during volume discovery was swallowed as success. Retained regression `500f2161-9751-4bae-b48e-b3ccc2138da5` proves the delayed deadline and swallowed cancellation. Tightening the output boundary also exposed negative omitted-byte counts for outputs smaller than the capture limit (`b13644ff-a7d0-4508-80b6-add727e00579`). Bound read-only discovery, preserve uncertain ownership, and calculate exact omission counts without changing actual Compose operation limits or provider selection.
