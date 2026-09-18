@@ -160,7 +160,7 @@ def recover_closed_docker(retained: Path, owner: dict, guard: HostGuard, *, appl
 
 
 def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None, launchd=None,
-            build_resources: bool = False) -> dict:
+            build_resources: bool = False, stop_client: bool = False) -> dict:
     """Caller owns the family lease, including report-only inspection."""
     guard = HostGuard(retained / "runtime-admission.json")
     if not guard.path.exists() and not guard.path.is_symlink():
@@ -178,6 +178,11 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if (not root.is_absolute() or root.parent != live or not root.name.startswith(prefix) or
             live.resolve() != live or root.resolve() != root):
         raise ValueError("Recovery root is not a canonical owned case directory")
+    if build_resources and stop_client:
+        raise ValueError("Reconcile resources and the captured client in separate verified phases")
+    if stop_client:
+        from recover_client import recover_engine
+        return recover_engine(retained, owner, guard, apply=apply)
     if build_resources:
         from recover_apple_build import recover_resources
         return recover_resources(retained, owner, guard, apply=apply)
@@ -193,6 +198,8 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     require_probe_stopped(records)
     require_keychain_stopped(records)
     require_guest_resources_stopped(records)
+    from recover_client import retain_engine_diagnostics
+    retain_engine_diagnostics(root, journal, apply=apply)
     context = json.loads(records.get("runtime-context.json", b"null"))
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):
         raise ValueError("No recorded runtime context; manual journal reconciliation required")
@@ -267,6 +274,8 @@ def main() -> None:
     parser.add_argument("--case", help="exact case ID printed by the default report")
     parser.add_argument("--build-resources", action="store_true",
                         help="reconcile completed Apple build resources only; never signal the Engine or restore services")
+    parser.add_argument("--stop-client", action="store_true",
+                        help="stop only a spawn-time captured Engine after build-resource closure; never adopt a legacy PID")
     args = parser.parse_args()
     os.umask(0o077)
     retained = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
@@ -279,7 +288,7 @@ def main() -> None:
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")):
         try:
             print(canonical(recover(retained, ssd, apply=args.apply, expected_case=args.case,
-                                    build_resources=args.build_resources)).decode())
+                                    build_resources=args.build_resources, stop_client=args.stop_client)).decode())
         except (Exception, KeyboardInterrupt) as error:
             # Do not leak file paths from original definitions or exception text.
             print(canonical({"status": "quarantined", "error": type(error).__name__, "changed": "not-confirmed"}).decode())
