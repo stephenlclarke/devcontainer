@@ -23,11 +23,14 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     case inspect(kind: String, name: String)
     case containers(all: Bool, truncate: Bool, filters: [String: [String]])
     case exec(DockerExecCommand)
+    case run(DockerRunCommand)
+    case events(DockerEventsCommand)
 
     public static func parse(_ arguments: [String]) throws -> Self {
         var options = DockerFrontendArguments(arguments)
         guard let command = options.next() else {
-            throw DockerFrontendError.usage("expected a command; supported: version, info, inspect, ps, exec")
+            throw DockerFrontendError
+                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events")
         }
         switch command {
         case "-v", "--version":
@@ -50,6 +53,10 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             return try containers(&options)
         case "exec":
             return try .exec(DockerExecCommand.parse(&options))
+        case "run":
+            return try .run(DockerRunCommand.parse(&options))
+        case "events":
+            return try .events(DockerEventsCommand.parse(&options))
         default:
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")

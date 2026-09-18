@@ -12,6 +12,81 @@ import Testing
 
 struct DockerFrontendSocketTests {
     @Test
+    func `real executable streams events and keeps HTTP error bodies off stdout`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let server = ContainerUnixHTTPServer(
+            responder: FrontendTestResponder(), socketPath: socket, logger: Logger(label: "frontend-events-test")
+        )
+        try await server.start()
+        do {
+            let result = try await FrontendExecutable.run(
+                ["events", "--format", "{{json .}}", "--filter", "event=start"], socket: socket
+            )
+            #expect(result.exitCode == 0)
+            #expect(result.standardOutput == Data("{\"Action\":\"start\",\"timeNano\":9223372036854775807}\n".utf8))
+            #expect(result.standardError.isEmpty)
+            let failure = try await FrontendExecutable.run(
+                ["events", "--format", "{{json .}}", "--filter", "label=error"], socket: socket
+            )
+            #expect(failure.exitCode == 1)
+            #expect(failure.standardOutput.isEmpty)
+            #expect(String(data: failure.standardError, encoding: .utf8)?.contains("event failure") == true)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    }
+
+    @Test
+    func `real executable attaches before startup and preserves run output warnings and status`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let responder = RunSocketResponder()
+        let server = ContainerUnixHTTPServer(
+            responder: responder, socketPath: socket, logger: Logger(label: "frontend-run-test")
+        )
+        try await server.start()
+        do {
+            let result = try await FrontendExecutable.run(
+                [
+                    "run",
+                    "--sig-proxy=false",
+                    "-a",
+                    "STDOUT",
+                    "-a",
+                    "STDERR",
+                    "--entrypoint",
+                    "/bin/sh",
+                    "image",
+                    "-c",
+                    "exit 9"
+                ],
+                socket: socket
+            )
+            #expect(result.exitCode == 9)
+            #expect(result.standardOutput == Data("ready\n".utf8))
+            #expect(result.standardError == Data("WARNING: test warning\nerror\n".utf8))
+            #expect(await responder.attachedBeforeStart)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    }
+
+    @Test
     func `real executable sends interactive input and separates Engine output without Docker`() async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(
@@ -90,7 +165,7 @@ struct DockerFrontendSocketTests {
     }
 }
 
-private enum FrontendExecutable {
+enum FrontendExecutable {
     static func run(
         _ arguments: [String],
         socket: String? = nil,
@@ -125,6 +200,17 @@ private final class FrontendTestBundle: NSObject {}
 
 private struct FrontendTestResponder: DockerHTTPResponder {
     func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        if request.target.hasPrefix("/events?") {
+            if request.target.contains("%22error%22") {
+                return .text(#"{"message":"event failure"}"#, status: 500, contentType: "application/json")
+            }
+            let stream = AsyncThrowingStream<Data, any Error> { continuation in
+                continuation.yield(Data("{\"Action\":\"start\",\"timeNano\":".utf8))
+                continuation.yield(Data("9223372036854775807}\n".utf8))
+                continuation.finish()
+            }
+            return .init(status: 200, headers: ["Content-Type": "application/json"], body: .stream(stream))
+        }
         if request.method == .post, request.target == "/containers/box/exec" {
             return .text(#"{"Id":"c9e1deac-d20d-4b9a-ace8-4456740fed63"}"#, contentType: "application/json")
         }
@@ -169,6 +255,58 @@ private actor FrontendEchoSession: DockerHijackSession {
 
     func wait() -> Int32 {
         7
+    }
+
+    func cancel() {
+        continuation.finish()
+    }
+}
+
+private actor RunSocketResponder: DockerHTTPResponder {
+    let session = RunSocketSession()
+    var attachedBeforeStart = false
+    private var attached = false
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        switch request.target {
+        case "/containers/create":
+            return .text(#"{"Id":"run123","Warnings":["test warning"]}"#, contentType: "application/json")
+        case "/containers/run123/attach?stream=1&stdin=0&stdout=1&stderr=1":
+            attached = true
+            return .init(
+                status: 101,
+                headers: ["Connection": "Upgrade", "Upgrade": "tcp"],
+                body: .hijack(session, terminal: false)
+            )
+        case "/containers/run123/start":
+            attachedBeforeStart = attached
+            await session.start()
+            return .empty(status: 204)
+        case "/containers/run123/wait?condition=not-running":
+            return .text(#"{"StatusCode":9}"#, contentType: "application/json")
+        default:
+            return .text("unexpected request", status: 400)
+        }
+    }
+}
+
+private actor RunSocketSession: DockerHijackSession {
+    nonisolated let frames: AsyncThrowingStream<DockerStreamFrame, any Error>
+    private let continuation: AsyncThrowingStream<DockerStreamFrame, any Error>.Continuation
+    init() {
+        (frames, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    func start() {
+        continuation.yield(.init(channel: .standardOutput, data: Data("ready\n".utf8)))
+        continuation.yield(.init(channel: .standardError, data: Data("error\n".utf8)))
+        continuation.finish()
+    }
+
+    func write(_: Data) { /* Output-only attachment does not accept data. */ }
+    func closeStandardInput() { /* Closing input must not finish the pre-start output stream. */ }
+    func wait() -> Int32 {
+        9
     }
 
     func cancel() {

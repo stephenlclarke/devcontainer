@@ -112,7 +112,7 @@ That post-release repin is not attributed to the 1.0.1 tag.
 | Enhanced `stephenlclarke/container` | `228897171d71975988ccdc690f1982e7433952af` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
 | Enhanced `stephenlclarke/containerization` | `b404e03bb914904107a6a9305ba1f0e44c79a59c` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
 | Enhanced `stephenlclarke/swift-nio-ssl` | `3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Shared `stephenlclarke/container-engine-api` | `2bff309d7ec93e5063ccfa246851903172a0da29` | Selected by both profiles; draft [PR 45](https://github.com/stephenlclarke/container-engine-api/pull/45) adds bounded cancellable full-duplex transport and concurrent-client fixes. Development revision, not a released dependency or full-stack certification |
+| Shared `stephenlclarke/container-engine-api` | `f32e1829d0f0293bd68a69a7a6f93f67953c31e9` | Selected by both profiles; draft [PR 45](https://github.com/stephenlclarke/container-engine-api/pull/45) adds bounded cancellable full-duplex transport concurrent-client fixes and diagnostic-only HTTP error bodies. Development revision, not a released dependency or full-stack certification |
 
 `Package.resolved` and `Package.stock.resolved` are authoritative for source
 builds. The parity manifest becomes authoritative for a newer runtime claim

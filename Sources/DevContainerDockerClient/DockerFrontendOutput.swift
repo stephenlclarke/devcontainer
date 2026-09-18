@@ -31,8 +31,18 @@ public final class DockerFrontendOutput: @unchecked Sendable {
                 }
             }
         } onCancel: {
-            self.stateLock.withLock { self.cancelled = true }
+            self.cancel()
         }
+    }
+
+    /// Used only by the shared HTTP client's blocking body worker, never a Swift
+    /// cooperative executor. The enclosing stream forwards cancellation to cancel().
+    func writeSynchronously(_ data: Data) throws {
+        try writeLock.withLock { try writeBlocking(data) }
+    }
+
+    func cancel() {
+        stateLock.withLock { cancelled = true }
     }
 
     private func writeBlocking(_ data: Data) throws {

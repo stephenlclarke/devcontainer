@@ -17,6 +17,13 @@ enum DevContainerDockerCommand {
                 arguments: Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment
             )
             let frontend = DockerFrontend(version: BuildInfo.current.version)
+            if case let .events(spec) = invocation.command {
+                try await events(spec, invocation: invocation, frontend: frontend)
+                return
+            }
+            if case let .run(spec) = invocation.command {
+                try await exit(run(spec, invocation: invocation, frontend: frontend))
+            }
             if case let .exec(spec) = invocation.command {
                 let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
                 let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
@@ -50,6 +57,33 @@ enum DevContainerDockerCommand {
             )
             exit(1)
         }
+    }
+
+    private static func events(
+        _ spec: DockerEventsCommand, invocation: DockerFrontendInvocation, frontend: DockerFrontend
+    ) async throws {
+        let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
+        let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
+        try await frontend.executeEvents(
+            spec,
+            transport: transport,
+            output: DockerFrontendOutput(descriptor: STDOUT_FILENO)
+        )
+    }
+
+    private static func run(
+        _ spec: DockerRunCommand, invocation: DockerFrontendInvocation, frontend: DockerFrontend
+    ) async throws -> Int32 {
+        let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
+        let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
+        let standardOutput = try DockerFrontendOutput(descriptor: STDOUT_FILENO)
+        let standardError = try DockerFrontendOutput(descriptor: STDERR_FILENO)
+        return try await frontend.executeRun(spec, transport: transport, output: { frame in
+            let writer = frame.channel == .standardError ? standardError : standardOutput
+            try await writer.write(frame.data)
+        }, warning: { message in
+            try await emit(Data(("WARNING: " + message + "\n").utf8), descriptor: STDERR_FILENO, timeout: .seconds(5))
+        })
     }
 
     private static func emit(_ data: Data, descriptor: Int32, timeout: Duration) async throws {

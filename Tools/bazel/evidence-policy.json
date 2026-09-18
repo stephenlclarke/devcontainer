@@ -11,7 +11,7 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 47,
-        "//:DevContainerDockerClientTests": 37,
+        "//:DevContainerDockerClientTests": 55,
         "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
@@ -39,7 +39,10 @@
         "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
         "Sources/DevContainerProcess/ProcessRunner.swift",
-        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift",
+        "Sources/DevContainerDockerClient/DockerRunCommand.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendRun.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendEvents.swift"
       ]
     },
     "enhanced": {
@@ -48,7 +51,7 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 47,
-        "//:DevContainerDockerClientTests": 37,
+        "//:DevContainerDockerClientTests": 55,
         "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
@@ -76,7 +79,10 @@
         "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
         "Sources/DevContainerProcess/ProcessRunner.swift",
-        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift",
+        "Sources/DevContainerDockerClient/DockerRunCommand.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendRun.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendEvents.swift"
       ]
     }
   }

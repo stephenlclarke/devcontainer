@@ -96,7 +96,7 @@ let package = Package(
             name: "container-engine-api",
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "2bff309d7ec93e5063ccfa246851903172a0da29"
+            revision: "f32e1829d0f0293bd68a69a7a6f93f67953c31e9"
         ),
         runtimeDependency(
             name: "container",
