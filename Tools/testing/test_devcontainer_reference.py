@@ -98,8 +98,10 @@ class ReferenceTests(unittest.TestCase):
                 "Image": self.inputs["workload"]["image"]["manifest"],
                 "Mounts": [{"Type": "bind", "Source": str(self.fixture.workspace), "Destination": WORKSPACE}]}
 
-    def command(self, name, arguments, *, timeout):
+    def command(self, name, arguments, *, timeout, separate_output=False):
         self.commands.append((name, arguments, timeout))
+        if name in {"devcontainer-up", "devcontainer-exec"} and arguments:
+            self.assertTrue(separate_output)
         self.vm.journal.put(name + "-intent.json", canonical({"arguments": arguments, "timeout": timeout}))
         self.vm.journal.put(name + "-exit.json", canonical({"code": 0}))
         if name == "devcontainer-up":
@@ -229,16 +231,16 @@ class ReferenceTests(unittest.TestCase):
 
     def test_created_id_requires_one_successful_full_id(self):
         good = canonical({"outcome": "success", "containerId": ID})
-        self.assertEqual(created_id(b'{"type":"text","text":"diagnostic"}\n' + good), ID)
-        for payload in (b"", good + b"\n" + good, b'{"outcome":"error"}', b'{"outcome":"success","containerId":"abc"}',
+        self.assertEqual(created_id(good), ID)
+        for payload in (b"", b"[]", good + b"\n" + good, b'{"outcome":"error"}', b'{"outcome":"success","containerId":"abc"}',
                         b'{"unexpected":"record"}', b"not-json", b"{broken"):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 created_id(payload)
 
     def test_probe_never_normalizes_values_or_accepts_missing_duplicate_extra_records(self):
         self.assertEqual(observations(PROBE.replace(b"uid=0", b"uid=1000"))["uid"], "1000")
-        self.assertEqual(observations(b'{"type":"start","text":"exec"}\n' + PROBE), observations(PROBE))
-        for payload in (b"", PROBE + b"uid=0\n", PROBE + b"other=value\n", PROBE + b"unexpected\n",
+        for payload in (b"", b'{"type":"start","text":"exec"}\n' + PROBE,
+                        PROBE + b"uid=0\n", PROBE + b"other=value\n", PROBE + b"unexpected\n",
                         PROBE.replace(b"uid=0\n", b"")):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 observations(payload)

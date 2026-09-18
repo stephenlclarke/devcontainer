@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -180,6 +181,8 @@ def require_closed_vm(root: Path, owner: dict, records: dict, *, inventory=None)
                 raise ValueError("Docker VM command has no durable exit receipt")
             if stem in DEVCONTAINER_COMMANDS and (stem + ".log" not in records or stem + "-log.json" not in records):
                 raise ValueError("D01 command diagnostics are not retained")
+            if json.loads(data).get("separateOutput") and (stem + ".stderr.log" not in records or stem + "-stderr-log.json" not in records):
+                raise ValueError("Separated command diagnostics are not retained")
             process = json.loads(records.get(stem + "-process.json", b"null"))
             if not isinstance(process, dict) or type(process.get("pid")) is not int or process["pid"] <= 0:
                 raise ValueError("Docker VM command process record is missing or invalid")
@@ -262,17 +265,19 @@ class DockerVM:
         (config / "override.yaml").write_bytes(canonical(override))
         self.journal.put("docker-lima-override.json", canonical(override))
 
-    def command(self, name: str, arguments: list[str], *, timeout=60) -> bytes:
+    def command(self, name: str, arguments: list[str], *, timeout=60, separate_output=False) -> bytes:
         private_root(self.root, self.owner)
         if self.uncertain or name + "-intent.json" in self.journal.records():
             raise ValueError("Uncertain or repeated Docker VM command")
-        self.journal.put(name + "-intent.json", canonical({"arguments": arguments, "timeout": timeout}))
+        self.journal.put(name + "-intent.json", canonical({"arguments": arguments, "timeout": timeout,
+                                                         "separateOutput": separate_output}))
         started = time.monotonic_ns()
         path = self.root / (name + ".log")
         self.uncertain = True
-        with path.open("xb") as output:
+        with path.open("xb") as output, ((self.root / (name + ".stderr.log")).open("xb")
+                                        if separate_output else nullcontext(subprocess.STDOUT)) as errors:
             child = subprocess.Popen(arguments, cwd=self.root, env=self.env, stdin=subprocess.DEVNULL,
-                                     stdout=output, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+                                     stdout=output, stderr=errors, start_new_session=True, close_fds=True)
             self.processes.append(child)
             self.journal.put(name + "-process.json", canonical({"pid": child.pid}))
             try:
@@ -291,7 +296,9 @@ class DockerVM:
         self.journal.put(name + "-exit.json", canonical({"code": code, "durationNS": time.monotonic_ns() - started}))
         self.uncertain = False
         payload, metadata = diagnostic_snapshot(path)
-        if json.loads(metadata)["truncated"]:
+        stderr_truncated = (separate_output and
+                            json.loads(diagnostic_snapshot(self.root / (name + ".stderr.log"))[1])["truncated"])
+        if json.loads(metadata)["truncated"] or stderr_truncated:
             raise ValueError("Docker VM command output exceeded its bound")
         if code != 0:
             raise RuntimeError("Docker VM command failed; private diagnostic log retained")
@@ -371,3 +378,8 @@ class DockerVM:
                 payload, metadata = diagnostic_snapshot(self.root / (stem + ".log"))
                 self.journal.put(stem + ".log", payload)
                 self.journal.put(stem + "-log.json", metadata)
+                intent = json.loads(records.get(stem + "-intent.json", b"{}"))
+                if intent.get("separateOutput"):
+                    payload, metadata = diagnostic_snapshot(self.root / (stem + ".stderr.log"))
+                    self.journal.put(stem + ".stderr.log", payload)
+                    self.journal.put(stem + "-stderr-log.json", metadata)

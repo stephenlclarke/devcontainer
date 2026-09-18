@@ -28,28 +28,10 @@ def fixture_inputs(repository: Path) -> dict:
     return {"configuration": configuration.decode(), "probe": probe.decode()}
 
 
-def output_lines(payload: bytes) -> list[str]:
-    """Separate the CLI's JSON diagnostic lines from the fixture's plain output."""
-    output = []
-    for line in payload.decode().splitlines():
-        if line.startswith("{"):
-            value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ValueError("Invalid reference CLI JSON output")
-            if "outcome" in value:
-                output.append(line)
-            elif not isinstance(value.get("type"), str):
-                raise ValueError("Unrecognized reference CLI diagnostic")
-        elif line:
-            output.append(line)
-    return output
-
-
 def created_id(payload: bytes) -> str:
-    lines = output_lines(payload)
-    if len(lines) != 1:
-        raise ValueError("CLI up must report exactly one result")
-    result = json.loads(lines[0])
+    result = json.loads(payload)
+    if not isinstance(result, dict):
+        raise ValueError("CLI up must report one result object")
     identifier = result.get("containerId")
     if (result.get("outcome") != "success" or not isinstance(identifier, str) or
             re.fullmatch(r"[0-9a-f]{64}", identifier) is None):
@@ -59,7 +41,7 @@ def created_id(payload: bytes) -> str:
 
 def observations(payload: bytes) -> dict[str, str]:
     result = {}
-    for line in output_lines(payload):
+    for line in payload.decode().splitlines():
         key, separator, value = line.partition("=")
         if not separator or key not in KEYS or key in result:
             raise ValueError("D01 probe returned unexpected or duplicate output")
@@ -152,13 +134,14 @@ class DevcontainerReference(GuestFixture):
         if self.journal.records().get("devcontainer-plan.json") != canonical(self.plan):
             raise ValueError("D01 plan identity changed")
         output = self.vm.command("devcontainer-up", self.arguments("up") + ["--user-data-folder",
-                                 str(self.vm.root / "devcontainer-data")], timeout=120)
+                                 str(self.vm.root / "devcontainer-data")], timeout=120, separate_output=True)
         self.identifier = created_id(output)
         self.journal.put("devcontainer-created.json", canonical({"id": self.identifier}))
         actual = self.find()
         if actual is None or self.owned(actual) != self.identifier:
             raise ValueError("CLI result does not match the owned D01 resource")
-        output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["/bin/sh", WORKSPACE + "/probe.sh"], timeout=60)
+        output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["/bin/sh", WORKSPACE + "/probe.sh"],
+                                 timeout=60, separate_output=True)
         return observations(output)
 
     def recovery_plan(self):

@@ -131,7 +131,7 @@ class DockerVMTests(unittest.TestCase):
         self.assertFalse(self.vm.uncertain)
         self.assertEqual(json.loads(self.journal.records()["docker-fail-exit.json"])["code"], 1)
 
-    def test_reference_cli_success_and_failure_logs_survive_root_removal(self):
+    def test_reference_cli_success_and_failure_logs_survive_source_log_removal(self):
         self.vm.configure()
         for name in sorted(docker_vm.DEVCONTAINER_COMMANDS):
             if name == "devcontainer-up":
@@ -148,6 +148,17 @@ class DockerVMTests(unittest.TestCase):
             self.assertEqual(records[name + ".log"], expected)
             self.assertFalse(json.loads(records[name + "-log.json"])["truncated"])
         self.assertFalse(docker_vm.command_record("devcontainer-delete-intent.json", "-intent.json"))
+
+    def test_reference_stdout_never_contains_stderr_warning_and_both_are_retained(self):
+        self.vm.configure()
+        output = self.vm.command("devcontainer-up", ["/bin/sh", "-c", "printf 'result'; printf 'Node warning' >&2"],
+                                 separate_output=True)
+        self.assertEqual(output, b"result")
+        self.vm.retain_logs()
+        records = self.journal.records()
+        self.assertEqual(records["devcontainer-up.log"], b"result")
+        self.assertEqual(records["devcontainer-up.stderr.log"], b"Node warning")
+        self.assertFalse(json.loads(records["devcontainer-up-stderr-log.json"])["truncated"])
 
     def test_interrupted_spawn_preserves_quarantine_and_never_stops_unknown_pid(self):
         self.vm.configure()
