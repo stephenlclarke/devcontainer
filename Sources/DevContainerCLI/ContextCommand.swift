@@ -33,6 +33,10 @@ struct ContextCommand: ParsableCommand {
     var format = "shell"
 
     func run() throws {
+        try print(renderedOutput())
+    }
+
+    func renderedOutput() throws -> String {
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
             configuration: config,
             socket: socket
@@ -40,9 +44,9 @@ struct ContextCommand: ParsableCommand {
         let endpoint = "unix://\(selection.socket)"
         switch format {
         case "shell":
-            print("export DOCKER_HOST='\(endpoint.replacingOccurrences(of: "'", with: "'\\''"))'")
+            return "export DOCKER_HOST='\(endpoint.replacingOccurrences(of: "'", with: "'\\''"))'"
         case "value":
-            print(endpoint)
+            return endpoint
         default:
             throw ValidationError("unsupported format \(format); expected shell or value")
         }

@@ -26,6 +26,8 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+Installation-facing version and socket-context output need executable contracts, not parser-only smoke checks. The CLI suite now verifies exact provenance and safe shell evaluation without creating state, while retaining the current public output formats. Both native dependency profiles pass the focused tests; live installation and release gates remain separate.
+
 The first trusted devcontainer jobs (`35343776611` stock and `35343874943` enhanced) passed unit/component execution but failed archive analysis: `rules_license` 1.0.0 omitted target identity from an empty licence provider. The Compose bridge legitimately has no external Swift package licences, whereas the engine has a populated transitive set. Backport upstream PR 161's identity fix; do not discard the empty target or waive missing notices. Archive tests must retain notices from the populated targets and still reject an entirely empty licence set. The separate sub-90% coverage gate remains unchanged.
 
 Cross-harness validation must preserve filesystem identity and select the exact built executable. CI exposed path-alias text comparisons and unsafe recursive engine discovery; the corrected tests compare inode/device identity and require the executable beside the SwiftPM test bundle. Bazel's declared runfile and explicit overrides remain unchanged. The focused unit proof does not qualify the Keychain-backed service lane or replace a complete sanitizer run.

@@ -232,7 +232,7 @@ swift_test(
     name = "DevContainerCLITests",
     srcs = glob(["Tests/DevContainerCLITests/*.swift"]),
     module_name = "DevContainerCLITests",
-    deps = [":DevContainerCLI", ":DevContainerCore", ":DevContainerModel", ":DevContainerState"],
+    deps = [":DevContainerCLI", ":DevContainerCore", ":DevContainerModel", ":DevContainerProcess", ":DevContainerState"],
 )
 
 swift_binary(

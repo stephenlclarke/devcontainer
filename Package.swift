@@ -254,6 +254,7 @@ let package = Package(
                 "DevContainerCLI",
                 "DevContainerCore",
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerState"
             ]
         ),
