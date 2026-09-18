@@ -15,7 +15,7 @@
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
-        "//:DevContainerAppleRuntimeTests": 97,
+        "//:DevContainerAppleRuntimeTests": 99,
         "//:DevContainerServiceTests": 23
       },
       "required_sources": [
@@ -43,7 +43,7 @@
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
-        "//:DevContainerAppleRuntimeTests": 108,
+        "//:DevContainerAppleRuntimeTests": 110,
         "//:DevContainerServiceTests": 23
       },
       "required_sources": [

@@ -9,30 +9,30 @@ import Foundation
 
 /// POSIX launch avoids running inherited libc teardown after fork/exec failure.
 /// Configure and start on one task; only the launched PID is shared with waiters.
-final class ProcessCommand: @unchecked Sendable {
-    struct Attributes {
-        var setProcessGroup = false
-        var setForegroundProcessGroup = false
+public final class ProcessCommand: @unchecked Sendable {
+    public struct Attributes: Sendable {
+        public var setProcessGroup = false
+        public var setForegroundProcessGroup = false
     }
 
     let executable: String
     let arguments: [String]
     let environment: [String]
     let directory: String?
-    var stdin: FileHandle?
-    var stdout: FileHandle?
-    var stderr: FileHandle?
-    var attributes = Attributes()
+    public var stdin: FileHandle?
+    public var stdout: FileHandle?
+    public var stderr: FileHandle?
+    public var attributes = Attributes()
 
     private let lock = NSLock()
     private var processIdentifier: pid_t = -1
     private let transferForeground: @Sendable (pid_t) throws -> Void
 
-    var pid: pid_t {
+    public var pid: pid_t {
         lock.withLock { processIdentifier }
     }
 
-    init(
+    public init(
         _ executable: String,
         arguments: [String],
         environment: [String],
@@ -52,7 +52,7 @@ final class ProcessCommand: @unchecked Sendable {
 
     // Keep POSIX resources and their matching cleanup visible in launch order.
     // swiftlint:disable:next function_body_length
-    func start() throws {
+    public func start() throws {
         guard pid == -1 else { throw POSIXError(.EBUSY) }
         let nullInput = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
         let nullOutput = try FileHandle(forWritingTo: URL(fileURLWithPath: "/dev/null"))
@@ -134,7 +134,7 @@ final class ProcessCommand: @unchecked Sendable {
     }
 
     /// Observe exit without releasing the leader PID while descendants drain.
-    func waitUntilExit() throws {
+    public func waitUntilExit() throws {
         let identifier = pid
         guard identifier > 0 else { throw POSIXError(.ECHILD) }
         var information = siginfo_t()
@@ -145,7 +145,7 @@ final class ProcessCommand: @unchecked Sendable {
         }
     }
 
-    func wait() throws -> Int32 {
+    public func wait() throws -> Int32 {
         try lock.withLock {
             let identifier = processIdentifier
             guard identifier > 0 else { throw POSIXError(.ECHILD) }

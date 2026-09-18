@@ -30,6 +30,13 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+The complete sanitizer cycle exposed another use of the dependency's fork-based
+launcher in non-TTY Apple runtime sessions. A sampled ASan allocator-lock stall
+shows that fixing only the shared CLI process runner was insufficient. Reuse
+the existing spawn implementation at this session boundary, preserve streams
+and process-group ownership, and add real failure-path regressions. A passing
+focused rerun does not replace the complete sanitizer and leak gates.
+
 A passing Sonar quality gate is not proof of zero open issues. The first local
 native-coverage scan passed its gate while reporting six ambiguous exception
 tests and one excessively nested process closure. Address these structurally

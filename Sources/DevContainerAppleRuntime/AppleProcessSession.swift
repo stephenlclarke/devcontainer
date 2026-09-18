@@ -14,7 +14,6 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import ContainerizationOS
 import Darwin
 import DevContainerModel
 import DevContainerProcess
@@ -91,7 +90,7 @@ private struct ProcessSessionIO: @unchecked Sendable {
 final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
 
-    private let command: Command
+    private let command: ProcessCommand
     private let termination: OwnedProcessTermination
     private let inputWriter: ProcessInputWriter
     private let outputMonitor: ProcessPipeMonitor
@@ -107,7 +106,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         let streams = ProcessSessionIO()
         let inputWriter = ProcessInputWriter(pipe: streams.standardInput)
         let monitors = Self.configureMonitors(streams: streams)
-        var command = Command(
+        let command = ProcessCommand(
             executable.path,
             arguments: arguments,
             environment: environment.sorted { $0.key < $1.key }
@@ -117,7 +116,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         command.stdin = streams.standardInput.fileHandleForReading
         command.stdout = streams.standardOutput.fileHandleForWriting
         command.stderr = streams.standardError.fileHandleForWriting
-        command.attrs.setPGroup = true
+        command.attributes.setProcessGroup = true
         let termination = OwnedProcessTermination()
         try Self.start(command, streams: streams, termination: termination)
         completion = Self.completionTask(
@@ -165,7 +164,7 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     }
 
     private static func start(
-        _ command: Command,
+        _ command: ProcessCommand,
         streams: ProcessSessionIO,
         termination: OwnedProcessTermination
     ) throws {
