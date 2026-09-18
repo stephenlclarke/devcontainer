@@ -164,7 +164,7 @@ enum DevContainerComposeCommand {
             try await releaseProjectIfEmpty(claim)
             return
         }
-        guard let liveVolumes = await liveContainerComposeVolumes(
+        guard let liveVolumes = try await liveContainerComposeVolumes(
             envelope: envelope,
             execution: execution
         ) else {
@@ -183,7 +183,7 @@ enum DevContainerComposeCommand {
     private static func liveContainerComposeVolumes(
         envelope: ComposeCommandEnvelope,
         execution: ComposeExecutionEnvironment
-    ) async -> Set<String>? {
+    ) async throws -> Set<String>? {
         let child = childCommand(
             provider: .containerCompose,
             arguments: envelope.projectArguments + ["volumes", "--quiet"],
@@ -191,11 +191,21 @@ enum DevContainerComposeCommand {
             environment: execution.environment,
             socket: execution.socket
         )
-        guard let result = try? await executeCaptured(
-            executable: child.executable,
-            arguments: child.arguments,
-            environment: child.environment
-        ), result.exitCode == 0 else {
+        let result: CapturedProcessResult
+        do {
+            result = try await executeCaptured(
+                executable: child.executable,
+                arguments: child.arguments,
+                environment: child.environment
+            )
+        } catch {
+            // An unavailable probe preserves ownership, but cancellation must
+            // not be reported as a successfully completed command.
+            try Task.checkCancellation()
+            return nil
+        }
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else {
             return nil
         }
         guard let output = String(bytes: result.standardOutput, encoding: .utf8) else {
@@ -380,15 +390,32 @@ enum DevContainerComposeCommand {
         environment: [String: String]
     ) async throws -> CapturedProcessResult {
         try requireExecutable(executable)
-        return try await ProcessRunner.captured(
-            executable: executable,
-            arguments: arguments,
-            environment: environment,
-            workingDirectory: URL(
-                fileURLWithPath: FileManager.default.currentDirectoryPath,
-                isDirectory: true
-            )
-        )
+        var context = RuntimeRequestScope.context ?? RuntimeRequestContext()
+        let probeDeadline = Date().addingTimeInterval(30)
+        context.deadline = min(context.deadline ?? probeDeadline, probeDeadline)
+        return try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                let result = try await ProcessRunner.captured(
+                    executable: executable,
+                    arguments: arguments,
+                    environment: environment,
+                    workingDirectory: URL(
+                        fileURLWithPath: FileManager.default.currentDirectoryPath,
+                        isDirectory: true
+                    ),
+                    maximumOutputBytes: 1024 * 1024
+                )
+                guard result.omittedStandardOutputBytes == 0,
+                      result.omittedStandardErrorBytes == 0
+                else {
+                    throw DevContainerError(
+                        .providerProtocolMismatch,
+                        message: "Compose discovery output exceeded the 1 MiB per-stream limit"
+                    )
+                }
+                return result
+            }
+        }
     }
 
     private static func requireExecutable(_ executable: URL) throws {

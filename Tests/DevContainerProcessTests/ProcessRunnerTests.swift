@@ -23,6 +23,21 @@ import Testing
 
 @Suite(.serialized)
 struct ProcessRunnerTests {
+    @Test(arguments: [0, 3, 6, 4096])
+    func `bounded capture reports exact omitted bytes below and at the limit`(limit: Int) async throws {
+        let result = try await ProcessRunner.captured(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf abcdef; printf xy >&2"],
+            environment: [:],
+            maximumOutputBytes: limit
+        )
+        #expect(result.exitCode == 0)
+        #expect(result.standardOutput == Data("abcdef".utf8.prefix(limit)))
+        #expect(result.standardError == Data("xy".utf8.prefix(limit)))
+        #expect(result.omittedStandardOutputBytes == max(0, 6 - limit))
+        #expect(result.omittedStandardErrorBytes == max(0, 2 - limit))
+    }
+
     @Test
     func `cancelling a synchronous caller cancels and reaps its running child`() async throws {
         let marker = TestStorage.temporaryDirectory.appendingPathComponent("sync-cancel-\(UUID().uuidString)")

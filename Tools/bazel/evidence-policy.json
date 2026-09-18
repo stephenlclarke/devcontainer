@@ -11,10 +11,10 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 38,
-        "//:DevContainerProcessTests": 15,
+        "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
-        "//:DevContainerComposeCLITests": 10,
+        "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 97,
         "//:DevContainerServiceTests": 5
       },
@@ -25,7 +25,8 @@
         "Sources/DevContainerCLI/PluginCommand.swift",
         "Sources/DevContainerService/DevContainerServiceCommand.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
-        "Sources/DevContainerProcess/ProcessRunner.swift"
+        "Sources/DevContainerProcess/ProcessRunner.swift",
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
       ]
     },
     "enhanced": {
@@ -34,10 +35,10 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 38,
-        "//:DevContainerProcessTests": 15,
+        "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
-        "//:DevContainerComposeCLITests": 10,
+        "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 108,
         "//:DevContainerServiceTests": 5
       },
@@ -48,7 +49,8 @@
         "Sources/DevContainerCLI/PluginCommand.swift",
         "Sources/DevContainerService/DevContainerServiceCommand.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
-        "Sources/DevContainerProcess/ProcessRunner.swift"
+        "Sources/DevContainerProcess/ProcessRunner.swift",
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
       ]
     }
   }

@@ -280,7 +280,7 @@ public enum ProcessRunner {
         guard let maximumBytes else {
             return chunkBytes
         }
-        return max(0, maximumBytes - retainedBytes)
+        return min(chunkBytes, max(0, maximumBytes - retainedBytes))
     }
 
     private static func performBlocking<Value: Sendable>(

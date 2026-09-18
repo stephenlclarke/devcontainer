@@ -212,6 +212,8 @@ printed before the archive is written.
 
 In the unreleased candidate, `devcontainer doctor` rejects invalid output formats before running commands and applies a five-second deadline to each runtime/Compose probe, followed by owned-process cleanup. Socket checks verify ownership, type and private permissions only; a missing socket is a warning, and a metadata pass is not an HTTP health check. Candidate process launch uses Compose's POSIX-spawn approach to avoid fork-error teardown deadlocks. Service lifetime cleanup now runs after startup, waiter and cancellation failures; these component-tested changes still require live release qualification.
 
+The unreleased Compose bridge limits project-name and remaining-volume discovery to 30 seconds per probe (or an earlier caller deadline), drains and reaps cancelled children, and rejects output exceeding 1 MiB per stream. Uncertain volume discovery retains project ownership; caller cancellation is not reported as success. These limits do not shorten the actual Compose operation or change the default provider.
+
 Live runtime tests are deliberately not run on public pull-request code or GitHub-hosted macOS. They execute on an isolated physical runner only after a trusted exact commit has passed hosted checks.
 
 ## Documentation
