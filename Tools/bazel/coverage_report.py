@@ -15,7 +15,7 @@ from input_identity import verify
 from retain_evidence import digest
 
 
-def sonar_xml(lcov: bytes) -> tuple[bytes, int, int]:
+def sonar_xml(lcov: bytes, source_roots: tuple[str, ...] = ("Sources",)) -> tuple[bytes, int, int]:
     """Convert the exact first-party LCOV line denominator, without exclusions."""
     files = {}
     for record in lcov.decode("utf-8").split("end_of_record"):
@@ -27,7 +27,7 @@ def sonar_xml(lcov: bytes) -> tuple[bytes, int, int]:
             raise ValueError("Coverage record needs exactly one source")
         source = sources[0]
         path = PurePosixPath(source)
-        if (not source.startswith("Sources/") or path.as_posix() != source
+        if (not any(source.startswith(root + "/") for root in source_roots) or path.as_posix() != source
                 or ".." in path.parts or "\\" in source or source in files):
             raise ValueError("Coverage source is duplicate or outside the maintained source tree")
         lines = {}
@@ -92,7 +92,13 @@ def report_bytes(database: Path, invocation: str) -> dict[str, bytes]:
             raise ValueError("Coverage needs the validated complete source unit suite")
         report = json.loads(read("source-tests.json"))
         lcov = read("build:build:coverage_report.lcov")
-        xml, covered, total = sonar_xml(lcov)
+        roots = ("Sources",)
+        if "policy_sha256" in report:
+            policy_identity = before["files"].get("Tools/bazel/evidence-policy.json", {})
+            if report["policy_sha256"] != policy_identity.get("sha256"):
+                raise ValueError("Coverage policy differs from the recorded source identity")
+            roots = tuple(report["source_roots"])
+        xml, covered, total = sonar_xml(lcov, roots)
         counts = report["coverage"]
         if (counts["sha256"] != digest(lcov) or counts["hit"] != covered or counts["found"] != total
                 or report.get("runtime_profile") not in {"stock", "enhanced"}):
@@ -105,8 +111,27 @@ def report_bytes(database: Path, invocation: str) -> dict[str, bytes]:
         "coveredLines": covered, "measuredLines": total,
         "percent": round(100 * covered / total, 4), "releaseAuthority": False,
     }
+    if "policy_sha256" in report:
+        receipt["policySHA256"] = report["policy_sha256"]
     return {"coverage.lcov": lcov, "coverage.xml": xml,
             "receipt.json": (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode()}
+
+
+def require_minimum(receipt: dict, minimum: float) -> None:
+    """A quality gate uses raw counts, never a rounded display percentage."""
+    if not 0 <= minimum <= 100:
+        raise ValueError("Coverage minimum must be between 0 and 100")
+    if receipt["coveredLines"] * 100 < minimum * receipt["measuredLines"]:
+        raise ValueError(f"Measured coverage {receipt['percent']:.4f}% is below {minimum:g}%")
+
+
+def require_context(receipt: dict, commit: str, profile: str, policy: Path | None) -> None:
+    """A requested quality gate must match the selected consumer and source head."""
+    if receipt["sourceCommit"] != commit or receipt["runtimeProfile"] != profile:
+        raise ValueError("Coverage does not match the requested source commit and runtime profile")
+    expected = digest(policy.read_bytes()) if policy else None
+    if receipt.get("policySHA256") != expected:
+        raise ValueError("Coverage does not match the requested consumer policy")
 
 
 def export(database: Path, invocation: str, scratch: Path) -> Path:
@@ -137,12 +162,23 @@ def export(database: Path, invocation: str, scratch: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("invocation")
+    parser.add_argument("--minimum-percent", type=float, default=0)
+    parser.add_argument("--expected-commit")
+    parser.add_argument("--expected-profile", choices=["stock", "enhanced"])
+    parser.add_argument("--expected-policy", type=Path)
     args = parser.parse_args()
     root = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
     if root.resolve() != root or root.stat().st_dev != Path.home().stat().st_dev:
         raise ValueError("Evidence must be on non-symlinked internal storage")
     os.umask(0o077)
-    print(export(root / "bazel-evidence.sqlite", args.invocation, Path("/Volumes/SSD/cf/bazel")))
+    destination = export(root / "bazel-evidence.sqlite", args.invocation, Path("/Volumes/SSD/cf/bazel"))
+    print(destination, flush=True)
+    receipt = json.loads((destination / "receipt.json").read_bytes())
+    if args.expected_commit or args.expected_profile or args.expected_policy:
+        if not args.expected_commit or not args.expected_profile:
+            parser.error("Expected source commit and runtime profile must be supplied together")
+        require_context(receipt, args.expected_commit, args.expected_profile, args.expected_policy)
+    require_minimum(receipt, args.minimum_percent)
 
 
 if __name__ == "__main__":

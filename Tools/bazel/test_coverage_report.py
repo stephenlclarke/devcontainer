@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from coverage_report import export, report_bytes, sonar_xml
+from coverage_report import export, report_bytes, require_context, require_minimum, sonar_xml
 from retain_evidence import digest
 
 
@@ -50,6 +50,48 @@ class CoverageReportTests(unittest.TestCase):
         root = ET.fromstring(xml)
         self.assertEqual(root[0].get("path"), "Sources/A&B.swift")
         self.assertEqual([line.get("covered") for line in root[0]], ["true", "false"])
+
+    def test_consumer_roots_are_bound_to_the_retained_policy(self) -> None:
+        data = LCOV.replace(b"Sources/Example.swift", b"Tools/helper/main.go")
+        self.contents["build:build:coverage_report.lcov"] = data
+        report = json.loads(self.contents["source-tests.json"])
+        report.update(policy_sha256="b" * 64, source_roots=["Sources", "Tools/helper"])
+        report["coverage"]["sha256"] = digest(data)
+        self.contents["source-tests.json"] = json.dumps(report).encode()
+        identity = json.loads(self.contents["inputs-before.json"])
+        identity["files"]["Tools/bazel/evidence-policy.json"] = {"sha256": "b" * 64}
+        self.contents["inputs-before.json"] = self.contents["inputs-after.json"] = json.dumps(identity).encode()
+        self.store()
+        result = report_bytes(self.database, "fixture")
+        self.assertIn(b"Tools/helper/main.go", result["coverage.xml"])
+        report["policy_sha256"] = "c" * 64
+        self.contents["source-tests.json"] = json.dumps(report).encode()
+        self.store()
+        with self.assertRaisesRegex(ValueError, "policy differs"):
+            report_bytes(self.database, "fixture")
+
+    def test_quality_gate_rejects_other_consumer_profile_or_source_head(self) -> None:
+        policy = self.root / "policy.json"
+        policy.write_text("consumer-policy")
+        receipt = {"sourceCommit": "a" * 40, "runtimeProfile": "stock", "policySHA256": digest(policy.read_bytes())}
+        require_context(receipt, "a" * 40, "stock", policy)
+        for commit, profile, expected_policy in [("b" * 40, "stock", policy), ("a" * 40, "enhanced", policy), ("a" * 40, "stock", None)]:
+            with self.subTest(commit=commit, profile=profile), self.assertRaises(ValueError):
+                require_context(receipt, commit, profile, expected_policy)
+        policy.write_text("different-consumer")
+        with self.assertRaises(ValueError):
+            require_context(receipt, "a" * 40, "stock", policy)
+        del receipt["policySHA256"]
+        require_context(receipt, "a" * 40, "stock", None)
+
+    def test_threshold_uses_unrounded_measurements(self) -> None:
+        receipt = {"coveredLines": 899999, "measuredLines": 1000000, "percent": 90.0}
+        require_minimum(receipt, 89)
+        for minimum in [90, -1, 101, float("nan"), float("inf")]:
+            with self.subTest(minimum=minimum), self.assertRaises(ValueError):
+                require_minimum(receipt, minimum)
+        receipt["coveredLines"] = 900000
+        require_minimum(receipt, 90)
 
     def test_invalid_duplicate_and_escaping_records_fail(self) -> None:
         for data in [b"", LCOV * 2, LCOV.replace(b"Sources/", b"../"),

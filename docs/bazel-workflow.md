@@ -38,6 +38,10 @@ The Keychain-backed service process tests and live Apple-service logging test ar
 
 The receipt names the original source commit and profile, not the current checkout. A historical export must not be submitted as current-head coverage; scanner integration must verify that binding before upload. This is coverage export, not a passing 90% quality gate, hosted analysis or release authority. Existing `make sonar-scan` has not been switched over. Report output is disposable and reconstructible; broader report-directory lifetime cleanup remains a migration gate.
 
+Use `Tools/bazel/run.sh coverage-report ID --minimum-percent 90` to apply the line-coverage threshold to an already retained report, without compiling or rerunning anything. Select stock explicitly with `--config=stock`; enhanced is the default. Unlike export-only, the gate requires a clean checkout and the same current source SHA, profile and consumer policy. Another repository/profile or historical head cannot satisfy it. The comparison uses raw counts rather than a rounded percentage. A below-target result fails but still leaves the authenticated diagnostic report on SSD; it does not change the historical test result or grant release authority.
+
+Consumers such as Compose supply `Tools/bazel/evidence-policy.json` with explicit stock/enhanced target discovery minima, required executed production files and source roots. The shared validator checks canonical aggregate `test` invocations as well as `coverage` invocations. Plain test results make no coverage claim. Coverage export binds the consumer policy digest to the recorded source identity and accepts only its declared production trees, including Compose's Go helpers. Missing/skipped cases, incomplete inventories, malformed line counts and missing source probes fail closed. Consumers do not maintain another validator or scheduler.
+
 ## Build timing records
 
 Every new build, test and coverage invocation records monotonic elapsed time around the Bazel process, its exit status, before/after load averages, machine identity hash, macOS/Xcode/Swift versions and configuration fingerprint. Metadata collection and evidence retention are excluded from that elapsed interval. Retention seals these measurements with the source identity, Bazel version, action/cache metrics and each test's original duration/cache disposition. Cached test durations describe their original execution, not time spent rerunning a cached test.
@@ -93,7 +97,7 @@ A workspace lease covers the Bazel invocation and evidence retention, preventing
 
 Bazel and the leased shell run with an explicit clean environment: inherited credentials, shell startup hooks and arbitrary PATH entries are not forwarded. Retention also rejects event streams containing non-allowlisted client environment keys. Earlier pre-isolation evidence can contain inherited credentials and must remain private, never uploaded raw; rotate any exposed credentials before reusing them. The build environment is not an isolation boundary for hostile source code: untrusted PR code must still run on a disposable worker without signing credentials.
 
-The launcher automatically validates canonical unit and qualification coverage before returning success and writes `source-tests.json` or `qualification.json` beside its event file. To independently check a completed unit invocation before another build overwrites its output tree:
+The launcher automatically validates canonical unit and qualification test/coverage aggregates before returning success and writes `source-tests.json` or `qualification.json` beside its event file. To independently check a completed unit coverage invocation before another build overwrites its output tree:
 
 ```console
 python3 Tools/bazel/check_evidence.py --suite source --profile enhanced /Volumes/SSD/cf/bazel/invocations/run.EXAMPLE/events.json

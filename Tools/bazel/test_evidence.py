@@ -1,12 +1,73 @@
 """Regression tests for evidence false-green rejection."""
 
+import copy
+import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
 
-from check_evidence import case_count, coverage_counts, expected_tests, require_source_hits, validate, validate_report
+from check_evidence import case_count, coverage_counts, expected_tests, load_policy, require_source_hits, validate, validate_report
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_consumer_policy_is_explicit_and_profile_specific(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            path = Path(directory) / "policy.json"
+            policy = {"schema": 1, "scope": "unit only", "source_roots": ["Sources", "Tools/helper"], "profiles": {
+                "stock": {"tests": {"//:StockTests": 3}, "required_sources": ["Sources/Stock.swift"]},
+                "enhanced": {"tests": {"//:EnhancedTests": 4}, "required_sources": ["Tools/helper/main.go"]},
+            }}
+            path.write_text(json.dumps(policy))
+            self.assertEqual(load_policy(path, "stock")["tests"], {"//:StockTests": 3})
+            enhanced = load_policy(path, "enhanced")
+            self.assertEqual(enhanced["tests"], {"//:EnhancedTests": 4})
+            self.assertEqual(len(enhanced["sha256"]), 64)
+            invalid = []
+            for key, value in [("schema", 2), ("scope", ""), ("source_roots", []), ("source_roots", ["../Sources"]), ("source_roots", ["/Sources"]), ("source_roots", ["Sources", "Sources"])]:
+                changed = copy.deepcopy(policy)
+                changed[key] = value
+                invalid.append(changed)
+            for key, value in [("tests", {}), ("tests", {"//:StockTests": 0}), ("tests", {"//:StockTests": True}), ("tests", {"@external//:test": 1}), ("required_sources", []), ("required_sources", ["Tests/helper.swift"]), ("required_sources", ["Sources/../escape"])]:
+                changed = copy.deepcopy(policy)
+                changed["profiles"]["stock"][key] = value
+                invalid.append(changed)
+            for changed in invalid:
+                path.write_text(json.dumps(changed))
+                with self.subTest(policy=changed), self.assertRaises(ValueError):
+                    load_policy(path, "enhanced")
+
+    def test_consumer_xml_inventory_and_warm_reuse(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            xml = Path(directory) / "test.xml"
+            xml.write_text('<testsuite><testcase name="one"/><testcase name="two"/></testsuite>')
+            events = [{"finished": {"exitCode": {"code": 0}}},
+                      {"id": {"testSummary": {"label": "//:Consumer"}}, "testSummary": {"overallStatus": "PASSED", "totalRunCount": 1, "totalNumCached": 1}},
+                      {"id": {"testResult": {"label": "//:Consumer"}}, "testResult": {"testActionOutput": [{"name": "test.xml", "uri": xml.as_uri()}]}}]
+            self.assertEqual(validate(events, True, {"//:Consumer": 2})["test_cases"], {"//:Consumer": 2})
+            with self.assertRaises(ValueError):
+                validate(events, False, {"//:Consumer": 3})
+            events[1]["testSummary"]["totalNumCached"] = 0
+            with self.assertRaises(ValueError):
+                validate(events, True, {"//:Consumer": 2})
+            xml.write_text('<testsuite/>')
+            with self.assertRaises(ValueError):
+                validate(events, False, {"//:Consumer": 2})
+
+    def test_consumer_coverage_validates_real_lines_and_required_sources(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            coverage = Path(directory) / "coverage.lcov"
+            data = "SF:Tools/helper/main.go\nDA:1,2\nDA:2,0\nLF:2\nLH:1\nend_of_record\n"
+            coverage.write_text(data)
+            events = [{"started": {"command": "coverage"}}, {"buildToolLogs": {"log": [{"name": "coverage_report.lcov", "uri": coverage.as_uri()}]}}]
+            policy = {"required_sources": ["Tools/helper/main.go"], "source_roots": ["Tools/helper"], "scope": "helper unit only"}
+            result = validate_report(events, coverage, "source", policy)
+            self.assertEqual((result["hit"], result["found"], result["scope"]), (1, 2, "helper unit only"))
+            for changed in [data.replace("LH:1", "LH:2"), data.replace("Tools/helper/main.go", "Tests/main.go")]:
+                coverage.write_text(changed)
+                with self.assertRaises(ValueError):
+                    validate_report(events, coverage, "source", policy)
+
     def test_profile_discovery_inventory(self) -> None:
         stock = expected_tests("source", "stock")
         enhanced = expected_tests("source", "enhanced")
