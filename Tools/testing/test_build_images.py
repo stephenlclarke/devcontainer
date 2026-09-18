@@ -90,6 +90,19 @@ class BuildImagesTests(unittest.TestCase):
     def assert_no_delete(self):
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
 
+    def test_docker_hub_official_digest_display_is_the_same_admitted_reference(self):
+        self.server.images[BASE]['RepoDigests'] = [BASE.removeprefix('docker.io/library/')]
+        self.fixture.prepare()
+        self.assertIn('e04-images-intent.json', self.journal.records())
+
+    def test_foreign_registry_or_namespace_cannot_satisfy_base_admission(self):
+        for reference in ('other.example/library/alpine@sha256:' + 'b' * 64,
+                          'example/alpine@sha256:' + 'b' * 64, 'alpine@sha256:' + 'c' * 64):
+            self.server.images[BASE]['RepoDigests'] = [reference]
+            with self.subTest(reference=reference), self.assertRaisesRegex(ValueError, 'not prepared'):
+                self.fixture.prepare()
+        self.assertNotIn('e04-images-intent.json', self.journal.records())
+
     def test_both_intents_precede_build_and_cleanup_is_exact_and_repeatable(self):
         self.submitted()
         self.fixture.start(failing=True)

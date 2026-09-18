@@ -50,9 +50,15 @@ class BuildImages:
         if "e04-images-intent.json" in self.journal.records():
             raise ValueError("Build preparation already attempted; reconcile instead")
         base = self.inspect(self.intent["base"])
+        references = {self.intent["base"]}
+        # Docker displays official Hub images without docker.io/library.
+        # This is the same repository and exact digest, not a foreign alias,
+        # digest-only match or normalization of a parity observation.
+        if self.intent["base"].startswith("docker.io/library/"):
+            references.add(self.intent["base"].removeprefix("docker.io/library/"))
         if (base is None or base.get("Id") != self.intent["image"] or
                 not isinstance(base.get("RepoDigests"), list) or
-                self.intent["base"] not in (base.get("RepoDigests") or [])):
+                not any(reference in base["RepoDigests"] for reference in references)):
             raise ValueError("Digest-pinned build base is not prepared")
         for failing in (False, True):
             if self.inspect(tag_for(self.owner, failing=failing)) is not None:
