@@ -165,6 +165,7 @@ swift_library(
         "@swiftpkg_container//:ContainerAPIClient", "@swiftpkg_container//:ContainerBuild",
         "@swiftpkg_container//:ContainerPersistence",
         "@swiftpkg_container//:ContainerResource", "@swiftpkg_container//:SocketForwarder",
+        "@swiftpkg_containerization//:Containerization",
         "@swiftpkg_containerization//:ContainerizationOCI",
         "@swiftpkg_containerization//:ContainerizationOS",
         "@swiftpkg_swift_nio//:NIOCore", "@swiftpkg_swift_nio//:NIOPosix",

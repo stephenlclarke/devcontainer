@@ -374,6 +374,8 @@ The state database records which backend owns a project. This prevents stock and
 
 In current development source, the runtime backend owns the project independently of which Compose frontend is selected. Changing only the frontend does not migrate ownership. A missing selected executable fails before a claim is created and does not fall back to Docker; install or explicitly configure the intended frontend before retrying. This does not expand the certified release combinations.
 
+The candidate native container-create path checks mounts and the selected kernel before journalling possible creation. Repairing those prerequisites permits retry without database surgery. A failure after create may have been submitted still retains pending intent for explicit reconciliation; do not remove that evidence to force a retry. Existing volume resources are preserved, and this correction does not certify live crash recovery.
+
 The dispatcher applies Docker Compose's project-name precedence before recording that ownership. Valid inherited options such as `--env-file`, `--profile`, `--parallel`, and `--progress` are normalized whether they appear before or after the subcommand; an unknown option in the global position fails explicitly instead of running an unclaimed mutation. Commands that can change resources, including `cp`, `exec`, `scale`, `watch`, and `wait` (which can remove the project with `--down-project`), require the same durable claim as `up` and `down`. A successful `down` or `wait --down-project` releases the claim after the provider removes the project.
 
 Inspect a claim:

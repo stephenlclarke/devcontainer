@@ -1,6 +1,7 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import ContainerAPIClient
+import Containerization
 import ContainerizationError
 import ContainerizationOCI
 import ContainerPersistence
@@ -12,6 +13,11 @@ import Foundation
 import Testing
 
 struct AppleContainerCreateTests {
+    private enum PreflightFailure: Error {
+        case missingKernel
+        case stoppedBeforeRPC
+    }
+
     private var digest: String {
         "sha256:" + String(repeating: "a", count: 64)
     }
@@ -42,8 +48,12 @@ struct AppleContainerCreateTests {
             return configuration
         }
 
-        func create(configuration: ContainerConfiguration, mountOptions _: [String], context: RuntimeRequestContext) throws {
+        func create(
+            configuration: ContainerConfiguration, mountOptions _: [String], context: RuntimeRequestContext,
+            recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
+        ) async throws -> RuntimeContainerCreation {
             try context.checkActive()
+            let creation = try await recordIntent(configuration)
             guard !failCreate else {
                 throw ContainerizationError(.notFound, message: "Captured image content missing")
             }
@@ -51,6 +61,7 @@ struct AppleContainerCreateTests {
             if failAfterCreate {
                 throw DevContainerError(.providerProtocolMismatch, message: "Injected post-create verification failure")
             }
+            return creation
         }
 
         func list() -> [ContainerResource.ContainerSnapshot] {
@@ -115,6 +126,105 @@ struct AppleContainerCreateTests {
         #expect(!log.contains("start fixture"))
         #expect(!log.contains("restart fixture"))
         #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    @Test func `corrupt mount metadata does not poison a container creation retry`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        _ = try await runtime.createVolume(spec: VolumeSpec(name: "data"), context: RuntimeRequestContext())
+        let metadata = fixture.root.appendingPathComponent("volumes/data/metadata.json")
+        let original = try Data(contentsOf: metadata)
+        try Data("invalid volume metadata".utf8).write(to: metadata)
+        let spec = ContainerSpec(
+            name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"],
+            mounts: [.init(type: .volume, source: "data", destination: "/data")]
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        }
+        #expect(await creator.created.isEmpty)
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        try original.write(to: metadata)
+        let snapshot = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        #expect(snapshot.runtimeID.rawValue == "fixture")
+        #expect(await creator.created.count == 1)
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+        #expect(await store.containerMetadata(id: "fixture") != nil)
+    }
+
+    @Test func `unverified native volume leaves no container creation intent`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let spec = ContainerSpec(
+            name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"],
+            mounts: [.init(type: .volume, source: "buildx_buildkit_missing_state", destination: "/data")]
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        }
+        #expect(await creator.created.isEmpty)
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+        #expect(try fixture.log().contains("volume create buildx_buildkit_missing_state"))
+        let repaired = ContainerSpec(name: "fixture", image: spec.image, command: ["/bin/true"])
+        _ = try await runtime.createContainer(spec: repaired, context: RuntimeRequestContext())
+        #expect(await creator.created.count == 1)
+    }
+
+    @Test func `live kernel lookup fails before recording possible submission`() async throws {
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        let native = try configuration(spec)
+        let store = TestMetadataStore()
+        let client = LiveAppleContainerCreateClient(client: ContainerClient(), loadKernel: {
+            throw PreflightFailure.missingKernel
+        })
+        await #expect(throws: PreflightFailure.missingKernel) {
+            try await client.create(
+                configuration: native, mountOptions: [], context: RuntimeRequestContext()
+            ) { prepared in
+                let intent = try RuntimeContainerCreation(
+                    runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate, imageID: spec.image,
+                    spec: spec, nativeConfiguration: JSONEncoder().encode(prepared)
+                )
+                try await store.beginContainerCreation(intent)
+                // Never reach the real native create RPC, even on regression.
+                throw PreflightFailure.stoppedBeforeRPC
+            }
+        }
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+    }
+
+    @Test func `live submission journals final mounts before any native create RPC`() async throws {
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        let native = try configuration(spec)
+        let store = TestMetadataStore()
+        let client = LiveAppleContainerCreateClient(client: ContainerClient(), loadKernel: {
+            Kernel(path: URL(fileURLWithPath: "/unused-test-kernel"), platform: .linuxArm)
+        })
+        await #expect(throws: PreflightFailure.stoppedBeforeRPC) {
+            try await client.create(
+                configuration: native, mountOptions: ["--tmpfs", "/work"], context: RuntimeRequestContext()
+            ) { prepared in
+                let intent = try RuntimeContainerCreation(
+                    runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate, imageID: spec.image,
+                    spec: spec, nativeConfiguration: JSONEncoder().encode(prepared)
+                )
+                try await store.beginContainerCreation(intent)
+                // Stop at the real journal boundary, without contacting the service.
+                throw PreflightFailure.stoppedBeforeRPC
+            }
+        }
+        let intent = try #require(await store.pendingContainerCreation(id: "fixture"))
+        let recorded = try JSONDecoder().decode(ContainerConfiguration.self, from: intent.nativeConfiguration)
+        #expect(recorded.mounts.count == 1)
+        #expect(recorded.mounts.first?.destination == "/work")
+        #expect(native.mounts.isEmpty)
     }
 
     @Test func `metadata completion failure preserves pending create without deletion`() async throws {
@@ -343,6 +453,8 @@ struct AppleContainerCreateTests {
         }
         #expect(await creator.created.isEmpty)
         #expect(await store.containerMetadata(id: "fixture") == nil)
+        // Once create was submitted, even an error must retain uncertain intent.
+        #expect(await store.pendingContainerCreation(id: "fixture") != nil)
         #expect(try !(fixture.log()).contains("create --name"))
         #expect(try !(fixture.log()).contains("image pull"))
     }

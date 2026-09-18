@@ -2,6 +2,8 @@
 
 ## Problem description
 
+GitHub review `4045780895` identified premature native-create intent: failed mount preparation could permanently block retry despite no container submission. Independent review extended this to final mount inspection and kernel lookup. The callback boundary now journals only after these preparations, immediately before native creation; it preserves every potentially submitted failure instead of guessing that an error proves absence.
+
 The Compose wrapper also derived runtime ownership from frontend choice, which could assign a stock project to the enhanced backend or vice versa. Frontend execution must preserve independently resolved runtime selection, reject existing conflicting claims and fail without state changes when the selected executable is absent. The regression tests exercise all four configured frontend/backend pairs; this is not certification of new live runtime combinations.
 
 The existing family workflow repeatedly rebuilds/retests work and couples recovery to large mutable build trees. The approved redesign assigns dependency scheduling and caching to Bazel, keeps disposable state on the external SSD, and reserves internal storage for retained source and accepted assets.

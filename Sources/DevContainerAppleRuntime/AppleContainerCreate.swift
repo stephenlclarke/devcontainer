@@ -1,6 +1,7 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import ContainerAPIClient
+import Containerization
 import ContainerizationOCI
 import ContainerPersistence
 import ContainerResource
@@ -14,12 +15,14 @@ protocol AppleContainerCreateClient: Sendable {
         context: RuntimeRequestContext
     ) async throws -> ContainerConfiguration
     func create(
-        configuration: ContainerConfiguration, mountOptions: [String], context: RuntimeRequestContext
-    ) async throws
+        configuration: ContainerConfiguration, mountOptions: [String], context: RuntimeRequestContext,
+        recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
+    ) async throws -> RuntimeContainerCreation
 }
 
 struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
     let client: ContainerClient
+    var loadKernel: @Sendable () async throws -> Kernel = { try await ClientKernel.getDefaultKernel(for: .current) }
 
     func prepare(
         spec: ContainerSpec, image: ResolvedAppleImage,
@@ -59,18 +62,23 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
     }
 
     func create(
-        configuration: ContainerConfiguration, mountOptions: [String], context: RuntimeRequestContext
-    ) async throws {
+        configuration: ContainerConfiguration, mountOptions: [String], context: RuntimeRequestContext,
+        recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
+    ) async throws -> RuntimeContainerCreation {
         var configuration = configuration
         configuration.mounts = try await Self.mounts(mountOptions)
-        let kernel = try await ClientKernel.getDefaultKernel(for: .current)
+        let kernel = try await loadKernel()
         try context.checkActive()
+        // Finish fallible local preparation before recording possible submission.
+        // Once journalled, a failed create/verification keeps its recovery record.
+        let creation = try await recordIntent(configuration)
         // The API consumes this descriptor, not its mutable reference. Missing
         // local content fails; it must never turn into a pull of a replacement tag.
         try await client.create(configuration: configuration, kernel: kernel)
         let created = try await client.get(id: configuration.id)
         try AppleContainerCreateProjection.verify(created.configuration, expected: configuration)
         try context.checkActive()
+        return creation
     }
 
     /// Keep parsing testable without contacting the runtime volume service.

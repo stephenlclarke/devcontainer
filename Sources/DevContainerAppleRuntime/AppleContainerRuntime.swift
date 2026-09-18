@@ -680,20 +680,21 @@ public extension AppleContainerRuntime {
         _ = try containerConfigurationArguments(spec, optionSupport: optionSupport)
         try Self.validateNativeMounts(spec.mounts)
         let configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
-        let creation = try RuntimeContainerCreation(
-            runtimeID: configuration.id, nativeCreatedAt: configuration.creationDate,
-            imageID: image.snapshot.id, spec: spec,
-            nativeConfiguration: JSONEncoder().encode(configuration)
-        )
-        try await store.beginContainerCreation(creation)
         var mountOptions: [String] = []
         for mount in spec.mounts {
             mountOptions += try await mountArguments(mount)
         }
-        try await containerCreateClient.create(
+        return try await containerCreateClient.create(
             configuration: configuration, mountOptions: mountOptions, context: context
-        )
-        return creation
+        ) { prepared in
+            let creation = try RuntimeContainerCreation(
+                runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate,
+                imageID: image.snapshot.id, spec: spec,
+                nativeConfiguration: JSONEncoder().encode(prepared)
+            )
+            try await store.beginContainerCreation(creation)
+            return creation
+        }
     }
 
     private func containerCreateArguments(

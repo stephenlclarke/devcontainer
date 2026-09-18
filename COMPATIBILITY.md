@@ -62,6 +62,8 @@ or another implementation module.
 
 Current development source separates Compose frontend choice from runtime ownership and rejects missing frontend executables before claiming state. Component tests cover both frontend choices with both runtime backends and reject cross-runtime claim migration. These tests do not certify additional frontend/runtime combinations; the immutable 1.0.1 matrix below remains the release claim.
 
+The candidate native-create path also distinguishes failed local preparation from uncertain runtime submission. Mount/kernel failures do not create pending container intent, while failures after journalling retain it. Component tests do not substitute for live creation/recovery qualification.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each

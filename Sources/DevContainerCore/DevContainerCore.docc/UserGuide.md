@@ -38,6 +38,8 @@ only the current shell. It does not replace Docker's global context.
 
 In current development source, Compose claims the resolved runtime backend independently of frontend selection. A conflicting existing claim is rejected, and a missing frontend fails before creating project state without falling back to Docker. Component coverage of these choices does not expand the certified release matrix or remove the Docker client dependency.
 
+The candidate native-create path completes mount and kernel checks before recording possible submission. Repairing a failed prerequisite permits retry without clearing database records. Once create may have been submitted, failure retains its recovery record; never remove that record merely to force a retry. Live recovery qualification remains separate from component tests.
+
 ## Run the official CLI
 
 ```console
