@@ -23,6 +23,8 @@ sh_test(
         "test_archive_probe.py",
         "build_probe.py",
         "test_build_probe.py",
+        "build_images.py",
+        "test_build_images.py",
         "guest_fixture.py",
         "test_guest_fixture.py",
         "guest_runtime.py",
