@@ -315,7 +315,10 @@ swift_test(
 
 swift_test(
     name = "DevContainerServiceIntegrationTests",
-    srcs = ["Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift"],
+    srcs = [
+        "Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
+        "Tests/DevContainerServiceTests/ServiceTestExecutable.swift",
+    ],
     module_name = "DevContainerServiceIntegrationTests",
     copts = RUNTIME_COPTS,
     data = [":devcontainer-engine"],

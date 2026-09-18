@@ -405,66 +405,7 @@ private func engineExecutable() throws -> URL {
     if let executable = try configuredEngineExecutable() {
         return executable
     }
-
-    var startingPoints = [URL(fileURLWithPath: CommandLine.arguments[0])]
-    startingPoints += Bundle.allBundles.compactMap(\.executableURL)
-    if let profile = ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] {
-        startingPoints.append(URL(fileURLWithPath: profile))
-    }
-    for startingPoint in startingPoints {
-        var candidate = startingPoint
-        for _ in 0 ..< 12 {
-            let sibling = candidate
-                .deletingLastPathComponent()
-                .appendingPathComponent("devcontainer-engine")
-            if FileManager.default.isExecutableFile(atPath: sibling.path) {
-                return sibling
-            }
-            candidate.deleteLastPathComponent()
-        }
-    }
-
-    let repository = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let build = repository.appendingPathComponent(".build", isDirectory: true)
-    let enumerator = FileManager.default.enumerator(
-        at: build,
-        includingPropertiesForKeys: [.isExecutableKey],
-        options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    )
-    let expectsCoverageBuild = startingPoints.contains {
-        $0.path.contains("/coverage/")
-    }
-    let matches = (enumerator?.allObjects as? [URL] ?? [])
-        .filter {
-            $0.lastPathComponent == "devcontainer-engine"
-                && FileManager.default.isExecutableFile(atPath: $0.path)
-        }
-        .sorted {
-            executableCandidatePrecedes(
-                $0,
-                $1,
-                expectsCoverageBuild: expectsCoverageBuild
-            )
-        }
-    if let match = matches.first {
-        return match
-    }
-    throw ServiceIntegrationError("could not locate the built devcontainer-engine")
-}
-
-private func executableCandidatePrecedes(
-    _ left: URL,
-    _ right: URL,
-    expectsCoverageBuild: Bool
-) -> Bool {
-    let leftMatchesBuild = left.path.contains("/coverage/") == expectsCoverageBuild
-    let rightMatchesBuild = right.path.contains("/coverage/") == expectsCoverageBuild
-    return leftMatchesBuild == rightMatchesBuild
-        ? left.path < right.path
-        : leftMatchesBuild && !rightMatchesBuild
+    return try ServiceTestExecutable.resolve(beside: Bundle(for: ServiceIntegrationBundle.self).bundleURL)
 }
 
 private func configuredEngineExecutable() throws -> URL? {

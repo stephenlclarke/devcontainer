@@ -20,6 +20,8 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+Cross-harness validation must preserve filesystem identity and select the exact built executable. CI exposed path-alias text comparisons and unsafe recursive engine discovery; the corrected tests compare inode/device identity and require the executable beside the SwiftPM test bundle. Bazel's declared runfile and explicit overrides remain unchanged. The focused unit proof does not qualify the Keychain-backed service lane or replace a complete sanitizer run.
+
 The terminal helper's sanitized environment originally omitted LLVM profiling, leaving successful child execution absent from coverage. The regression now requires fresh nonempty child profiles at a validated SSD-only destination without inheriting the operator environment. Focused invocation `81b1bc85-4452-48bc-a2ad-5bc858348694` passes; independent review is clean. This corrects evidence collection rather than changing production behavior or relaxing the 90% aggregate gate.
 
 Docker shutdown could be verified while a later crash during scratch deletion or guard clearance left no supported recovery path. Recovery now recognizes the Docker journal separately, verifies process/socket closure again, and uses a durable directory-identity authorization written before normal or resumed deletion. It preserves failed-case evidence and refuses uncertain startup/shutdown rather than rerunning the VM. Full live interrupted-process reconciliation is still required.

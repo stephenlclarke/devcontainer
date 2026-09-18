@@ -146,8 +146,13 @@ struct ProcessRunnerTests {
         )
         #expect(result.exitCode == 7)
         #expect(String(bytes: result.standardOutput, encoding: .utf8) == "payload|fixture|a b")
-        #expect(String(bytes: result.standardError, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            == directory.resolvingSymlinksInPath().path)
+        let observed = try #require(String(bytes: result.standardError, encoding: .utf8))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var actual = stat()
+        var expected = stat()
+        try #require(stat(observed, &actual) == 0)
+        try #require(stat(directory.path, &expected) == 0)
+        #expect(actual.st_dev == expected.st_dev && actual.st_ino == expected.st_ino)
     }
 
     @Test
