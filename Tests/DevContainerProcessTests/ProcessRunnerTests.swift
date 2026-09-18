@@ -36,6 +36,17 @@ struct ProcessRunnerTests {
                 .appendingPathComponent("DevContainerProcessProbe")
         }
         try #require(FileManager.default.isExecutableFile(atPath: probe.path))
+        var childEnvironment = ["TERM": "dumb"]
+        var profileDirectory: URL?
+        let profilePrefix = "terminal-probe-\(UUID().uuidString)-"
+        if environment["COVERAGE"] == "1" {
+            let path = try #require(environment["COVERAGE_DIR"])
+            let directory = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+            try #require(directory.path.hasPrefix("/Volumes/SSD/cf/bazel/"))
+            childEnvironment["LLVM_PROFILE_FILE"] = directory
+                .appendingPathComponent(profilePrefix + "%p-%m.profraw").path
+            profileDirectory = directory
+        }
         // Keep script's stdin open briefly so its synthetic EOF does not race
         // the queued PTY input. The probe itself has a separate ten-second alarm.
         let result = try await ProcessRunner.captured(
@@ -44,11 +55,20 @@ struct ProcessRunnerTests {
                 "-c", "{ printf '%s' \"$2\"; /bin/sleep 1; } | /usr/bin/script -q /dev/null \"$1\"",
                 "sh", probe.path, String(repeating: "fixture\n", count: 12)
             ],
-            environment: ["TERM": "dumb"]
+            environment: childEnvironment
         )
         let output = String(bytes: result.standardOutput, encoding: .utf8)
         #expect(result.exitCode == 0, "TTY probe output: \(output ?? "invalid UTF-8")")
         #expect(output?.components(separatedBy: "tty-ok").count == 13)
+        if let profileDirectory {
+            let profiles = try FileManager.default.contentsOfDirectory(
+                at: profileDirectory, includingPropertiesForKeys: [.fileSizeKey]
+            ).filter { $0.lastPathComponent.hasPrefix(profilePrefix) && $0.pathExtension == "profraw" }
+            try #require(!profiles.isEmpty, "The native terminal child must emit its own coverage")
+            for profile in profiles {
+                #expect(try profile.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0 > 0)
+            }
+        }
     }
 
     @Test
