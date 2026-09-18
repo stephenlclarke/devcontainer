@@ -16,7 +16,7 @@
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 97,
-        "//:DevContainerServiceTests": 19
+        "//:DevContainerServiceTests": 23
       },
       "required_sources": [
         "Sources/DevContainerModel/AtomicFile.swift",
@@ -27,6 +27,7 @@
         "Sources/DevContainerCLI/ContextCommand.swift",
         "Sources/DevContainerCLI/VersionCommand.swift",
         "Sources/DevContainerService/DevContainerServiceCommand.swift",
+        "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
         "Sources/DevContainerProcess/ProcessRunner.swift",
         "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
@@ -43,7 +44,7 @@
         "//:DevContainerComposeProviderTests": 12,
         "//:DevContainerComposeCLITests": 18,
         "//:DevContainerAppleRuntimeTests": 108,
-        "//:DevContainerServiceTests": 19
+        "//:DevContainerServiceTests": 23
       },
       "required_sources": [
         "Sources/DevContainerModel/AtomicFile.swift",
@@ -54,6 +55,7 @@
         "Sources/DevContainerCLI/ContextCommand.swift",
         "Sources/DevContainerCLI/VersionCommand.swift",
         "Sources/DevContainerService/DevContainerServiceCommand.swift",
+        "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
         "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
         "Sources/DevContainerProcess/ProcessRunner.swift",
         "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"

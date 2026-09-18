@@ -305,7 +305,7 @@ swift_test(
     module_name = "DevContainerServiceTests",
     copts = RUNTIME_COPTS,
     deps = [
-        ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerTestSupport",
+        ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerState", ":DevContainerTestSupport",
         "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
         "@swiftpkg_container_engine_api//:ContainerEngineWire",

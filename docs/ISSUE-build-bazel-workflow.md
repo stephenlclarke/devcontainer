@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Provider declarations bind the compiled profile, runtime revision, resource owner and effective capabilities into the handoff fingerprint, but the service previously constructed them only inside Keychain-backed startup. Extract the unchanged projection into a side-effect-free boundary and test provenance, stock/enhanced handoff advertising, unavailable/emulated mappings, route inventory, fingerprint sensitivity and rejection of empty provenance. This must not relabel a selected resource owner as the compiled profile or change runtime capability claims.
+
 The explicit host-service integration lane used a synchronous HTTP helper with no request timeout and waited for exit before draining pipes. A hanging service or oversized response could stall unattended tests. Reuse the existing deadline-aware process runner, bound both streams, reject truncation and malformed status, preserve tighter caller deadlines, and disable implicit curl configuration. Unit fixtures must prove helper failure and cleanup without accessing the operator's Keychain; the real host lane remains separate opt-in execution.
 
 Support-archive generation also used unbounded external probes and swallowed caller cancellation/deadline errors into a successful partial bundle. Red regression `4f8dba68-bf34-4c75-9d62-96c2fbf8c8a1` reproduces both. Bound probes while preserving useful best-effort results for ordinary failures; cancellation and enclosing deadline expiry must stop collection, reap subprocesses and remove owned staging.
