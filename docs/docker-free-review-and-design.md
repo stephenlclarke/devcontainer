@@ -216,6 +216,8 @@ so the release-binding portion of this finding remains open.
 
 ## Target architecture
 
+Development update, 19 September: the native Bazel branch implements metadata, non-TTY exec, foreground startup and event streaming in its project frontend, plus the public lifecycle forwarding boundary. Focused executable/private-socket and process-forwarding tests pass; the latter uses a stand-in child. The required private Node/reference CLI production bundle, candidate D01 execution, complete compatibility matrix and release gates remain outstanding. This does not replace the historical published-source evidence above or close DF-01/DF-16.
+
 ### Components and ownership
 
 ```mermaid

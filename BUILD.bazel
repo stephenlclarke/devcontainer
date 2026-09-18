@@ -282,6 +282,8 @@ swift_test(
     name = "DevContainerCLITests",
     srcs = glob(["Tests/DevContainerCLITests/*.swift"]),
     module_name = "DevContainerCLITests",
+    data = [":devcontainer"],
+    env = {"DEVCONTAINER_LIFECYCLE_TEST_RUNFILE": "$(rootpath :devcontainer)"},
     deps = [":DevContainerCLI", ":DevContainerCore", ":DevContainerModel", ":DevContainerProcess", ":DevContainerState"],
 )
 

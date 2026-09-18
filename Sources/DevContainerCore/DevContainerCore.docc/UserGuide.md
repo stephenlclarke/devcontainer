@@ -5,6 +5,8 @@ Use the official Dev Containers CLI and VS Code extension with stock Apple
 
 ## Install
 
+The unreleased Bazel development branch now registers `up`, `build`, `exec`, `read-configuration` and `run-user-commands` as pass-through lifecycle commands. They require an installation-private Node/CLI bundle and project-owned frontend executables; missing assets fail without npm or Docker fallback. Bundle packaging and live candidate qualification are still pending, so the stable installation instructions below do not yet provide these new commands. Component forwarding tests use a stand-in child, not the full reference runtime.
+
 Install and verify Apple `container` 1.1.0 separately, then install the stable
 formula:
 

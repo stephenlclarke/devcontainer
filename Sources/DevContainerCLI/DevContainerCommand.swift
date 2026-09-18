@@ -30,6 +30,11 @@ struct DevContainerCommand: AsyncParsableCommand {
 
     static func configuredSubcommands() -> [ParsableCommand.Type] {
         [
+            LifecycleUpCommand.self,
+            LifecycleBuildCommand.self,
+            LifecycleExecCommand.self,
+            LifecycleReadConfigurationCommand.self,
+            LifecycleRunUserCommandsCommand.self,
             VersionCommand.self,
             DoctorCommand.self,
             ConfigureCommand.self,
