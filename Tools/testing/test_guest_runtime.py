@@ -66,6 +66,22 @@ class GuestRuntimeTests(unittest.TestCase):
             self.case.cleanup()
         self.case.builder.cleanup.assert_not_called()
 
+    def test_fault_adapter_reuses_owned_guest_with_whole_operation_deadline(self):
+        self.case.fixture = 'F01-fault-recovery'
+        with patch('guest_runtime.FaultFixture') as fixture, \
+                patch('guest_runtime.deadline') as deadline:
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            deadline.assert_called_once_with(90)
+            self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+
+    def test_fault_recovery_requires_all_resource_closure(self):
+        records = {'fault-intent.json': canonical({'owner': 'case'})}
+        with self.assertRaisesRegex(ValueError, 'explicit reconciliation'):
+            require_guest_cleanup(records)
+        records['fault-removed.json'] = canonical({'intentSHA256': guest_runtime.digest(records['fault-intent.json']),
+                                                  'absent': True})
+        require_guest_cleanup(records)
+
     def test_recovery_requires_both_build_output_and_builder_closure(self):
         for prefix in ('e04-images', 'e04-builder'):
             intent = canonical({'owner': 'test'})

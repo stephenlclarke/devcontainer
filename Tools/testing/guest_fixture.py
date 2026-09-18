@@ -50,12 +50,13 @@ class GuestFixture:
             self.intent["networkMounts"] = self.configuration
         self.identifier = None
 
-    def call(self, method: str, route: str, body=None, *, timeout=5):
+    def call(self, method: str, route: str, body=None, *, timeout=5, total_timeout=None):
         event = {"method": method, "route": f"/v{self.version}{route}"}
         started = time.monotonic_ns()
         try:
+            options = {"total_timeout": total_timeout} if total_timeout is not None else {}
             status, payload = request(self.socket, method, event["route"],
-                                      canonical(body) if body is not None else None, timeout=timeout)
+                                      canonical(body) if body is not None else None, timeout=timeout, **options)
             event["status"] = status
             return status, payload
         except (Exception, KeyboardInterrupt) as error:

@@ -1,16 +1,18 @@
 """Real Unix-socket integration tests of the Docker-independent E01 probe."""
 
 from http.server import BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
 import os
 from pathlib import Path
 import socket
-from socketserver import UnixStreamServer
+from socketserver import ThreadingUnixStreamServer
 import tempfile
 import threading
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from engine_probe import engine_negotiation, request
 
@@ -32,6 +34,22 @@ class Handler(BaseHTTPRequestHandler):
             # A complete JSON record is still an incomplete HTTP response.
             self.wfile.write(b'{"stream":"Step 1 complete"}\n')
             self.close_connection = True
+        elif self.path in {"/drip-length", "/drip-close", "/drip-headers"}:
+            try:
+                if self.path == "/drip-headers":
+                    for byte in b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n":
+                        self.wfile.write(bytes([byte]))
+                        time.sleep(0.02)
+                else:
+                    self.send_response(200)
+                    if self.path == "/drip-length":
+                        self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    for _ in range(100):
+                        self.wfile.write(b"x")
+                        time.sleep(0.02)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # The absolute request deadline deliberately closes the peer.
         else:
             self.reply(404, self.server.error_body)
 
@@ -61,7 +79,7 @@ class EngineProbeTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.scratch.cleanup)
         self.socket = Path(self.scratch.name) / "s"
-        self.server = UnixStreamServer(str(self.socket), Handler)
+        self.server = ThreadingUnixStreamServer(str(self.socket), Handler)
         self.server.version = b'{"MinAPIVersion":"1.44"}'
         self.server.ping_status = 200
         self.server.error_body = b'{"message":"invalid request"}'
@@ -143,6 +161,48 @@ class EngineProbeTests(unittest.TestCase):
         idle.listen(1)
         with self.assertRaises(TimeoutError):
             request(path, "GET", "/_ping", timeout=0.02)
+
+    def test_absolute_deadline_closes_four_trickling_workers_before_join(self):
+        for route in ("/drip-length", "/drip-close", "/drip-headers"):
+            def invoke(_index):
+                with self.assertRaises(TimeoutError):
+                    request(self.socket, "GET", route, timeout=1, total_timeout=0.08)
+            started = time.monotonic()
+            with self.subTest(route=route), ThreadPoolExecutor(max_workers=4) as executor:
+                list(executor.map(invoke, range(4)))
+            self.assertLess(time.monotonic() - started, 1)
+
+    def test_completed_request_cancels_deadline_and_preserves_body(self):
+        self.assertEqual(request(self.socket, "GET", "/_ping", total_timeout=1), (200, b"OK"))
+
+    def test_invalid_total_deadlines_fail_without_connection(self):
+        for value in (0, -1, True, 301, float('nan'), '1'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "deadline"):
+                request(self.socket, "GET", "/_ping", total_timeout=value)
+
+    def test_timer_before_socket_creation_cannot_start_late_request(self):
+        from engine_probe import UnixHTTPConnection
+        connection = UnixHTTPConnection(self.socket, 1)
+        connection.expired.set()
+        with self.assertRaises(TimeoutError):
+            connection.connect()
+        connection.close()
+
+    def test_expiry_between_flag_check_and_connect_invalidates_socket(self):
+        original_connect = socket.socket.connect
+        callbacks = []
+
+        def timer(_seconds, callback):
+            callbacks.append(callback)
+            return Mock()
+
+        def raced_connect(sock, address):
+            callbacks[0]()
+            return original_connect(sock, address)
+
+        with patch('engine_probe.threading.Timer', side_effect=timer), \
+                patch('engine_probe.socket.socket.connect', raced_connect), self.assertRaises(TimeoutError):
+            request(self.socket, 'GET', '/drip-close', total_timeout=1)
 
 
 if __name__ == "__main__":

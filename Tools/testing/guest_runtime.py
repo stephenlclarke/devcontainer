@@ -23,9 +23,10 @@ from network_volume_probe import NetworkVolumeFixture
 from engine_probe import request
 from build_fixture import BuildFixture
 from build_runtime import ReleasedBuilder, admit_builder
+from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -190,6 +191,11 @@ class ReleasedGuest:
                                               self.root, observe=self.observe)
             with deadline(180):
                 return self.guest.operation()
+        if self.fixture == "F01-fault-recovery":
+            self.guest = FaultFixture(self.socket, digest(canonical(self.owner["identity"])),
+                                      self.image_id, GUEST_API_VERSION, self.runtime.journal, observe=self.observe)
+            with deadline(90):
+                return self.guest.operation()
         command = COMMAND if self.fixture == "E02-container-lifecycle" else ("sleep", "300")
         if self.fixture == "E03-exec-streams":
             command = ("sleep", "600")
@@ -232,10 +238,12 @@ def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
                 expected["intentSHA256"] = digest(records[prefix + "-intent.json"])
             if removed != expected:
                 raise ValueError("Image-build resources need explicit reconciliation before service recovery")
-    if "network-volume-intent.json" in records:
-        removed = json.loads(records.get("network-volume-removed.json", b"null"))
-        if removed != {"intentSHA256": digest(records["network-volume-intent.json"]), "absent": True}:
-            raise ValueError("Network/volume resources need explicit reconciliation before service recovery")
+    for prefix in ("network-volume", "fault"):
+        if prefix + "-intent.json" in records:
+            removed = json.loads(records.get(prefix + "-removed.json", b"null"))
+            if removed != {"intentSHA256": digest(records[prefix + "-intent.json"]), "absent": True}:
+                kind = "Network/volume" if prefix == "network-volume" else "Fault"
+                raise ValueError(kind + " resources need explicit reconciliation before service recovery")
     if "container-intent.json" in records:
         intent = json.loads(records["container-intent.json"])
         removed = json.loads(records.get("container-removed.json", b"null"))

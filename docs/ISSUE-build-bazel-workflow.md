@@ -32,6 +32,8 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+F01's native adapter preserves the existing separate never-started removal race while removing its Docker CLI dependency. Concurrent workers need absolute HTTP deadlines, not inactivity timeouts alone: a trickling response otherwise outlives the outer phase alarm and prevents executor shutdown/cleanup. The implementation closes the exact per-request socket on expiry, including connection-setup races, and retains independent guest/composite cleanup receipts. Component regressions cover these boundaries; live three-lane execution remains the acceptance boundary, and the enhanced runtime remains separately blocked by recorded host/release-input admission.
+
 The complete sanitizer cycle exposed another use of the dependency's fork-based
 launcher in non-TTY Apple runtime sessions. A sampled ASan allocator-lock stall
 shows that fixing only the shared CLI process runner was insufficient. Reuse

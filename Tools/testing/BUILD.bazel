@@ -35,6 +35,8 @@ sh_test(
         "test_guest_runtime.py",
         "lifecycle_probe.py",
         "test_lifecycle_probe.py",
+        "fault_probe.py",
+        "test_fault_probe.py",
         "run_tests.py",
         "test_run_tests.py",
         "host_runtime.py",
@@ -84,6 +86,7 @@ sh_test(
         "//:Tests/Parity/fixtures/E04-image-build/contract.json",
         "//:Tests/Parity/fixtures/E05-archive-copy/contract.json",
         "//:Tests/Parity/fixtures/E06-network-volume/contract.json",
+        "//:Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     ],
     size = "small",
     visibility = ["//visibility:public"],
@@ -117,6 +120,7 @@ filegroup(
         "guest_runtime.py",
         "guest_fixture.py",
         "lifecycle_probe.py",
+        "fault_probe.py",
         "archive_probe.py",
         "//Tools/bazel:prepare_releases.py",
         "//Tools/bazel:prepare_docker_cli.py",
@@ -134,6 +138,7 @@ filegroup(
         "//:Tests/Parity/fixtures/E03-exec-streams/contract.json",
         "//:Tests/Parity/fixtures/E05-archive-copy/contract.json",
         "//:Tests/Parity/fixtures/E06-network-volume/contract.json",
+        "//:Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     ],
 )
 

@@ -30,6 +30,7 @@ exports_files([
     "Tests/Parity/fixtures/E04-image-build/contract.json",
     "Tests/Parity/fixtures/E05-archive-copy/contract.json",
     "Tests/Parity/fixtures/E06-network-volume/contract.json",
+    "Tests/Parity/fixtures/F01-fault-recovery/contract.json",
 ])
 
 candidate_archive(
