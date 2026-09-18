@@ -30,6 +30,12 @@ Final delivery includes stable GitHub/Homebrew releases for both projects, full 
 
 ## Resolution and remaining risk
 
+A passing Sonar quality gate is not proof of zero open issues. The first local
+native-coverage scan passed its gate while reporting six ambiguous exception
+tests and one excessively nested process closure. Address these structurally
+without suppressions, weaker assertions, source exclusions or changed process
+lifetime semantics, then verify the actual issue list in a fresh scan.
+
 Runtime admission previously accepted a running selected API executable before proving that it could answer XPC requests. An enhanced-lane timeout before fixture operations exposed that distinction. Admission now checks the selected CLI's read-only empty inventory with a ten-second bound and durable child-lifetime evidence. Failure remains setup failure, never a passing fixture or an automatic retry; missing stop proof blocks restoration and cleanup until reconciled. This improves startup evidence but does not by itself resolve the enhanced provider's underlying startup failure.
 
 Installation-facing version and socket-context output need executable contracts, not parser-only smoke checks. The CLI suite now verifies exact provenance and safe shell evaluation without creating state, while retaining the current public output formats. Both native dependency profiles pass the focused tests; live installation and release gates remain separate.

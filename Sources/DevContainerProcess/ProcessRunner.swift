@@ -57,17 +57,15 @@ public enum ProcessRunner {
             do {
                 // Detached work avoids blocking the caller's executor, but must
                 // explicitly retain its request identity and bounded lifetime.
-                let capturedResult = try await RuntimeRequestScope.$context.withValue(context) {
-                    try await RuntimeRequestScope.withDeadline {
-                        try await captured(
-                            executable: executable,
-                            arguments: arguments,
-                            environment: environment,
-                            workingDirectory: workingDirectory,
-                            input: input,
-                            maximumOutputBytes: maximumOutputBytes
-                        )
-                    }
+                let capturedResult = try await withRequestScope(context) {
+                    try await captured(
+                        executable: executable,
+                        arguments: arguments,
+                        environment: environment,
+                        workingDirectory: workingDirectory,
+                        input: input,
+                        maximumOutputBytes: maximumOutputBytes
+                    )
                 }
                 result.store(.success(capturedResult))
             } catch {
@@ -84,6 +82,15 @@ public enum ProcessRunner {
         }
         try Task.checkCancellation()
         return try result.load().get()
+    }
+
+    private static func withRequestScope<Result: Sendable>(
+        _ context: RuntimeRequestContext?,
+        operation: @escaping @Sendable () async throws -> Result
+    ) async throws -> Result {
+        try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline(operation)
+        }
     }
 
     // Launch, drain, cancellation, escalation, and reap form one ownership

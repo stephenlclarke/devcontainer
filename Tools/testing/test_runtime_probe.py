@@ -58,9 +58,10 @@ class RuntimeProbeTests(unittest.TestCase):
             with self.subTest(payload_bytes=len(payload), exit_code=code):
                 root, cli, journal, child = self.fixture(payload)
                 child.process.wait.return_value = code
+                verify = Mock()
                 with patch("runtime_probe.OwnedProcess", return_value=child):
                     with self.assertRaises(ValueError):
-                        probe_api(root, cli, journal, Mock())
+                        probe_api(root, cli, journal, verify)
                 child.stop.assert_called_once()
                 require_probe_stopped(journal.records())
                 self.assertNotIn(NAME + "-ready.json", journal.records())
@@ -99,11 +100,13 @@ class RuntimeProbeTests(unittest.TestCase):
             if interrupted:
                 child.start.side_effect = KeyboardInterrupt()
             child.stop.side_effect = ValueError("uncertain child lifetime")
+            verify = Mock()
             with patch("runtime_probe.OwnedProcess", return_value=child):
                 with self.assertRaisesRegex(ValueError, "uncertain child"):
-                    probe_api(root, cli, journal, Mock())
+                    probe_api(root, cli, journal, verify)
+            records = journal.records()
             with self.assertRaisesRegex(ValueError, "reconciliation"):
-                require_probe_stopped(journal.records())
+                require_probe_stopped(records)
             self.assertNotIn(NAME + "-ready.json", journal.records())
             self.assertTrue(root.exists())
 
@@ -120,22 +123,24 @@ class RuntimeProbeTests(unittest.TestCase):
         root, cli, journal, child = self.fixture()
         alias = root / "alias"
         alias.symlink_to(cli.parent, target_is_directory=True)
+        verify = Mock()
         with patch("runtime_probe.OwnedProcess", return_value=child):
             for executable in (alias / "container", cli.with_name("missing"), Path("container")):
                 with self.assertRaisesRegex(ValueError, "canonical"):
-                    probe_api(root, executable, journal, Mock())
+                    probe_api(root, executable, journal, verify)
             child.start.assert_not_called()
-            probe_api(root, cli, journal, Mock())
+            probe_api(root, cli, journal, verify)
             with self.assertRaisesRegex(ValueError, "already attempted"):
-                probe_api(root, cli, journal, Mock())
+                probe_api(root, cli, journal, verify)
             child.start.assert_called_once()
 
     def test_retention_failure_resumes_without_running_probe_again(self):
         root, cli, journal, child = self.fixture()
+        verify = Mock()
         with patch("runtime_probe.OwnedProcess", return_value=child), \
                 patch("runtime_probe.diagnostic_snapshot", side_effect=OSError("retention interrupted")):
             with self.assertRaisesRegex(OSError, "retention interrupted"):
-                probe_api(root, cli, journal, Mock())
+                probe_api(root, cli, journal, verify)
         require_probe_stopped(journal.records())
         probe_diagnostics(root, journal)
         self.assertEqual(journal.records()[NAME + ".log"], b"[]\n")
