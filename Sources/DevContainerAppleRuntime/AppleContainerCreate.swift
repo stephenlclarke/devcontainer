@@ -73,7 +73,11 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         try context.checkActive()
     }
 
-    private static func mounts(_ options: [String]) async throws -> [Filesystem] {
+    /// Keep parsing testable without contacting the runtime volume service.
+    static func mounts(
+        _ options: [String],
+        inspectVolume: @Sendable (String) async throws -> VolumeConfiguration = { try await ClientVolume.inspect($0) }
+    ) async throws -> [Filesystem] {
         var filesystems: [Filesystem] = []
         for index in stride(from: 0, to: options.count, by: 2) {
             guard index + 1 < options.count else {
@@ -91,7 +95,7 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
                 case let .filesystem(filesystem):
                     filesystems.append(filesystem)
                 case let .volume(parsed):
-                    let volume = try await ClientVolume.inspect(parsed.name)
+                    let volume = try await inspectVolume(parsed.name)
                     filesystems.append(.volume(
                         name: parsed.name, format: volume.format, source: volume.source,
                         destination: parsed.destination, options: parsed.options

@@ -475,6 +475,15 @@ struct AppleContainerCreateTests {
         image.descriptor = try JSONEncoder().encode(descriptor())
         image.platform = try JSONEncoder().encode(Platform.current)
         #expect(try image.nativeIdentity().0.digest == digest)
+        image.descriptor = try JSONEncoder().encode(Descriptor(
+            mediaType: "application/vnd.oci.image.index.v1+json",
+            digest: "sha256:" + String(repeating: "b", count: 64), size: 123
+        ))
+        #expect(throws: DevContainerError.self) { try image.nativeIdentity() }
+        image.descriptor = try JSONEncoder().encode(descriptor())
+        image.platform = Data("{}".utf8)
+        #expect(throws: ContainerizationError.self) { try image.nativeIdentity() }
+        image.platform = try JSONEncoder().encode(Platform.current)
         image.descriptor = Data("{}".utf8)
         #expect(throws: DecodingError.self) { try image.nativeIdentity() }
     }
