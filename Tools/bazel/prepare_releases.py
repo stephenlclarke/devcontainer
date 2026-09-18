@@ -27,6 +27,13 @@ def layout(asset: dict) -> dict:
     """Only reviewed release layouts are admitted; never guess a missing binary."""
     repository, name = asset["repository"], asset["name"]
     if (repository, asset["tag"], name) == (
+            "nodejs.org/dist", "24.21.0", "node-v24.21.0-darwin-arm64.tar.gz"):
+        return {"format": "selected-tar", "executables": {"node": "node-v24.21.0-darwin-arm64/bin/node"},
+                "files": {"license": "node-v24.21.0-darwin-arm64/LICENSE"}}
+    if (repository, asset["tag"], name) == ("registry.npmjs.org/@devcontainers/cli", "0.88.0", "cli-0.88.0.tgz"):
+        return {"format": "tar", "executables": {"devcontainer-cli": "package/devcontainer.js"},
+                "files": {"package": "package/package.json"}}
+    if (repository, asset["tag"], name) == (
             "ghcr.io/homebrew/core/docker", "29.6.2", "docker--29.6.2.arm64_tahoe.bottle.tar.gz"):
         return {"format": "tar", "executables": {"docker": "docker/29.6.2/bin/docker"}}
     if repository == "local/devcontainer-candidate" and name == "candidate_archive.tar.gz":
@@ -121,6 +128,36 @@ def copy_raw(source: Path, destination: Path, specification: dict) -> None:
     target.parent.mkdir(parents=True)
     shutil.copyfile(source, target)
     target.chmod(0o755 if executable else 0o600)
+
+
+def unpack_selected_tar(source: Path, destination: Path, specification: dict) -> None:
+    """Retain only reviewed Node binary/license; never materialize npm or links."""
+    executables = set(specification["executables"].values())
+    selected = executables | set(specification["files"].values())
+    seen, found, size = set(), set(), 0
+    with tarfile.open(source, "r:gz") as archive:
+        for entry in archive:
+            path = member_path(entry.name)
+            if path == Path(".") and entry.isdir():
+                continue
+            if path == Path(".") or path in seen or len(seen) >= MAX_FILES or entry.size < 0:
+                raise ValueError("Duplicate or excessive selected archive members")
+            seen.add(path)
+            size += entry.size
+            if size > MAX_BYTES:
+                raise ValueError("Expanded selected archive exceeds size limit")
+            if path.as_posix() not in selected:
+                continue
+            if not entry.isfile():
+                raise ValueError("Selected archive member is not a regular file")
+            target = destination / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.extractfile(entry) as incoming, target.open("xb") as output:
+                shutil.copyfileobj(incoming, output)
+            target.chmod(0o755 if path.as_posix() in executables else 0o600)
+            found.add(path.as_posix())
+    if found != selected:
+        raise ValueError("Selected release payload is incomplete")
 
 
 def expand_package(source: Path, destination: Path) -> None:
@@ -241,6 +278,8 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
                 staged.mkdir()
                 if kind == "tar":
                     unpack_tar(source, staged, specification["layout"].get("omittedLinks"))
+                elif kind == "selected-tar":
+                    unpack_selected_tar(source, staged, specification["layout"])
                 elif kind == "kernel-zstd":
                     unpack_kernel(source, staged)
                 elif kind in ("raw", "raw-data"):

@@ -52,6 +52,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-prepare-guest-kernel
 .PHONY: bazel-prepare-docker-oracle
 .PHONY: bazel-prepare-docker-cli
+.PHONY: bazel-prepare-devcontainers-cli
 .PHONY: bazel-docs
 export CASE_ID
 export CASE_FIXTURE
@@ -89,6 +90,9 @@ bazel-prepare-docker-oracle:
 
 bazel-prepare-docker-cli:
 	Tools/bazel/run.sh prepare-docker-cli Tools/bazel/docker-cli.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-devcontainers-cli:
+	Tools/bazel/run.sh prepare-devcontainers-cli Tools/bazel/devcontainers-cli.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
