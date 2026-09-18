@@ -3,6 +3,9 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
+    "documentation/action.py",
+    "documentation/test_action.py",
+    "documentation/test.sh",
     "prepare_releases.py",
     "prepare_candidate.py",
     "retain_evidence.py",

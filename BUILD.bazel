@@ -4,8 +4,23 @@ load("@build_bazel_rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hi
 load("//Tools/bazel:swift_rules.bzl", "swift_binary", "swift_library", "swift_test")
 load("//Tools/bazel:build_identity.bzl", "build_identity")
 load("//Tools/bazel:candidate_archive.bzl", "candidate_archive")
+load("//Tools/bazel:docc.bzl", "native_docc")
 
 package(default_visibility = ["//visibility:public"])
+
+native_docc(
+    name = "documentation",
+    modules = [
+        "DevContainerModel", "DevContainerProcess", "DevContainerRuntimeSPI",
+        "DevContainerState", "DevContainerCore", "DevContainerDockerAPI",
+        "DevContainerAppleRuntime", "DevContainerComposeProvider", "DevContainerTestSupport",
+    ],
+    catalog = glob(["Sources/DevContainerCore/DevContainerCore.docc/**"]),
+    catalog_path = "Sources/DevContainerCore/DevContainerCore.docc",
+    catalog_module = "DevContainerCore",
+    repository = "stephenlclarke/devcontainer",
+    hosting_base_path = "devcontainer",
+)
 
 exports_files([
     "Tests/Parity/manifest.json",

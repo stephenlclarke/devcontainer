@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The legacy DocC script starts a separate SwiftPM build. The native documentation slice instead reuses optimized Bazel modules, caches each module's extraction/conversion, validates cross-module links and merges a standalone site. DocC's preserved sandbox symlinks must become regular files without modifying declared inputs. Nine action fault tests and three real-site checks pass in both runtime profiles; the adapter measures 75/76 executable lines (98.68%) in isolated tests. Independent review is clean. This is documentation generation only, not publication or release/parity qualification.
+
 Provider declarations bind the compiled profile, runtime revision, resource owner and effective capabilities into the handoff fingerprint, but the service previously constructed them only inside Keychain-backed startup. Extract the unchanged projection into a side-effect-free boundary and test provenance, stock/enhanced handoff advertising, unavailable/emulated mappings, route inventory, fingerprint sensitivity and rejection of empty provenance. This must not relabel a selected resource owner as the compiled profile or change runtime capability claims.
 
 The explicit host-service integration lane used a synchronous HTTP helper with no request timeout and waited for exit before draining pipes. A hanging service or oversized response could stall unattended tests. Reuse the existing deadline-aware process runner, bound both streams, reject truncation and malformed status, preserve tighter caller deadlines, and disable implicit curl configuration. Unit fixtures must prove helper failure and cleanup without accessing the operator's Keychain; the real host lane remains separate opt-in execution.

@@ -51,6 +51,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-prepare-guest-kernel
 .PHONY: bazel-prepare-docker-oracle
 .PHONY: bazel-prepare-docker-cli
+.PHONY: bazel-docs
 export CASE_ID
 export CASE_FIXTURE
 BAZEL_PROFILE ?= enhanced
@@ -116,6 +117,9 @@ bazel-build-timings:
 
 bazel-package:
 	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:candidate_archive //Tools/bazel:package_smoke
+
+bazel-docs:
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:documentation_tests
 
 bazel-acquire-releases:
 	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
