@@ -60,6 +60,12 @@ or another implementation module.
 
 ## Pinned 1.0.1 release provenance
 
+Current development source separates Compose frontend choice from runtime ownership and rejects missing frontend executables before claiming state. Component tests cover both frontend choices with both runtime backends and reject cross-runtime claim migration. These tests do not certify additional frontend/runtime combinations; the immutable 1.0.1 matrix below remains the release claim.
+
+The candidate native-create path also distinguishes failed local preparation from uncertain runtime submission. Mount/kernel failures do not create pending container intent, while failures after journalling retain it. Component tests do not substitute for live creation/recovery qualification.
+
+The candidate image-build path preserves completed builder progress and emits an in-band Docker build error only after recording failed reconciliation. Preflight, cancellation and abandonment remain failures. Stock/enhanced component checks do not replace live E04 builder/failure-phase qualification or change the historical release matrix below.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each
@@ -81,6 +87,10 @@ component's machine-readable version output.
 | Release host | macOS `26.5.2` (`25F84`), Xcode `26.6` (`17F113`), Swift `6.3.3`, arm64 | Exact values enforced by the release parity preflight | Host and toolchain |
 
 ## Current source dependency profiles
+
+The September 2026 Bazel requalification has found a specific gap with released devcontainer 1.0.1 and stock Apple Container 1.4.1: inspection by the original OCI configuration digest returns 404 before E02 creates its guest. Configuration-digest lookup and descriptor-bound native creation are implemented in the development branch with focused tests, not release certification. Live SDK transport, alias-safe image mutations and the complete parity cycle remain open. See the [retained attempt evidence](docs/bazel-test-harness.md#approved-helpers-and-first-stock-protocol-pass). Do not extend the historical 1.1.0 matrix above to this newer runtime combination.
+
+Draft creation recovery uses schema 4 and requires `RuntimeCreationStore` for direct native creation. It retains uncertain operations and blocks launch/exec/archive/rename of the affected incarnation without unsafe automatic deletion. Schema-2/3 migration is supported; schema-3 binaries cannot open the upgraded state. Operator reconciliation and live interrupted-create proof are still outstanding, so this is not a completed recovery/parity claim. [Native creation recovery](DESIGN.md#native-creation-recovery) specifies the exact scope and rollback rule.
 
 Current `main` builds two explicit dependency graphs. These are compile and
 hosted-test inputs, not a new runtime-parity claim. The latest source-bearing

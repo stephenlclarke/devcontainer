@@ -1,0 +1,90 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+exports_files([
+    "documentation/action.py",
+    "documentation/test_action.py",
+    "documentation/test.sh",
+    "prepare_releases.py",
+    "prepare_candidate.py",
+    "retain_evidence.py",
+    "release_inputs.py",
+    "releases.lock.json",
+    "docker-oracle.lock.json",
+    "docker-cli.lock.json",
+    "prepare_docker_cli.py",
+    "guest-kernel.lock.json",
+    "guest-images.lock.json",
+    "prepare_guest_images.py",
+    "oci_image_layout.py",
+    "candidate_archive.py",
+    "build_identity.bzl",
+    "rules-swift-sandbox-output.patch",
+    "rules-license-empty-provider.patch",
+    "tests/FrameworkTests.swift",
+])
+
+sh_binary(
+    name = "ssd_test_runner",
+    srcs = ["ssd-test-runner.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "release_preparation_tests",
+    srcs = ["tests/release-preparation.sh"],
+    args = ["$(location //Tools/testing:run_tests.py)", "$(location prepare_releases.py)"],
+    data = [
+        "prepare_releases.py",
+        "release_inputs.py",
+        "test_prepare_releases.py",
+        "prepare_candidate.py",
+        "test_prepare_candidate.py",
+        "candidate_archive.py",
+        "test_candidate_archive.py",
+        "//:Tools/release/create-reproducible-archive.py",
+        "retain_evidence.py",
+        "prepare_guest_images.py",
+        "test_prepare_guest_images.py",
+        "prepare_docker_cli.py",
+        "test_prepare_docker_cli.py",
+        "oci_image_layout.py",
+        "//Tools/testing:run_tests.py",
+    ],
+    size = "small",
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "version_generator_tests",
+    srcs = ["tests/version-generator.sh"],
+    args = ["$(location //:DevContainerVersionGenerator)"],
+    data = ["//:DevContainerVersionGenerator"],
+    env = {"TEST_BINARIES_FOR_LLVM_COV": "$(location //:DevContainerVersionGenerator)"},
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "package_smoke",
+    srcs = ["tests/package-smoke.sh"],
+    args = [
+        "$(location //Tools/testing:run_tests.py)",
+        "$(location package_checks/test_archive.py)",
+        "$(location //:candidate_archive_payload)",
+        "$(location //:candidate_archive_receipt)",
+    ],
+    data = [
+        "package_checks/test_archive.py",
+        "package_checks/test_harness.py",
+        "package_checks/cli_process.py",
+        "//Tools/testing:run_tests.py",
+        "//:candidate_archive_payload",
+        "//:candidate_archive_receipt",
+    ],
+    size = "small",
+    # Six sequential commands each have a 15-second deadline plus bounded
+    # session cleanup. The outer 300-second budget must not kill the janitor.
+    timeout = "moderate",
+    visibility = ["//visibility:public"],
+)

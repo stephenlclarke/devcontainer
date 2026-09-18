@@ -109,57 +109,9 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 deadline: Date().addingTimeInterval(5 * 60)
             )
         )
-        let routeCapabilities = try Self.stockRouteIdentifiers.map { identifier in
-            try ContainerEngineProviderCapability(
-                identifier: "engine.route.\(identifier)",
-                status: identifier == "ContainerAttachWebsocket"
-                    ? .emulated
-                    : .native
-            )
-        }
-        var handoffCapabilityIdentifiers = [
-            "engine.handoff.part.identity-lifecycle-events.v1",
-            "engine.handoff.provider-key-enrollment.v1"
-        ]
-        #if DEVCONTAINER_ENHANCED_RUNTIME
-            handoffCapabilityIdentifiers.append("engine.handoff.part.logging.v1")
-        #endif
-        let handoffCapabilities = try handoffCapabilityIdentifiers.map {
-            try ContainerEngineProviderCapability(
-                identifier: $0,
-                status: .native
-            )
-        }
-        #if DEVCONTAINER_ENHANCED_RUNTIME
-            let providerProfile = ContainerEngineProviderProfile.enhanced
-        #else
-            let providerProfile = ContainerEngineProviderProfile.stock
-        #endif
-        let providerDeclaration = try ContainerEngineProviderDeclaration(
-            profile: providerProfile,
-            kind: .devcontainerStock,
-            implementationVersion: BuildInfo.current.version,
-            runtimeRevisions: [
-                "apple-container": runtimeDescriptor.providerVersion,
-                "apple-container-commit": runtimeDescriptor.providerCommit,
-                "devcontainer": BuildInfo.current.commit,
-                "resource-owner": selectedProvider.rawValue
-            ],
-            stateSchemaVersion: UInt64(SQLiteStateStore.schemaVersion),
-            capabilities: runtimeDescriptor.capabilities.map { capability, status in
-                let sharedStatus: ContainerEngineCapabilityStatus = switch status {
-                case .native:
-                    .native
-                case .emulated:
-                    .emulated
-                case .unsupported:
-                    .unavailable
-                }
-                return try ContainerEngineProviderCapability(
-                    identifier: "engine.\(capability.rawValue)",
-                    status: sharedStatus
-                )
-            } + routeCapabilities + handoffCapabilities
+        let providerDeclaration = try Self.providerDeclaration(
+            runtime: runtimeDescriptor,
+            resourceOwner: selectedProvider
         )
         let providerSelectionPath = stateURL.deletingLastPathComponent()
             .appendingPathComponent("engine-provider.json")
@@ -195,6 +147,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 deadline: Date().addingTimeInterval(5 * 60)
             )
         )
+        logger.info("Runtime recovery completed")
         let router = DockerRouter(
             runtime: runtime,
             coordinator: coordinator,
@@ -208,6 +161,7 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             stateDirectory: stateURL.deletingLastPathComponent(),
             providerVersion: BuildInfo.current.version
         )
+        logger.info("Provider handoff identity ready")
         let internalProviderSocket = DefaultPaths.providerSocket(
             publicSocket: socket
         )
@@ -240,48 +194,22 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
                 )
             )
         }
-        try await server.start()
         let signals = Self.terminationSignals()
-        try await withThrowingTaskGroup(of: ServiceCompletion.self) { group in
-            group.addTask {
-                try await server.wait()
-                return .serverClosed
-            }
-            group.addTask {
-                for await signalNumber in signals {
-                    return .signal(signalNumber)
-                }
-                return .signal(SIGTERM)
-            }
-
-            if case let .signal(signalNumber) = try await group.next() {
+        try await ServiceLifecycle(
+            start: { try await server.start() },
+            wait: { try await server.wait() },
+            shutdownRuntime: { await runtime.shutdown() },
+            shutdownServer: { try await server.shutdown() }
+        ).run(
+            signals: signals,
+            onSignal: { signalNumber in
                 logger.info(
                     "Engine shutdown requested",
                     metadata: ["signal": .stringConvertible(signalNumber)]
                 )
             }
-            await runtime.shutdown()
-            try await server.shutdown()
-            group.cancelAll()
-            while try await group.next() != nil {
-                // Drain cancelled child tasks before leaving the structured scope.
-            }
-        }
+        )
     }
-
-    private static let stockRouteIdentifiers = [
-        "SystemPing", "SystemPingHead", "SystemVersion", "SystemInfo",
-        "ContainerList", "ContainerCreate", "ContainerInspect", "ContainerStart",
-        "ContainerStop", "ContainerRestart", "ContainerKill", "ContainerRename",
-        "ContainerWait", "ContainerExec", "ContainerLogs", "ContainerAttach",
-        "ContainerAttachWebsocket",
-        "ContainerArchive", "ContainerArchiveInfo", "PutContainerArchive",
-        "ContainerDelete", "ExecInspect", "ExecStart", "ExecResize", "ImageList",
-        "ImageInspect", "ImageCreate", "ImageLoad", "ImageBuild", "ImageTag",
-        "ImageDelete", "NetworkList", "NetworkCreate", "NetworkInspect",
-        "NetworkConnect", "NetworkDisconnect", "NetworkDelete", "VolumeList",
-        "VolumeCreate", "VolumeInspect", "VolumeDelete", "SystemEvents"
-    ]
 
     private static func previousProviderSelection(
         store: ContainerEngineProviderSelectionStore
@@ -321,11 +249,6 @@ struct DevContainerServiceCommand: AsyncParsableCommand {
             terminate.resume()
         }
     }
-}
-
-private enum ServiceCompletion: Sendable {
-    case serverClosed
-    case signal(Int32)
 }
 
 private enum ServiceServer: Sendable {

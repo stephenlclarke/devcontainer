@@ -1,0 +1,131 @@
+{
+  "campaign": "released-common-e01-20260918b",
+  "completeManifest": false,
+  "fixtures": [
+    {
+      "cases": [
+        {
+          "cleanupStatus": "passed",
+          "durationsNS": {
+            "cleanup": 847610042,
+            "operation": 121125167,
+            "setup": 5538767416
+          },
+          "errorCount": 0,
+          "identity": {
+            "campaign": "released-common-e01-20260918b",
+            "contractSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+            "fixture": "E01-engine-negotiation",
+            "harnessSHA256": "2708d378657ac1b77cb89885a60773dadd0c53df189cf4fc1e9834fa09371945",
+            "lane": "apple-stock",
+            "releaseSetSHA256": "32b9e29881a6cd612dc54151b90fbfea765d8f1f89bee29559b9b3a5e6b5c309",
+            "runtimeSHA256": "9809597226dd997e169df2580fce53de049ef9afb719d9ee73b80b225a0fc79f"
+          },
+          "observationsMatch": true,
+          "observationsSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+          "remainingOwnedResourceCount": 0,
+          "sealSHA256": "39247dddba225acec010766536671254ae10f1982a2924a69db5b8a71134a8f3",
+          "status": "passed"
+        },
+        {
+          "cleanupStatus": "passed",
+          "durationsNS": {
+            "cleanup": 862147000,
+            "operation": 2034307541,
+            "setup": 5548434875
+          },
+          "errorCount": 0,
+          "identity": {
+            "campaign": "released-common-e01-20260918b",
+            "contractSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+            "fixture": "E01-engine-negotiation",
+            "harnessSHA256": "2708d378657ac1b77cb89885a60773dadd0c53df189cf4fc1e9834fa09371945",
+            "lane": "container-compose",
+            "releaseSetSHA256": "32b9e29881a6cd612dc54151b90fbfea765d8f1f89bee29559b9b3a5e6b5c309",
+            "runtimeSHA256": "fcea6330a9b8fbaf99fa09ae27bef90ecc263f7218a1eb5e829b5639028cf0b6"
+          },
+          "observationsMatch": true,
+          "observationsSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+          "remainingOwnedResourceCount": 0,
+          "sealSHA256": "ca5f1775cac951c8931eeda3e833d12504561fc4b8163fc5e6cdde0ed8d9d7b2",
+          "status": "passed"
+        },
+        {
+          "cleanupStatus": "passed",
+          "durationsNS": {
+            "cleanup": 2754892834,
+            "operation": 9846333,
+            "setup": 14960515958
+          },
+          "errorCount": 0,
+          "identity": {
+            "campaign": "released-common-e01-20260918b",
+            "contractSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+            "fixture": "E01-engine-negotiation",
+            "harnessSHA256": "2708d378657ac1b77cb89885a60773dadd0c53df189cf4fc1e9834fa09371945",
+            "lane": "docker",
+            "releaseSetSHA256": "32b9e29881a6cd612dc54151b90fbfea765d8f1f89bee29559b9b3a5e6b5c309",
+            "runtimeSHA256": "87bd6a184881e401c958f9af2c54a91905af9e74872aa7ca9a21f6256ffd9bee"
+          },
+          "observationsMatch": true,
+          "observationsSHA256": "f4a6e67d9e31d6a45e4e21647203c54a268495c6fa4e25ba3ec0eb537b15caeb",
+          "remainingOwnedResourceCount": 0,
+          "sealSHA256": "7ff78d1fa45ed96fc0bafb7bfa16a5213cf18d3669da5bd1915eb84bfab8b193",
+          "status": "passed"
+        }
+      ],
+      "comparison": {
+        "differences": [],
+        "functionalParity": true,
+        "operationRatios": {
+          "apple-stock": 12.30155094287386,
+          "container-compose": 206.60560037934934,
+          "docker": 1.0
+        },
+        "timingNote": "Raw per-case durations; quiet paired campaign qualification is required separately.",
+        "timingQualified": false
+      },
+      "expected": {
+        "api_prefix": "true",
+        "error_envelope": "true",
+        "head_ping": "true",
+        "malformed_request": "true",
+        "ping": "true"
+      },
+      "fixture": "E01-engine-negotiation",
+      "missingLanes": [],
+      "rawOrderOfMagnitudeCandidates": [
+        "apple-stock",
+        "container-compose"
+      ]
+    }
+  ],
+  "functionalParity": true,
+  "releaseQualified": false,
+  "requestedFixtures": [
+    "E01-engine-negotiation"
+  ],
+  "schema": 1,
+  "scope": "explicit-fixture-functional-comparison",
+  "timingQualified": false,
+  "unrequestedFixtures": [
+    "C01-compose-service",
+    "C02-compose-dependencies",
+    "C03-compose-resources",
+    "C04-compose-lifecycle",
+    "D01-image-config",
+    "D02-dockerfile-config",
+    "D03-users-environment",
+    "D04-lifecycle-hooks",
+    "D05-features",
+    "D06-ports",
+    "D07-reuse-cleanup",
+    "E02-container-lifecycle",
+    "E03-exec-streams",
+    "E04-image-build",
+    "E05-archive-copy",
+    "E06-network-volume",
+    "F01-fault-recovery",
+    "V01-vscode-end-to-end"
+  ]
+}

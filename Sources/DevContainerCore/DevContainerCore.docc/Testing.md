@@ -1,5 +1,7 @@
 # Testing
 
+The unreleased native Bazel candidate tests failed image-build progress, in-band error records and failed-operation bookkeeping in both profiles, including cancellation and abandonment. These component checks do not establish live E04 build parity or replace the historical release evidence below.
+
 The hosted-safe suite contains unit, contract, state-recovery, malformed-input,
 archive-safety, and HTTP wire tests. Aggregate first-party Swift line coverage
 must remain at or above 90 percent. Address Sanitizer and Thread Sanitizer run

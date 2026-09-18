@@ -19,10 +19,77 @@ import Darwin
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import Foundation
 import Testing
 
 struct DevContainerComposeCommandTests {
+    @Test(
+        arguments: [ComposeProviderKind.docker, .containerCompose],
+        [BackendProvider.stock, .containerCompose]
+    )
+    func `orchestration choice never changes configured runtime ownership`(
+        provider: ComposeProviderKind,
+        backend: BackendProvider
+    ) async throws {
+        let fixture = try ComposeCommandFixture(
+            projectName: "selected-runtime",
+            provider: provider,
+            backend: backend
+        )
+        #expect(
+            try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "selected-runtime", "up"],
+                environment: fixture.environment
+            ) == 0
+        )
+        let store = try SQLiteStateStore(path: fixture.state)
+        let project = try await store.project(key: ProjectKey(rawValue: "\(getuid()):selected-runtime"))
+        #expect(project?.provider == backend)
+        #expect(try fixture.invocations().count == 1)
+    }
+
+    @Test
+    func `missing native frontend cannot claim a project or fall back to Docker`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "missing-native", backend: .stock)
+        var environment = fixture.environment
+        let native = environment["DEVCONTAINER_COMPOSE_BIN"]
+        environment["DEVCONTAINER_DOCKER_BIN"] = native
+        environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = native
+        environment["DEVCONTAINER_COMPOSE_BIN"] = fixture.root.appendingPathComponent("missing").path
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "missing-native", "up"],
+                environment: environment
+            )
+        }
+        #expect(try fixture.invocations().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+    }
+
+    @Test
+    func `orchestration cannot migrate an existing project to another runtime`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "owned", backend: .stock)
+        let store = try SQLiteStateStore(path: fixture.state)
+        let key = ProjectKey(rawValue: "\(getuid()):owned")
+        _ = try await store.claimProject(
+            key: key,
+            provider: .containerCompose,
+            composeProject: "owned",
+            projectDirectory: fixture.root.path,
+            configurationHash: "previous"
+        )
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "owned", "up"],
+                environment: fixture.environment
+            )
+        }
+        #expect(try fixture.invocations().isEmpty)
+        #expect(try await store.project(key: key)?.provider == .containerCompose)
+        #expect(try await store.unfinishedOperations().isEmpty)
+    }
+
     @Test
     func `mutating command claims the project name resolved by Compose`() async throws {
         let fixture = try ComposeCommandFixture(projectName: "canonical-project")
@@ -308,6 +375,7 @@ private final class ComposeCommandFixture {
     private let invocationLog: URL
     private let exitStatus: Int32
     private let provider: ComposeProviderKind
+    private let backend: BackendProvider
     private let liveVolumes: [String]
     private let volumeProbeStatus: Int32
     private let innerGeneration: Int64?
@@ -317,6 +385,7 @@ private final class ComposeCommandFixture {
         projectName: String,
         exitStatus: Int32 = 0,
         provider: ComposeProviderKind = .containerCompose,
+        backend: BackendProvider? = nil,
         liveVolumes: [String] = [],
         volumeProbeStatus: Int32 = 0,
         innerGeneration: Int64? = nil,
@@ -324,11 +393,14 @@ private final class ComposeCommandFixture {
     ) throws {
         self.exitStatus = exitStatus
         self.provider = provider
+        // Existing scenarios explicitly model their historical runtime lane;
+        // cross-product scenarios above supply the independent runtime choice.
+        self.backend = backend ?? (provider == .docker ? .stock : .containerCompose)
         self.liveVolumes = liveVolumes
         self.volumeProbeStatus = volumeProbeStatus
         self.innerGeneration = innerGeneration
         self.innerProjectKey = innerProjectKey
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-compose-cli-tests-\(UUID().uuidString)",
                 isDirectory: true
@@ -366,7 +438,7 @@ private final class ComposeCommandFixture {
             ;;
         esac
         """
-        try Data(script.utf8).write(to: executable, options: .atomic)
+        try Data(script.utf8).write(to: executable)
         #expect(chmod(executable.path, S_IRWXU) == 0)
     }
 
@@ -377,6 +449,7 @@ private final class ComposeCommandFixture {
     var environment: [String: String] {
         var result = [
             "DEVCONTAINER_COMPOSE_PROVIDER": provider.rawValue,
+            "DEVCONTAINER_BACKEND": backend.rawValue,
             "DEVCONTAINER_CONFIG": root.appendingPathComponent("config.toml").path,
             "DEVCONTAINER_SOCKET": root.appendingPathComponent("docker.sock").path,
             "DEVCONTAINER_STATE": state.path,

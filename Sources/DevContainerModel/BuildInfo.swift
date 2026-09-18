@@ -16,7 +16,7 @@
 
 import Foundation
 
-/// Immutable provenance embedded by SwiftPM from the Makefile-owned version.
+/// Immutable provenance generated from the Makefile-owned version.
 public struct BuildInfo: Codable, Equatable, Sendable {
     public let version: String
     public let source: String

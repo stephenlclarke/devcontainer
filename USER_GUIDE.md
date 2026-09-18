@@ -81,6 +81,8 @@ For archive verification, source installation, Current builds, upgrades, and com
 
 ## Configure the default backend
 
+In current development source, omitted `configure` options preserve stored settings, including compatibility strictness. `--strict` and `--no-strict` explicitly change that setting; a new file enables strictness by default. Invalid backend/provider selections or malformed stored files fail without replacing the existing configuration. This candidate behavior is not a claim about the currently published release.
+
 Write an explicit stock configuration:
 
 ```console
@@ -372,6 +374,10 @@ Advanced Docker `--mount` fields such as bind propagation, consistency modes, vo
 
 The state database records which backend owns a project. This prevents stock and optional provider operations from silently mutating the same project.
 
+In current development source, the runtime backend owns the project independently of which Compose frontend is selected. Changing only the frontend does not migrate ownership. A missing selected executable fails before a claim is created and does not fall back to Docker; install or explicitly configure the intended frontend before retrying. This does not expand the certified release combinations.
+
+The candidate native container-create path checks mounts and the selected kernel before journalling possible creation. Repairing those prerequisites permits retry without database surgery. A failure after create may have been submitted still retains pending intent for explicit reconciliation; do not remove that evidence to force a retry. Existing volume resources are preserved, and this correction does not certify live crash recovery.
+
 The dispatcher applies Docker Compose's project-name precedence before recording that ownership. Valid inherited options such as `--env-file`, `--profile`, `--parallel`, and `--progress` are normalized whether they appear before or after the subcommand; an unknown option in the global position fails explicitly instead of running an unclaimed mutation. Commands that can change resources, including `cp`, `exec`, `scale`, `watch`, and `wait` (which can remove the project with `--down-project`), require the same durable claim as `up` and `down`. A successful `down` or `wait --down-project` releases the claim after the provider removes the project.
 
 Inspect a claim:
@@ -501,6 +507,10 @@ brew services stop stephenlclarke/tap/devcontainer
 Stopping the compatibility service does not delete containers, images, networks, volumes, or state.
 
 ## Diagnostics and support
+
+The unreleased candidate gives each external `doctor` probe a five-second deadline and reaps owned processes before continuing. An invalid `--format` fails before execution. A socket check only inspects its ownership, file type and permissions: it does not connect or prove that HTTP requests succeed, and an absent socket is reported as a warning. Runtime/client launch errors are returned without the dependency's fork-based teardown path. The candidate also releases runtime resources on service-start failure and releases runtime/server resources on waiter failure or cancellation. Component tests cover these paths without a live runtime or Keychain; live service and release qualification remain separate gates.
+
+Current source gives each external `diagnostics` probe the same five-second maximum, preserving any earlier request deadline. Ordinary probe failures and timeouts appear in the archive so collection can continue; cancellation or expiry of the enclosing request stops collection and removes its staging directory. The Compose bridge separately bounds project/volume discovery to 30 seconds and rejects output over 1 MiB per stream, retaining ownership when volume discovery is uncertain. These candidate-only bounds do not change actual Compose operation lifetimes or certify live runtime parity.
 
 Create a privacy-redacted archive:
 

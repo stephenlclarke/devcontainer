@@ -14,14 +14,129 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ArgumentParser
+import Darwin
 @testable import DevContainerCLI
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import Foundation
 import Testing
 
+@Suite(.serialized)
+struct DiagnosticsProbeLifetimeTests {
+    @Test
+    func `diagnostics respects caller deadline and removes failed staging`() async throws {
+        let fixture = try DiagnosticsFixture()
+        let marker = fixture.root.appendingPathComponent("probe-pid")
+        try fixture.writeContainerProbe("printf '%s' $$ > '\(marker.path)'; exec /bin/sleep 2")
+        let context = RuntimeRequestContext(
+            correlationID: "diagnostics-deadline", deadline: Date().addingTimeInterval(0.4)
+        )
+        let started = ContinuousClock.now
+        await #expect(throws: DevContainerError.self) {
+            try await RuntimeRequestScope.$context.withValue(context) {
+                let prepared = try await DiagnosticsBundleBuilder(temporaryRoot: fixture.root).prepare(fixture.inputs())
+                try FileManager.default.removeItem(at: prepared.directory)
+            }
+        }
+        #expect(started.duration(to: .now) < .milliseconds(1500))
+        try expectReaped(marker)
+        try fixture.expectNoStaging()
+    }
+
+    @Test
+    func `cancelled diagnostics does not return a successful partial bundle`() async throws {
+        let fixture = try DiagnosticsFixture()
+        let marker = fixture.root.appendingPathComponent("probe-started")
+        try fixture.writeContainerProbe("printf '%s' $$ > '\(marker.path)'; exec /bin/sleep 2")
+        let inputs = fixture.inputs()
+        let root = fixture.root
+        let task = Task { try await DiagnosticsBundleBuilder(temporaryRoot: root).prepare(inputs) }
+        defer { task.cancel() }
+        let limit = ContinuousClock.now.advanced(by: .seconds(5))
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < limit {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        task.cancel()
+        await #expect(throws: CancellationError.self) {
+            let prepared = try await task.value
+            try FileManager.default.removeItem(at: prepared.directory)
+        }
+        try expectReaped(marker)
+        try fixture.expectNoStaging()
+    }
+
+    @Test
+    func `timed out individual probe is recorded and collection continues`() async throws {
+        let fixture = try DiagnosticsFixture()
+        try fixture.writeContainerProbe(
+            "case \"$*\" in 'system version --format json') /bin/sleep 2;; esac; printf '{}' "
+        )
+        let builder = DiagnosticsBundleBuilder(temporaryRoot: fixture.root, probeTimeout: 0.3)
+        let started = ContinuousClock.now
+        let prepared = try await builder.prepare(fixture.inputs())
+        defer { try? FileManager.default.removeItem(at: prepared.directory) }
+        let summary = try JSONDecoder().decode(
+            DiagnosticsRuntimeSummary.self,
+            from: Data(contentsOf: prepared.directory.appendingPathComponent("runtime.json"))
+        )
+        #expect(started.duration(to: .now) < .milliseconds(1500))
+        #expect(summary.probes.count == 8)
+        #expect(summary.probes[0].exitCode == nil)
+        #expect(summary.probes[0].error?.contains("exceeded its deadline") == true)
+        #expect(summary.probes.dropFirst().allSatisfy { $0.error == nil && $0.exitCode == 0 })
+    }
+
+    @Test(arguments: [0.0, -1.0, 5.01, .greatestFiniteMagnitude, .infinity, .nan])
+    func `invalid diagnostic bounds fail before staging`(timeout: TimeInterval) async throws {
+        let fixture = try DiagnosticsFixture()
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DiagnosticsBundleBuilder(temporaryRoot: fixture.root, probeTimeout: timeout)
+                .prepare(fixture.inputs())
+        }
+        try fixture.expectNoStaging()
+    }
+
+    private func expectReaped(_ marker: URL) throws {
+        let pid = try #require(pid_t(String(contentsOf: marker, encoding: .utf8)))
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1 && errno == ESRCH)
+    }
+}
+
 struct DiagnosticsCommandTests {
+    @Test
+    func `parsed diagnostics command archives missing state without creating it`() async throws {
+        let fixture = try DiagnosticsFixture()
+        try fixture.writeSensitiveLog()
+        let output = fixture.root.appendingPathComponent("support.tar.gz")
+        let arguments = [
+            "--container", fixture.container.path, "--compose", fixture.compose.path,
+            "--config", fixture.configuration.path, "--state", fixture.state.path,
+            "--socket", fixture.socket.path, "--log", fixture.log.path,
+            "--event-limit", "10", "--output", output.path
+        ]
+        var command = try DiagnosticsCommand.parse(arguments)
+        let logBefore = try Data(contentsOf: fixture.log)
+        try await command.run()
+        #expect(try Set(tarMembers(output)) == [
+            "./", "./configuration.json", "./runtime.json", "./state.json",
+            "./manifest.json", "./logs/", "./logs/01-engine.log"
+        ])
+        let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #expect(!FileManager.default.fileExists(atPath: fixture.configuration.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+        #expect(try Data(contentsOf: fixture.log) == logBefore)
+
+        let archiveBefore = try Data(contentsOf: output)
+        await #expect(throws: DevContainerError.self) { try await command.run() }
+        #expect(try Data(contentsOf: output) == archiveBefore)
+    }
+
     @Test
     func `root command exposes diagnostics`() {
         #expect(
@@ -392,7 +507,7 @@ private final class DiagnosticsFixture {
     let compose: URL
 
     init() throws {
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-diagnostics-tests-\(UUID().uuidString)",
                 isDirectory: true
@@ -446,6 +561,15 @@ private final class DiagnosticsFixture {
             )
         )
         try data.write(to: log)
+    }
+
+    func writeContainerProbe(_ body: String) throws {
+        try writeExecutable("#!/bin/sh\n\(body)\n", to: container)
+    }
+
+    func expectNoStaging() throws {
+        let contents = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        #expect(!contents.contains { $0.hasPrefix("devcontainer-diagnostics-") })
     }
 
     func populateState(

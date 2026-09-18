@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "stock-init-and-shared-workload-images; enhanced-init-and-kernel-qualification-pending",
+  "images": [
+    {
+      "name": "stock-vminit",
+      "repository": "ghcr.io/apple/containerization/vminit",
+      "manifest": "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",
+      "config": "sha256:c7146472cafa9cb0334fb309054c38b2c7836149da9cf06b0906dfa494862c87",
+      "reference": "ghcr.io/apple/containerization/vminit:0.45.0"
+    },
+    {
+      "name": "alpine-workload",
+      "repository": "docker.io/library/alpine",
+      "manifest": "sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37",
+      "config": "sha256:2c15e55df5d63efb31b629a557df305130612a16feb029c93447e54dda2c4189",
+      "reference": "docker.io/library/alpine:3.22.5"
+    }
+  ]
+}

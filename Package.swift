@@ -33,6 +33,7 @@ let enhancedRuntime: Bool = {
         )
     }
 }()
+
 let runtimeSwiftSettings: [SwiftSetting] = enhancedRuntime
     ? [.define("DEVCONTAINER_ENHANCED_RUNTIME")]
     : []
@@ -44,7 +45,7 @@ private func dependency(
     revision: String
 ) -> Package.Dependency {
     if let path = ProcessInfo.processInfo.environment[environmentVariable],
-        !path.isEmpty
+       !path.isEmpty
     {
         return .package(name: name, path: path)
     }
@@ -60,7 +61,7 @@ private func runtimeDependency(
     enhancedRevision: String
 ) -> Package.Dependency {
     if let path = ProcessInfo.processInfo.environment[environmentVariable],
-        !path.isEmpty
+       !path.isEmpty
     {
         return .package(name: name, path: path)
     }
@@ -119,6 +120,7 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.1.0")
     ],
     targets: [
+        .target(name: "DevContainerTestStorage"),
         .executableTarget(
             name: "DevContainerVersionGenerator",
             path: "Tools/version-generator"
@@ -139,10 +141,7 @@ let package = Package(
         ),
         .target(
             name: "DevContainerProcess",
-            dependencies: [
-                "DevContainerModel",
-                .product(name: "ContainerizationOS", package: "containerization")
-            ]
+            dependencies: ["DevContainerModel"]
         ),
         .target(
             name: "DevContainerState",
@@ -181,7 +180,10 @@ let package = Package(
                 .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerBuild", package: "container"),
+                .product(name: "ContainerPersistence", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
+                .product(name: "Containerization", package: "containerization"),
+                .product(name: "ContainerizationOCI", package: "containerization"),
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -248,19 +250,26 @@ let package = Package(
         .testTarget(
             name: "DevContainerCLITests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerCLI",
                 "DevContainerCore",
                 "DevContainerModel",
+                "DevContainerProcess",
                 "DevContainerState"
             ]
         ),
         .testTarget(
             name: "DevContainerModelTests",
-            dependencies: ["DevContainerModel"]
+            dependencies: ["DevContainerModel", "DevContainerTestStorage"]
         ),
         .testTarget(
             name: "DevContainerProcessTests",
-            dependencies: ["DevContainerProcess"]
+            dependencies: ["DevContainerProcess", "DevContainerModel", "DevContainerTestStorage", "DevContainerProcessProbe"]
+        ),
+        .executableTarget(
+            name: "DevContainerProcessProbe",
+            dependencies: ["DevContainerProcess"],
+            path: "Tools/process-test-probe"
         ),
         .testTarget(
             name: "DevContainerStateTests",
@@ -274,6 +283,7 @@ let package = Package(
         .testTarget(
             name: "DevContainerCoreTests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerCore",
                 "DevContainerModel",
                 "DevContainerState",
@@ -283,6 +293,7 @@ let package = Package(
         .testTarget(
             name: "DevContainerDockerAPITests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerCore",
                 "DevContainerDockerAPI",
                 "DevContainerModel",
@@ -293,6 +304,7 @@ let package = Package(
         .testTarget(
             name: "DevContainerComposeProviderTests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerComposeProvider",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI"
@@ -301,6 +313,7 @@ let package = Package(
         .testTarget(
             name: "DevContainerComposeCLITests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerComposeCLI",
                 "DevContainerModel",
                 "DevContainerState"
@@ -309,6 +322,7 @@ let package = Package(
         .testTarget(
             name: "DevContainerAppleRuntimeTests",
             dependencies: [
+                "DevContainerTestStorage",
                 "DevContainerAppleRuntime",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
@@ -317,6 +331,8 @@ let package = Package(
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
                 .product(name: "Containerization", package: "containerization"),
+                .product(name: "ContainerPersistence", package: "container"),
+                .product(name: "ContainerizationOCI", package: "containerization"),
                 .product(name: "ContainerizationOS", package: "containerization"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
@@ -329,6 +345,9 @@ let package = Package(
         .testTarget(
             name: "DevContainerServiceTests",
             dependencies: [
+                "DevContainerTestStorage",
+                "DevContainerProcess",
+                "DevContainerState",
                 "DevContainerDockerAPI",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
@@ -341,6 +360,15 @@ let package = Package(
             ],
             swiftSettings: runtimeSwiftSettings
         )
-    ],
+    ] + (ProcessInfo.processInfo.environment["DEVCONTAINER_HOST_INTEGRATION"] == "1" && enhancedRuntime ? [
+        .testTarget(
+            name: "DevContainerHostIntegrationTests",
+            dependencies: [
+                "DevContainerAppleRuntime",
+                .product(name: "ContainerAPIClient", package: "container")
+            ],
+            swiftSettings: runtimeSwiftSettings
+        )
+    ] : []),
     swiftLanguageModes: [.v6]
 )

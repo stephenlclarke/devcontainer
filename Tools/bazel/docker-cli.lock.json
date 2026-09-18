@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "repository": "ghcr.io/homebrew/core/docker",
+  "version": "29.6.2",
+  "manifest": "0a20c3b2e466ded9ddfb3bde700c9fee46a08e30caef8e2fb1a7494a9f321902",
+  "manifestSize": 3384,
+  "bottleSHA256": "b05a401b661f2d0c3b54b10fd1e0c4adb26b479dcfb953d86febfdfb57dd9821",
+  "bottleSize": 9313042,
+  "executableSHA256": "eade1c3a5dda47534dc776f2f534c99cc94cfcf9ce07c4bf09e98258d13e7d7a"
+}

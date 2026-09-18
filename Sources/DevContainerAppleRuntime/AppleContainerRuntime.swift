@@ -67,11 +67,23 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let temporary: TemporaryDirectory?
     }
 
+    struct StorageRoots {
+        let volumes: URL?
+        let transfers: URL?
+    }
+
+    struct LoggingClients {
+        let records: (any AppleContainerLoggingRecordClient)?
+        let handoff: (any AppleContainerLoggingHandoffClient)?
+    }
+
     struct DirectClients {
         let api: ContainerClient
         let inventory: any AppleContainerInventoryClient
         let files: any AppleContainerFileClient
         let networks: any AppleNetworkClient
+        let images: any AppleImageIdentityClient
+        let creator: any AppleContainerCreateClient
         let loggingRecords: any AppleContainerLoggingRecordClient
         let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
 
@@ -80,16 +92,19 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             inventory: any AppleContainerInventoryClient,
             files: any AppleContainerFileClient,
             networks: any AppleNetworkClient,
-            loggingRecords: (any AppleContainerLoggingRecordClient)? = nil,
-            loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)? = nil
+            images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
+            creator: (any AppleContainerCreateClient)? = nil,
+            logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
         ) {
             self.api = api
             self.inventory = inventory
             self.files = files
             self.networks = networks
-            self.loggingRecords = loggingRecords
+            self.images = images
+            self.creator = creator ?? LiveAppleContainerCreateClient(client: api)
+            loggingRecords = logging.records
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
-            self.loggingHandoffClientOverride = loggingHandoffClientOverride
+            loggingHandoffClientOverride = logging.handoff
         }
     }
 
@@ -108,7 +123,10 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let fileClient: any AppleContainerFileClient
     let networkClient: any AppleNetworkClient
     let metadataStore: (any RuntimeMetadataStore)?
+    let imageIdentityClient: any AppleImageIdentityClient
+    let containerCreateClient: any AppleContainerCreateClient
     let managedVolumes: ManagedVolumeStore
+    let transferRoot: URL
     let portForwarding = PortForwarding()
     var execs: [ExecID: ExecSnapshot] = [:]
     var requestedContainers: [String: RequestedContainer] = [:]
@@ -135,7 +153,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectProcessAPI: Bool = true,
         useDirectContainerAPI: Bool = true,
         metadataStore: (any RuntimeMetadataStore)? = nil,
-        volumeRoot: URL? = nil
+        volumeRoot: URL? = nil,
+        transferRoot: URL? = nil
     ) throws {
         let apiClient = ContainerClient()
         try self.init(
@@ -144,7 +163,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             useDirectProcessAPI: useDirectProcessAPI,
             useDirectContainerAPI: useDirectContainerAPI,
             metadataStore: metadataStore,
-            volumeRoot: volumeRoot,
+            storageRoots: StorageRoots(volumes: volumeRoot, transfers: transferRoot),
             clients: DirectClients(
                 api: apiClient,
                 inventory: LiveAppleContainerInventoryClient(client: apiClient),
@@ -160,7 +179,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         useDirectProcessAPI: Bool,
         useDirectContainerAPI: Bool,
         metadataStore: (any RuntimeMetadataStore)?,
-        volumeRoot: URL?,
+        storageRoots: StorageRoots,
         clients: DirectClients
     ) throws {
         let resolved = executable.standardizedFileURL
@@ -180,9 +199,12 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         inventoryClient = clients.inventory
         fileClient = clients.files
         networkClient = clients.networks
+        imageIdentityClient = clients.images
+        containerCreateClient = clients.creator
         self.metadataStore = metadataStore
+        transferRoot = storageRoots.transfers ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
-            root: volumeRoot ?? Self.defaultVolumeRoot
+            root: storageRoots.volumes ?? Self.defaultVolumeRoot
         )
     }
 }
@@ -311,7 +333,7 @@ public extension AppleContainerRuntime {
                 && metadata[$0.runtimeID.rawValue]?.imageID == nil
         }
         let images = requiresImageResolution
-            ? try await listImages(context: context)
+            ? try await resolvedImages(context: context)
             : []
         for observed in observed {
             let imageID = observed.imageID
@@ -334,17 +356,11 @@ public extension AppleContainerRuntime {
         return snapshots
     }
 
-    static func imageID(
+    internal static func imageID(
         for reference: String,
-        in images: [ImageSnapshot]
+        in images: [ResolvedAppleImage]
     ) -> String? {
-        images.first {
-            $0.id == reference
-                || imageDigest(reference) == $0.id
-                || $0.references.contains {
-                    equivalentImageReference($0, reference)
-                }
-        }?.id
+        images.first { $0.matches(reference) }?.snapshot.id
     }
 
     static func isInternalBuilderResource(_ snapshot: ContainerSnapshot) -> Bool {
@@ -379,6 +395,13 @@ public extension AppleContainerRuntime {
             snapshot.finishedAt = exit.finishedAt
         }
         guard let metadataStore else {
+            return snapshot
+        }
+        if let store = metadataStore as? any RuntimeCreationStore,
+           try await store.pendingContainerCreation(id: snapshot.runtimeID.rawValue) != nil
+        {
+            // Observability is retained, but unverified creation cannot be
+            // promoted into successful metadata by ordinary reconciliation.
             return snapshot
         }
         if var metadata {
@@ -509,7 +532,7 @@ public extension AppleContainerRuntime {
         containerMetadataAdoptionOperations.removeValue(forKey: id)
     }
 
-    private static func syntheticDockerIdentifier() -> String {
+    static func syntheticDockerIdentifier() -> String {
         let first = UUID().uuidString.replacingOccurrences(
             of: "-",
             with: ""
@@ -594,6 +617,10 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        let digestAddressed = spec.image.hasPrefix("sha256:") || spec.image.contains("@")
+        if digestAddressed, !useDirectContainerAPI {
+            try Self.requireNamedImageMutation(spec.image)
+        }
         var spec = spec
         let mutation = beginContainerLifecycleMutation(id: spec.name)
         var mutationIdentifiers: Set<String> = [spec.name]
@@ -613,17 +640,19 @@ public extension AppleContainerRuntime {
         containerExitTasks.removeValue(forKey: spec.name)?.cancel()
         containerExitRegistrations.removeValue(forKey: spec.name)
         containerExits.removeValue(forKey: spec.name)
-        let image = try await inspectImage(reference: spec.image, context: context)
-        let result = try await command(
-            containerCreateArguments(spec, optionSupport: optionSupport)
+        let resolved = try await resolvedImage(reference: spec.image, context: context)
+        let image = resolved.snapshot
+        let creation: RuntimeContainerCreation?
+        do {
+            creation = try await performContainerCreate(
+                spec: spec, image: resolved, optionSupport: optionSupport, context: context
+            )
+        } catch {
+            throw directAPIError(error, operation: "container create")
+        }
+        let snapshot = try await completeContainerCreation(
+            creation, spec: spec, imageID: image.id, context: context
         )
-        try requireSuccess(result, operation: "container create")
-        requestedContainers[spec.name] = RequestedContainer(
-            spec: spec,
-            imageID: image.id,
-            createdAt: nil
-        )
-        var snapshot = try await inspectContainer(id: spec.name, context: context)
         mutationIdentifiers.formUnion([
             snapshot.runtimeID.rawValue,
             snapshot.dockerID.rawValue
@@ -632,10 +661,40 @@ public extension AppleContainerRuntime {
             identifiers: mutationIdentifiers,
             registration: mutation
         )
-        snapshot.imageID = image.id
-        try await recordContainerMetadata(snapshot: snapshot, spec: spec)
         await signalEventPollers()
         return snapshot
+    }
+
+    private func performContainerCreate(
+        spec: ContainerSpec, image: ResolvedAppleImage,
+        optionSupport: CreateOptionSupport, context: RuntimeRequestContext
+    ) async throws -> RuntimeContainerCreation? {
+        guard useDirectContainerAPI else {
+            let result = try await command(containerCreateArguments(spec, optionSupport: optionSupport))
+            try requireSuccess(result, operation: "container create")
+            return nil
+        }
+        let store = try requireCreationStore()
+        try await requireCompletedCreation(id: spec.name, forCreate: true)
+        // Validate flags before preparing mounts or creating native resources.
+        _ = try containerConfigurationArguments(spec, optionSupport: optionSupport)
+        try Self.validateNativeMounts(spec.mounts)
+        let configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
+        var mountOptions: [String] = []
+        for mount in spec.mounts {
+            mountOptions += try await mountArguments(mount)
+        }
+        return try await containerCreateClient.create(
+            configuration: configuration, mountOptions: mountOptions, context: context
+        ) { prepared in
+            let creation = try RuntimeContainerCreation(
+                runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate,
+                imageID: image.snapshot.id, spec: spec,
+                nativeConfiguration: JSONEncoder().encode(prepared)
+            )
+            try await store.beginContainerCreation(creation)
+            return creation
+        }
     }
 
     private func containerCreateArguments(
@@ -800,6 +859,29 @@ public extension AppleContainerRuntime {
         }
     }
 
+    static func validateNativeMounts(_ mounts: [RuntimeMount]) throws {
+        var destinations: Set<String> = []
+        for mount in mounts {
+            guard destinations.insert(mount.destination).inserted else {
+                throw DevContainerError(.invalidRequest, message: "Duplicate mount destination")
+            }
+            if mount.type == .volume, mount.anonymous == true {
+                // These remain on the container's private root filesystem.
+                guard mount.destination.hasPrefix("/") else {
+                    throw DevContainerError(.invalidRequest, message: "Mount destination must be absolute")
+                }
+                continue
+            }
+            if mount.type == .tmpfs {
+                _ = try Parser.tmpfsMounts([mount.destination])
+            } else {
+                _ = try Parser.mounts([mountValue(
+                    mount, type: mount.type == .volume ? "volume" : "bind", source: mount.source
+                )])
+            }
+        }
+    }
+
     private static func mountValue(
         _ mount: RuntimeMount,
         type: String,
@@ -809,7 +891,7 @@ public extension AppleContainerRuntime {
             + (mount.readOnly ? ",readonly" : "")
     }
 
-    private func recordContainerMetadata(
+    func recordContainerMetadata(
         snapshot: ContainerSnapshot,
         spec: ContainerSpec
     ) async throws {
@@ -864,7 +946,7 @@ public extension AppleContainerRuntime {
             snapshot: snapshot,
             context: context
         ) {
-            let temporary = try TemporaryDirectory(base: Self.transferDirectory)
+            let temporary = try TemporaryDirectory(base: transferRoot)
             defer { temporary.remove() }
             let requestedName = URL(fileURLWithPath: path).lastPathComponent
             let archiveName = requestedName.isEmpty ? "root" : requestedName
@@ -937,11 +1019,17 @@ public extension AppleContainerRuntime {
             snapshot: snapshot,
             context: context
         ) {
-            let temporary = try TemporaryDirectory(base: Self.transferDirectory)
+            let temporary = try TemporaryDirectory(base: transferRoot)
             defer { temporary.remove() }
+            // An archive may give its "." directory broad permissions. Keep
+            // an untouched private parent outside the extraction namespace.
+            let contents = try TemporaryDirectory(base: temporary.url)
+            defer { contents.remove() }
             let extractResult = try await AppleCommandRunner.run(
                 executable: URL(fileURLWithPath: "/usr/bin/tar"),
-                arguments: ["-xf", "-", "-C", temporary.url.path],
+                // Preserve the validated archive's permissions, not the
+                // service's restrictive umask. The staging root stays 0700.
+                arguments: ["-xpf", "-", "-C", contents.url.path],
                 environment: environment,
                 input: extractionInput
             )
@@ -953,7 +1041,7 @@ public extension AppleContainerRuntime {
                         try context.checkActive()
                         try await fileClient.copyIn(
                             id: resolved,
-                            source: temporary.url.path,
+                            source: contents.url.path,
                             destination: staging
                         )
                         try context.checkActive()
@@ -966,7 +1054,7 @@ public extension AppleContainerRuntime {
                 } else {
                     let uploadResult = try await command([
                         "cp",
-                        temporary.url.path,
+                        contents.url.path,
                         "\(resolved):\(staging)"
                     ])
                     try requireSuccess(
@@ -1007,6 +1095,7 @@ public extension AppleContainerRuntime {
         operation: () async throws -> T
     ) async throws -> T {
         let resolved = snapshot.runtimeID.rawValue
+        try await requireCompletedCreation(id: resolved)
         let needsTransientStart = snapshot.state != .running
         if needsTransientStart {
             try await requireSuccess(
@@ -1090,29 +1179,24 @@ public extension AppleContainerRuntime {
         ])
     }
 
-    func listImages(context _: RuntimeRequestContext) async throws -> [ImageSnapshot] {
-        let result = try await command(["image", "list", "--format", "json"])
-        try requireSuccess(result, operation: "image list")
-        return try parseJSONObjectArray(result.standardOutput).compactMap(imageSnapshot)
+    func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot] {
+        var snapshots: [ImageSnapshot] = []
+        for image in try await resolvedImages(context: context) {
+            if let index = snapshots.firstIndex(where: { $0.id == image.snapshot.id }) {
+                let references = snapshots[index].references + image.snapshot.references
+                snapshots[index].references = Array(Set(references)).sorted()
+            } else {
+                snapshots.append(image.snapshot)
+            }
+        }
+        return snapshots
     }
 
     func inspectImage(
         reference: String,
         context: RuntimeRequestContext
     ) async throws -> ImageSnapshot {
-        let images = try await listImages(context: context)
-        guard
-            let image = images.first(where: {
-                $0.id == reference
-                    || Self.imageDigest(reference) == $0.id
-                    || $0.references.contains(where: {
-                        Self.equivalentImageReference($0, reference)
-                    })
-            })
-        else {
-            throw DevContainerError(.notFound, message: "image \(reference) was not found")
-        }
-        return image
+        try await resolvedImage(reference: reference, context: context).snapshot
     }
 
     func pullImage(
@@ -1138,7 +1222,7 @@ public extension AppleContainerRuntime {
         let temporary = try TemporaryDirectory()
         defer { temporary.remove() }
         let archiveURL = temporary.url.appendingPathComponent("image.tar")
-        try archive.write(to: archiveURL, options: .atomic)
+        try AtomicFile.write(archive, to: archiveURL)
         let result = try await command([
             "image",
             "load",
@@ -1206,10 +1290,26 @@ public extension AppleContainerRuntime {
         }
         arguments.append(buildInput.contextRoot.path)
         let result = try await command(arguments)
-        try requireSuccess(result, operation: "image build")
-        return AsyncThrowingStream { continuation in
-            continuation.yield(result.standardOutput)
-            continuation.finish()
+        return imageBuildResultStream(result)
+    }
+
+    private func imageBuildResultStream(
+        _ result: AppleCommandResult
+    ) -> AsyncThrowingStream<Data, any Error> {
+        AsyncThrowingStream { continuation in
+            if !result.standardOutput.isEmpty {
+                continuation.yield(result.standardOutput)
+            }
+            if !result.standardError.isEmpty {
+                continuation.yield(result.standardError)
+            }
+            do {
+                try requireSuccess(result, operation: "image build")
+                continuation.finish()
+            } catch {
+                // Once the builder has run, its failure belongs to the stream.
+                continuation.finish(throwing: error)
+            }
         }
     }
 
@@ -1232,7 +1332,7 @@ public extension AppleContainerRuntime {
         return arguments
     }
 
-    private static func hostBuildDNSArguments() -> [String] {
+    static func hostBuildDNSArguments() -> [String] {
         guard
             let resolverConfiguration = try? String(
                 contentsOfFile: "/etc/resolv.conf",
@@ -1279,9 +1379,10 @@ public extension AppleContainerRuntime {
             operation: "Feature content archive creation"
         )
         let preparedDockerfile = prepared.url.appendingPathComponent("Dockerfile")
-        try Data(
-            "FROM scratch\nADD context.tar /tmp/build-features/\n".utf8
-        ).write(to: preparedDockerfile, options: .atomic)
+        try AtomicFile.write(
+            Data("FROM scratch\nADD context.tar /tmp/build-features/\n".utf8),
+            to: preparedDockerfile
+        )
         return NativeBuildInput(
             contextRoot: prepared.url,
             dockerfile: preparedDockerfile,
@@ -1338,6 +1439,7 @@ public extension AppleContainerRuntime {
         target: String,
         context _: RuntimeRequestContext
     ) async throws {
+        try Self.requireNamedImageMutation(source)
         try await requireSuccess(
             command(["image", "tag", source, target]),
             operation: "image tag"
@@ -1349,6 +1451,7 @@ public extension AppleContainerRuntime {
         force: Bool,
         context _: RuntimeRequestContext
     ) async throws {
+        try Self.requireNamedImageMutation(reference)
         var arguments = ["image", "delete"]
         if force {
             arguments.append("--force")

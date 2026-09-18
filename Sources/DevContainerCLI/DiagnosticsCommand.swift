@@ -217,6 +217,8 @@ struct DiagnosticsResourceSummary: Codable, Equatable, Sendable {
 }
 
 struct DiagnosticsBundleBuilder {
+    var temporaryRoot: URL?
+    var probeTimeout: TimeInterval = 5
     private static let maximumLogs = 8
     private static let maximumLogBytes = 256 * 1024
     private static let maximumProbeBytes = 256 * 1024
@@ -224,10 +226,14 @@ struct DiagnosticsBundleBuilder {
     func prepare(
         _ inputs: DiagnosticsInputs
     ) async throws -> PreparedDiagnostics {
+        try Task.checkCancellation()
+        try RuntimeRequestScope.checkActive()
         try validate(inputs)
         let directory = try makeStagingDirectory()
         do {
             let warnings = try await writePayload(inputs, to: directory)
+            try Task.checkCancellation()
+            try RuntimeRequestScope.checkActive()
             return try prepareManifest(
                 inputs: inputs,
                 warnings: warnings,
@@ -240,6 +246,9 @@ struct DiagnosticsBundleBuilder {
     }
 
     private func validate(_ inputs: DiagnosticsInputs) throws {
+        guard probeTimeout.isFinite, probeTimeout > 0, probeTimeout <= 5 else {
+            throw DevContainerError(.invalidRequest, message: "diagnostics probe timeout must be within (0, 5] seconds")
+        }
         guard (1 ... 1000).contains(inputs.eventLimit) else {
             throw DevContainerError(
                 .invalidRequest,
@@ -255,7 +264,10 @@ struct DiagnosticsBundleBuilder {
     }
 
     private func makeStagingDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
+        let temporaryRoot = temporaryRoot ?? ProcessInfo.processInfo.environment["TMPDIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory
+        let directory = temporaryRoot
             .appendingPathComponent(
                 "devcontainer-diagnostics-\(UUID().uuidString)",
                 isDirectory: true
@@ -377,9 +389,11 @@ struct DiagnosticsBundleBuilder {
         container: URL,
         compose: URL?,
         socket: URL
-    ) async -> DiagnosticsRuntimeSummary {
+    ) async throws -> DiagnosticsRuntimeSummary {
         var probes: [DiagnosticsProbe] = []
         for command in probeRequests(container: container, compose: compose) {
+            try Task.checkCancellation()
+            try RuntimeRequestScope.checkActive()
             await probes.append(
                 probe(
                     name: command.name,
@@ -686,7 +700,7 @@ struct DiagnosticsBundleBuilder {
     }
 
     private func write(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .atomic)
+        try AtomicFile.write(data, to: url)
         guard chmod(url.path, S_IRUSR | S_IWUSR) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
@@ -696,12 +710,19 @@ struct DiagnosticsBundleBuilder {
         executable: URL,
         arguments: [String]
     ) async throws -> DiagnosticsProcessResult {
-        let result = try await ProcessRunner.captured(
-            executable: executable,
-            arguments: arguments,
-            environment: CLIPaths.safeEnvironment,
-            maximumOutputBytes: 1024 * 1024
-        )
+        var context = RuntimeRequestScope.context ?? RuntimeRequestContext()
+        let probeDeadline = Date().addingTimeInterval(probeTimeout)
+        context.deadline = min(context.deadline ?? probeDeadline, probeDeadline)
+        let result = try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await ProcessRunner.captured(
+                    executable: executable,
+                    arguments: arguments,
+                    environment: CLIPaths.safeEnvironment,
+                    maximumOutputBytes: 1024 * 1024
+                )
+            }
+        }
         return DiagnosticsProcessResult(
             standardOutput: result.standardOutput,
             standardError: result.standardError,

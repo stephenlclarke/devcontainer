@@ -174,6 +174,8 @@ archive, and managed `/etc/hosts` transfers continue to use distribution-safe
 direct clients. Operations without a certified typed equivalent continue
 through the selected `container` executable.
 
+Archive uploads validate their tar input before host extraction and preserve member permission bits independently of the service's file-creation mask. Extraction uses a child of an untouched private `0700` temporary directory: an archive's `.` entry may change the child mode but cannot expose the enclosing host staging tree. Both direct-client and CLI copy paths upload only that extracted child. This does not claim UID/GID or extended-attribute parity beyond the separately qualified fixture scope.
+
 ```mermaid
 flowchart LR
     Request["Runtime SPI request"] --> Choice{"Certified typed operation?"}
@@ -238,6 +240,22 @@ Apple-authored Compose product. The provider adapter and inspection layer
 project them into `com.docker.compose.*` labels and translate Docker label
 filters back to native discovery queries. A projected label never overwrites
 conflicting runtime data; conflict is a reconciliation error.
+
+### Image identity binding
+
+Docker image IDs are the SHA-256 digest of the original OCI configuration blob, not Apple's image-index identifier and not a hash of re-encoded JSON. The adapter resolves that digest from the selected platform manifest using the stock `ClientImage` API. Listings and inspection group tags sharing a configuration ID; `repository@digest` matching ignores tags but must still bind the canonical repository. The source correction is under Bazel validation; it is not yet published runtime evidence.
+
+Creation and image mutations must preserve that identity through the native operation. Do not translate a digest to a mutable tag and record the original digest as if the operation were pinned. The draft native create path captures `ImageDescription` and platform, rereads configuration from that descriptor, validates process/security/network/mount inputs before allocating volumes, and sends a complete `ContainerConfiguration` through stock `ContainerClient.create`. It checks the returned descriptor/platform before publishing compatibility metadata. Both named and digest-addressed requests use this path when the direct API is enabled; missing captured content must not trigger a mutable-tag pull. Empty user and working-directory overrides inherit the image defaults, including non-root USER. Its live SDK transport and init/kernel closure still require integration proof.
+
+Stock `ClientImage.tag(new:)` resolves a source reference, so it is not a descriptor-bound substitute. Config-ID deletion must account for every alias and Docker force/conflict semantics. Digest-addressed tag/delete still fail before CLI mutation. Digest creation is also refused if the direct API is explicitly disabled: forwarding a config digest is unsafe because stock CLI may parse it as a repository/tag and fetch different content. These remaining refusals are visible implementation gaps, not accepted parity or a final solution.
+
+### Native creation recovery
+
+The draft native path requires a durable `RuntimeCreationStore`; production supplies `SQLiteStateStore`. It resolves volume arguments, final native mounts, the kernel and the request deadline before recording a possible container submission. Immediately before the native create RPC, a callback records a distinct operation UUID, native identifier, exact creation timestamp, selected configuration-image ID, requested spec and final encoded native configuration including mounts. Preparation errors leave no pending container intent, so repairing a corrupt volume or missing kernel permits retry; separately created volume resources are not implicitly deleted. This is intent, not successful metadata. After creation, final typed inspection must match the captured identifier, descriptor, platform and timestamp. Only then does one database transaction publish compatibility metadata and remove the matching intent. Inventory adoption rejects pending intent in its own transaction, closing the concurrent reconciliation race.
+
+Failure, cancellation, verification mismatch or metadata failure retains the intent. Bridge start/restart/exec, rename and both archive-transfer directions reject the unresolved incarnation; read-only inspection remains available. A demonstrably different native incarnation is not quarantined, but never clears the earlier operation's evidence. Neither absence nor a name-based delete proves a timed-out RPC cannot still complete. No automatic rollback deletion is issued for failed native creation, because stock Apple provides no incarnation-conditional deletion. Explicit deletion retains unresolved intent as well. The separate CLI compatibility-create path is unchanged and is not covered by this native recovery guarantee.
+
+Schema 4 adds `runtime_container_creations` transactionally while preserving schema-2/3 metadata. `RuntimeCreationStore` implementations must reject ordinary metadata writes while an intent exists and atomically validate operation/spec/image/timestamp at completion. Its token-checked discard primitive is reserved for explicit reconciliation after proving the old writer cannot still create; a safe operator reconciliation interface and live crash/restart proof remain release blockers. Do not delete journal rows to make a test pass. For rollback to a schema-3 binary, restore the quiescent pre-upgrade database backup rather than lowering the schema number or dropping the journal.
 
 ## Provider selection
 
@@ -414,6 +432,8 @@ paths fail closed. Per-project provider choice and configuration digest live in
 the service database. Secrets are not accepted in configuration files.
 `container devcontainer doctor --format json` emits a machine-readable backend
 fingerprint and capability report.
+
+The Compose wrapper records project ownership from the resolved runtime backend, not from the orchestration frontend. Both frontend choices preserve the same runtime claim and reject a conflicting existing claim before executing a mutation. The selected frontend must be executable before project state is created; a missing native executable never triggers a Docker fallback. These checks establish configuration and state consistency, not runtime-service identity qualification.
 
 ## Observability
 

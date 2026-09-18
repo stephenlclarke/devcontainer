@@ -24,6 +24,57 @@ import Foundation
 import Testing
 
 struct AppleContainerRuntimeDirectTests {
+    @Test(arguments: [0o644, 0o750, 0o777], [false, true])
+    func `archive upload preserves member permissions inside private staging`(
+        mode: Int, includesRoot: Bool
+    ) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let input = fixture.root.appendingPathComponent("archive-input")
+        try FileManager.default.createDirectory(at: input, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: input.path)
+        let source = input.appendingPathComponent("permissions.txt")
+        try Data("archive permission fixture".utf8).write(to: source)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: source.path)
+        let archive = try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["--format=ustar", "-cf", "-", "-C", input.path, includesRoot ? "." : source.lastPathComponent],
+            environment: ["COPYFILE_DISABLE": "1"]
+        )
+        #expect(archive.exitCode == 0)
+        let files = ArchivePermissionsClient()
+        let runtime = try directRuntime(
+            fixture: fixture,
+            inventory: FakeContainerInventory(snapshots: [
+                nativeSnapshot(id: "fixture", labels: [:], status: .running)
+            ]),
+            files: files
+        )
+        try await runtime.copyArchiveToContainer(
+            id: "fixture", path: "/workspace", archive: archive.standardOutput, context: RuntimeRequestContext()
+        )
+        #expect(await files.memberMode == mode)
+        #expect(await files.privateParentMode == 0o700)
+        #expect(await files.stagingMode == (includesRoot ? 0o777 : 0o700))
+    }
+
+    @Test(arguments: ["a", "c"])
+    func `native digest references retain config IDs during list and inspection`(hex: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try fixture.setImageInventory([imageRecord("fixture:latest")])
+        let snapshot = nativeSnapshot(
+            id: "fixture", labels: [:], status: .running,
+            imageReference: "fixture@sha256:" + String(repeating: hex, count: 64)
+        )
+        let runtime = try directRuntime(fixture: fixture, inventory: FakeContainerInventory(snapshots: [snapshot]))
+        let context = RuntimeRequestContext()
+        let listed = try await runtime.listContainersDirect(all: true, labels: [:], context: context)
+        #expect(listed.first?.imageID == FakeAppleImageIdentityClient.digest)
+        let inspected = try await runtime.inspectContainerDirect(id: "fixture", context: context)
+        #expect(inspected?.imageID == FakeAppleImageIdentityClient.digest)
+    }
+
     @Test
     func `direct inventory filters state labels and internal builders`() async throws {
         let fixture = try FakeAppleCLI()
@@ -52,7 +103,7 @@ struct AppleContainerRuntimeDirectTests {
             context: context
         )
         #expect(running.map(\.runtimeID.rawValue) == ["running"])
-        #expect(running.first?.imageID == "sha256:abc123")
+        #expect(running.first?.imageID == FakeAppleImageIdentityClient.digest)
 
         let all = try await runtime.listContainers(
             all: true,
@@ -84,7 +135,7 @@ struct AppleContainerRuntimeDirectTests {
             try await runtime.inspectContainerDirect(id: "fixture", context: context)
         )
         #expect(exact.dockerID.rawValue == "docker-fixture")
-        #expect(exact.imageID == "sha256:abc123")
+        #expect(exact.imageID == FakeAppleImageIdentityClient.digest)
         #expect(
             try await runtime.inspectContainerDirect(
                 id: "unrelated",
@@ -219,6 +270,9 @@ struct AppleContainerRuntimeDirectTests {
             containers: [target],
             context: context
         )
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("transfers").path
+        ))
         try await runtime.synchronizeNetworkHosts(
             target: target,
             containers: [target],
@@ -226,6 +280,7 @@ struct AppleContainerRuntimeDirectTests {
         )
         #expect(await files.copyOutCallCount() == 1)
         #expect(await files.copyInCallCount() == 1)
+        #expect(await files.uploadedPermissions() == 0o644)
 
         await files.resetHostsForBootstrap()
         try await runtime.startContainer(id: "fixture", context: context)
@@ -723,10 +778,32 @@ private actor FakeNetworkClient: AppleNetworkClient {
     }
 }
 
+private actor ArchivePermissionsClient: AppleContainerFileClient {
+    var memberMode: Int?
+    var stagingMode: Int?
+    var privateParentMode: Int?
+
+    func copyIn(id _: String, source: String, destination _: String) throws {
+        let manager = FileManager.default
+        stagingMode = try manager.attributesOfItem(atPath: source)[.posixPermissions] as? Int
+        privateParentMode = try manager.attributesOfItem(
+            atPath: URL(fileURLWithPath: source).deletingLastPathComponent().path
+        )[.posixPermissions] as? Int
+        memberMode = try manager.attributesOfItem(
+            atPath: URL(fileURLWithPath: source).appendingPathComponent("permissions.txt").path
+        )[.posixPermissions] as? Int
+    }
+
+    func copyOut(id _: String, source _: String, destination _: String) throws {
+        throw DirectInventoryFailure.failed
+    }
+}
+
 private actor FakeContainerFileClient: AppleContainerFileClient {
     private var currentHosts = "127.0.0.1 localhost\n"
     private var copyOutCalls = 0
     private var copyInCalls = 0
+    private var lastUploadedPermissions: Int?
 
     func copyIn(
         id _: String,
@@ -734,6 +811,9 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
         destination _: String
     ) throws {
         copyInCalls += 1
+        lastUploadedPermissions = try FileManager.default.attributesOfItem(
+            atPath: source
+        )[.posixPermissions] as? Int
         currentHosts = try String(contentsOfFile: source, encoding: .utf8)
     }
 
@@ -745,6 +825,9 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
         copyOutCalls += 1
         try Data(currentHosts.utf8).write(
             to: URL(fileURLWithPath: destination)
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: destination
         )
     }
 
@@ -758,6 +841,10 @@ private actor FakeContainerFileClient: AppleContainerFileClient {
 
     func copyInCallCount() -> Int {
         copyInCalls
+    }
+
+    func uploadedPermissions() -> Int? {
+        lastUploadedPermissions
     }
 
     func hosts() -> String {
@@ -789,12 +876,16 @@ private func directRuntime(
         useDirectProcessAPI: false,
         useDirectContainerAPI: true,
         metadataStore: nil,
-        volumeRoot: fixture.root.appendingPathComponent("volumes"),
+        storageRoots: AppleContainerRuntime.StorageRoots(
+            volumes: fixture.root.appendingPathComponent("volumes"),
+            transfers: fixture.root.appendingPathComponent("transfers")
+        ),
         clients: AppleContainerRuntime.DirectClients(
             api: ContainerClient(),
             inventory: inventory,
             files: files,
-            networks: networks
+            networks: networks,
+            images: FakeAppleImageIdentityClient()
         )
     )
 }
@@ -802,10 +893,11 @@ private func directRuntime(
 private func nativeSnapshot(
     id: String,
     labels: [String: String],
-    status: RuntimeStatus
+    status: RuntimeStatus,
+    imageReference: String = "fixture:latest"
 ) -> ContainerResource.ContainerSnapshot {
     let image = ImageDescription(
-        reference: "fixture:latest",
+        reference: imageReference,
         descriptor: .init(
             mediaType: "application/vnd.oci.image.manifest.v1+json",
             digest: "sha256:" + String(repeating: "a", count: 64),

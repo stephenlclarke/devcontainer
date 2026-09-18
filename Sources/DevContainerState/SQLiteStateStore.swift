@@ -20,12 +20,11 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-// Schema and statement helpers remain colocated while the v3 migration is the
-// only supported upgrade path.
+// Schema and statement helpers remain colocated for transactional migrations.
 // swiftlint:disable file_length
 
-public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
-    public static let schemaVersion = 3
+public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
+    public static let schemaVersion = 4
 
     private let handle: SQLiteHandle
     private var database: OpaquePointer {
@@ -519,6 +518,15 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
     public func recordContainerMetadata(
         _ metadata: RuntimeContainerMetadata
     ) throws {
+        try transaction {
+            guard try pendingContainerCreation(id: metadata.runtimeID.rawValue) == nil else {
+                throw DevContainerError(.conflict, message: "cannot adopt an incomplete container creation")
+            }
+            try writeContainerMetadata(metadata)
+        }
+    }
+
+    private func writeContainerMetadata(_ metadata: RuntimeContainerMetadata) throws {
         let specification = try JSONEncoder().encode(metadata.spec)
         let sql = """
         INSERT INTO runtime_containers (
@@ -543,6 +551,73 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
                 to: statement
             )
             try stepDone(statement)
+        }
+    }
+
+    public func beginContainerCreation(_ creation: RuntimeContainerCreation) throws {
+        try transaction {
+            guard try pendingContainerCreation(id: creation.runtimeID) == nil else {
+                throw DevContainerError(.conflict, message: "container creation requires reconciliation")
+            }
+            let data = try JSONEncoder().encode(creation)
+            let sql = "INSERT INTO runtime_container_creations (runtime_id, intent_json) VALUES (?, ?)"
+            try withStatement(sql) { statement in
+                try bind(creation.runtimeID, at: 1, to: statement)
+                try bind(data, at: 2, to: statement)
+                try stepDone(statement)
+            }
+        }
+    }
+
+    public func pendingContainerCreation(id: String) throws -> RuntimeContainerCreation? {
+        try withStatement("SELECT intent_json FROM runtime_container_creations WHERE runtime_id = ?") { statement in
+            try bind(id, at: 1, to: statement)
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE {
+                return nil
+            }
+            guard status == SQLITE_ROW, let data = blob(statement, 0) else {
+                throw Self.sqliteError(database, prefix: "cannot read container creation intent")
+            }
+            let creation = try JSONDecoder().decode(RuntimeContainerCreation.self, from: data)
+            guard creation.runtimeID == id else {
+                throw DevContainerError(.stateCorruption, message: "container creation intent identity differs")
+            }
+            return creation
+        }
+    }
+
+    public func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
+        try transaction {
+            guard let creation = try pendingContainerCreation(id: metadata.runtimeID.rawValue),
+                  creation.operationID == operationID,
+                  creation.imageID == metadata.imageID,
+                  creation.spec == metadata.spec,
+                  creation.nativeCreatedAt == metadata.createdAt
+            else {
+                throw DevContainerError(.stateCorruption, message: "container creation completion identity differs")
+            }
+            try writeContainerMetadata(metadata)
+            try discardContainerCreation(id: creation.runtimeID, operationID: operationID)
+        }
+    }
+
+    public func discardContainerCreation(id: String, operationID: UUID) throws {
+        guard let creation = try pendingContainerCreation(id: id) else { return }
+        guard creation.operationID == operationID else {
+            throw DevContainerError(.conflict, message: "container creation intent was replaced")
+        }
+        let sql = """
+        DELETE FROM runtime_container_creations
+        WHERE runtime_id = ? AND json_extract(intent_json, '$.operationID') = ?
+        """
+        try withStatement(sql) { statement in
+            try bind(id, at: 1, to: statement)
+            try bind(operationID.uuidString, at: 2, to: statement)
+            try stepDone(statement)
+            guard sqlite3_changes(database) == 1 else {
+                throw DevContainerError(.conflict, message: "container creation intent was replaced")
+            }
         }
     }
 
@@ -722,6 +797,10 @@ extension SQLiteStateStore {
                     }
                     version = 3
                 }
+                if version == 3 {
+                    // schemaSQL has created the separate write-ahead intent table.
+                    version = 4
+                }
                 guard version == Int64(schemaVersion) else {
                     throw DevContainerError(
                         .stateCorruption,
@@ -803,6 +882,10 @@ extension SQLiteStateStore {
         created_at REAL NOT NULL,
         started_at REAL
     );
+    CREATE TABLE IF NOT EXISTS runtime_container_creations (
+        runtime_id TEXT PRIMARY KEY,
+        intent_json BLOB NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS resources_project_idx
         ON resources(project_key);
     CREATE INDEX IF NOT EXISTS operations_phase_idx
@@ -835,7 +918,8 @@ extension SQLiteStateStore {
             "runtime_containers": [
                 "runtime_id", "docker_id", "image_id", "specification_json",
                 "created_at", "started_at"
-            ]
+            ],
+            "runtime_container_creations": ["runtime_id", "intent_json"]
         ]
         for (table, expected) in expectedColumns {
             let actual = try tableColumns(database, table: table)

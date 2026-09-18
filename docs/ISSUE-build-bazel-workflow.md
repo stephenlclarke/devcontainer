@@ -1,0 +1,66 @@
+# Issue: implement the native Bazel workflow
+
+## Problem description
+
+The legacy DocC script starts a separate SwiftPM build. The native documentation slice instead reuses optimized Bazel modules, caches each module's extraction/conversion, validates cross-module links and merges a standalone site. DocC's preserved sandbox symlinks must become regular files without modifying declared inputs. Nine action fault tests and three real-site checks pass in both runtime profiles; the adapter measures 75/76 executable lines (98.68%) in isolated tests. Independent review is clean. This is documentation generation only, not publication or release/parity qualification.
+
+Provider declarations bind the compiled profile, runtime revision, resource owner and effective capabilities into the handoff fingerprint, but the service previously constructed them only inside Keychain-backed startup. Extract the unchanged projection into a side-effect-free boundary and test provenance, stock/enhanced handoff advertising, unavailable/emulated mappings, route inventory, fingerprint sensitivity and rejection of empty provenance. This must not relabel a selected resource owner as the compiled profile or change runtime capability claims.
+
+The explicit host-service integration lane used a synchronous HTTP helper with no request timeout and waited for exit before draining pipes. A hanging service or oversized response could stall unattended tests. Reuse the existing deadline-aware process runner, bound both streams, reject truncation and malformed status, preserve tighter caller deadlines, and disable implicit curl configuration. Unit fixtures must prove helper failure and cleanup without accessing the operator's Keychain; the real host lane remains separate opt-in execution.
+
+Support-archive generation also used unbounded external probes and swallowed caller cancellation/deadline errors into a successful partial bundle. Red regression `4f8dba68-bf34-4c75-9d62-96c2fbf8c8a1` reproduces both. Bound probes while preserving useful best-effort results for ordinary failures; cancellation and enclosing deadline expiry must stop collection, reap subprocesses and remove owned staging.
+
+Compose bridge project-name and volume discovery had unbounded subprocess lifetimes and output capture; cancellation during volume discovery was swallowed as success. Retained regression `500f2161-9751-4bae-b48e-b3ccc2138da5` proves the delayed deadline and swallowed cancellation. Tightening the output boundary also exposed negative omitted-byte counts for outputs smaller than the capture limit (`b13644ff-a7d0-4508-80b6-add727e00579`). Bound read-only discovery, preserve uncertain ownership, and calculate exact omission counts without changing actual Compose operation limits or provider selection.
+
+Synchronous external probes also lost the caller's request context when dispatching detached work. A finite regression proves an expired request still launches a command and a running request ignores its deadline. Plug-in registration's automatic install-root query had no bound at all. Preserve request identity and deadlines across that bridge, cancel/drain/reap on timeout, and enforce a five-second discovery bound without extending an earlier caller deadline. Explicit install-root registration must remain independent of runtime availability.
+
+Unattended diagnostics exposed missing per-probe deadlines and output-format validation after external execution. A combined regression run additionally reproduced a fork/exec failure deadlock: the child entered `exit -> __cxa_finalize_ranges -> ostream::flush -> fflush -> flockfile`, while the parent awaited launch completion. The actual failed run is retained as `836e7845-7ac4-47d5-8b56-72df2305a9f8`; only its owned test parent and stuck child were terminated after sampling. Reusing Compose's POSIX-spawn primitive avoids that post-fork teardown and keeps stock Apple compatibility independent of a dependency patch. Service lifetime regressions separately demonstrate skipped cleanup on startup, waiter failure and cancellation; those paths must release resources and preserve the primary failure.
+
+Native CLI coverage also exposed an unintended configuration reset: updating only the socket enabled strict compatibility even when the saved setting was false. Treat omitted strictness as no update, preserve the secure default for new files, and prove the real parser/run boundary plus durable backend claims without launching a runtime.
+
+GitHub review `4045780895` identified premature native-create intent: failed mount preparation could permanently block retry despite no container submission. Independent review extended this to final mount inspection and kernel lookup. The callback boundary now journals only after these preparations, immediately before native creation; it preserves every potentially submitted failure instead of guessing that an error proves absence.
+
+The Compose wrapper also derived runtime ownership from frontend choice, which could assign a stock project to the enhanced backend or vice versa. Frontend execution must preserve independently resolved runtime selection, reject existing conflicting claims and fail without state changes when the selected executable is absent. The regression tests exercise all four configured frontend/backend pairs; this is not certification of new live runtime combinations.
+
+The existing family workflow repeatedly rebuilds/retests work and couples recovery to large mutable build trees. The approved redesign assigns dependency scheduling and caching to Bazel, keeps disposable state on the external SSD, and reserves internal storage for retained source and accepted assets.
+
+## Scope and acceptance
+
+Implement the complete native stock/enhanced product and test graph, version generation, real XCTest/Swift Testing discovery, meaningful coverage and unchanged-input cache reuse. Retain evidence before output reuse, reject mixed-source receipts and keep scratch on the enrolled SSD. Continue to artifact-only parity, recovery/publication, family adoption and ownership-based hygiene before replacing production workflows. Preserve existing release transactions and unrelated adapter work; native compilation alone is not the full migration.
+
+Final delivery includes stable GitHub/Homebrew releases for both projects, full unit/integration/parity validation of the published downloads, public quiet-host benchmark reports/raw evidence, and a final documentation phase producing both DocC sites and installation-first live VHS demos. The Compose demo must exercise the complete default monitoring stack, visibly showing empty, running, stopped and restarted states. See the [delivery contract](bazel-workflow.md#final-delivery-and-public-evidence) for provenance, storage and publication requirements.
+
+## Resolution and remaining risk
+
+The complete sanitizer cycle exposed another use of the dependency's fork-based
+launcher in non-TTY Apple runtime sessions. A sampled ASan allocator-lock stall
+shows that fixing only the shared CLI process runner was insufficient. Reuse
+the existing spawn implementation at this session boundary, preserve streams
+and process-group ownership, and add real failure-path regressions. A passing
+focused rerun does not replace the complete sanitizer and leak gates.
+
+A passing Sonar quality gate is not proof of zero open issues. The first local
+native-coverage scan passed its gate while reporting six ambiguous exception
+tests and one excessively nested process closure. Address these structurally
+without suppressions, weaker assertions, source exclusions or changed process
+lifetime semantics, then verify the actual issue list in a fresh scan.
+
+Runtime admission previously accepted a running selected API executable before proving that it could answer XPC requests. An enhanced-lane timeout before fixture operations exposed that distinction. Admission now checks the selected CLI's read-only empty inventory with a ten-second bound and durable child-lifetime evidence. Failure remains setup failure, never a passing fixture or an automatic retry; missing stop proof blocks restoration and cleanup until reconciled. This improves startup evidence but does not by itself resolve the enhanced provider's underlying startup failure.
+
+Installation-facing version and socket-context output need executable contracts, not parser-only smoke checks. The CLI suite now verifies exact provenance and safe shell evaluation without creating state, while retaining the current public output formats. Both native dependency profiles pass the focused tests; live installation and release gates remain separate.
+
+The first trusted devcontainer jobs (`35343776611` stock and `35343874943` enhanced) passed unit/component execution but failed archive analysis: `rules_license` 1.0.0 omitted target identity from an empty licence provider. The Compose bridge legitimately has no external Swift package licences, whereas the engine has a populated transitive set. Backport upstream PR 161's identity fix; do not discard the empty target or waive missing notices. Archive tests must retain notices from the populated targets and still reject an entirely empty licence set. The separate sub-90% coverage gate remains unchanged.
+
+Cross-harness validation must preserve filesystem identity and select the exact built executable. CI exposed path-alias text comparisons and unsafe recursive engine discovery; the corrected tests compare inode/device identity and require the executable beside the SwiftPM test bundle. Bazel's declared runfile and explicit overrides remain unchanged. The focused unit proof does not qualify the Keychain-backed service lane or replace a complete sanitizer run.
+
+The terminal helper's sanitized environment originally omitted LLVM profiling, leaving successful child execution absent from coverage. The regression now requires fresh nonempty child profiles at a validated SSD-only destination without inheriting the operator environment. Focused invocation `81b1bc85-4452-48bc-a2ad-5bc858348694` passes; independent review is clean. This corrects evidence collection rather than changing production behavior or relaxing the 90% aggregate gate.
+
+Docker shutdown could be verified while a later crash during scratch deletion or guard clearance left no supported recovery path. Recovery now recognizes the Docker journal separately, verifies process/socket closure again, and uses a durable directory-identity authorization written before normal or resumed deletion. It preserves failed-case evidence and refuses uncertain startup/shutdown rather than rerunning the VM. Full live interrupted-process reconciliation is still required.
+
+Creating an archive alone does not prove that its installed layout runs or that its bytes survive the test workflow. Native package verification now authenticates the actual extracted products and executes safe CLI/provider-fixture checks on SSD, retaining archive bytes and test evidence under one invocation. Uncertain process cleanup must preserve both the private home and extracted package. This remains unsigned local package proof; Homebrew installation and complete distribution qualification remain required.
+
+Native consumer CLI component tests could pass without emitting LLVM coverage because their sanitized child environment discarded profiling output and the shell target did not declare the executable for export. The shared evidence contract now supports a separate exact unit-plus-CLI inventory, preserving unit-only history and binding the selected inventory at the 90% gate. Compose owns the executable instrumentation and additive target inventory; no source exclusions or lower thresholds are introduced.
+
+See [implementation status](bazel-workflow.md) and [PR 83](PR-83.md). The complete native graph, transactional evidence/candidate retention, archive restore, pinned GitHub binary acquisition and owned invocation cleanup are implemented. Host and quality qualification, complete artifact-only parity, durable release effects, family adoption, broader cleanup and CI cutover remain explicit gates.
+
+The Docker reference now has retained published tool/image/client inputs and an opt-in Bazel VM adapter with the shared Engine assertions. E01/E02/E03/E05/E06 have real Docker functional passes and verified cleanup. New published campaigns share a complete cross-lane fingerprint. Full three-lane qualification, interrupted-VM recovery and the remaining fixtures are still required; these focused results are not stable-release completion.

@@ -43,6 +43,102 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: release-version
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
+.PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
+.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
+.PHONY: bazel-recover-runtime bazel-recover-runtime-apply
+.PHONY: bazel-parity-report
+.PHONY: bazel-prepare-guest-images
+.PHONY: bazel-prepare-guest-kernel
+.PHONY: bazel-prepare-docker-oracle
+.PHONY: bazel-prepare-docker-cli
+.PHONY: bazel-docs
+export CASE_ID
+export CASE_FIXTURE
+BAZEL_PROFILE ?= enhanced
+RELEASE_SET ?= Tools/bazel/releases.lock.json
+
+# Opt-in native qualification; existing product/release entry points are unchanged.
+bazel-configure:
+	Tools/bazel/run.sh configure
+
+bazel-qualify:
+	Tools/bazel/run.sh coverage //:bazel_qualification
+
+bazel-test-tools:
+	Tools/bazel/run.sh test-tools
+
+bazel-harness:
+	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests
+
+bazel-parity-report:
+	@test -n "$(CAMPAIGN)" || { printf 'Set CAMPAIGN explicitly.\n' >&2; exit 2; }
+	@Tools/bazel/run.sh parity-report "$(CAMPAIGN)" $(if $(CASE_FIXTURE),--fixture="$(CASE_FIXTURE)") --format="$${REPORT_FORMAT:-json}"
+
+bazel-prepare-guest-images:
+	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-guest-kernel:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/guest-kernel.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-docker-oracle:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/docker-oracle.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-docker-cli:
+	Tools/bazel/run.sh prepare-docker-cli Tools/bazel/docker-cli.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-engine-case:
+	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
+	Tools/bazel/run.sh test //Tools/testing:$(if $(filter docker,$(LANE)),released_docker_engine,released_engine_negotiation) --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)")
+
+bazel-prepare-candidate:
+	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)"
+
+bazel-recover-runtime:
+	Tools/bazel/run.sh recover-runtime
+
+bazel-recover-runtime-apply:
+	Tools/bazel/run.sh recover-runtime --apply --case "$${CASE_ID}"
+
+bazel-build:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
+
+bazel-unit:
+	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //:unit
+
+bazel-coverage-report:
+	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a retained source-unit coverage ID.\n' >&2; exit 2; }
+	Tools/bazel/run.sh coverage-report "$(INVOCATION)"
+
+bazel-build-timings:
+	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a measured build/test invocation ID.\n' >&2; exit 2; }
+	@if [[ -n "$(BASELINE)" ]]; then \
+		Tools/bazel/run.sh build-timings "$(INVOCATION)" --baseline "$(BASELINE)"; \
+	else Tools/bazel/run.sh build-timings "$(INVOCATION)"; fi
+
+bazel-package:
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:candidate_archive //Tools/bazel:package_smoke
+
+bazel-docs:
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:documentation_tests
+
+bazel-acquire-releases:
+	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
+
+bazel-prepare-releases:
+	Tools/bazel/run.sh prepare-releases "$(RELEASE_SET)" $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-cleanup:
+	Tools/bazel/run.sh cleanup
+
+# Explicit coherent checkpoint, not the per-edit loop. Profile-specific actions
+# are distinct; each invocation shares its native product/test dependency graph.
+bazel-checkpoint:
+	Tools/bazel/run.sh test-tools
+	Tools/bazel/run.sh coverage --config=stock //:unit //:product
+	Tools/bazel/run.sh test --config=stock --config=release //:candidate_archive //Tools/bazel:package_smoke
+	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product
+	Tools/bazel/run.sh test --config=release //:candidate_archive //Tools/bazel:package_smoke
+	Tools/bazel/run.sh cleanup --apply
 
 all: workflow
 
@@ -70,7 +166,7 @@ test-unit: swift-test
 test-contract: swift-test
 
 test-integration:
-	DEVCONTAINER_RUN_HOST_INTEGRATION=1 $(MAKE) swift-test
+	DEVCONTAINER_HOST_INTEGRATION=1 $(MAKE) swift-test
 
 swift-test:
 	@mkdir -p .build

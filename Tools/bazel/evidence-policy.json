@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "scope": "source unit tests; excludes host integration",
+  "source_roots": [
+    "Sources"
+  ],
+  "profiles": {
+    "stock": {
+      "tests": {
+        "//:DevContainerModelTests": 11,
+        "//:DevContainerStateTests": 7,
+        "//:DevContainerCoreTests": 13,
+        "//:DevContainerCLITests": 47,
+        "//:DevContainerProcessTests": 16,
+        "//:DevContainerDockerAPITests": 53,
+        "//:DevContainerComposeProviderTests": 12,
+        "//:DevContainerComposeCLITests": 18,
+        "//:DevContainerAppleRuntimeTests": 99,
+        "//:DevContainerServiceTests": 23
+      },
+      "required_sources": [
+        "Sources/DevContainerModel/AtomicFile.swift",
+        "Sources/DevContainerState/SQLiteStateStore.swift",
+        "Sources/DevContainerCore/DevContainerConfiguration.swift",
+        "Sources/DevContainerCLI/PluginCommand.swift",
+        "Sources/DevContainerCLI/DiagnosticsCommand.swift",
+        "Sources/DevContainerCLI/ContextCommand.swift",
+        "Sources/DevContainerCLI/VersionCommand.swift",
+        "Sources/DevContainerService/DevContainerServiceCommand.swift",
+        "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
+        "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "Sources/DevContainerProcess/ProcessRunner.swift",
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
+      ]
+    },
+    "enhanced": {
+      "tests": {
+        "//:DevContainerModelTests": 11,
+        "//:DevContainerStateTests": 7,
+        "//:DevContainerCoreTests": 13,
+        "//:DevContainerCLITests": 47,
+        "//:DevContainerProcessTests": 16,
+        "//:DevContainerDockerAPITests": 53,
+        "//:DevContainerComposeProviderTests": 12,
+        "//:DevContainerComposeCLITests": 18,
+        "//:DevContainerAppleRuntimeTests": 110,
+        "//:DevContainerServiceTests": 23
+      },
+      "required_sources": [
+        "Sources/DevContainerModel/AtomicFile.swift",
+        "Sources/DevContainerState/SQLiteStateStore.swift",
+        "Sources/DevContainerCore/DevContainerConfiguration.swift",
+        "Sources/DevContainerCLI/PluginCommand.swift",
+        "Sources/DevContainerCLI/DiagnosticsCommand.swift",
+        "Sources/DevContainerCLI/ContextCommand.swift",
+        "Sources/DevContainerCLI/VersionCommand.swift",
+        "Sources/DevContainerService/DevContainerServiceCommand.swift",
+        "Sources/DevContainerService/DevContainerProviderDeclaration.swift",
+        "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
+        "Sources/DevContainerProcess/ProcessRunner.swift",
+        "Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift"
+      ]
+    }
+  }
+}

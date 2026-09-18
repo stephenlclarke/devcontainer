@@ -18,6 +18,7 @@ import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -55,7 +56,7 @@ private func makeEdgeFixture(name: String = "edge") async throws -> EdgeFixture 
 @Test
 // swiftlint:disable:next function_body_length
 func `auto removed container releases resource and empty project claim`() async throws {
-    let directory = FileManager.default.temporaryDirectory
+    let directory = TestStorage.temporaryDirectory
         .appendingPathComponent(
             "devcontainer-router-auto-remove-\(UUID().uuidString)",
             isDirectory: true

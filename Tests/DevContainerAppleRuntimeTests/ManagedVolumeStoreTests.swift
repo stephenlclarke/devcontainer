@@ -19,6 +19,7 @@
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -118,7 +119,7 @@ struct ManagedVolumeStoreTests {
 
     @Test
     func `metadata permission failure rolls back the volume`() throws {
-        let root = FileManager.default.temporaryDirectory
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-volume-store-tests-\(UUID().uuidString)",
                 isDirectory: true
@@ -145,7 +146,7 @@ struct ManagedVolumeStoreTests {
     private func withStore(
         _ body: (ManagedVolumeStore) throws -> Void
     ) throws {
-        let root = FileManager.default.temporaryDirectory
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "devcontainer-volume-store-tests-\(UUID().uuidString)",
                 isDirectory: true

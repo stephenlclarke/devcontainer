@@ -22,6 +22,8 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
+    private let buildImageStream: (@Sendable (ImageBuildRequest) async throws
+        -> AsyncThrowingStream<Data, any Error>)?
     private let pullImageStream: (@Sendable (String) async throws
         -> AsyncThrowingStream<Data, any Error>)?
     private var requestCancellationCount = 0
@@ -43,10 +45,13 @@ public actor InMemoryRuntime: DevContainerRuntime {
         execSession: (any RuntimeProcessSession)? = nil,
         descriptorDelay: Duration? = nil,
         pullImageStream: (@Sendable (String) async throws
+            -> AsyncThrowingStream<Data, any Error>)? = nil,
+        buildImageStream: (@Sendable (ImageBuildRequest) async throws
             -> AsyncThrowingStream<Data, any Error>)? = nil
     ) {
         self.execSession = execSession
         self.descriptorDelay = descriptorDelay
+        self.buildImageStream = buildImageStream
         self.pullImageStream = pullImageStream
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
@@ -128,7 +133,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func buildImage(
         request: ImageBuildRequest,
         context _: RuntimeRequestContext
-    ) -> AsyncThrowingStream<Data, any Error> {
+    ) async throws -> AsyncThrowingStream<Data, any Error> {
+        if let buildImageStream {
+            return try await buildImageStream(request)
+        }
         let id = "sha256:\(Self.identifier())"
         let snapshot = ImageSnapshot(
             id: id,

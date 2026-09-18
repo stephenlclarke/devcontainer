@@ -143,6 +143,7 @@ public extension AppleContainerRuntime {
     }
 
     private func launchContainerProcess(id: String) async throws -> UUID? {
+        try await requireCompletedCreation(id: id)
         guard useDirectProcessAPI else {
             try await requireSuccess(
                 command(["start", id]),
@@ -439,6 +440,7 @@ public extension AppleContainerRuntime {
         timeout: Duration?,
         context: RuntimeRequestContext
     ) async throws {
+        try await requireCompletedCreation(id: resolved)
         var arguments = [useDirectProcessAPI ? "stop" : "restart"]
         if let timeout {
             let components = timeout.components
@@ -524,6 +526,7 @@ public extension AppleContainerRuntime {
         }
         let containers = try await listContainers(all: true, labels: [:], context: context)
         let snapshot = try resolvedContainerSnapshot(id: id, in: containers)
+        try await requireCompletedCreation(id: snapshot.runtimeID.rawValue)
         mutationIdentifiers.formUnion([
             snapshot.runtimeID.rawValue,
             snapshot.dockerID.rawValue,
@@ -626,6 +629,9 @@ public extension AppleContainerRuntime {
         containerExitRegistrations.removeValue(forKey: resolved)
         containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
+        // A name-based delete cannot prove which create operation it removed,
+        // or that an earlier timed-out create cannot still complete. Keep any
+        // pending intent, including one inserted while this delete was running.
         try await synchronizeNetworkHosts(context: context)
         await signalEventPollers()
     }
@@ -750,6 +756,7 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> ExecSnapshot {
         let container = try await inspectContainer(id: containerID, context: context)
+        try await requireCompletedCreation(id: container.runtimeID.rawValue)
         guard container.state == .running else {
             throw DevContainerError(.conflict, message: "container \(containerID) is not running")
         }
@@ -769,6 +776,7 @@ public extension AppleContainerRuntime {
         guard var exec = execs[id] else {
             throw DevContainerError(.notFound, message: "exec \(id) was not found")
         }
+        try await requireCompletedCreation(id: exec.containerID.rawValue)
         guard !exec.running, exec.exitCode == nil else {
             throw DevContainerError(.conflict, message: "exec \(id) has already started")
         }

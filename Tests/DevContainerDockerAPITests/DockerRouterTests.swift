@@ -18,6 +18,7 @@ import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -676,7 +677,7 @@ func `exposed ports and empty Docker host IP retain their semantics`() async thr
 @Test
 // swiftlint:disable:next function_body_length
 func `production router journals and labels owned container mutations`() async throws {
-    let directory = FileManager.default.temporaryDirectory
+    let directory = TestStorage.temporaryDirectory
         .appendingPathComponent(
             "devcontainer-router-coordinator-\(UUID().uuidString)",
             isDirectory: true

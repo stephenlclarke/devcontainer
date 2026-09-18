@@ -100,6 +100,14 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
                 return try await route(request, context: context)
             }
             response.headers["X-Request-ID"] = context.correlationID
+            if request.method == .post,
+               try stripAPIVersion(ParsedTarget(request.target).path) == "/build",
+               response.status == 200,
+               case let .stream(stream) = response.body
+            {
+                // Encode only after coordination has recorded the failure.
+                response.body = .stream(dockerBuildResultStream(stream))
+            }
             return response
         } catch let error as DevContainerError {
             var response = errorResponse(error)
