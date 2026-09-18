@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
 
 
-def file_identity(path: Path, root: Path) -> dict:
+def file_identity(path: Path, root: Path, object_format: str | None = None) -> dict:
     """Include permissions and linked bytes; external source links fail closed."""
     link = None
     if path.is_symlink():
@@ -22,27 +23,58 @@ def file_identity(path: Path, root: Path) -> dict:
         return {"deleted": True}
     if not path.is_file():
         raise ValueError(f"Unsupported source input: {path}")
-    result = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "mode": stat.S_IMODE(path.stat().st_mode)}
+    payload = path.read_bytes()
+    result = {"sha256": hashlib.sha256(payload).hexdigest(), "mode": stat.S_IMODE(path.stat().st_mode)}
     if link is not None:
         result["link"] = link
+    if object_format is not None:
+        blob = link.encode() if link is not None else payload
+        header = b"blob " + str(len(blob)).encode("ascii") + b"\0"
+        result["gitObject"] = hashlib.new(object_format, header + blob).hexdigest()
+        result["gitMode"] = "120000" if link is not None else ("100755" if result["mode"] & 0o111 else "100644")
     return result
 
 
 def source_identity(root: Path) -> dict:
-    """Hash Git-visible sources, including new files, without following links."""
+    """Compare Git-visible and ignored source-glob inputs with committed bytes."""
     def git(*arguments: str) -> bytes:
         return subprocess.check_output(["/usr/bin/git", "-C", str(root), *arguments])
 
     paths = git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    # Bazel source/catalog globs do not honor Git ignore rules.
+    paths += git("ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "Sources")
+    commit = git("rev-parse", "HEAD").decode().strip()
+    object_format = git("rev-parse", "--show-object-format").decode().strip()
+    if object_format not in {"sha1", "sha256"}:
+        raise ValueError("Unsupported Git object format")
+    committed = {}
+    for entry in git("ls-tree", "-r", "-z", commit).split(b"\0"):
+        if entry:
+            metadata, name = entry.split(b"\t", 1)
+            mode, kind, identifier = metadata.decode("ascii").split()
+            if kind != "blob":
+                raise ValueError("Source submodules require explicit provenance")
+            committed[name.decode("utf-8")] = (mode, identifier)
     files = {}
     for raw in sorted(set(paths.split(b"\0")) - {b""}):
         name = raw.decode("utf-8")
         path = root / name
-        files[name] = file_identity(path, root)
+        files[name] = file_identity(path, root, object_format)
+    # Compare bytes to HEAD, not the index/stat cache: assume-unchanged,
+    # skip-worktree and user Git configuration cannot attest modified inputs.
+    observed = {name: (value.get("gitMode"), value.get("gitObject")) for name, value in files.items()}
+    unverified_links = []
+    for name, value in files.items():
+        if "link" in value:
+            target = Path(os.path.abspath((root / name).parent / value["link"]))
+            # Only a direct, tracked target can be attested. Do not adopt an
+            # intermediate link's bytes, even when its final target is tracked.
+            if target != (root / name).resolve() or target.relative_to(root.resolve()).as_posix() not in committed:
+                unverified_links.append(name)
     return {
         "schema": 1,
-        "commit": git("rev-parse", "HEAD").decode().strip(),
-        "dirty": bool(git("status", "--porcelain", "--untracked-files=all")),
+        "commit": commit,
+        "dirty": observed != committed or bool(unverified_links),
         "files": files,
     }
 
