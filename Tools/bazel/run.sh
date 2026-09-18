@@ -35,7 +35,7 @@ usage() {
     printf '       %s parity-report CAMPAIGN [--fixture ID] [--format json|markdown|junit] (read-only sealed evidence)\n' "$SCRIPT_NAME"
     printf 'First run configure to enrol /Volumes/SSD, or set CONTAINER_FAMILY_SSD_UUID.\n'
     printf 'Example: %s coverage //:bazel_qualification\n' "$SCRIPT_NAME"
-    printf '       %s coverage-report ID [--minimum-percent N] (export retained coverage; optionally enforce a quality threshold)\n' "$SCRIPT_NAME"
+    printf '       %s coverage-report ID [--minimum-percent N] [--inventory=unit|unit-cli] (export retained coverage; optionally enforce a quality threshold)\n' "$SCRIPT_NAME"
 }
 
 # Reject alias mounts and disk replacement, including a missing expected identity.
@@ -174,7 +174,7 @@ run_bazel() {
 execute_invocation() {
     local repo="$1" command="$2" invocation="$3" executable="$4" profile="$5"
     shift 5
-    local part suite="" status=0 validation=0
+    local part suite="" inventory=unit status=0 validation=0
     # Bazel info emits no BEP. It is a leased diagnostic, not retained build proof.
     if [[ "$command" == info ]]; then
         run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@"
@@ -189,12 +189,13 @@ execute_invocation() {
             if is_qualification_label "$part"; then suite=qualification; fi
             case "$part" in
                 source_tests|:source_tests|//:source_tests|unit|:unit|//:unit|unit_stock|:unit_stock|//:unit_stock|unit_enhanced|:unit_enhanced|//:unit_enhanced) suite=source ;;
+                coverage_stock|:coverage_stock|//:coverage_stock|coverage_enhanced|:coverage_enhanced|//:coverage_enhanced) suite=source; inventory="unit-cli" ;;
                 *) : ;; # Focused targets retain raw evidence without a whole-suite claim.
             esac
         done
         if [[ -n "$suite" ]]; then
             local report=qualification.json
-            local evidence_args=()
+            local evidence_args=(--inventory "$inventory")
             [[ "$suite" != source ]] || report=source-tests.json
             [[ "$command" != test ]] || evidence_args+=(--tests-only)
             if [[ "$suite" == source && ( -f "$repo/Tools/bazel/evidence-policy.json" || "$repo/Tools/bazel" != "$TOOL_DIRECTORY" ) ]]; then
@@ -221,6 +222,36 @@ verify_digest() {
     [[ -f "$file" && ! -L "$file" ]] || return 1
     actual="$(/usr/bin/shasum -a 256 "$file")" || return
     [[ "${actual%% *}" == "$expected" ]]
+}
+
+# Export retained coverage, binding a quality gate to the selected source scope.
+export_coverage_report() {
+    local repo="$1" profile="$2" part inventory=unit inventory_seen=false
+    local report_args=()
+    shift 2
+    while IFS= read -r -d '' part; do
+        case "$part" in
+            --inventory=unit|--inventory=unit-cli)
+                [[ "$inventory_seen" == false ]] || { error 'Select exactly one coverage inventory.'; return 2; }
+                inventory="${part#--inventory=}"; inventory_seen=true ;;
+            *) report_args+=("$part") ;;
+        esac
+    done < <(execution_arguments "$@")
+    [[ ${#report_args[@]} == 1 || ( ${#report_args[@]} == 3 && "${report_args[1]}" == --minimum-percent ) ]] || {
+        error 'coverage-report requires ID [--minimum-percent N] [--inventory=unit|unit-cli] [--config=stock|enhanced].'; return 2;
+    }
+    if [[ ${#report_args[@]} == 3 ]]; then
+        [[ -z "$(/usr/bin/git -C "$repo" status --porcelain)" ]] || {
+            error 'Coverage quality gate requires a clean consumer checkout; use export-only for diagnosis.'; return 2;
+        }
+        report_args+=(--expected-commit "$(/usr/bin/git -C "$repo" rev-parse HEAD)" --expected-profile "$profile" --expected-inventory "$inventory")
+        if [[ -f "$repo/Tools/bazel/evidence-policy.json" ]]; then
+            report_args+=(--expected-policy "$repo/Tools/bazel/evidence-policy.json")
+        fi
+    elif [[ "$inventory_seen" == true ]]; then
+        error 'Inventory selection requires a quality threshold; export-only preserves the recorded inventory.'; return 2
+    fi
+    clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/coverage_report.py" "${report_args[@]}"
 }
 
 # Resolve and enrol storage before allowing build or test tooling to start.
@@ -323,21 +354,7 @@ main() {
         return
     fi
     if [[ "$command" == coverage-report ]]; then
-        local report_args=()
-        while IFS= read -r -d '' part; do report_args+=("$part"); done < <(execution_arguments "$@")
-        [[ ${#report_args[@]} == 1 || ( ${#report_args[@]} == 3 && "${report_args[1]}" == --minimum-percent ) ]] || {
-            error 'coverage-report requires ID [--minimum-percent N] [--config=stock|enhanced].'; return 2;
-        }
-        if [[ ${#report_args[@]} == 3 ]]; then
-            [[ -z "$(/usr/bin/git -C "$repo" status --porcelain)" ]] || {
-                error 'Coverage quality gate requires a clean consumer checkout; use export-only for diagnosis.'; return 2;
-            }
-            report_args+=(--expected-commit "$(/usr/bin/git -C "$repo" rev-parse HEAD)" --expected-profile "$profile")
-            if [[ -f "$repo/Tools/bazel/evidence-policy.json" ]]; then
-                report_args+=(--expected-policy "$repo/Tools/bazel/evidence-policy.json")
-            fi
-        fi
-        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/coverage_report.py" "${report_args[@]}"
+        export_coverage_report "$repo" "$profile" "$@"
         return
     fi
     if [[ "$command" == build-timings ]]; then

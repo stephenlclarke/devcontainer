@@ -93,6 +93,40 @@ class CoverageReportTests(unittest.TestCase):
         receipt["coveredLines"] = 900000
         require_minimum(receipt, 90)
 
+    def test_inventory_is_retained_and_gate_cannot_substitute_unit_for_combined(self) -> None:
+        report = json.loads(self.contents["source-tests.json"])
+        report.update(inventory="unit-cli", policy_sha256="b" * 64, source_roots=["Sources"])
+        identity = json.loads(self.contents["inputs-before.json"])
+        identity["files"]["Tools/bazel/evidence-policy.json"] = {"sha256": "b" * 64}
+        self.contents["inputs-before.json"] = self.contents["inputs-after.json"] = json.dumps(identity).encode()
+        self.contents["source-tests.json"] = json.dumps(report).encode()
+        self.store()
+        receipt = json.loads(report_bytes(self.database, "fixture")["receipt.json"])
+        self.assertEqual(receipt["inventory"], "unit-cli")
+        policy = self.root / "policy.json"
+        policy.write_text("policy")
+        receipt["policySHA256"] = digest(policy.read_bytes())
+        require_context(receipt, "a" * 40, "stock", policy, "unit-cli")
+        with self.assertRaisesRegex(ValueError, "test inventory"):
+            require_context(receipt, "a" * 40, "stock", policy)
+        for inventory in (None, "unit"):
+            if inventory is None:
+                receipt.pop("inventory")
+            else:
+                receipt["inventory"] = inventory
+            with self.assertRaisesRegex(ValueError, "test inventory"):
+                require_context(receipt, "a" * 40, "stock", policy, "unit-cli")
+            require_context(receipt, "a" * 40, "stock", policy)
+
+    def test_combined_receipt_requires_policy_and_known_inventory(self) -> None:
+        for inventory in ("unit-cli", "unknown"):
+            report = json.loads(self.contents["source-tests.json"])
+            report["inventory"] = inventory
+            self.contents["source-tests.json"] = json.dumps(report).encode()
+            self.store()
+            with self.assertRaisesRegex(ValueError, "inventory"):
+                report_bytes(self.database, "fixture")
+
     def test_invalid_duplicate_and_escaping_records_fail(self) -> None:
         for data in [b"", LCOV * 2, LCOV.replace(b"Sources/", b"../"),
                      LCOV.replace(b"Sources/", b"Sources/../"), LCOV.replace(b"LF:2", b"LF:3"),

@@ -25,6 +25,38 @@ def invoke(function: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class LauncherTests(unittest.TestCase):
+    def test_coverage_gate_routes_exact_inventory_without_building(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            repo = Path(directory)
+            policy = repo / "Tools/bazel/evidence-policy.json"
+            policy.parent.mkdir(parents=True)
+            policy.write_text("{}")
+            subprocess.run(["/usr/bin/git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["/usr/bin/git", "-C", str(repo), "add", "."], check=True)
+            subprocess.run(["/usr/bin/git", "-C", str(repo), "-c", "user.name=Fixture", "-c",
+                            "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.check_output(["/usr/bin/git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+
+            def report(*arguments):
+                return subprocess.run(
+                    ["/bin/bash", "-c", 'source "$1"; shift; clean_environment() { printf "%s\\0" "$@"; }; export_coverage_report "$@"',
+                     "test", str(SCRIPT), str(repo), "stock", "invocation", *arguments], capture_output=True, text=True, check=False)
+
+            for inventory in ("unit", "unit-cli"):
+                result = report("--minimum-percent", "90", f"--inventory={inventory}", "--config=stock")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = result.stdout.split("\0")[:-1]
+                self.assertEqual(args[2:], ["invocation", "--minimum-percent", "90", "--expected-commit", commit,
+                                           "--expected-profile", "stock", "--expected-inventory", inventory, "--expected-policy", str(policy)])
+            for arguments in [("--inventory=unit-cli",), ("--minimum-percent", "90", "--inventory=other"),
+                              ("--minimum-percent", "90", "--inventory=unit", "--inventory=unit-cli")]:
+                result = report(*arguments)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+            policy.write_text("changed")
+            self.assertEqual(report("--minimum-percent", "90").returncode, 2)
+            self.assertEqual(report().returncode, 0)
+
     def test_shared_launcher_remains_absolute_after_changing_workspaces(self) -> None:
         result = subprocess.run(
             ["/bin/bash", "-c", 'source ./run.sh; cd /; /bin/bash -c \'source "$1"; printf "%s" "$SELF_PATH"\' test "$SELF_PATH"'],

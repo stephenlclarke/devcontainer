@@ -11,6 +11,35 @@ from check_evidence import case_count, coverage_counts, expected_tests, load_pol
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_combined_inventory_adds_components_without_changing_unit_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            path = Path(directory) / "policy.json"
+            policy = {"schema": 2, "scope": "unit only", "component_scope": "unit plus CLI, no runtime",
+                      "source_roots": ["Sources"], "profiles": {
+                          profile: {"tests": {f"//:{profile}": minimum},
+                                    "component_tests": {"//Tools/bazel:cli_contracts": 12},
+                                    "required_sources": ["Sources/main.swift"]}
+                          for profile, minimum in [("stock", 3), ("enhanced", 4)]}}
+            path.write_text(json.dumps(policy))
+            for profile, minimum in [("stock", 3), ("enhanced", 4)]:
+                unit = load_policy(path, profile)
+                combined = load_policy(path, profile, "unit-cli")
+                self.assertEqual(unit["tests"], {f"//:{profile}": minimum})
+                self.assertEqual(combined["tests"], {**unit["tests"], "//Tools/bazel:cli_contracts": 12})
+                self.assertEqual((unit["inventory"], unit["scope"]), ("unit", "unit only"))
+                self.assertEqual((combined["inventory"], combined["scope"]), ("unit-cli", "unit plus CLI, no runtime"))
+                self.assertEqual(unit["sha256"], combined["sha256"])
+            for components in ({}, {"//:stock": 1}, {"//:Extra": 0}, {"//:Extra": True}, {"@external//:test": 1}, None):
+                changed = copy.deepcopy(policy)
+                changed["profiles"]["stock"]["component_tests"] = components
+                path.write_text(json.dumps(changed))
+                with self.subTest(components=components), self.assertRaises(ValueError):
+                    load_policy(path, "enhanced")
+            for scope in ("", None, []):
+                path.write_text(json.dumps({**policy, "component_scope": scope}))
+                with self.subTest(scope=scope), self.assertRaises(ValueError):
+                    load_policy(path, "stock", "unit-cli")
+
     def test_consumer_policy_is_explicit_and_profile_specific(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             path = Path(directory) / "policy.json"
@@ -23,6 +52,8 @@ class EvidenceTests(unittest.TestCase):
             enhanced = load_policy(path, "enhanced")
             self.assertEqual(enhanced["tests"], {"//:EnhancedTests": 4})
             self.assertEqual(len(enhanced["sha256"]), 64)
+            with self.assertRaisesRegex(ValueError, "requested inventory"):
+                load_policy(path, "stock", "unit-cli")
             invalid = []
             for key, value in [("schema", 2), ("scope", ""), ("source_roots", []), ("source_roots", ["../Sources"]), ("source_roots", ["/Sources"]), ("source_roots", ["Sources", "Sources"])]:
                 changed = copy.deepcopy(policy)
@@ -45,6 +76,13 @@ class EvidenceTests(unittest.TestCase):
                       {"id": {"testSummary": {"label": "//:Consumer"}}, "testSummary": {"overallStatus": "PASSED", "totalRunCount": 1, "totalNumCached": 1}},
                       {"id": {"testResult": {"label": "//:Consumer"}}, "testResult": {"testActionOutput": [{"name": "test.xml", "uri": xml.as_uri()}]}}]
             self.assertEqual(validate(events, True, {"//:Consumer": 2})["test_cases"], {"//:Consumer": 2})
+            # A unit result is not a complete combined result and an extra
+            # component cannot silently change the meaning of a unit receipt.
+            with self.assertRaisesRegex(ValueError, "target set"):
+                validate(events, False, {"//:Consumer": 2, "//:CLI": 12})
+            extra = {"id": {"testSummary": {"label": "//:CLI"}}, "testSummary": {"overallStatus": "PASSED", "totalRunCount": 1}}
+            with self.assertRaisesRegex(ValueError, "target set"):
+                validate([*events, extra], False, {"//:Consumer": 2})
             with self.assertRaises(ValueError):
                 validate(events, False, {"//:Consumer": 3})
             events[1]["testSummary"]["totalNumCached"] = 0

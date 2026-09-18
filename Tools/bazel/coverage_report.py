@@ -89,7 +89,7 @@ def report_bytes(database: Path, invocation: str) -> dict[str, bytes]:
             raise ValueError("Coverage export requires clean recorded source identity")
         outcome = json.loads(read("outcome.json"))
         if outcome != {"bazel_exit_code": 0, "validation_exit_code": 0, "suite": "source"}:
-            raise ValueError("Coverage needs the validated complete source unit suite")
+            raise ValueError("Coverage needs a validated complete source inventory")
         report = json.loads(read("source-tests.json"))
         lcov = read("build:build:coverage_report.lcov")
         roots = ("Sources",)
@@ -113,6 +113,11 @@ def report_bytes(database: Path, invocation: str) -> dict[str, bytes]:
     }
     if "policy_sha256" in report:
         receipt["policySHA256"] = report["policy_sha256"]
+    # Preserve byte-identical export of historical unit receipts.
+    if "inventory" in report:
+        if report["inventory"] not in {"unit", "unit-cli"} or (report["inventory"] == "unit-cli" and "policy_sha256" not in report):
+            raise ValueError("Invalid coverage inventory")
+        receipt["inventory"] = report["inventory"]
     return {"coverage.lcov": lcov, "coverage.xml": xml,
             "receipt.json": (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode()}
 
@@ -125,13 +130,15 @@ def require_minimum(receipt: dict, minimum: float) -> None:
         raise ValueError(f"Measured coverage {receipt['percent']:.4f}% is below {minimum:g}%")
 
 
-def require_context(receipt: dict, commit: str, profile: str, policy: Path | None) -> None:
+def require_context(receipt: dict, commit: str, profile: str, policy: Path | None, inventory: str = "unit") -> None:
     """A requested quality gate must match the selected consumer and source head."""
     if receipt["sourceCommit"] != commit or receipt["runtimeProfile"] != profile:
         raise ValueError("Coverage does not match the requested source commit and runtime profile")
     expected = digest(policy.read_bytes()) if policy else None
     if receipt.get("policySHA256") != expected:
         raise ValueError("Coverage does not match the requested consumer policy")
+    if inventory not in {"unit", "unit-cli"} or receipt.get("inventory", "unit") != inventory:
+        raise ValueError("Coverage does not match the requested test inventory")
 
 
 def export(database: Path, invocation: str, scratch: Path) -> Path:
@@ -166,6 +173,7 @@ def main() -> None:
     parser.add_argument("--expected-commit")
     parser.add_argument("--expected-profile", choices=["stock", "enhanced"])
     parser.add_argument("--expected-policy", type=Path)
+    parser.add_argument("--expected-inventory", choices=["unit", "unit-cli"], default="unit")
     args = parser.parse_args()
     root = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
     if root.resolve() != root or root.stat().st_dev != Path.home().stat().st_dev:
@@ -177,7 +185,7 @@ def main() -> None:
     if args.expected_commit or args.expected_profile or args.expected_policy:
         if not args.expected_commit or not args.expected_profile:
             parser.error("Expected source commit and runtime profile must be supplied together")
-        require_context(receipt, args.expected_commit, args.expected_profile, args.expected_policy)
+        require_context(receipt, args.expected_commit, args.expected_profile, args.expected_policy, args.expected_inventory)
     require_minimum(receipt, args.minimum_percent)
 
 

@@ -60,18 +60,42 @@ def validate_inventory(inventory: dict, roots: list[str]) -> None:
             raise ValueError("Required source is outside the declared production roots")
 
 
-def load_policy(path: Path, profile: str) -> dict:
+def validate_profile_inventory(entry: dict, roots: list[str], schema: int) -> None:
+    """Keep schema-2 components disjoint from the complete unchanged unit set."""
+    unit = {key: value for key, value in entry.items() if key != "component_tests"} if schema == 2 else entry
+    validate_inventory(unit, roots)
+    if schema == 2:
+        validate_inventory({"tests": entry.get("component_tests"), "required_sources": entry["required_sources"]}, roots)
+        if set(entry["tests"]) & set(entry["component_tests"]):
+            raise ValueError("Component inventory cannot replace unit tests or discovery minima")
+
+
+def load_policy(path: Path, profile: str, inventory: str = "unit") -> dict:
     """Read a consumer-owned, source-fingerprinted inventory, not executable code."""
     contents = path.read_bytes()
     policy = json.loads(contents)
-    if (set(policy) != {"schema", "scope", "source_roots", "profiles"}
-            or policy["schema"] != 1 or not isinstance(policy["scope"], str) or not policy["scope"].strip()
+    schema = policy.get("schema")
+    fields = {"schema", "scope", "source_roots", "profiles"}
+    if schema == 2:
+        fields.add("component_scope")
+    if (set(policy) != fields or type(schema) is not int or schema not in {1, 2}
+            or not isinstance(policy["scope"], str) or not policy["scope"].strip()
             or set(policy["profiles"]) != {"stock", "enhanced"}):
         raise ValueError("Invalid consumer evidence policy")
+    if inventory not in {"unit", "unit-cli"} or (inventory == "unit-cli" and schema != 2):
+        raise ValueError("Policy does not declare the requested inventory")
+    if schema == 2 and (not isinstance(policy["component_scope"], str) or not policy["component_scope"].strip()):
+        raise ValueError("Combined inventory requires an explicit scope")
     roots = policy_paths(policy["source_roots"])
-    for inventory in policy["profiles"].values():
-        validate_inventory(inventory, roots)
-    return {**policy["profiles"][profile], "source_roots": roots, "scope": policy["scope"],
+    for entry in policy["profiles"].values():
+        validate_profile_inventory(entry, roots, schema)
+    selected = policy["profiles"][profile]
+    tests = dict(selected["tests"])
+    if inventory == "unit-cli":
+        tests.update(selected["component_tests"])
+    return {"tests": tests, "required_sources": selected["required_sources"],
+            "inventory": inventory, "source_roots": roots,
+            "scope": policy["component_scope"] if inventory == "unit-cli" else policy["scope"],
             "sha256": hashlib.sha256(contents).hexdigest()}
 
 
@@ -189,16 +213,20 @@ def main() -> None:
     parser.add_argument("coverage", type=Path, nargs="?", help="Defaults to this invocation's BEP coverage output")
     parser.add_argument("--warm", action="store_true")
     parser.add_argument("--tests-only", action="store_true", help="Validate discovery and results without a coverage claim")
-    parser.add_argument("--policy", type=Path, help="Consumer-owned source unit inventory")
+    parser.add_argument("--policy", type=Path, help="Consumer-owned source evidence policy")
+    parser.add_argument("--inventory", choices=["unit", "unit-cli"], default="unit")
     parser.add_argument("--suite", choices=["qualification", "source"], default="qualification")
     parser.add_argument("--profile", choices=["stock", "enhanced"], default="enhanced")
     args = parser.parse_args()
     if args.policy and args.suite != "source":
         parser.error("A consumer policy describes only the source suite")
-    policy = load_policy(args.policy, args.profile) if args.policy else None
+    if args.inventory != "unit" and not args.policy:
+        parser.error("Combined coverage requires an explicit consumer policy")
+    policy = load_policy(args.policy, args.profile, args.inventory) if args.policy else None
     events = [json.loads(line) for line in args.events.read_text().splitlines()]
     report = validate(events, args.warm, policy["tests"] if policy else expected_tests(args.suite, args.profile))
     report["runtime_profile"] = args.profile
+    report["inventory"] = args.inventory
     if policy:
         report["policy_sha256"] = policy["sha256"]
         report["source_roots"] = policy["source_roots"]
