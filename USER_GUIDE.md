@@ -81,6 +81,8 @@ For archive verification, source installation, Current builds, upgrades, and com
 
 ## Configure the default backend
 
+In current development source, omitted `configure` options preserve stored settings, including compatibility strictness. `--strict` and `--no-strict` explicitly change that setting; a new file enables strictness by default. Invalid backend/provider selections or malformed stored files fail without replacing the existing configuration. This candidate behavior is not a claim about the currently published release.
+
 Write an explicit stock configuration:
 
 ```console

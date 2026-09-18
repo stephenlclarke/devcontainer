@@ -40,8 +40,11 @@ struct ConfigureCommand: ParsableCommand {
     @Option(name: .long, help: "Crash-recovery SQLite database path.")
     var state: String?
 
-    @Flag(name: .long, inversion: .prefixedNo, help: "Enable strict capability validation.")
-    var strict = true
+    @Flag(
+        name: .long, inversion: .prefixedNo,
+        help: "Set strict validation (default: preserve existing; enable for new files)."
+    )
+    var strict: Bool?
 
     @Option(name: .long, help: "Configuration file path.")
     var config = CLIPaths.configuration
@@ -73,7 +76,9 @@ struct ConfigureCommand: ParsableCommand {
         if let state {
             value.stateDatabase = state
         }
-        value.strictCompatibility = strict
+        if let strict {
+            value.strictCompatibility = strict
+        }
         try DevContainerConfigurationStore.save(value, to: url)
         print(config)
     }

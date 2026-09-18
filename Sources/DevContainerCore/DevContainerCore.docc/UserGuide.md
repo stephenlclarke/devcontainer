@@ -23,6 +23,8 @@ reach the container VM.
 
 ## Configure stock mode
 
+The unreleased candidate preserves stored settings when their `configure` options are omitted. This includes strict compatibility: use `--strict` or `--no-strict` to change it explicitly; newly created configurations remain strict by default. Backend and frontend choices are independent.
+
 ```console
 devcontainer configure \
   --backend stock \

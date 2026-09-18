@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Native CLI coverage also exposed an unintended configuration reset: updating only the socket enabled strict compatibility even when the saved setting was false. Treat omitted strictness as no update, preserve the secure default for new files, and prove the real parser/run boundary plus durable backend claims without launching a runtime.
+
 GitHub review `4045780895` identified premature native-create intent: failed mount preparation could permanently block retry despite no container submission. Independent review extended this to final mount inspection and kernel lookup. The callback boundary now journals only after these preparations, immediately before native creation; it preserves every potentially submitted failure instead of guessing that an error proves absence.
 
 The Compose wrapper also derived runtime ownership from frontend choice, which could assign a stock project to the enhanced backend or vice versa. Frontend execution must preserve independently resolved runtime selection, reject existing conflicting claims and fail without state changes when the selected executable is absent. The regression tests exercise all four configured frontend/backend pairs; this is not certification of new live runtime combinations.
