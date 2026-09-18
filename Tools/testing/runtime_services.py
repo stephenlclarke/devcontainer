@@ -15,6 +15,7 @@ import subprocess
 import time
 
 from host_runtime import deadline, require_api_service
+from runtime_probe import probe_api, probe_diagnostics, require_probe_stopped
 from service_journal import ServiceJournal, digest
 from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, snapshot
 
@@ -199,6 +200,8 @@ class ControlledRuntime:
                     # launchd to report this selected job running, not a retry
                     # of an Engine conformance request.
                     time.sleep(0.05)
+        self.journal.put("service-started.plist", plistlib.dumps(self.service))
+        probe_api(self.root, self.executable.parent / "container", self.journal, self.verify)
         self.journal.put("service-ready.plist", plistlib.dumps(self.service))
 
     def require_idle_before_selection(self, prior):
@@ -244,6 +247,7 @@ class ControlledRuntime:
     def restore(self):
         if self.switch is None:
             return
+        require_probe_stopped(self.journal.records())
         self.switch.restore(before_originals=lambda: wait_stopped(self.require_selected_stopped))
 
     def require_selected_stopped(self):
@@ -263,6 +267,7 @@ class ControlledRuntime:
         """Keep bounded service diagnostics privately; they may contain secrets."""
         if self.journal is None:
             return
+        probe_diagnostics(self.root, self.journal)
         # Stock SystemStart leaves stdio to launchd and supplies LogRoot for
         # service-owned file logging. launchd cannot open SSD stdio here
         # (EX_CONFIG), even when the selected process itself can use the disk.

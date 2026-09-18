@@ -41,6 +41,7 @@ class RuntimeServicesTests(unittest.TestCase):
         self.processes = patch("runtime_services.process_programs", return_value=[]).start()
         self.addCleanup(patch.stopall)
         self.ready = patch("runtime_services.require_api_service", return_value={"pid": 42}).start()
+        self.probe = patch("runtime_services.probe_api", create=True).start()
         self.inventory = patch("runtime_services.process_inventory", return_value={}).start()
         patch("runtime_services.wait_stopped", side_effect=lambda probe: probe()).start()
 
@@ -145,6 +146,28 @@ class RuntimeServicesTests(unittest.TestCase):
         runtime.start()
         with self.assertRaisesRegex(ValueError, "changed during"):
             runtime.verify()
+        runtime.restore()
+
+    def test_running_process_is_not_ready_without_successful_rpc(self):
+        runtime = self.runtime()
+        self.probe.side_effect = TimeoutError("API request stalled")
+        with self.assertRaisesRegex(TimeoutError, "API request stalled"):
+            runtime.start()
+        self.assertNotIn("service-ready.plist", runtime.journal.records())
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_readiness_receipt_follows_rpc_and_uses_selected_executable(self):
+        runtime = self.runtime()
+        def observe(root, executable, journal, verify):
+            self.assertEqual((root, executable), (self.owned, self.executable.parent / "container"))
+            self.assertIn("service-started.plist", journal.records())
+            self.assertNotIn("service-ready.plist", journal.records())
+            verify()
+        self.probe.side_effect = observe
+        runtime.start()
+        self.probe.assert_called_once()
+        self.assertIn("service-ready.plist", runtime.journal.records())
         runtime.restore()
 
     def test_surviving_released_process_keeps_original_workers_suspended(self):

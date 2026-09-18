@@ -22,7 +22,7 @@ RUNTIME_HELPERS = (
     "engine_probe.py", "exec_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",
-    "runtime_services.py", "service_journal.py", "service_switch.py",
+    "runtime_services.py", "runtime_probe.py", "service_journal.py", "service_switch.py",
 )
 
 

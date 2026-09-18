@@ -21,6 +21,7 @@ from service_switch import Launchd, canonical_file
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_resources_stopped
 from private_keychain import keychain_diagnostics, require_keychain_stopped, run_keychain
 from docker_vm import require_closed_vm
+from runtime_probe import probe_diagnostics, require_probe_stopped
 
 
 def private_json(path: Path) -> dict:
@@ -94,6 +95,7 @@ def recovery_idle(launchd, prior: list[dict], root: Path) -> None:
 
 
 def restore_only(runtime: ControlledRuntime) -> None:
+    probe_diagnostics(runtime.root, runtime.journal)
     require_keychain_stopped(runtime.journal.records())
     keychain_diagnostics(runtime.root, runtime.journal)
     recovery_idle(runtime.launchd, runtime.switch.prior, runtime.root)
@@ -173,6 +175,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
         return recover_closed_docker(retained, owner, guard, apply=apply)
     journal = ServiceJournal(retained / "private-runtime" / (digest(str(root).encode()) + ".sqlite"), owner)
     records = journal.records()
+    require_probe_stopped(records)
     require_keychain_stopped(records)
     require_guest_resources_stopped(records)
     context = json.loads(records.get("runtime-context.json", b"null"))

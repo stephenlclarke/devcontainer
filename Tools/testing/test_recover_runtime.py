@@ -116,6 +116,27 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(cleanup.call_args.args[2].path, self.journal.path)
         self.assertFalse(self.root.exists())
 
+    def test_interrupted_readiness_probe_cannot_restore_or_delete_its_root(self):
+        self.journal.put('api-readiness-intent.json', canonical({'arguments': ['container', 'list']}))
+        mutations = list(self.launchd.mutations)
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, 'readiness helper'):
+                self.run_recovery(apply=apply)
+            self.assertEqual(self.launchd.mutations, mutations)
+            self.assert_quarantined()
+
+    def test_stopped_readiness_log_is_retained_before_resumed_root_deletion(self):
+        intent = canonical({'arguments': ['container', 'list']})
+        self.journal.put('api-readiness-intent.json', intent)
+        self.journal.put('api-readiness-stopped.json', canonical({
+            'verifiedStopped': True, 'intentSHA256': digest(intent)}))
+        (self.root / 'api-readiness.log').write_bytes(b'private startup failure')
+        self.assertEqual(self.run_recovery()['status'], 'restored')
+        self.assertEqual(self.journal.records()['api-readiness.log'], b'private startup failure')
+        self.assertNotIn('api-readiness-ready.json', self.journal.records())
+        self.assertFalse(self.root.exists())
+        self.assertEqual(self.store.begin(self.identity), self.result)
+
     def test_crash_after_keychain_spawn_blocks_recovery_even_with_empty_inventory(self):
         self.journal.put('keychain-0001-intent.json', canonical({'arguments': ['private-helper']}))
         before = list(self.launchd.mutations)
