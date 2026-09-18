@@ -29,6 +29,11 @@ def concurrent_requests(guest, method: str, route: str) -> list[tuple[int, bytes
 
 def require_identity(guest, *, state: str) -> dict:
     value = guest.inspect(guest.identifier)
+    # Preserve the returned lifecycle state before asserting it. Public case
+    # failures deliberately omit exception text, so this private, bounded
+    # observation makes a failed wait/inspect boundary diagnosable.
+    guest.journal.put("f01-inspect-" + state + ".json", canonical(
+        {key: value.get(key) for key in ("Id", "Image", "State")} if value is not None else None))
     if (value is None or guest.owned(value) != guest.identifier or
             value.get("State", {}).get("Status") != state):
         raise ValueError("Fault fixture identity or lifecycle state changed")
