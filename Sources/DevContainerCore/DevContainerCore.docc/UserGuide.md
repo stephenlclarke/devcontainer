@@ -87,6 +87,8 @@ device, resource, hostname, or advanced mount behavior.
 
 ## Diagnostics
 
+Current-source support-archive probes have a five-second maximum. An individual probe failure is recorded and collection continues, but cancellation or an expired enclosing request aborts and removes staging after subprocess cleanup. Published 1.0.1 does not include this change.
+
 In current source, the Compose bridge bounds project-name and remaining-volume probes to 30 seconds without extending an earlier request deadline, and rejects truncated output above 1 MiB per stream. Failed volume discovery preserves project ownership; cancelled discovery propagates cancellation after owned-child cleanup. Actual Compose operations keep their existing lifetime. This is not yet in the published release.
 
 Current source also bounds `plugin register`, `plugin status` and `plugin unregister` installation discovery to five seconds, preserving any earlier request deadline and reaping the owned probe. Use `--install-root` to skip discovery for an offline installation. This change is not in the published 1.0.1 binary.

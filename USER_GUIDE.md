@@ -510,6 +510,8 @@ Stopping the compatibility service does not delete containers, images, networks,
 
 The unreleased candidate gives each external `doctor` probe a five-second deadline and reaps owned processes before continuing. An invalid `--format` fails before execution. A socket check only inspects its ownership, file type and permissions: it does not connect or prove that HTTP requests succeed, and an absent socket is reported as a warning. Runtime/client launch errors are returned without the dependency's fork-based teardown path. The candidate also releases runtime resources on service-start failure and releases runtime/server resources on waiter failure or cancellation. Component tests cover these paths without a live runtime or Keychain; live service and release qualification remain separate gates.
 
+Current source gives each external `diagnostics` probe the same five-second maximum, preserving any earlier request deadline. Ordinary probe failures and timeouts appear in the archive so collection can continue; cancellation or expiry of the enclosing request stops collection and removes its staging directory. The Compose bridge separately bounds project/volume discovery to 30 seconds and rejects output over 1 MiB per stream, retaining ownership when volume discovery is uncertain. These candidate-only bounds do not change actual Compose operation lifetimes or certify live runtime parity.
+
 Create a privacy-redacted archive:
 
 ```console

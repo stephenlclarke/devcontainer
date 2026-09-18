@@ -214,6 +214,8 @@ In the unreleased candidate, `devcontainer doctor` rejects invalid output format
 
 The unreleased Compose bridge limits project-name and remaining-volume discovery to 30 seconds per probe (or an earlier caller deadline), drains and reaps cancelled children, and rejects output exceeding 1 MiB per stream. Uncertain volume discovery retains project ownership; caller cancellation is not reported as success. These limits do not shorten the actual Compose operation or change the default provider.
 
+Support-archive collection in current source also limits each external probe to five seconds. An individual timeout is recorded in the archive and other probes continue; cancellation or an expired enclosing request aborts collection and removes staging rather than returning a successful partial bundle. These changes are not in published 1.0.1.
+
 Live runtime tests are deliberately not run on public pull-request code or GitHub-hosted macOS. They execute on an isolated physical runner only after a trusted exact commit has passed hosted checks.
 
 ## Documentation

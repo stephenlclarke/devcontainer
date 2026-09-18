@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Support-archive generation also used unbounded external probes and swallowed caller cancellation/deadline errors into a successful partial bundle. Red regression `4f8dba68-bf34-4c75-9d62-96c2fbf8c8a1` reproduces both. Bound probes while preserving useful best-effort results for ordinary failures; cancellation and enclosing deadline expiry must stop collection, reap subprocesses and remove owned staging.
+
 Compose bridge project-name and volume discovery had unbounded subprocess lifetimes and output capture; cancellation during volume discovery was swallowed as success. Retained regression `500f2161-9751-4bae-b48e-b3ccc2138da5` proves the delayed deadline and swallowed cancellation. Tightening the output boundary also exposed negative omitted-byte counts for outputs smaller than the capture limit (`b13644ff-a7d0-4508-80b6-add727e00579`). Bound read-only discovery, preserve uncertain ownership, and calculate exact omission counts without changing actual Compose operation limits or provider selection.
 
 Synchronous external probes also lost the caller's request context when dispatching detached work. A finite regression proves an expired request still launches a command and a running request ignores its deadline. Plug-in registration's automatic install-root query had no bound at all. Preserve request identity and deadlines across that bridge, cancel/drain/reap on timeout, and enforce a five-second discovery bound without extending an earlier caller deadline. Explicit install-root registration must remain independent of runtime availability.
