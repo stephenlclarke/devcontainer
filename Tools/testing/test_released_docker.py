@@ -144,6 +144,17 @@ class DockerCaseTests(unittest.TestCase):
         self.guest.cleanup.assert_called_once_with()
         self.assertFalse(self.case.root.exists())
 
+    def test_c01_uses_compose_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "C01-compose-service"
+        with patch.object(released_docker, "DevcontainerComposeReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_d07_uses_reuse_adapter_and_keeps_normal_owned_cleanup(self):
         self.identity["fixture"] = "D07-reuse-cleanup"
         with patch.object(released_docker, "DevcontainerReuseReference", return_value=self.guest) as adapter:
@@ -176,6 +187,25 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_c01_admits_published_compose_and_unchanged_configuration(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+        with patch.object(released_docker, "require_retained", side_effect=lambda asset, *args: {
+                "executables": {}, "repository": asset["repository"]}) as prepared, \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", return_value={"verified": True}):
+            result = released_docker.admit_docker(lock, {}, pins, {"images": [{"name": "alpine-workload"}]},
+                Path("/scratch"), Path("/retained"), fixture="C01-compose-service", repository=repository)
+            self.assertEqual(result["compose"]["repository"], "docker/compose")
+            self.assertEqual(prepared.call_count, 4)
+            self.assertIn("COMPOSE_VALUE: compose-service", result["devcontainerFixture"]["compose"])
+            with self.assertRaisesRegex(ValueError, "pinned published"):
+                released_docker.admit_docker(lock, {}, {**pins, "composeVersion": "other"},
+                    {"images": [{"name": "alpine-workload"}]}, Path("/scratch"), Path("/retained"),
+                    fixture="C01-compose-service", repository=repository)
+
     def test_d05_admits_ubuntu_and_original_feature_lock(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

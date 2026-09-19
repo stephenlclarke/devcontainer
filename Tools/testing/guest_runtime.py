@@ -259,6 +259,10 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "c01-project-intent.json" in records:
+        intent = json.loads(records["c01-project-intent.json"])
+        if json.loads(records.get("c01-project-removed.json", b"null")) != {"project": intent["project"], "absent": True}:
+            raise ValueError("C01 project needs explicit reconciliation")
     if "d07-volume-intent.json" in records:
         intent = json.loads(records["d07-volume-intent.json"])
         if json.loads(records.get("d07-volume-removed.json", b"null")) != {"name": intent["Name"], "absent": True}:

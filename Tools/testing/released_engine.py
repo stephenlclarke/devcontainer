@@ -227,7 +227,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, "C01-compose-service", *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -237,6 +237,8 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
+    if args.fixture == "C01-compose-service":
+        raise ValueError("C01 native Compose admission is not implemented; no runtime changes made")
     if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]

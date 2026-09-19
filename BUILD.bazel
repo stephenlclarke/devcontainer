@@ -55,6 +55,10 @@ exports_files([
     "Tests/Parity/fixtures/D07-reuse-cleanup/contract.json",
     "Tests/Parity/fixtures/D07-reuse-cleanup/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/D07-reuse-cleanup/probe.sh",
+    "Tests/Parity/fixtures/C01-compose-service/contract.json",
+    "Tests/Parity/fixtures/C01-compose-service/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/C01-compose-service/compose.yaml",
+    "Tests/Parity/fixtures/C01-compose-service/probe.sh",
 ])
 
 candidate_archive(
