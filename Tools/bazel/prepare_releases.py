@@ -40,6 +40,17 @@ def layout(asset: dict) -> dict:
         return {"format": "tar", "executables": {
             key: f"devcontainer-{asset['tag']}/bin/{key}"
             for key in ("devcontainer", "devcontainer-engine", "devcontainer-compose")}}
+    if repository == "local/devcontainer-candidate" and name == "candidate_archive_v2.tar.gz":
+        prefix = f"devcontainer-{asset['tag']}/"
+        reference = prefix + "libexec/devcontainer/reference/"
+        return {"format": "tar", "executables": {
+            **{key: prefix + "bin/" + key for key in
+               ("devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker")},
+            "reference-node": reference + "node"}, "files": {
+                name: reference + name for name in (
+                    "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
+                    "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
+                    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt")}}
     if (repository, asset["tag"], name) == ("kata-containers/kata-containers", "3.32.0", "kata-static-3.32.0-arm64.tar.zst"):
         return {"format": "kernel-zstd", "executables": {}, "files": {"kernel": "kernel/vmlinux"}}
     if repository == "stephenlclarke/devcontainer" and name == "devcontainer-release-arm64.tar.gz":

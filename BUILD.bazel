@@ -38,7 +38,11 @@ exports_files([
 
 candidate_archive(
     name = "candidate_archive",
-    binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine"],
+    binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine", ":devcontainer-docker"],
+    reference_node = "@devcontainer_reference_node//:bin/node",
+    reference_node_license = "@devcontainer_reference_node//:LICENSE",
+    reference_cli = "@devcontainer_reference_cli//:runtime",
+    reference_lock = "//Tools/bazel:devcontainers-cli.lock.json",
     makefile = "Makefile",
     resolved = select({":stock_runtime": "Package.stock.resolved", "//conditions:default": "Package.resolved"}),
     profile = select({":stock_runtime": "stock", "//conditions:default": "enhanced"}),

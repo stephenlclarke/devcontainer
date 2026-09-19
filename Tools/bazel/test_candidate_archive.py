@@ -1,5 +1,6 @@
 """Native candidate layout, determinism, provenance and failure tests."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import tarfile
 import tempfile
 import unittest
 
-from candidate_archive import PRODUCTS, package, sha256
+from candidate_archive import CLI_FILES, PRODUCTS, package, sha256
 
 
 ARCHIVE_TOOL = Path(__file__).parents[1] / "release/create-reproducible-archive.py"
@@ -35,6 +36,16 @@ class CandidateTests(unittest.TestCase):
             self.manifest[key] = str(path)
         self.archive = self.root / "candidate.tar.gz"
         self.receipt = self.root / "candidate.json"
+        lock = self.root / "runtime-lock.json"
+        lock.write_text(json.dumps({"schemaVersion": 1, "node": {"version": "24.21.0"}, "cli": {"version": "0.88.0"}}))
+        cli = {}
+        for name in CLI_FILES:
+            path = self.root / "cli" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"version":"0.88.0"}' if name == "package.json" else "fixture " + name)
+            cli[name] = str(path)
+        self.manifest["reference"] = {"node": self.manifest["binaries"]["devcontainer"],
+                                      "nodeLicense": str(self.root / "LICENSE"), "lock": str(lock), "cli": cli}
 
     def build(self) -> None:
         package(self.manifest, self.archive, self.receipt, ARCHIVE_TOOL)
@@ -49,6 +60,8 @@ class CandidateTests(unittest.TestCase):
         self.assertFalse(receipt["distributionReady"])
         self.assertEqual(receipt["runtimeProfile"], "stock")
         self.assertEqual(set(receipt["products"]), PRODUCTS)
+        self.assertEqual(receipt["schemaVersion"], 2)
+        self.assertEqual(receipt["referenceRuntime"]["nodeVersion"], "24.21.0")
         with tarfile.open(self.archive) as archive:
             for name in PRODUCTS:
                 self.assertEqual(archive.getmember(f"devcontainer-1.2.3/bin/{name}").mode, 0o755)
@@ -56,6 +69,12 @@ class CandidateTests(unittest.TestCase):
             plugin = "devcontainer-1.2.3/libexec/container/plugins/devcontainer/"
             self.assertTrue(archive.getmember(plugin + "config.toml").isfile())
             self.assertEqual(archive.extractfile(plugin + "bin/devcontainer").read(), Path(self.manifest["binaries"]["devcontainer"]).read_bytes())
+            reference = "devcontainer-1.2.3/libexec/devcontainer/reference/"
+            for name, expected in receipt["referenceRuntime"]["files"].items():
+                member = archive.getmember(reference + name)
+                self.assertTrue(member.isfile())
+                self.assertEqual(member.mode, 0o755 if name == "node" else 0o644)
+                self.assertEqual(hashlib.sha256(archive.extractfile(member).read()).hexdigest(), expected)
         self.assertFalse(list(self.root.glob("candidate-stage-*")))
 
     def test_source_or_profile_change_changes_candidate_identity(self) -> None:
@@ -81,7 +100,7 @@ class CandidateTests(unittest.TestCase):
 
     def test_rejects_missing_product_wrong_architecture_and_empty_licenses(self) -> None:
         binary = self.manifest["binaries"].pop("devcontainer")
-        with self.assertRaisesRegex(ValueError, "three native products"):
+        with self.assertRaisesRegex(ValueError, "four native products"):
             self.build()
         self.manifest["binaries"]["devcontainer"] = binary
         original = Path(binary).read_bytes()
@@ -108,4 +127,23 @@ class CandidateTests(unittest.TestCase):
         del self.manifest["files"]["../escape"]
         Path(self.manifest["makefile"]).write_text("not a version")
         with self.assertRaisesRegex(ValueError, "semantic version"):
+            self.build()
+
+    def test_private_runtime_rejects_missing_files_versions_and_wrong_node(self) -> None:
+        runtime = self.manifest["reference"]
+        missing = runtime["cli"].pop("LICENSE.txt")
+        with self.assertRaisesRegex(ValueError, "inventory"):
+            self.build()
+        runtime["cli"]["LICENSE.txt"] = missing
+        Path(missing).write_text("")
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.build()
+        Path(missing).write_text("license")
+        package = Path(runtime["cli"]["package.json"])
+        package.write_text('{"version":"0.1.0"}')
+        with self.assertRaisesRegex(ValueError, "version differs"):
+            self.build()
+        package.write_text('{"version":"0.88.0"}')
+        runtime["node"] = missing
+        with self.assertRaisesRegex(ValueError, "Node.*arm64"):
             self.build()

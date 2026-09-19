@@ -1,21 +1,28 @@
 """Execute the real unsigned package layout, never a developer build-tree binary."""
 
 import hashlib
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socketserver
 import struct
 import tarfile
 import tempfile
+import threading
 import unittest
 
 from cli_process import run
 
 
-PRODUCTS = {"devcontainer", "devcontainer-engine", "devcontainer-compose"}
+PRODUCTS = {"devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker"}
 PLUGIN = "libexec/container/plugins/devcontainer"
+REFERENCE = "libexec/devcontainer/reference/"
+REFERENCE_FILES = {"node", "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
+                   "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
+                   "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt"}
 
 
 class ArchiveTests(unittest.TestCase):
@@ -34,7 +41,7 @@ class ArchiveTests(unittest.TestCase):
                 "LICENSE", "NOTICE.md", "THIRD-PARTY-NOTICES.txt", "Package.resolved", "candidate.json",
                 "com.github.stephenlclarke.devcontainer.plist.in",
             )
-        } | {PLUGIN + "/config.toml", PLUGIN + "/bin/devcontainer"}
+        } | {PLUGIN + "/config.toml", PLUGIN + "/bin/devcontainer"} | {REFERENCE + name for name in REFERENCE_FILES}
         directories = {cls.root.name}
         files = {cls.root.name + "/" + name for name in expected}
         for name in files:
@@ -55,7 +62,7 @@ class ArchiveTests(unittest.TestCase):
                 total += entry.size
                 if total > 1024**3:
                     raise ValueError("Archive exceeds package size bound")
-                mode = 0o755 if Path(entry.name).parent.name == "bin" else 0o644
+                mode = 0o755 if Path(entry.name).parent.name == "bin" or entry.name == cls.root.name + "/" + REFERENCE + "node" else 0o644
                 if entry.mode != mode or (entry.uid, entry.gid) != (0, 0):
                     raise ValueError("Invalid archive file ownership or mode")
                 output = cls.base / entry.name
@@ -113,7 +120,7 @@ class ArchiveTests(unittest.TestCase):
                 values.append(data.decode())
         self.assertFalse(self.marker.exists(), "Package smoke invoked an external runtime")
         self.assertFalse((self.home / "state.sqlite").exists(), "Read-only smoke created runtime state")
-        self.assertEqual(status, expected_status, values[1])
+        self.assertEqual(status, expected_status, "stdout: " + values[0] + "\nstderr: " + values[1])
         return values
 
     def test_layout_and_receipt_bind_all_binary_bytes(self):
@@ -130,6 +137,13 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn(identity["runtimeProfile"], {"stock", "enhanced"})
         self.assertRegex(identity["commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(set(identity["products"]), PRODUCTS)
+        self.assertEqual(identity["schemaVersion"], 2)
+        reference = identity["referenceRuntime"]
+        self.assertEqual(set(reference["files"]), REFERENCE_FILES)
+        for name, expected in reference["files"].items():
+            self.assertEqual(hashlib.sha256((self.root / REFERENCE / name).read_bytes()).hexdigest(), expected)
+        self.assertEqual(reference["lockSHA256"], reference["files"]["runtime-lock.json"])
+        self.assertEqual(json.loads((self.root / REFERENCE / "cli/package.json").read_bytes())["version"], reference["cliVersion"])
         for name in PRODUCTS:
             data = (self.root / "bin" / name).read_bytes()
             self.assertEqual(data[:8], struct.pack("<II", 0xFEEDFACF, 0x0100000C))
@@ -180,3 +194,58 @@ class ArchiveTests(unittest.TestCase):
     def test_cli_invalid_format_fails_without_runtime(self):
         _, error = self.invoke("bin/devcontainer", "version", "--format", "invalid", expected_status=64)
         self.assertIn("unsupported format invalid", error)
+
+    def test_private_node_has_exact_version(self):
+        output, _ = self.invoke(REFERENCE + "node", "--version")
+        self.assertEqual(output.strip(), "v" + self.receipt["referenceRuntime"]["nodeVersion"])
+
+    def test_public_lifecycle_reads_configuration_with_real_private_cli(self):
+        workspace = self.home / "workspace"
+        configuration = workspace / ".devcontainer/devcontainer.json"
+        configuration.parent.mkdir(parents=True)
+        configuration.write_text(json.dumps({"image": "fixture.invalid/no-pull:1", "containerEnv": {"BUNDLE_PROBE": "packaged"}}))
+        # Injected Node hooks would abort startup if the facade leaked them.
+        self.environment["NODE_OPTIONS"] = "--require=/missing-must-not-be-loaded.js"
+        # The official read-configuration command queries existing containers.
+        # Only that boundary is faked; Node, CLI and our frontend are real.
+        requests = []
+
+        class InventoryHandler(BaseHTTPRequestHandler):
+            def setup(self):
+                self.request.settimeout(5)
+                super().setup()
+
+            def do_GET(self):
+                requests.append(self.path)
+                accepted = re.fullmatch(r"(?:/v[0-9.]+)?/containers/json\?.*", self.path)
+                self.send_response(200 if accepted else 500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"[]")
+
+            def log_message(self, *_):
+                pass  # Requests are retained above; suppress generic server logging.
+
+        socket_path = self.home / "engine.sock"
+        with socketserver.UnixStreamServer(str(socket_path), InventoryHandler) as server:
+            socket_path.chmod(0o600)
+            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+            thread.start()
+            try:
+                output, _ = self.invoke("bin/devcontainer", "read-configuration", "--workspace-folder", str(workspace),
+                                       "--log-level", "debug")
+            finally:
+                server.shutdown()
+                thread.join(timeout=6)
+                self.assertFalse(thread.is_alive(), "Package inventory server did not stop")
+        self.assertTrue(requests)
+        self.assertTrue(all(re.fullmatch(r"(?:/v[0-9.]+)?/containers/json\?.*", path) for path in requests))
+        result = json.loads(output)
+        self.assertEqual(result["configuration"]["image"], "fixture.invalid/no-pull:1")
+        self.assertEqual(result["configuration"]["containerEnv"], {"BUNDLE_PROBE": "packaged"})
+
+    def test_plugin_lifecycle_help_uses_real_private_cli(self):
+        output, _ = self.invoke(PLUGIN + "/bin/devcontainer", "up", "--help")
+        self.assertIn("workspace-folder", output)
+        self.assertIn("docker-path", output)

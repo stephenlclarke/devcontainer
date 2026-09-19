@@ -1,6 +1,9 @@
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load(":reference_runtime_test.bzl", "reference_runtime_test")
+
+reference_runtime_test(name = "reference_runtime_test")
 
 exports_files([
     "documentation/action.py",

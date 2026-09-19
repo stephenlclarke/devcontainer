@@ -70,7 +70,7 @@ bazel-test-tools:
 	Tools/bazel/run.sh test-tools
 
 bazel-harness:
-	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests
+	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests //Tools/bazel:reference_runtime_test
 
 bazel-parity-report:
 	@test -n "$(CAMPAIGN)" || { printf 'Set CAMPAIGN explicitly.\n' >&2; exit 2; }

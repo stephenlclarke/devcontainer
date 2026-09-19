@@ -44,19 +44,28 @@ def retained_candidate(database: Path, invocation: str) -> tuple[dict, dict]:
         raise ValueError("Candidate validation did not pass")
     receipt = json.loads(contents["artifact:candidate_archive.json"])
     archive = contents["artifact:candidate_archive.tar.gz"]
-    if (receipt.get("schemaVersion") != 1 or receipt.get("kind") != "unsigned-native-candidate"
+    schema = receipt.get("schemaVersion")
+    products = PRODUCTS | {"devcontainer-docker"} if schema == 2 else PRODUCTS
+    if (schema not in {1, 2} or receipt.get("kind") != "unsigned-native-candidate"
             or receipt.get("distributionReady") is not False or receipt.get("architecture") != "arm64"
             or receipt.get("compilationMode") != "opt" or receipt.get("runtimeProfile") not in {"stock", "enhanced"}
             or receipt.get("commit") != inputs["commit"]
             or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", receipt.get("version", ""))
             or receipt.get("archiveSHA256") != digest(archive) or receipt.get("archiveSize") != len(archive)
-            or set(receipt.get("products", {})) != PRODUCTS):
+            or set(receipt.get("products", {})) != products):
         raise ValueError("Invalid native candidate identity")
     resolved = "Package.stock.resolved" if receipt["runtimeProfile"] == "stock" else "Package.resolved"
     if receipt.get("dependencyLockSHA256") != inputs.get("files", {}).get(resolved, {}).get("sha256"):
         raise ValueError("Candidate dependency lock differs from captured source")
+    if schema == 2:
+        reference = receipt.get("referenceRuntime", {})
+        source_lock = inputs.get("files", {}).get("Tools/bazel/devcontainers-cli.lock.json", {}).get("sha256")
+        if (reference.get("nodeVersion") != "24.21.0" or reference.get("cliVersion") != "0.88.0"
+                or not source_lock or reference.get("lockSHA256") != source_lock):
+            raise ValueError("Candidate private runtime differs from captured source")
     asset = {"repository": "local/devcontainer-candidate", "tag": receipt["version"],
-             "name": "candidate_archive.tar.gz", "sha256": receipt["archiveSHA256"], "size": receipt["archiveSize"]}
+             "name": "candidate_archive_v2.tar.gz" if schema == 2 else "candidate_archive.tar.gz",
+             "sha256": receipt["archiveSHA256"], "size": receipt["archiveSize"]}
     return receipt, asset
 
 
@@ -80,9 +89,18 @@ def admit_candidate(retained: Path, invocation: str, profile: str) -> dict:
     if digest((shared / "Package.resolved").read_bytes()) != receipt["dependencyLockSHA256"]:
         raise ValueError("Embedded candidate dependency lock differs")
     executables = specification["layout"]["executables"]
-    if any(prepared["inventory"][path]["sha256"] != receipt["products"][name]
-           for name, path in executables.items()):
+    if any(prepared["inventory"][executables[name]]["sha256"] != expected
+           for name, expected in receipt["products"].items()):
         raise ValueError("Candidate product digests differ")
+    if receipt["schemaVersion"] == 2:
+        reference = receipt["referenceRuntime"]
+        prefix = f"devcontainer-{receipt['version']}/libexec/devcontainer/reference/"
+        expected_files = {"node": executables["reference-node"], **specification["layout"]["files"]}
+        if (set(reference.get("files", {})) != set(expected_files)
+                or reference["files"].get("runtime-lock.json") != reference["lockSHA256"]
+                or any(prepared["inventory"][prefix + name]["sha256"] != reference["files"][name]
+                       for name in expected_files)):
+            raise ValueError("Candidate private runtime digests differ")
     return {"assetSHA256": asset["sha256"], "preparationSHA256": key, "root": str(root),
             "inventorySHA256": digest(canonical(prepared["inventory"]).encode()),
             "executables": {name: str(root / path) for name, path in executables.items()},

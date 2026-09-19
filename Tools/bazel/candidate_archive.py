@@ -13,7 +13,37 @@ import sys
 import tempfile
 
 
-PRODUCTS = {"devcontainer", "devcontainer-compose", "devcontainer-engine"}
+PRODUCTS = {"devcontainer", "devcontainer-compose", "devcontainer-engine", "devcontainer-docker"}
+CLI_FILES = {"devcontainer.js", "dist/spec-node/devContainersSpecCLI.js", "scripts/updateUID.Dockerfile",
+             "package.json", "LICENSE.txt", "ThirdPartyNotices.txt"}
+
+
+def bundle_reference(manifest: dict, stage: Path) -> dict:
+    """Copy the declared, checksum-pinned runtime without npm or install hooks."""
+    runtime = manifest["reference"]
+    lock_path = Path(runtime["lock"])
+    lock = json.loads(lock_path.read_text())
+    if (lock.get("schemaVersion") != 1 or lock["node"]["version"] != "24.21.0"
+            or lock["cli"]["version"] != "0.88.0" or set(runtime["cli"]) != CLI_FILES):
+        raise ValueError("Invalid private runtime lock or file inventory")
+    if json.loads(Path(runtime["cli"]["package.json"]).read_text()).get("version") != lock["cli"]["version"]:
+        raise ValueError("Private CLI version differs from lock")
+    with Path(runtime["node"]).open("rb") as binary:
+        if binary.read(8) != struct.pack("<II", 0xFEEDFACF, 0x0100000C):
+            raise ValueError("Private Node is not a thin arm64 Mach-O binary")
+    root = stage / "libexec/devcontainer/reference"
+    files = {"node": runtime["node"], "NODE-LICENSE.txt": runtime["nodeLicense"],
+             "runtime-lock.json": str(lock_path), **{"cli/" + name: source for name, source in runtime["cli"].items()}}
+    for name, source in files.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not Path(source).is_file() or Path(source).stat().st_size == 0:
+            raise ValueError("Missing or empty private runtime input")
+        shutil.copyfile(source, target)
+        target.chmod(0o755 if name == "node" else 0o644)
+    return {"nodeVersion": lock["node"]["version"], "cliVersion": lock["cli"]["version"],
+            "lockSHA256": sha256(lock_path),
+            "files": {name: sha256(root / name) for name in sorted(files)}}
 
 
 def sha256(path: Path) -> str:
@@ -23,7 +53,7 @@ def sha256(path: Path) -> str:
 def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) -> None:
     """Only copy declared inputs; never discover a build or run a compiler."""
     if set(manifest["binaries"]) != PRODUCTS:
-        raise ValueError("Candidate must contain exactly the three native products")
+        raise ValueError("Candidate must contain exactly the four native products")
     version_match = re.search(r"^DEVCONTAINER_VERSION\s*\?=\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", Path(manifest["makefile"]).read_text(), re.M)
     if not version_match:
         raise ValueError("Missing semantic version in Makefile")
@@ -68,19 +98,21 @@ def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) ->
             raise ValueError("Candidate has no transitive dependency license evidence")
         (shared / "THIRD-PARTY-NOTICES.txt").write_text("\n\n".join(path + "\n\n" + Path(path).read_text() for path in texts))
         shutil.copyfile(manifest["resolved"], shared / "Package.resolved")
+        reference = bundle_reference(manifest, stage)
         identity = {
-            "schemaVersion": 1, "kind": "unsigned-native-candidate", "version": version,
+            "schemaVersion": 2, "kind": "unsigned-native-candidate", "version": version,
             "commit": commit, "runtimeProfile": manifest["profile"], "architecture": "arm64",
             "compilationMode": "opt", "distributionReady": False,
             "dependencyLockSHA256": sha256(Path(manifest["resolved"])),
             "products": {name: sha256(binary_root / name) for name in sorted(PRODUCTS)},
+            "referenceRuntime": reference,
         }
         (shared / "candidate.json").write_text(json.dumps(identity, sort_keys=True, indent=2) + "\n")
         # Normalize permissions independently of the operator's umask.
         for path in [stage, *stage.rglob("*")]:
             if path.is_dir():
                 path.chmod(0o755)
-            elif path.parent.name != "bin":
+            elif path.parent.name != "bin" and path != stage / "libexec/devcontainer/reference/node":
                 path.chmod(0o644)
         module.create_archive(stage, archive, epoch)
     identity["archiveSHA256"] = sha256(archive)

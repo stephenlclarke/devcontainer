@@ -1,6 +1,10 @@
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 module(name = "devcontainer")
 
+private_runtime = use_extension("//Tools/bazel:reference_runtime.bzl", "reference_runtime")
+private_runtime.lockfile(path = "//Tools/bazel:devcontainers-cli.lock.json")
+use_repo(private_runtime, "devcontainer_reference_node", "devcontainer_reference_cli")
+
 bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rules_swift")
 bazel_dep(name = "apple_support", version = "1.24.2")
 bazel_dep(name = "rules_cc", version = "0.2.14")

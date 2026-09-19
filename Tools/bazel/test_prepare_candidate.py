@@ -65,6 +65,89 @@ class CandidateAdmissionTests(unittest.TestCase):
     def prepare(self):
         return prepare_candidate(self.retained, self.scratch, self.invocation)
 
+    def upgrade_runtime(self):
+        """Version-two fixture is independent of the preserved legacy receipt."""
+        self.invocation = "candidate-v2-fixture"
+        runtime = {"node": b"node-fixture", "NODE-LICENSE.txt": b"license", "runtime-lock.json": b"locked-runtime"}
+        runtime.update({"cli/" + name: name.encode() for name in (
+            "devcontainer.js", "dist/spec-node/devContainersSpecCLI.js", "scripts/updateUID.Dockerfile",
+            "package.json", "LICENSE.txt", "ThirdPartyNotices.txt")})
+        self.receipt.update(schemaVersion=2, referenceRuntime={
+            "nodeVersion": "24.21.0", "cliVersion": "0.88.0", "lockSHA256": digest(runtime["runtime-lock.json"]),
+            "files": {name: digest(data) for name, data in runtime.items()}})
+        self.receipt["products"]["devcontainer-docker"] = digest(b"frontend")
+        embedded = {key: value for key, value in self.receipt.items() if key not in {"archiveSHA256", "archiveSize"}}
+        output = io.BytesIO()
+        with tarfile.open(fileobj=io.BytesIO(self.contents["artifact:candidate_archive.tar.gz"]), mode="r:gz") as original, \
+                tarfile.open(fileobj=output, mode="w:gz") as archive:
+            files = {entry.name.removeprefix("devcontainer-1.2.3/"): (original.extractfile(entry).read(), entry.mode)
+                     for entry in original}
+            files["share/devcontainer/candidate.json"] = (canonical(embedded).encode(), 0o644)
+            files["bin/devcontainer-docker"] = (b"frontend", 0o755)
+            files.update({"libexec/devcontainer/reference/" + name: (data, 0o755 if name == "node" else 0o644)
+                          for name, data in runtime.items()})
+            for name, (data, mode) in files.items():
+                entry = tarfile.TarInfo("devcontainer-1.2.3/" + name)
+                entry.size, entry.mode = len(data), mode
+                archive.addfile(entry, io.BytesIO(data))
+        payload = output.getvalue()
+        self.receipt.update(archiveSHA256=digest(payload), archiveSize=len(payload))
+        self.contents["artifact:candidate_archive.tar.gz"] = payload
+        self.contents["artifact:candidate_archive.json"] = canonical(self.receipt).encode()
+        inputs = json.loads(self.contents["inputs-before.json"])
+        inputs["files"]["Tools/bazel/devcontainers-cli.lock.json"] = {"sha256": digest(runtime["runtime-lock.json"])}
+        self.contents["inputs-before.json"] = self.contents["inputs-after.json"] = canonical(inputs).encode()
+        self.save()
+
+    def test_private_runtime_admission_keeps_legacy_identity_and_survives_scratch_removal(self):
+        legacy = self.prepare()
+        self.upgrade_runtime()
+        current = self.prepare()
+        self.assertNotEqual(legacy["preparationSHA256"], current["preparationSHA256"])
+        self.assertEqual(set(current["executables"]), PRODUCTS | {"devcontainer-docker", "reference-node"})
+        shutil.rmtree(self.scratch)
+        self.assertEqual(current, admit_candidate(self.retained, self.invocation, "stock"))
+        self.assertTrue(Path(legacy["root"]).is_dir())
+
+    def test_private_runtime_lock_is_bound_to_source(self):
+        self.upgrade_runtime()
+        self.receipt["referenceRuntime"]["lockSHA256"] = "0" * 64
+        self.contents["artifact:candidate_archive.json"] = canonical(self.receipt).encode()
+        self.save()
+        with self.assertRaisesRegex(ValueError, "private runtime differs"):
+            self.prepare()
+
+    def test_private_runtime_tampering_is_not_repaired(self):
+        self.upgrade_runtime()
+        current = self.prepare()
+        node = Path(current["executables"]["reference-node"])
+        node.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "bytes or modes"):
+            admit_candidate(self.retained, self.invocation, "stock")
+
+    def test_private_runtime_payload_must_match_declared_digests(self):
+        self.upgrade_runtime()
+        original = dict(self.contents)
+        for member in ("node", "cli/devcontainer.js", "runtime-lock.json", "NODE-LICENSE.txt"):
+            with self.subTest(member=member):
+                self.invocation = "altered-runtime-" + member.replace("/", "-")
+                output = io.BytesIO()
+                with tarfile.open(fileobj=io.BytesIO(original["artifact:candidate_archive.tar.gz"]), mode="r:gz") as source, \
+                        tarfile.open(fileobj=output, mode="w:gz") as target:
+                    for entry in source:
+                        data = source.extractfile(entry).read()
+                        if entry.name == "devcontainer-1.2.3/libexec/devcontainer/reference/" + member:
+                            data = b"changed-runtime-payload"
+                        entry.size = len(data)
+                        target.addfile(entry, io.BytesIO(data))
+                payload = output.getvalue()
+                self.contents["artifact:candidate_archive.tar.gz"] = payload
+                receipt = dict(self.receipt, archiveSHA256=digest(payload), archiveSize=len(payload))
+                self.contents["artifact:candidate_archive.json"] = canonical(receipt).encode()
+                self.save()
+                with self.assertRaisesRegex(ValueError, "private runtime digests"):
+                    self.prepare()
+
     def test_preparation_reuses_assets_and_admission_survives_all_scratch_removal(self):
         first = self.prepare()
         self.assertEqual(first, self.prepare())
