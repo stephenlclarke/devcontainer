@@ -58,9 +58,11 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
 
 def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
-    if fixture not in {"D01-image-config", "D02-dockerfile-config"}:
+    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
         return inputs
-    if fixture == "D02-dockerfile-config":
+    if fixture == "D03-users-environment":
+        from devcontainer_users_reference import fixture_inputs
+    elif fixture == "D02-dockerfile-config":
         from devcontainer_build_reference import fixture_inputs
     else:
         from devcontainer_reference import fixture_inputs
@@ -153,7 +155,7 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
-        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config"}:
+        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
             self.guest.setup_devcontainer()
 
     def operation(self):
@@ -217,7 +219,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, "D03-users-environment", *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -227,10 +229,8 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture in {"D01-image-config", "D02-dockerfile-config"} and not args.candidate_invocation:
+    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
-    if args.fixture == "D03-users-environment":
-        raise ValueError("D03 native adapter is not implemented; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None
@@ -238,7 +238,7 @@ def main():
     if args.fixture in FIXTURES:
         guest_locks = [json.loads((repository / "Tools/bazel" / name).read_text())
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
-        if args.fixture in {"E04-image-build", "D02-dockerfile-config"}:
+        if args.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment"}:
             builder_lock = json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
     expected = {key: str(value).lower() for key, value in json.loads(
         (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}

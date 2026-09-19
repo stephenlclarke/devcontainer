@@ -6,6 +6,14 @@ import Foundation
 import Testing
 
 struct DockerRunTests {
+    @Test(arguments: ["-u", "--user", "--user="])
+    func `run preserves explicit non-root user in create request`(_ option: String) throws {
+        let arguments = option.hasSuffix("=") ? [option + "vscode"] : [option, "vscode"]
+        let spec = try command(["--sig-proxy=false"] + arguments + ["image"])
+        let body = try #require(try JSONSerialization.jsonObject(with: spec.createBody()) as? [String: Any])
+        #expect(body["User"] as? String == "vscode")
+    }
+
     @Test
     func `run deadline still covers terminal wait after early output EOF`() async throws {
         let transport = RunTransport(waitDelay: .milliseconds(250))
@@ -59,6 +67,7 @@ struct DockerRunTests {
         let body = try #require(try JSONSerialization.jsonObject(with: defaults.createBody()) as? [String: Any])
         #expect(defaults.standardOutput && defaults.standardError)
         #expect(body["Cmd"] == nil && body["Entrypoint"] == nil)
+        #expect(body["User"] == nil)
         #expect(try DockerRunMount.parse("type=bind,source=/s,destination=/d,readonly=false").readOnly == false)
     }
 
@@ -69,7 +78,10 @@ struct DockerRunTests {
         ["--sig-proxy=false", "-d", "image"], ["--sig-proxy=false", "-e", "FROM_HOST", "image"],
         ["--sig-proxy=false", "-e", "=bad", "image"], ["--sig-proxy=false", "-l", "=bad", "image"],
         ["--sig-proxy=false", "-l", "a=bad\0", "image"], ["--sig-proxy=false", "--entrypoint=bad\0", "image"],
-        ["--sig-proxy=false", "--entrypoint=a", "--entrypoint=b", "image"]
+        ["--sig-proxy=false", "--entrypoint=a", "--entrypoint=b", "image"],
+        ["--sig-proxy=false", "--user"], ["--sig-proxy=false", "--user=", "image"],
+        ["--sig-proxy=false", "-u", "bad\0", "image"],
+        ["--sig-proxy=false", "-u", "vscode", "--user=root", "image"]
     ])
     func `unsupported or invalid run options fail before mutation`(_ arguments: [String]) {
         #expect(throws: DockerFrontendError.self) { try command(arguments) }

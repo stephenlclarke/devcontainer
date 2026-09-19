@@ -53,12 +53,12 @@ class ReleasedEngineTests(unittest.TestCase):
         admit.assert_not_called()
         self.keychains.assert_not_called()
 
-    def test_d03_candidate_refuses_before_runtime_or_asset_mutation(self):
+    def test_d03_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
         with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D03-users-environment"]), \
                 patch("released_engine.platform.system", return_value="Darwin"), \
                 patch("released_engine.platform.machine", return_value="arm64"), \
                 patch("released_engine.admit") as admit, \
-                self.assertRaisesRegex(ValueError, "D03 native adapter"):
+                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
             released_engine.main()
         admit.assert_not_called()
         self.keychains.assert_not_called()
@@ -95,6 +95,10 @@ class ReleasedEngineTests(unittest.TestCase):
         build = released_engine.fixture_guest_inputs({"workload": "pin"}, "D02-dockerfile-config", candidate, repository)
         self.assertIn("dockerfile", build["devcontainerFixture"])
         self.assertEqual(build["devcontainerCandidate"], candidate)
+        users = released_engine.fixture_guest_inputs({"workload": "pin"}, "D03-users-environment", candidate, repository)
+        self.assertEqual(users["devcontainerCandidate"], candidate)
+        self.assertIn("adduser", users["devcontainerFixture"]["dockerfile"])
+        self.assertEqual(json.loads(users["devcontainerFixture"]["configuration"])["containerUser"], "vscode")
         for changed in ({}, {**candidate, "scope": "release"}, {**candidate, "executables": {}}):
             with self.assertRaisesRegex(ValueError, "private-runtime"):
                 released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)

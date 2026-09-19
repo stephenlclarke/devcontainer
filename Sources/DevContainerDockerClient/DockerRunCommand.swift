@@ -10,6 +10,7 @@ public struct DockerRunCommand: Equatable, Sendable {
     public let environment: [String]
     public let labels: [String: String]
     public let entrypoint: String?
+    public let user: String?
     public let mounts: [DockerRunMount]
     public let standardOutput: Bool
     public let standardError: Bool
@@ -37,7 +38,7 @@ public struct DockerRunCommand: Equatable, Sendable {
         }
         return Self(
             image: image, command: command, environment: values.environment, labels: values.labels,
-            entrypoint: values.entrypoint, mounts: values.mounts,
+            entrypoint: values.entrypoint, user: values.user, mounts: values.mounts,
             standardOutput: values.attachments.isEmpty || values.attachments.contains("stdout"),
             standardError: values.attachments.isEmpty || values.attachments.contains("stderr")
         )
@@ -56,6 +57,7 @@ public struct DockerRunCommand: Equatable, Sendable {
         if let entrypoint {
             fields["Entrypoint"] = [entrypoint]
         }
+        fields["User"] = user
         return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
     }
 }
@@ -104,6 +106,7 @@ private struct RunOptions {
     var environment: [String] = []
     var labels: [String: String] = [:]
     var entrypoint: String?
+    var user: String?
     var mounts: [DockerRunMount] = []
     var attachments: Set<String> = []
 
@@ -130,10 +133,19 @@ private struct RunOptions {
             labels[pair.0] = pair.1
         case "--entrypoint":
             try setEntrypoint(options.value(for: argument))
+        case "-u", "--user":
+            try setUser(options.value(for: argument))
         case "--mount":
             try mounts.append(DockerRunMount.parse(options.value(for: argument)))
         default: throw DockerFrontendError.usage("unsupported run option: \(argument)")
         }
+    }
+
+    private mutating func setUser(_ value: String) throws {
+        guard user == nil, !value.isEmpty, !value.contains("\0") else {
+            throw DockerFrontendError.usage("run requires one nonempty user without NUL bytes")
+        }
+        user = value
     }
 
     private mutating func setEntrypoint(_ value: String) throws {

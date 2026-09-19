@@ -123,6 +123,8 @@ struct DockerFrontendSocketTests {
                 [
                     "run",
                     "--sig-proxy=false",
+                    "-u",
+                    "vscode",
                     "-a",
                     "STDOUT",
                     "-a",
@@ -139,6 +141,7 @@ struct DockerFrontendSocketTests {
             #expect(result.standardOutput == Data("ready\n".utf8))
             #expect(result.standardError == Data("WARNING: test warning\nerror\n".utf8))
             #expect(await responder.attachedBeforeStart)
+            #expect(await responder.createdUser == "vscode")
         } catch {
             try await server.shutdown()
             throw error
@@ -336,11 +339,13 @@ private actor FrontendEchoSession: DockerHijackSession {
 private actor RunSocketResponder: DockerHTTPResponder {
     let session = RunSocketSession()
     var attachedBeforeStart = false
+    var createdUser: String?
     private var attached = false
 
     func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
         switch request.target {
         case "/containers/create":
+            createdUser = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any])?["User"] as? String
             return .text(#"{"Id":"run123","Warnings":["test warning"]}"#, contentType: "application/json")
         case "/containers/run123/attach?stream=1&stdin=0&stdout=1&stderr=1":
             attached = true

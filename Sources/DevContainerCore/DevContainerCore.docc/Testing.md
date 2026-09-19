@@ -1,6 +1,6 @@
 # Testing
 
-D03 users/environment is the active next fixture. The isolated official-CLI reference retains seven exact identity/environment observations, image ancestry and cleanup checks. Only public fixture files become non-root-readable; private harness state stays restricted. Live reference/candidate qualification remains required; no new compatibility or release claim follows from adapter implementation.
+D03 users/environment is active. The isolated official-CLI reference passes seven exact identity/environment observations and cleanup (`caae5f4d-2d1f-4cb2-b9ae-3d54b5b13bde`, source `d0ad0aa`). The native startup frontend now forwards the reference's explicit user, while the candidate adapter reuses admitted-builder ownership and bounded guest cleanup. Only public fixture files become non-root-readable; private harness state stays restricted. Native live qualification remains required; no new compatibility or release claim follows from adapter implementation.
 
 The native Bazel harness prepares its official Dev Container CLI reference with `make bazel-prepare-devcontainers-cli`. It retains pinned CLI 0.88.0 and prebuilt Node 24.21.0 privately, without a global installation, npm hooks or a product rebuild; `OFFLINE=1` verifies retained inputs without network access or repair. Official npm/Node distributions are an explicit exception to GitHub release-asset sourcing. These are reference-only dependencies, not requirements for the Docker-free candidate. Preparation and version probes pass; D01 runtime parity remains incomplete.
 

@@ -105,6 +105,22 @@ class GuestRuntimeTests(unittest.TestCase):
             self.case.cleanup()
         self.assertEqual(events, ['guest', 'builder'])
 
+    def test_d03_requires_owned_builder_and_preserves_cleanup_order(self):
+        self.case.fixture = 'D03-users-environment'
+        with self.assertRaisesRegex(ValueError, 'private builder'):
+            self.case.setup_devcontainer()
+        self.case.builder = Mock()
+        events = []
+        self.case.builder.cleanup.side_effect = lambda: events.append('builder')
+        with patch('devcontainer_candidate.DevcontainerUsersCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            self.assertEqual(fixture.call_args.kwargs['before_build'], self.case.builder.verify_for_build)
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            fixture.return_value.cleanup.side_effect = lambda: events.append('guest')
+            self.case.cleanup()
+        self.assertEqual(events, ['guest', 'builder'])
+
     def test_fault_recovery_requires_all_resource_closure(self):
         records = {'fault-intent.json': canonical({'owner': 'case'})}
         with self.assertRaisesRegex(ValueError, 'explicit reconciliation'):

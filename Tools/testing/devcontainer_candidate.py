@@ -9,6 +9,7 @@ import time
 from case_evidence import canonical
 from devcontainer_reference import DevcontainerReference, IMAGE
 from devcontainer_build_reference import DevcontainerBuildReference
+from devcontainer_users_reference import DevcontainerUsersReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -164,3 +165,7 @@ class DevcontainerBuildCandidate(DevcontainerCandidate, DevcontainerBuildReferen
         # can submit its build, rather than trusting setup-time ownership alone.
         self.before_build()
         return super().execute()
+
+
+class DevcontainerUsersCandidate(DevcontainerBuildCandidate, DevcontainerUsersReference):
+    """D03 uses native ownership/build lifetime and unchanged non-root observations."""

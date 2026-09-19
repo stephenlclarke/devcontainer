@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -165,7 +165,7 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
-        if self.fixture in {"E04-image-build", "D02-dockerfile-config"}:
+        if self.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment"}:
             self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
             with deadline(300):
                 self.builder.provision()
@@ -173,17 +173,19 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"D01-image-config", "D02-dockerfile-config"} or self.guest is not None:
+        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
-        if self.fixture == "D02-dockerfile-config" and self.builder is None:
-            raise ValueError("D02 requires an admitted private builder")
-        from devcontainer_candidate import CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate
+        if self.fixture in {"D02-dockerfile-config", "D03-users-environment"} and self.builder is None:
+            raise ValueError("Build-based devcontainer requires an admitted private builder")
+        from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
+                                           DevcontainerBuildCandidate, DevcontainerUsersCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
-        if self.fixture == "D02-dockerfile-config":
-            self.guest = DevcontainerBuildCandidate(commands, self.inputs, self.owner,
-                                                  before_build=self.builder.verify_for_build, observe=self.observe)
+        if self.fixture in {"D02-dockerfile-config", "D03-users-environment"}:
+            adapter = DevcontainerUsersCandidate if self.fixture == "D03-users-environment" else DevcontainerBuildCandidate
+            self.guest = adapter(commands, self.inputs, self.owner,
+                                 before_build=self.builder.verify_for_build, observe=self.observe)
         else:
             self.guest = DevcontainerCandidate(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()
@@ -191,7 +193,7 @@ class ReleasedGuest:
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"D01-image-config", "D02-dockerfile-config"}:
+        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()
