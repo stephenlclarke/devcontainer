@@ -611,6 +611,7 @@ extension AppleContainerRuntime {
                     Self.isUserDefinedNetwork($0.name)
                 }
         }
+        Self.networkHostsDiagnostic("inventory=\(inventory.count) eligible=\(running.count) target=\(running.filter { $0.runtimeID == targetID }.count)")
         guard !running.isEmpty else {
             return inventory
         }
@@ -644,6 +645,7 @@ extension AppleContainerRuntime {
             managedHosts: hosts
         )
         guard managedHostsState[targetID] != nextState else {
+            Self.networkHostsDiagnostic("cache-hit")
             return
         }
         guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
@@ -698,6 +700,7 @@ extension AppleContainerRuntime {
         }
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
+        Self.networkHostsDiagnostic("copy downloaded=\(current.utf8.count) desired=\(updated.utf8.count)")
         if current != updated {
             guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
             // This private staging copy needs no atomic publication. Keep its

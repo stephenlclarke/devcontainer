@@ -6,6 +6,11 @@ import DevContainerRuntimeSPI
 import Foundation
 
 extension AppleContainerRuntime {
+    // Temporary branch-only diagnosis; remove before release qualification.
+    static func networkHostsDiagnostic(_ message: String) {
+        try? FileHandle.standardError.write(contentsOf: Data("network-hosts-diagnostic: \(message)\n".utf8))
+    }
+
     static let managedNetworkHostsLabel = "io.devcontainer.network-hosts-operation"
     static let initialNetworkHosts = "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n"
 
@@ -14,6 +19,7 @@ extension AppleContainerRuntime {
     ) async throws -> Bool {
         do {
             let current = try await inspectContainer(id: target.runtimeID.rawValue, context: context)
+            Self.networkHostsDiagnostic("current running=\(current.state == .running) creation=\(current.createdAt == target.createdAt) start=\(current.startedAt == target.startedAt)")
             return current.state == .running && current.createdAt == target.createdAt
                 && current.startedAt == target.startedAt
         } catch let error as DevContainerError where error.code == .notFound {
