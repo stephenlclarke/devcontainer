@@ -8,6 +8,7 @@ import time
 
 from exec_probe import BINARY_INPUT, duplex, remaining, streams, upgrade
 from guest_fixture import GuestFixture
+from case_evidence import canonical, digest
 
 
 FIXTURE = "E07-init-attachment"
@@ -89,13 +90,21 @@ class AttachmentFixture(GuestFixture):
         if created.get("State", {}).get("Status") != "created":
             raise ValueError("Init ran before attachment was registered")
         history = (b"", b"")
-        for incoming in (BINARY_INPUT, BINARY_INPUT[::-1]):
+        for generation, incoming in enumerate((BINARY_INPUT, BINARY_INPUT[::-1]), 1):
             expected = (OUTPUT_PREFIX + incoming + OUTPUT_SUFFIX, ERROR_OUTPUT)
             if self.transfer(history=False, live=True, incoming=incoming) != expected:
                 raise ValueError("Init binary output or stdout/stderr separation differs")
             self.require_exit()
             history = tuple(before + after for before, after in zip(history, expected))
-            if self.transfer(history=True, live=False) != history:
+            observed = self.transfer(history=True, live=False)
+            self.journal.put(f"init-history-{generation}.json", canonical({
+                name: {"expectedBytes": len(wanted), "actualBytes": len(actual),
+                       "expectedSHA256": digest(wanted), "actualSHA256": digest(actual),
+                       "firstDifference": next((i for i, (left, right) in enumerate(zip(wanted, actual))
+                                                if left != right), min(len(wanted), len(actual))),
+                       "sampleHex": actual[:280].hex()}
+                for name, wanted, actual in zip(("stdout", "stderr"), history, observed)}))
+            if observed != history:
                 raise ValueError("Init history lost, duplicated or relabelled output")
         return {key: "true" for key in ("prestart_attach", "binary_duplex", "source_separation",
                                         "stdin_eof", "exact_exit", "history", "restart_history")}
