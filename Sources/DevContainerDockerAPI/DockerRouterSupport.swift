@@ -1210,23 +1210,6 @@ extension DockerRouter {
         )
     }
 
-    func networkInspect(_ network: NetworkSnapshot) -> DockerNetworkInspect {
-        DockerNetworkInspect(
-            name: network.spec.name,
-            id: network.id,
-            created: ISO8601DateFormatter().string(from: network.createdAt),
-            driver: network.spec.driver,
-            internalNetwork: network.spec.internalNetwork,
-            containers: network.containers.reduce(into: [:]) { result, entry in
-                result[entry.key.rawValue] = DockerNetworkContainer(
-                    name: entry.key.rawValue,
-                    ipv4Address: entry.value
-                )
-            },
-            labels: network.spec.labels
-        )
-    }
-
     func volumeInspect(_ volume: VolumeSnapshot) -> DockerVolumeInspect {
         DockerVolumeInspect(
             createdAt: ISO8601DateFormatter().string(from: volume.createdAt),

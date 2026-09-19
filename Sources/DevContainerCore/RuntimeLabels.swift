@@ -31,6 +31,7 @@ public enum RuntimeLabels {
     public static let composeProjection = [
         "com.apple.container.compose.project": "com.docker.compose.project",
         "com.apple.container.compose.service": "com.docker.compose.service",
+        "com.apple.container.compose.network": "com.docker.compose.network",
         "com.apple.container.compose.oneoff": "com.docker.compose.oneoff",
         "com.apple.container.compose.config-hash": "com.docker.compose.config-hash",
         "com.apple.container.compose.project.working-directory":
@@ -53,6 +54,19 @@ public enum RuntimeLabels {
             operation: selectedOperation.rawValue,
             configurationHash: selectedConfigurationHash
         ]
+    }
+
+    /// A wire identity is persisted on the native resource, not in a router cache.
+    public static func networkDockerID(_ network: NetworkSnapshot) throws -> String {
+        guard let identifier = network.spec.labels[dockerID] else {
+            return network.id
+        }
+        guard identifier.utf8.count == 64,
+              identifier.utf8.allSatisfy({ (48 ... 57).contains($0) || (97 ... 102).contains($0) })
+        else {
+            throw DevContainerError(.providerProtocolMismatch, message: "invalid persisted network Docker identity")
+        }
+        return identifier
     }
 
     public static func projectComposeLabels(

@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Network wire/native identity, observed membership and descriptor-bound original image spelling now have component-tested corrections, with matching logical-label/creation metadata changes in Compose PR 708. The active step is rebuilding the corrected pair once and proving the unchanged C01 native fixture. [Current component evidence and exact limitations](bazel-test-harness.md#c01-compose-service) supersede the earlier projection-unimplemented notes; C01 is not yet Verified.
+
 The first C01 stock native run failed post-creation verification (`8b876ed0`) and required exact-resource recovery; it remains failed. Native version `0.15.1` was interpreted as legacy Docker Compose, stripping project-name hyphens. The facade now qualifies short-version output with its real vendor, with 19 focused tests and all 30 new executable lines covered (`0eb79010`). Network/image projection differences remain active work, not waived differences or release proof. [Failure, recovery and focused evidence](bazel-test-harness.md#c01-compose-service) supersede pre-live statements below.
 
 C01 native Compose artifact admission and harness routing are now implemented and component-tested, reusing an authenticated stock candidate instead of rebuilding it. The active remaining step is the first unchanged-fixture stock runtime proof, followed by enhanced proof when its published guest exists. [Candidate identities, component evidence and invocation](bazel-test-harness.md#c01-compose-service) supersede earlier admission-unimplemented checkpoints below. No full parity or new stable release is claimed.

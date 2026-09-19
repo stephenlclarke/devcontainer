@@ -373,6 +373,9 @@ func `network and volume creation reject unsupported Docker fields`() async thro
 @Test
 func `container inspect accepts empty port bindings and sorted aliases`() async throws {
     let fixture = try await makeEdgeFixture()
+    _ = try await fixture.runtime.createNetwork(
+        spec: NetworkSpec(name: "edge-network"), context: RuntimeRequestContext()
+    )
     let body = try JSONSerialization.data(
         withJSONObject: [
             "Image": "edge:latest",
@@ -385,6 +388,7 @@ func `container inspect accepts empty port bindings and sorted aliases`() async 
     let created = await fixture.router.respond(
         to: DockerHTTPRequest(method: .post, target: "/containers/create?name=configured", body: body)
     )
+    #expect(created.status == 201)
     let object = try JSONSerialization.jsonObject(with: responseBytes(created)) as? [String: Any]
     let identifier = try #require(object?["Id"] as? String)
     #expect(

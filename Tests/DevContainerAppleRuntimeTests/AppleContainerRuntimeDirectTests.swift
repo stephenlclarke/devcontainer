@@ -24,6 +24,20 @@ import Foundation
 import Testing
 
 struct AppleContainerRuntimeDirectTests {
+    @Test
+    func `native typed inventory verifies digest image spelling`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let digest = "sha256:" + String(repeating: "a", count: 64)
+        let original = "fixture:version@" + digest
+        let native = nativeSnapshot(
+            id: "app", labels: [AppleContainerRuntime.composeImageReferenceLabel: original],
+            status: .running, imageReference: "docker.io/library/fixture@" + digest
+        )
+        let record = try await runtime.containerRecord(native)
+        #expect(record.spec.image == original)
+    }
+
     @Test(arguments: [0o644, 0o750, 0o777], [false, true])
     func `archive upload preserves member permissions inside private staging`(
         mode: Int, includesRoot: Bool

@@ -30,12 +30,16 @@ extension AppleContainerRuntime {
         let process = configuration.initProcess
         let labels = configuration.labels
         let id = value.id
-        return AppleContainerRecord(
+        return try AppleContainerRecord(
             id: id,
             dockerID: labels[Self.dockerIDLabel] ?? id,
             spec: ContainerSpec(
                 name: id,
-                image: configuration.image.reference,
+                image: Self.composeImageReference(
+                    observed: configuration.image.reference,
+                    descriptorDigest: configuration.image.descriptor.digest,
+                    labels: labels
+                ),
                 command: process.executable.isEmpty
                     ? process.arguments
                     : [process.executable] + process.arguments,
@@ -124,14 +128,17 @@ extension AppleContainerRuntime {
         let labels = configuration["labels"] as? [String: String] ?? [:]
         let creationDate = Self.date(configuration["creationDate"]) ?? Date(timeIntervalSince1970: 0)
         let dockerID = labels[Self.dockerIDLabel] ?? id
+        var spec = Self.observedContainerSpec(id: id, configuration: configuration, labels: labels)
+        let image = configuration["image"] as? [String: Any]
+        spec.image = try Self.composeImageReference(
+            observed: spec.image,
+            descriptorDigest: (image?["descriptor"] as? [String: Any])?["digest"] as? String,
+            labels: labels
+        )
         return AppleContainerRecord(
             id: id,
             dockerID: dockerID,
-            spec: Self.observedContainerSpec(
-                id: id,
-                configuration: configuration,
-                labels: labels
-            ),
+            spec: spec,
             state: status?["state"] as? String ?? "unknown",
             createdAt: creationDate,
             startedAt: Self.date(status?["startedDate"]),
@@ -280,6 +287,11 @@ extension AppleContainerRuntime {
         observed: ContainerSpec
     ) -> ContainerSpec {
         var spec = requested
+        if observed.labels[composeImageReferenceLabel] != nil {
+            // containerRecord already proved this alias against the native
+            // descriptor; older adopted metadata must not erase its spelling.
+            spec.image = observed.image
+        }
         spec.environment = observed.environment
         spec.environment.merge(requested.environment) { _, requestedValue in
             requestedValue

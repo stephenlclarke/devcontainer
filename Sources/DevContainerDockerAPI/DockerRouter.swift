@@ -335,10 +335,7 @@ extension DockerRouter {
                 )
                 labels.merge(snapshot.spec.labels) { current, _ in current }
             } else {
-                let network = try await runtime.inspectNetwork(
-                    id: segments[1],
-                    context: context
-                )
+                let network = try await resolveNetwork(segments[1], context: context)
                 labels.merge(network.spec.labels) { current, _ in current }
                 resourceKey = network.id
             }
@@ -740,6 +737,7 @@ extension DockerRouter {
             )
             try validateCreateContainerRequest(decoded)
             var spec = try containerSpec(from: decoded, requestedName: name)
+            spec.networks = try await resolveNetworkAttachments(spec.networks, context: context)
             try applyOwnershipLabels(to: &spec, context: context)
             if spec.labels[RuntimeLabels.dockerID] == nil {
                 spec.labels[RuntimeLabels.dockerID] = Self.dockerIdentifier()
@@ -1291,18 +1289,18 @@ extension DockerRouter {
             let filters = try parseFilters(target.first("filters"))
             let labels = try labelFilters(filters["label"] ?? [])
             let networks = try await runtime.listNetworks(context: context).filter { network in
-                labelsMatch(network.spec.labels, expected: labels)
+                try labelsMatch(RuntimeLabels.projectComposeLabels(network.spec.labels), expected: labels)
                     && (filters["name"]?.contains(where: {
                         network.spec.name.contains($0)
                     }) ?? true)
                     && (filters["id"]?.contains(where: {
-                        network.id.hasPrefix($0)
+                        try RuntimeLabels.networkDockerID(network).hasPrefix($0)
                     }) ?? true)
                     && (filters["driver"]?.contains(network.spec.driver) ?? true)
             }
-            return try .json(
-                networks.map(networkInspect)
-            )
+            let containers = networks.isEmpty
+                ? [] : try await runtime.listContainers(all: true, labels: [:], context: context)
+            return try .json(networks.map { try networkInspect($0, containers: containers) })
         }
         if request.method == .post, path == "/networks/create" {
             let decoded = try DockerJSON.decode(
@@ -1317,10 +1315,14 @@ extension DockerRouter {
                     message: "network driver \(decoded.driver ?? "") is not supported"
                 )
             }
-            let labels = try applyingOwnershipLabels(
+            var labels = try applyingOwnershipLabels(
                 to: decoded.labels ?? [:],
                 context: context
             )
+            guard labels[RuntimeLabels.dockerID] == nil else {
+                throw DevContainerError(.invalidRequest, message: "network identity labels are reserved")
+            }
+            labels[RuntimeLabels.dockerID] = Self.digest(Data(UUID().uuidString.utf8))
             let network = try await runtime.createNetwork(
                 spec: NetworkSpec(
                     name: decoded.name,
@@ -1340,7 +1342,7 @@ extension DockerRouter {
                 )
             }
             return try .json(
-                DockerNetworkCreateResponse(id: network.id, warning: ""),
+                DockerNetworkCreateResponse(id: RuntimeLabels.networkDockerID(network), warning: ""),
                 status: 201
             )
         }
@@ -1355,12 +1357,12 @@ extension DockerRouter {
         guard segments.count >= 2, segments[0] == "networks" else {
             return nil
         }
-        let id = segments[1]
+        let network = try await resolveNetwork(segments[1], context: context)
+        let id = network.id
         switch (request.method, segments.count == 3 ? segments[2] : "") {
         case (.get, ""):
-            return try await .json(
-                networkInspect(runtime.inspectNetwork(id: id, context: context))
-            )
+            let containers = try await runtime.listContainers(all: true, labels: [:], context: context)
+            return try .json(networkInspect(network, containers: containers))
         case (.post, "connect"):
             let decoded = try DockerJSON.decode(
                 DockerNetworkConnectRequest.self,
@@ -1389,7 +1391,6 @@ extension DockerRouter {
             )
             return .empty(status: 200)
         case (.delete, ""):
-            let network = try await runtime.inspectNetwork(id: id, context: context)
             try await runtime.removeNetwork(id: id, context: context)
             try await coordinator?.removeResource(
                 runtimeID: RuntimeID(rawValue: network.id)

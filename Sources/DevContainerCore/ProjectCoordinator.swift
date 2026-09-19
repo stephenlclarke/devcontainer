@@ -324,7 +324,7 @@ public actor ProjectCoordinator {
         try await recordResource(
             runtimeKind: "network",
             runtimeID: RuntimeID(rawValue: snapshot.id),
-            dockerID: DockerID(rawValue: snapshot.id),
+            dockerID: DockerID(rawValue: RuntimeLabels.networkDockerID(snapshot)),
             logicalName: snapshot.spec.name,
             role: "network",
             provider: provider,

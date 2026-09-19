@@ -189,7 +189,7 @@ class ArchiveTests(unittest.TestCase):
         provider.chmod(0o700)
         self.environment["DEVCONTAINER_COMPOSE_BIN"] = str(provider)
         output, _ = self.invoke("bin/devcontainer-compose", "version", "--short")
-        self.assertEqual(output, "package-provider-fixture\n")
+        self.assertEqual(output, "container-compose package-provider-fixture\n")
 
     def test_cli_invalid_format_fails_without_runtime(self):
         _, error = self.invoke("bin/devcontainer", "version", "--format", "invalid", expected_status=64)
