@@ -2,6 +2,8 @@
 
 ## Problem description
 
+C01 Docker reference proof now passes all three observations and cleanup (`4dcb1ff0`, source `e59a071`), with zero residue and clear recovery. The remaining active gap is the Docker-free native Compose provider/default path and its stock/enhanced proof, not the reference harness. [Exact phase timings and qualification limits](bazel-test-harness.md#c01-compose-service) are retained; earlier pre-live statements below are historical.
+
 C01 needs a Bazel-native Compose-service harness that preserves its original assertions without global plugin discovery, broad project cleanup or rebuilding release inputs. The reference adapter and its ownership/recovery components are implemented and pass 802 tests (`292a77dd`); live reference proof and Docker-free native provider/default selection remain outstanding. See the [C01 contract](bazel-test-harness.md#c01-compose-service). Earlier D07/other checkpoints below are historical.
 
 D07 stock rebuild now passes all six original assertions and cleanup (`d3a775e0-6b1f-4bc5-ad82-18d86a911e32`, source `53aafe4`), with zero owned resources and clear recovery. Together with the retained Docker oracle, this closes the observed named-volume/removal gaps on two lanes. Enhanced qualification remains blocked on its exact published guest input; D07 is handed off incomplete, with C01 Compose service next. [Current evidence](bazel-test-harness.md#d07-reuse-and-cleanup) supersedes the historical failures below. No stable release or quiet benchmark is claimed.
