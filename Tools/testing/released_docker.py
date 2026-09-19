@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 
-from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
+from case_evidence import CaseStore, canonical, contract_observations, digest, run_case, validate_identity
 from campaign_identity import published_fingerprints
 from docker_vm import DockerVM, private_root
 from devcontainer_reference import DevcontainerReference, FIXTURE as DEVCONTAINER_FIXTURE, fixture_inputs
@@ -145,8 +145,8 @@ def run_docker(args):
     names = ("docker-oracle.lock.json", "docker-cli.lock.json", "guest-images.lock.json")
     locks = [json.loads((repository / "Tools/bazel" / name).read_text()) for name in names]
     pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
-    expected = {key: str(value).lower() for key, value in json.loads(
-        (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}
+    expected = contract_observations(json.loads(
+        (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"])
     volume = require_owned_volume(SSD_VOLUME)
     if SSD.resolve() != SSD or RETAINED.resolve() != RETAINED or SSD.stat().st_dev == RETAINED.stat().st_dev:
         raise ValueError("Docker oracle requires separate canonical SSD and retained storage")

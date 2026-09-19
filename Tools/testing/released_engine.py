@@ -18,7 +18,7 @@ from prepare_releases import require_retained
 from prepare_candidate import admit_candidate, SCOPE as CANDIDATE_SCOPE
 from private_keychain import run_keychain
 from release_inputs import validate_lock
-from case_evidence import CaseStore, canonical, digest, run_case, validate_identity
+from case_evidence import CaseStore, canonical, contract_observations, digest, run_case, validate_identity
 from campaign_identity import published_fingerprints
 from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
@@ -242,8 +242,8 @@ def main():
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
         if args.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment"}:
             builder_lock = json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
-    expected = {key: str(value).lower() for key, value in json.loads(
-        (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"].items()}
+    expected = contract_observations(json.loads(
+        (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"])
     fingerprints = published_fingerprints(repository)
     for root in (SSD, RETAINED):
         if not root.is_dir() or root.resolve() != root:

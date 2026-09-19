@@ -32,6 +32,14 @@ class CampaignReportTests(unittest.TestCase):
             contract.parent.mkdir(parents=True)
             contract.write_bytes(canonical({"expected": {"ping": True}}))
 
+    def test_contract_reading_preserves_mixed_case_and_only_formats_booleans(self):
+        raw = {"order": "onCreate,updateContent,postCreate,postStart,postAttach", "marker": "TRUE", "ready": True,
+               "absent": False, "uid": 1000}
+        path = self.root / f"Tests/Parity/fixtures/{self.fixtures[0]}/contract.json"
+        path.write_bytes(canonical({"expected": raw}))
+        expected, _ = campaign_report.contracts(self.root, self.fixtures[:1])
+        self.assertEqual(expected[self.fixtures[0]], dict(raw, ready="true", absent="false", uid="1000"))
+
     def populate(self, failure=False):
         for index, lane in enumerate(LANES):
             request = identity(lane)

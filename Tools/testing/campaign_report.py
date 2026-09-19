@@ -12,7 +12,7 @@ import sqlite3
 import stat
 import xml.etree.ElementTree as ET
 
-from case_evidence import CaseStore, LANES, canonical, compare_cases, digest, validate_identity
+from case_evidence import CaseStore, LANES, canonical, compare_cases, contract_observations, digest, validate_identity
 
 
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
@@ -31,7 +31,7 @@ def contracts(repository: Path, selected: list[str]) -> tuple[dict, list[str]]:
     expected = {}
     for name in requested:
         raw = json.loads((repository / f"Tests/Parity/fixtures/{name}/contract.json").read_bytes())["expected"]
-        expected[name] = {key: str(value).lower() for key, value in raw.items()}
+        expected[name] = contract_observations(raw)
     return expected, names
 
 

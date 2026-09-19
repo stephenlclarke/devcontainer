@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from case_evidence import CaseStore, LANES, canonical, compare_cases, digest, run_case, validate_identity, validate_result
+from case_evidence import CaseStore, LANES, canonical, compare_cases, contract_observations, digest, run_case, validate_identity, validate_result
 
 
 def identity(lane="docker"):
@@ -24,6 +24,16 @@ def result():
 
 
 class CaseEvidenceTests(unittest.TestCase):
+    def test_case_sensitive_contract_is_preserved_and_lowercase_output_fails(self):
+        expected = contract_observations({"order": "onCreate,postAttach", "marker": "TRUE", "ready": True, "uid": 1000})
+        self.assertEqual(expected, {"order": "onCreate,postAttach", "marker": "TRUE", "ready": "true", "uid": "1000"})
+        for index, actual in enumerate((expected, dict(expected, order=expected["order"].lower()))):
+            request = dict(identity(), campaign="case-sensitive-" + str(index), contractSHA256=digest(canonical(expected)))
+            completed = run_case(self.store, request, expected, lambda: None, lambda: actual,
+                                 lambda: {"status": "passed", "remainingOwnedResources": []})
+            self.assertEqual(completed["status"], "passed" if index == 0 else "failed")
+            self.assertEqual(completed["observations"], actual)
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.scratch.cleanup)

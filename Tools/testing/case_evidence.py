@@ -24,6 +24,11 @@ def digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def contract_observations(values: dict) -> dict[str, str]:
+    """Encode JSON scalar expectations without changing case-sensitive strings."""
+    return {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in values.items()}
+
+
 def validate_identity(identity: dict) -> str:
     """A campaign is explicit; a new request cannot accidentally reuse an old run."""
     if set(identity) != IDENTITY_FIELDS or identity["lane"] not in LANES:
