@@ -250,11 +250,21 @@ class GuestRuntimeTests(unittest.TestCase):
 
     def test_missing_enhanced_image_never_falls_back_to_stock_or_mutates_storage(self):
         kernel, images = self.locks()
+        images["images"] = [image for image in images["images"] if image["name"] != "enhanced-vminit"]
         with patch("guest_runtime.require_retained") as k, patch("guest_runtime.require_image") as i:
             with self.assertRaisesRegex(ValueError, "missing or ambiguous"):
                 admit_guest(kernel, images, "container-compose", self.root)
             k.assert_not_called()
             i.assert_not_called()
+
+    def test_complete_enhanced_admission_selects_only_its_exact_image(self):
+        kernel, images = self.locks()
+        with patch("guest_runtime.require_retained", return_value={}), \
+                patch("guest_runtime.require_image", side_effect=lambda image, _: {"image": image}) as selected:
+            result = admit_guest(kernel, images, "container-compose", self.root)
+        self.assertEqual(result["initialization"]["image"]["name"], "enhanced-vminit")
+        self.assertEqual([call.args[0]["name"] for call in selected.call_args_list],
+                         ["enhanced-vminit", "alpine-workload"])
 
     def test_d05_admission_selects_ubuntu_without_changing_other_fixtures(self):
         kernel, images = self.locks()
@@ -388,6 +398,15 @@ class GuestRuntimeTests(unittest.TestCase):
         with patch("guest_runtime.NetworkVolumeFixture") as factory, patch("guest_runtime.deadline") as deadline:
             self.assertEqual(case.operation(), factory.return_value.operation.return_value)
             deadline.assert_called_once_with(180)
+            self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
+            self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
+
+    def test_init_attachment_retains_guest_for_cleanup_under_whole_operation_deadline(self):
+        case = ReleasedGuest(self.inputs, "E07-init-attachment", self.root, self.owner, self.runtime,
+                             "/released/container", self.root / "socket")
+        with patch("guest_runtime.AttachmentFixture") as factory, patch("guest_runtime.deadline") as deadline:
+            self.assertEqual(case.operation(), factory.return_value.operation.return_value)
+            deadline.assert_called_once_with(150)
             self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
             self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
 

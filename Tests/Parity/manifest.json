@@ -142,6 +142,13 @@
       "assertions": ["network lifecycle", "volume lifecycle", "bind read-only and tmpfs mounts"]
     },
     {
+      "id": "E07-init-attachment",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["pre-start init attachment", "4 MiB binary stdin and EOF", "separate stdout and stderr", "real exit status", "source-aware history across two init generations"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
