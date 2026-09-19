@@ -98,16 +98,45 @@ public struct DockerRunPort: Equatable, Sendable {
 }
 
 public struct DockerRunMount: Equatable, Sendable {
+    public enum Kind: String, Sendable {
+        case bind, volume
+    }
+
     public let source: String
     public let target: String
     public let readOnly: Bool
+    public let kind: Kind
+
+    init(source: String, target: String, readOnly: Bool, kind: Kind = .bind) {
+        self.source = source
+        self.target = target
+        self.readOnly = readOnly
+        self.kind = kind
+    }
 
     var fields: [String: Any] {
-        ["Type": "bind", "Source": source, "Target": target, "ReadOnly": readOnly]
+        ["Type": kind.rawValue, "Source": source, "Target": target, "ReadOnly": readOnly]
     }
 
     static func parse(_ value: String) throws -> Self {
-        // Quoted CSV, volume and propagation semantics need their own oracle.
+        let fields = try parseFields(value)
+        guard let kind = fields["type"].flatMap(Kind.init(rawValue:)), let source = fields["source"],
+              let target = fields["target"], target.hasPrefix("/"),
+              fields["readonly"].map({ ["true", "false"].contains($0) }) ?? true
+        else {
+            throw DockerFrontendError.usage("run mount requires explicit bind/volume type, source and absolute target")
+        }
+        let validSource = kind == .bind ? source.hasPrefix("/") :
+            source.range(of: "[a-zA-Z0-9][a-zA-Z0-9_.-]+", options: .regularExpression) ==
+            source.startIndex ..< source.endIndex
+        guard validSource else {
+            throw DockerFrontendError.usage("run mount requires an absolute bind source or a valid named volume")
+        }
+        return Self(source: source, target: target, readOnly: fields["readonly"] == "true", kind: kind)
+    }
+
+    private static func parseFields(_ value: String) throws -> [String: String] {
+        // Anonymous volumes, quoted CSV and propagation need their own oracle.
         guard !value.contains("\""), !value.contains("\0") else {
             throw DockerFrontendError.usage("unsupported quoted or NUL-containing mount")
         }
@@ -126,13 +155,12 @@ public struct DockerRunMount: Equatable, Sendable {
             guard ["type", "source", "target", "readonly"].contains(key), fields[key] == nil else {
                 throw DockerFrontendError.usage("unsupported or duplicate mount field")
             }
+            guard key == "readonly" || pair.count == 2 else {
+                throw DockerFrontendError.usage("mount type, source and target require explicit values")
+            }
             fields[key] = pair.count == 2 ? String(pair[1]) : "true"
         }
-        guard fields["type"] == "bind", let source = fields["source"], source.hasPrefix("/"),
-              let target = fields["target"], target.hasPrefix("/"),
-              fields["readonly"].map({ ["true", "false"].contains($0) }) ?? true
-        else { throw DockerFrontendError.usage("run mount requires absolute source and target with type=bind") }
-        return Self(source: source, target: target, readOnly: fields["readonly"] == "true")
+        return fields
     }
 }
 

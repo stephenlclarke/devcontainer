@@ -125,13 +125,37 @@ struct DockerRunTests {
     }
 
     @Test(arguments: [
-        "", "type=bind,", "type=volume,source=x,target=/d", "type=bind,source=s,target=/d",
+        "", "type=bind,", "type=volume,target=/d", "type=bind,source=s,target=/d",
         "type=bind,source=/s,target=d", "type=bind,source=/s,target=/d,readonly=invalid",
         "type=bind,source=/s,target=/d,src=/other", "type=bind,source=/s,target=/d,unknown=x",
+        "type=volume,source,target=/cache", "type=volume,src,target=/cache",
+        "type=volume,source=cache,target", "type,source=cache,target=/cache",
         "type=bind,source=\"/s\",target=/d", "type=bind,source=/s\0,target=/d"
     ])
     func `mount parser rejects ambiguous unsupported and unsafe fields`(_ value: String) {
         #expect(throws: DockerFrontendError.self) { try DockerRunMount.parse(value) }
+    }
+
+    @Test(arguments: [
+        "source=dcparity-d07-reuse,target=/cache,type=volume",
+        "type=volume,src=dcparity-d07-reuse,dst=/cache,readonly=false"
+    ])
+    func `named volume mounts preserve source type and destination`(_ value: String) throws {
+        let spec = try command(["--sig-proxy=false", "--mount", value, "image"])
+        let body = try #require(JSONSerialization.jsonObject(with: spec.createBody()) as? [String: Any])
+        let host = try #require(body["HostConfig"] as? [String: Any])
+        let mount = try #require((host["Mounts"] as? [[String: Any]])?.first)
+        #expect(mount["Type"] as? String == "volume")
+        #expect(mount["Source"] as? String == "dcparity-d07-reuse")
+        #expect(mount["Target"] as? String == "/cache")
+        #expect(mount["ReadOnly"] as? Bool == false)
+    }
+
+    @Test(arguments: ["", "x", "/host/path", "../other", "name/child", "bad name", "_initial", "-initial", "has:colon", "\u{00E9}", "name\n"])
+    func `volume mount names reject paths empty names and unsupported syntax`(_ name: String) {
+        #expect(throws: DockerFrontendError.self) {
+            try DockerRunMount.parse("type=volume,source=\(name),target=/cache")
+        }
     }
 
     @Test

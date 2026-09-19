@@ -123,6 +123,8 @@ struct DockerFrontendSocketTests {
                 [
                     "run",
                     "--sig-proxy=false",
+                    "--mount",
+                    "source=dcparity-d07-reuse,target=/cache,type=volume",
                     "-p",
                     "127.0.0.1:49277:8123",
                     "-u",
@@ -144,6 +146,8 @@ struct DockerFrontendSocketTests {
             #expect(result.standardError == Data("WARNING: test warning\nerror\n".utf8))
             #expect(await responder.attachedBeforeStart)
             #expect(await responder.createdUser == "vscode")
+            #expect(await responder.createdMountTypes == ["volume"])
+            #expect(await responder.createdMountSources == ["dcparity-d07-reuse"])
             #expect(await responder.createdPorts == ["8123/tcp": [["HostIp": "127.0.0.1", "HostPort": "49277"]]])
         } catch {
             try await server.shutdown()
@@ -343,6 +347,8 @@ private actor RunSocketResponder: DockerHTTPResponder {
     let session = RunSocketSession()
     var attachedBeforeStart = false
     var createdUser: String?
+    var createdMountTypes: [String] = []
+    var createdMountSources: [String] = []
     var createdPorts: [String: [[String: String]]]?
     private var attached = false
 
@@ -351,6 +357,9 @@ private actor RunSocketResponder: DockerHTTPResponder {
         case "/containers/create":
             let fields = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
             createdUser = fields?["User"] as? String
+            let mounts = (fields?["HostConfig"] as? [String: Any])?["Mounts"] as? [[String: Any]] ?? []
+            createdMountTypes = mounts.compactMap { $0["Type"] as? String }
+            createdMountSources = mounts.compactMap { $0["Source"] as? String }
             createdPorts = (fields?["HostConfig"] as? [String: Any])?["PortBindings"] as? [String: [[String: String]]]
             return .text(#"{"Id":"run123","Warnings":["test warning"]}"#, contentType: "application/json")
         case "/containers/run123/attach?stream=1&stdin=0&stdout=1&stderr=1":
