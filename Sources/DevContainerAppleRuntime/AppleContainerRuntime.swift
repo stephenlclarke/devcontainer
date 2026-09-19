@@ -915,6 +915,7 @@ public extension AppleContainerRuntime {
     private func mountArguments(_ mount: RuntimeMount) async throws -> [String] {
         switch mount.type {
         case .bind:
+            try AppleBindSourcePolicy.prepare(mount)
             return ["--mount", Self.mountValue(mount, type: "bind", source: mount.source)]
         case .volume where mount.anonymous == true:
             // Image-declared volumes remain private on the native writable
@@ -947,8 +948,9 @@ public extension AppleContainerRuntime {
             if mount.type == .tmpfs {
                 _ = try Parser.tmpfsMounts([mount.destination])
             } else {
+                let source = try AppleBindSourcePolicy.validationSource(mount)
                 _ = try Parser.mounts([mountValue(
-                    mount, type: mount.type == .volume ? "volume" : "bind", source: mount.source
+                    mount, type: mount.type == .volume ? "volume" : "bind", source: source
                 )])
             }
         }

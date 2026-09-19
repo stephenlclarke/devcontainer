@@ -2,6 +2,8 @@
 
 ## Current status
 
+The unreleased gateway candidate preserves bind `CreateMountpoint` as an explicit host-directory creation policy; legacy `Binds` host paths opt in, while structured mounts without the option still require an existing source. Native preparation does not overwrite files or remove caller-owned directories. Apple parser restrictions and unsupported propagation/recursive options still fail explicitly. Component proof does not establish live mount or full C02 parity.
+
 Prepared Compose gateway creation requires the unreleased `ContainerImageReference=1` capability. It preserves historical image spelling separately from immutable launch identity; no new stable or live parity claim follows from its component tests.
 
 Unreleased gateway work preserves finite per-container stop timeouts, including explicit zero, and honors stop/restart query overrides. Indefinite waits remain unsupported, and live Docker stop/restart parity has not been qualified. [Component evidence and bounds](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) do not expand the stable release claims.

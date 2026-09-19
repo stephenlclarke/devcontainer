@@ -235,19 +235,24 @@ public struct RuntimeMount: Codable, Equatable, Sendable {
     /// these paths on native EXT4 storage instead of projecting a host
     /// directory through VirtioFS.
     public var anonymous: Bool?
+    /// Create a missing host bind source as a directory. Nil preserves the
+    /// existing requirement that the source already exists.
+    public var createSourceDirectory: Bool?
 
     public init(
         type: RuntimeMountType,
         source: String,
         destination: String,
         readOnly: Bool = false,
-        anonymous: Bool? = nil
+        anonymous: Bool? = nil,
+        createSourceDirectory: Bool? = nil
     ) {
         self.type = type
         self.source = source
         self.destination = destination
         self.readOnly = readOnly
         self.anonymous = anonymous
+        self.createSourceDirectory = createSourceDirectory
     }
 }
 

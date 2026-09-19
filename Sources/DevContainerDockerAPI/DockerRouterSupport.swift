@@ -492,7 +492,7 @@ extension DockerRouter {
         if let options = mount.bindOptions,
            options.propagation?.isEmpty == false
            || options.nonRecursive == true
-           || options.createMountpoint == true
+           || (options.createMountpoint == true && mount.type != "bind")
            || options.readOnlyNonRecursive == true
            || options.readOnlyForceRecursive == true
         {
@@ -736,7 +736,8 @@ extension DockerRouter {
                 type: Self.bindSourceIsHostPath(String(parts[0])) ? .bind : .volume,
                 source: String(parts[0]),
                 destination: String(parts[1]),
-                readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro")
+                readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro"),
+                createSourceDirectory: Self.bindSourceIsHostPath(String(parts[0])) ? true : nil
             )
         }
     }
@@ -757,7 +758,8 @@ extension DockerRouter {
                 source: anonymous ? Self.anonymousVolumeName() : mount.source ?? "",
                 destination: mount.target,
                 readOnly: mount.readOnly ?? false,
-                anonymous: anonymous
+                anonymous: anonymous,
+                createSourceDirectory: type == .bind ? mount.bindOptions?.createMountpoint : nil
             )
         }
     }

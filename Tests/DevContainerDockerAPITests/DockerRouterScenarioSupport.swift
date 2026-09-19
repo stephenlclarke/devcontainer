@@ -136,7 +136,8 @@ func assertMountTypes(_ snapshot: ContainerSnapshot) throws {
                 type: .bind,
                 source: "/tmp/source",
                 destination: "/bind",
-                readOnly: true
+                readOnly: true,
+                createSourceDirectory: true
             )
     )
     #expect(

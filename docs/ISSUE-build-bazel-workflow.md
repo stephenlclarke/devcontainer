@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The first live prepared-gateway C02 attempt started the two dependencies but rejected the app bind mount's source-creation policy (`HostConfig.Mounts.[0].BindOptions`). The candidate now preserves and implements this policy rather than dropping it. The failed run remains retained unchanged; its task-owned resources were identity-checked and removed, the engine stopped and displaced services restored. Automatic recovery of partial C02 creation still needs implementation; the manual recovery is not proof of that workflow gate.
+
 Typed immutable-image creation would otherwise replace the caller's declared reference in `Config.Image`, breaking existing fixture ownership checks. The negotiated `ContainerImageReference` extension now preserves that declaration separately from immutable launch identity. [Component proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) covers creation, inspection and metadata recovery without current-tag lookup; live qualification remains pending.
 
 The prior gateway rejected nonzero create-time `StopTimeout` and silently treated malformed stop/restart overrides as absent. Finite values now survive creation, inspection and metadata recovery, and both operations honor configured/default grace periods and validated overrides. Negative indefinite waits remain unsupported because stock Apple's negative CLI timeout is not Docker's wait-forever primitive. [Component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) is not live parity proof.
