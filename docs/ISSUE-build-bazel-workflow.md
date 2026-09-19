@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The C01 native default/selection gaps now have focused implementation proof (`6637ba72`, regression `87994af7`): fresh configuration selects native Compose, explicit choices survive and children use the selected socket/executable. The active remaining gap is admitting the correct stock-capable Compose artifact and proving the unchanged live fixture on both native lanes. The published 0.15.1 plugin is fork-built; it must not be assumed equivalent to the current stock Engine adapter. [Evidence and coverage limits](bazel-test-harness.md#c01-compose-service) supersede the earlier default-selection pending checkpoints below.
+
 C01 Docker reference proof now passes all three observations and cleanup (`4dcb1ff0`, source `e59a071`), with zero residue and clear recovery. The remaining active gap is the Docker-free native Compose provider/default path and its stock/enhanced proof, not the reference harness. [Exact phase timings and qualification limits](bazel-test-harness.md#c01-compose-service) are retained; earlier pre-live statements below are historical.
 
 C01 needs a Bazel-native Compose-service harness that preserves its original assertions without global plugin discovery, broad project cleanup or rebuilding release inputs. The reference adapter and its ownership/recovery components are implemented and pass 802 tests (`292a77dd`); live reference proof and Docker-free native provider/default selection remain outstanding. See the [C01 contract](bazel-test-harness.md#c01-compose-service). Earlier D07/other checkpoints below are historical.

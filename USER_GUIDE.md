@@ -81,7 +81,7 @@ For archive verification, source installation, Current builds, upgrades, and com
 
 ## Configure the default backend
 
-In current development source, omitted `configure` options preserve stored settings, including compatibility strictness. `--strict` and `--no-strict` explicitly change that setting; a new file enables strictness by default. Invalid backend/provider selections or malformed stored files fail without replacing the existing configuration. This candidate behavior is not a claim about the currently published release.
+In current development source, omitted `configure` options preserve stored settings, including compatibility strictness. `--strict` and `--no-strict` explicitly change that setting; a new file enables strictness and selects the separately installed `container-compose` frontend by default. Existing explicit `docker` selections are preserved. Native frontend invocations receive the resolved socket and Container executable, overriding ambient Compose-specific runtime settings. A missing native frontend fails without Docker fallback. Invalid selections or malformed files fail without replacing configuration. This candidate behavior is not a claim about the currently published release; the explicit Docker example below describes its legacy configuration.
 
 Write an explicit stock configuration:
 
@@ -229,7 +229,7 @@ Reference it from `.devcontainer/devcontainer.json`:
 }
 ```
 
-The default `devcontainer-compose` wrapper launches upstream Docker Compose against the compatibility socket:
+In published 1.0.1, the default `devcontainer-compose` wrapper launches upstream Docker Compose against the compatibility socket. In unreleased source this path requires an explicit Docker selection:
 
 ```console
 devcontainer configure \

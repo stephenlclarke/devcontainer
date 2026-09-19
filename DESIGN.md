@@ -439,7 +439,7 @@ the service database. Secrets are not accepted in configuration files.
 `container devcontainer doctor --format json` emits a machine-readable backend
 fingerprint and capability report.
 
-The Compose wrapper records project ownership from the resolved runtime backend, not from the orchestration frontend. Both frontend choices preserve the same runtime claim and reject a conflicting existing claim before executing a mutation. The selected frontend must be executable before project state is created; a missing native executable never triggers a Docker fallback. These checks establish configuration and state consistency, not runtime-service identity qualification.
+The unreleased Compose wrapper defaults an omitted provider to `container-compose`; existing explicit provider choices are not rewritten. It passes the resolved socket as `CONTAINER_COMPOSE_ENGINE_SOCKET` and the resolved executable as both `CONTAINER_BIN` and `CONTAINER_COMPOSE_CONTAINER`, including configuration and cleanup probes. These values supersede inherited Compose-specific settings. Project ownership comes from the resolved runtime backend, not the frontend. Both frontend choices preserve the same runtime claim and reject conflicts before mutation. The selected frontend must be executable before project state is created; a missing native executable never triggers a Docker fallback. These checks establish configuration and state consistency, not runtime-service identity qualification. The explicit Docker example above documents the legacy opt-in path.
 
 ## Observability
 

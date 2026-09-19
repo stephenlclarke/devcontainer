@@ -24,6 +24,48 @@ import Foundation
 import Testing
 
 struct DevContainerComposeCommandTests {
+    @Test(arguments: [BackendProvider.stock, .containerCompose], [true, false])
+    func `native default receives selected runtime and socket despite ambient conflicts`(
+        backend: BackendProvider, useConfiguration: Bool
+    ) async throws {
+        let fixture = try ComposeCommandFixture(projectName: "native-selection", backend: backend)
+        var environment = fixture.environment
+        environment.removeValue(forKey: "DEVCONTAINER_COMPOSE_PROVIDER")
+        let runtime = fixture.root.appendingPathComponent("selected-container").path
+        let socket = fixture.root.appendingPathComponent("selected.sock").path
+        environment["CONTAINER_BIN"] = "/unrelated/container"
+        environment["CONTAINER_COMPOSE_CONTAINER"] = "/another/container"
+        environment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = "/unrelated/engine.sock"
+        environment["DEVCONTAINER_DOCKER_BIN"] = "/missing/docker"
+        environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = "/missing/docker-compose"
+        if useConfiguration {
+            environment.removeValue(forKey: "DEVCONTAINER_SOCKET")
+            try DevContainerConfigurationStore.save(
+                DevContainerConfiguration(
+                    backend: backend, containerExecutable: runtime,
+                    socket: socket, stateDatabase: fixture.state.path
+                ),
+                to: fixture.root.appendingPathComponent("config.toml")
+            )
+        } else {
+            environment["DEVCONTAINER_CONTAINER_BIN"] = runtime
+            environment["DEVCONTAINER_SOCKET"] = socket
+        }
+        #expect(try await DevContainerComposeCommand.run(
+            arguments: useConfiguration ? ["up"] : ["--project-name", "native-selection", "up"],
+            environment: environment
+        ) == 0)
+        let expectedEnvironment = [socket, runtime, runtime]
+        #expect(try fixture.runtimeEnvironment() == (
+            useConfiguration ? expectedEnvironment + expectedEnvironment : expectedEnvironment
+        ))
+        let store = try SQLiteStateStore(path: fixture.state)
+        #expect(try await store.project(
+            key: ProjectKey(rawValue: "\(getuid()):native-selection")
+        )?.provider == backend)
+        #expect(try fixture.invocations().count == (useConfiguration ? 2 : 1))
+    }
+
     @Test(
         arguments: [ComposeProviderKind.docker, .containerCompose],
         [BackendProvider.stock, .containerCompose]
@@ -53,6 +95,7 @@ struct DevContainerComposeCommandTests {
     func `missing native frontend cannot claim a project or fall back to Docker`() async throws {
         let fixture = try ComposeCommandFixture(projectName: "missing-native", backend: .stock)
         var environment = fixture.environment
+        environment.removeValue(forKey: "DEVCONTAINER_COMPOSE_PROVIDER")
         let native = environment["DEVCONTAINER_COMPOSE_BIN"]
         environment["DEVCONTAINER_DOCKER_BIN"] = native
         environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = native
@@ -417,6 +460,8 @@ private final class ComposeCommandFixture {
         #!/bin/sh
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
+        printf '%s\n' "${CONTAINER_COMPOSE_ENGINE_SOCKET-}" "${CONTAINER_BIN-}" \\
+          "${CONTAINER_COMPOSE_CONTAINER-}" >> "$RUNTIME_ENVIRONMENT_LOG"
         case " $* " in
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'
@@ -454,6 +499,7 @@ private final class ComposeCommandFixture {
             "DEVCONTAINER_SOCKET": root.appendingPathComponent("docker.sock").path,
             "DEVCONTAINER_STATE": state.path,
             "INVOCATION_LOG": invocationLog.path,
+            "RUNTIME_ENVIRONMENT_LOG": root.appendingPathComponent("runtime-environment.log").path,
             "LIVE_VOLUMES": liveVolumes.joined(separator: "\n"),
             "VOLUME_PROBE_STATUS": String(volumeProbeStatus),
             "PATH": "/usr/bin:/bin"
@@ -470,6 +516,12 @@ private final class ComposeCommandFixture {
             result["INNER_PROJECT_KEY"] = innerProjectKey.rawValue
         }
         return result
+    }
+
+    func runtimeEnvironment() throws -> [String] {
+        try String(contentsOf: root.appendingPathComponent("runtime-environment.log"), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .dropLast().map(String.init)
     }
 
     func invocations() throws -> [String] {

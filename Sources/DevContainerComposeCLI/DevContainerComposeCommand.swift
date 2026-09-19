@@ -59,6 +59,7 @@ enum DevContainerComposeCommand {
             configuration: paths.configuration.path
         )
         paths.socket = selection.socket
+        paths.containerExecutable = selection.containerExecutable
         paths.state = URL(fileURLWithPath: selection.stateDatabase)
         let provider = selection.composeProvider
         let envelope = try ComposeCommandEnvelope(arguments: arguments)
@@ -356,6 +357,11 @@ enum DevContainerComposeCommand {
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
         case .containerCompose:
             executable = paths.containerCompose
+            // The facade's resolved selection is authoritative for discovery
+            // and mutations alike; ambient Compose settings cannot redirect it.
+            childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = socket
+            childEnvironment["CONTAINER_BIN"] = paths.containerExecutable
+            childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = paths.containerExecutable
         }
         if childArguments.isEmpty {
             childArguments = ["help"]
@@ -480,6 +486,7 @@ private struct Paths {
     let configuration: URL
     var state: URL
     var socket: String
+    var containerExecutable = DevContainerPathDefaults.containerExecutable
     let docker: URL
     let dockerCompose: URL?
     let containerCompose: URL

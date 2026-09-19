@@ -25,7 +25,7 @@ reach the container VM.
 
 ## Configure stock mode
 
-The unreleased candidate preserves stored settings when their `configure` options are omitted. This includes strict compatibility: use `--strict` or `--no-strict` to change it explicitly; newly created configurations remain strict by default. Backend and frontend choices are independent.
+The unreleased candidate preserves stored settings when their `configure` options are omitted. Use `--strict` or `--no-strict` to change strict compatibility explicitly. Newly created configurations are strict and default to the separately installed `container-compose` frontend; explicit saved Docker choices remain unchanged. The native frontend receives the resolved socket and Container executable for discovery, mutation and cleanup probes, overriding ambient Compose-specific runtime settings. Backend and frontend choices are independent. The following explicit Docker example describes the legacy path, not the candidate default.
 
 ```console
 devcontainer configure \
@@ -76,7 +76,7 @@ Then run **Dev Containers: Reopen in Container**.
 
 ## Runtime boundary
 
-The default path uses upstream Docker Compose over the compatibility socket.
+Published 1.0.1 defaults to upstream Docker Compose over the compatibility socket; unreleased source requires explicit Docker selection for that path.
 Apple does not supply a Compose plug-in. The separately installed
 `container-compose` provider is optional, independently maintained, and uses
 its exact matched custom runtime stack.

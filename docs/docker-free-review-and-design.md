@@ -47,7 +47,7 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 
 ### DF-01 - P0: Docker is still a product dependency
 
-**Evidence:** [`Tools/release/devcontainer.rb.in`](../Tools/release/devcontainer.rb.in), lines 8-10, declares `docker` and `docker-compose`. [`DevContainerConfiguration.swift`](../Sources/DevContainerCore/DevContainerConfiguration.swift), lines 21-36, defaults Compose to `.docker`. [`DevContainerComposeCommand.swift`](../Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift), lines 323-345, dispatches that path to `DockerComposeCommand`. Selecting `container-compose` replaces orchestration but does not replace the Docker CLI used by the official Dev Containers client.
+**Audit evidence and current delta:** [`Tools/release/devcontainer.rb.in`](../Tools/release/devcontainer.rb.in) still declares Docker client dependencies. The audited source defaulted Compose to `.docker`; current unreleased [`DevContainerConfiguration.swift`](../Sources/DevContainerCore/DevContainerConfiguration.swift) defaults omitted choices to `.containerCompose` while preserving explicit saved selections. The packaged native client and selected socket/executable handoff now have focused proof, but complete Docker-free Compose runtime and installation qualification remain outstanding. An explicit Docker choice still dispatches to `DockerComposeCommand`.
 
 **Fix design:** ship a `devcontainer-docker` compatibility executable and a `devcontainer-compose` frontend backed by reusable Compose planning. Configure the reference CLI and VS Code to use these exact executables. Remove Homebrew Docker dependencies only after real client tests pass without either Docker executable. Never replace them with a wrapper that invokes Docker internally.
 
@@ -97,7 +97,7 @@ fail-closed resolver with command, environment, configuration, and default
 precedence. Separating enhanced runtime naming from Compose orchestration
 remains outstanding.
 
-The Compose wrapper now uses the resolved backend for project ownership instead of deriving it from frontend choice. Cross-product component tests exercise both frontends with both backends, reject migration of an existing claim and prove a missing native frontend creates no state or Docker fallback. Runtime-distribution binding and the DF-01 Docker-free client cutover remain unfinished; the default and Homebrew Docker dependencies are deliberately unchanged until that client path is qualified.
+The Compose wrapper uses the resolved backend for ownership instead of deriving it from frontend choice. Cross-product tests exercise both frontends with both backends, reject claim migration and prove missing-native failure without state or Docker fallback. Omitted provider selection now defaults to native Compose. Configuration/environment tests prove the native child receives the selected socket and Container executable despite conflicting ambient Compose settings. Runtime-distribution binding and full DF-01 qualification remain unfinished; Homebrew Docker dependencies are unchanged until the complete client path is qualified.
 
 **Acceptance:** configure a non-default socket and enhanced executable, then confirm every public command and service reports the same effective selection. Switching distributions with owned resources fails until the designed down/recreate or migration procedure completes. A mislabeled fork cannot enter the stock test lane.
 

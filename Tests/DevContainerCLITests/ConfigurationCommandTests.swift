@@ -62,6 +62,7 @@ struct ConfigurationCommandTests {
         let command = try ConfigureCommand.parse(["--config", fixture.configuration.path])
         try command.run()
         #expect(try fixture.load().strictCompatibility)
+        #expect(try fixture.load().composeProvider == .containerCompose)
     }
 
     @Test(arguments: ["--backend", "--compose-provider"])

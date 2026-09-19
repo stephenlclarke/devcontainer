@@ -290,6 +290,8 @@ terminal, port forwarding, rebuild, reopen, and cleanup smoke tests.
 
 Compose provider selection is durable project state:
 
+Current unreleased source defaults omitted orchestration selection to the independently installed `container-compose` frontend, preserving explicit Docker selections. Native frontend discovery and mutation receive the resolved Engine socket and Container executable rather than ambient Compose overrides. Focused configuration tests prove this handoff on both backend choices; published compatibility and live stock/enhanced Compose qualification are unchanged.
+
 1. Before the first resource-changing Compose command, the dispatcher consumes every supported global option, fails closed on an option it cannot classify, acquires a project-scoped lease, and records either `stock` or `container-compose`.
 2. The key is based on the local user and canonical Compose project name. An explicit `-p` or `COMPOSE_PROJECT_NAME` is validated directly; otherwise the selected provider's `config --format json` resolves file, top-level `name:`, project-directory, and current-directory precedence. The invocation project directory is retained as diagnostic metadata, not as an independent ownership domain.
 3. Every later mutation must present the recorded provider; a conflicting
