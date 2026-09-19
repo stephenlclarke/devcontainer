@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Stock D01's attachment cleanup defect is fixed and the live rerun passes all four observations plus cleanup (`46a33e35-686a-45f4-9168-80ba6ecafa31`, harness `e346eed`, unchanged retained product `f8dc210`). Enhanced admission/qualification and complete release gates remain open. Details below preserve the issue's historical findings rather than overriding that scoped result.
+
 First live stock D01 revealed that the official CLI's foreground attachment outlives `up`. Treating that expected lifetime as immediate process residue prevented probe execution. The harness fix preserves the live attachment until verified guest deletion, retries completed-command diagnostics and uses one cleanup deadline. The 525-test component proof and preserved failed-run recovery are recorded in [PR 83](PR-83.md); candidate live qualification is still required.
 
 The lifecycle facade must use the pinned private Node/CLI bundle, never global npm or an installed Docker client. Native candidate archives now contain that bundle, licences, hashes and frontend executable; the real reference client passes configuration reading through the facade against an isolated inventory socket. Empty download checksums must never disable verification: exact reviewed pins and a native Starlark regression enforce that boundary. Candidate D01 now has explicit bundle admission and a component-tested native adapter; live stock/enhanced execution is the next required proof. A package smoke test is not live Dev Containers parity or signed release qualification.
