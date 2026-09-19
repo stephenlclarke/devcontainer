@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D07 stock rebuild now passes all six original assertions and cleanup (`d3a775e0-6b1f-4bc5-ad82-18d86a911e32`, source `53aafe4`), with zero owned resources and clear recovery. Together with the retained Docker oracle, this closes the observed named-volume/removal gaps on two lanes. Enhanced qualification remains blocked on its exact published guest input; D07 is handed off incomplete, with C01 Compose service next. [Current evidence](bazel-test-harness.md#d07-reuse-and-cleanup) supersedes the historical failures below. No stable release or quiet benchmark is claimed.
+
 Current D07 gap: named-volume startup and reuse succeed, but stock invocation `87b56dd6` fails on rebuild's missing forced-removal command. The narrow full-ID frontend correction passes 75 unit/socket tests (`42086676`) and independent review. Failed resources were recovered with services restored and immutable diagnostics retained. Corrected live rebuild proof and enhanced prerequisites remain open; see the [D07 evidence](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier checkpoints below are historical.
 
 D07's reference passes all six assertions, but stock run `f3177942` rejected the named-volume startup mount. The frontend correction now preserves typed named mounts and rejects malformed bare source fields before mutation. Focused coverage is green (`dd4683df`, 71 functions, 178/178 parser lines), static checks and product review are clean. The failed case was safely recovered without rewriting its failure. Corrected stock live proof and enhanced prerequisites remain open; see the [D07 evidence](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier harness-only status below is historical.

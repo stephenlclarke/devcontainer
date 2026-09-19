@@ -2,7 +2,7 @@
 
 ## Current status
 
-The unreleased Bazel candidate frontend supports `rm -f/--force` for one complete 64-character hexadecimal or native UUID container ID through the selected private Engine socket. Names, short IDs, multiple targets and volume-removal flags are deliberately rejected. Component and executable/socket tests pass; corrected live rebuild qualification remains pending. This narrow command does not claim full Docker CLI compatibility or change the stable baseline below.
+The unreleased Bazel candidate frontend supports `rm -f/--force` for one complete 64-character hexadecimal or native UUID container ID through the selected private Engine socket. Names, short IDs, multiple targets and volume-removal flags are deliberately rejected. Component, executable/socket and stock live D07 rebuild/cleanup tests pass (`d3a775e0-6b1f-4bc5-ad82-18d86a911e32`); enhanced qualification remains blocked. This narrow command does not claim full Docker CLI compatibility or change the stable baseline below.
 
 > [!IMPORTANT]
 > Version 1.0.1 remains the latest immutable stable compatibility baseline. In
@@ -29,7 +29,7 @@ startup are not compatibility evidence.
 
 Unreleased D06 port work is `candidate`, not `supported`. The bounded frontend accepts explicit canonical `IPv4:host-port:container-port[/tcp]` with nonzero fixed ports through `-p`/`--publish`. Dynamic ports, ranges, IPv6 and UDP syntax fail before mutation. The pinned Docker reference and stock Apple candidate pass the original loopback fixture, including collision rejection and cleanup; enhanced qualification remains blocked on its exact guest input. These limits describe the new frontend, not the entire Engine API, and do not change the stable matrix.
 
-D07's candidate frontend also accepts explicit named `type=volume` mounts with an absolute target and optional read-only flag. Anonymous volumes, quoted CSV, driver/subpath/propagation options and invalid names are rejected before create. Docker's reuse/rebuild fixture passes; the initial stock run failed on the previously missing parser support, so corrected native qualification remains pending. This does not promote the stable compatibility matrix.
+D07's candidate frontend also accepts explicit named `type=volume` mounts with an absolute target and optional read-only flag. Anonymous volumes, quoted CSV, driver/subpath/propagation options and invalid names are rejected before create. Docker and the corrected stock candidate pass the reuse/rebuild fixture and cleanup; enhanced qualification remains blocked on its published guest input. This does not promote the stable compatibility matrix.
 
 Unreleased Bazel D02 work is `candidate`, not `supported`: the Docker reference and stock Apple candidate pass their unchanged observations and cleanup, while enhanced prerequisites and release qualification remain open. Stock evidence is `3530b684-a77e-42fb-b1a0-11e4c507e401` at `106144a`. The native build frontend currently accepts local contexts, explicit Dockerfile/tag/target/build-argument forms and bounded streamed progress. Existing `.dockerignore` files, remote/stdin contexts, implicit environment arguments, oversized inputs and other unimplemented flags fail explicitly. This does not widen the stable compatibility matrix or certify full Docker-build semantics. Native image-layer inspection is additive; older provider snapshots lacking layer data remain decodable and do not fabricate ancestry.
 
