@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -173,12 +173,12 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"} or self.guest is not None:
+        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
         if self.fixture in {"D02-dockerfile-config", "D03-users-environment"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
-                                           DevcontainerBuildCandidate, DevcontainerUsersCandidate)
+                                           DevcontainerBuildCandidate, DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
@@ -187,13 +187,14 @@ class ReleasedGuest:
             self.guest = adapter(commands, self.inputs, self.owner,
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
-            self.guest = DevcontainerCandidate(commands, self.inputs, self.owner, observe=self.observe)
+            adapter = DevcontainerLifecycleCandidate if self.fixture == "D04-lifecycle-hooks" else DevcontainerCandidate
+            self.guest = adapter(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()
 
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
+        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()

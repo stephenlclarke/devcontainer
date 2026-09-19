@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D04 lifecycle hooks is now active. The original fixture must execute host initialization plus five ordered guest hooks through the actual pinned CLI. An adapter must not precreate the host marker, omit hooks, rewrite order or infer success from configuration. It reuses D01 image ownership and bounded normal cleanup without a builder; Docker completed-command recovery is supported, but interrupted native phases remain quarantined pending explicit reconciliation. Reference and stock live proof are required before any support claim. The enhanced guest dependency remains unchanged.
+
 D03 reference and Docker-free stock execution now pass all seven observations and normal cleanup. Stock proof is `495adb97-3b5e-435f-83ec-2e9bccd9b674` at `533f9a7`; runtime recovery is clear. The contract is handed off incomplete on the unchanged enhanced guest-publication prerequisite, not Verified as complete three-lane parity. The following paragraphs preserve earlier implementation-stage findings.
 
 D03 must prove actual non-root identity, home directory, container/remote environment and expansion through the official CLI, not infer those semantics from accepted configuration fields. Its unchanged seven observations and conservative owned cleanup form the active contract. The Docker reference passes all seven checks and cleanup (`caae5f4d-2d1f-4cb2-b9ae-3d54b5b13bde`). Its captured `-u vscode` exposed a native startup parser gap, reproduced by parser and executable/socket regressions and fixed with explicit `User` projection. Native candidate integration is implemented; live candidate qualification remains required. UID remapping, TTY and Features are separate fixtures or backlog, not silently included in this scope.

@@ -89,6 +89,16 @@ class GuestRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'fresh candidate'):
             self.case.setup_devcontainer()
 
+    def test_d04_uses_lifecycle_adapter_without_builder(self):
+        self.case.fixture = 'D04-lifecycle-hooks'
+        with patch('devcontainer_candidate.DevcontainerLifecycleCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            self.assertIsNone(self.case.builder)
+            self.case.cleanup()
+            fixture.return_value.cleanup.assert_called_once()
+
     def test_d02_requires_owned_builder_and_removes_guest_before_builder(self):
         self.case.fixture = 'D02-dockerfile-config'
         with self.assertRaisesRegex(ValueError, 'private builder'):

@@ -133,6 +133,17 @@ class DockerCaseTests(unittest.TestCase):
         self.guest.cleanup.assert_called_once_with()
         self.assertFalse(self.case.root.exists())
 
+    def test_d04_uses_lifecycle_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "D04-lifecycle-hooks"
+        with patch.object(released_docker, "DevcontainerLifecycleReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_matching_image_id_does_not_hide_wrong_manifest_or_architecture(self):
         identifier = "sha256:" + "b" * 64
         for descriptor, architecture in (("sha256:" + "c" * 64, "arm64"), (identifier, "amd64")):
@@ -154,6 +165,21 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_d04_admission_binds_original_host_and_guest_hooks_without_builder(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        with patch.object(released_docker, "require_retained", return_value={"executables": {}}), \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", return_value={"verified": True}):
+            result = released_docker.admit_docker(lock, {}, {}, {"images": [{"name": "alpine-workload"}]},
+                Path("/scratch"), Path("/retained"), fixture="D04-lifecycle-hooks", repository=repository)
+        root = repository / "Tests/Parity/fixtures/D04-lifecycle-hooks"
+        self.assertEqual(result["devcontainerFixture"], {
+            "configuration": (root / ".devcontainer/devcontainer.json").read_text(),
+            "probe": (root / "probe.sh").read_text()})
+        self.assertNotIn("builder", result)
+
     def test_d03_admission_binds_nonroot_configuration_and_dockerfile(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

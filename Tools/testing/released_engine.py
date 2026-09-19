@@ -58,9 +58,11 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
 
 def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
-    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
+    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
         return inputs
-    if fixture == "D03-users-environment":
+    if fixture == "D04-lifecycle-hooks":
+        from devcontainer_lifecycle_reference import fixture_inputs
+    elif fixture == "D03-users-environment":
         from devcontainer_users_reference import fixture_inputs
     elif fixture == "D02-dockerfile-config":
         from devcontainer_build_reference import fixture_inputs
@@ -155,7 +157,7 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
-        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"}:
+        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
             self.guest.setup_devcontainer()
 
     def operation(self):
@@ -229,7 +231,7 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment"} and not args.candidate_invocation:
+    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())

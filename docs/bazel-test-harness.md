@@ -46,6 +46,12 @@ Seventeen deterministic tests cover immutable reuse after SSD eviction, corrupti
 
 ## Cutover requirements
 
+### D04 lifecycle hooks
+
+D04 is active after D03 reference/stock proof. Its unchanged image-based fixture must return `host_hook=initialize` and `order=onCreate,updateContent,postCreate,postStart,postAttach` through pinned official CLI `up` and `exec`. `initializeCommand` writes into the disposable mounted workspace; subsequent hooks append the guest's lifecycle file. The harness neither creates the host marker nor manufactures/normalizes hook output. Repeated reopen/restart semantics, parallel/failed-hook cases, Features and TTY are outside this fixture.
+
+Both adapters reuse D01 immutable image/owner/workspace checks, bounded commands and normal owned cleanup. Docker additionally supports cleanup-only recovery after verified CLI command completion. Interrupted native phases still require explicit reconciliation and remain quarantined; the adapter does not establish fully unattended recovery. Native D04 needs the authenticated private-runtime candidate but no builder; missing admission fails before runtime/keychain mutation. Exact hook configuration, probe and adapter bytes participate in shared fingerprints/runfiles. Reference execution precedes native live proof; neither adapter availability nor component tests establish three-lane parity. The current `533f9a7` product archive is reusable unless live evidence requires a product change. Enhanced guest publication remains blocked; quiet paired timing belongs to the later performance phase.
+
 ### D03 users and environment
 
 D03 is handed off incomplete after reference and stock qualification, on the same enhanced guest-publication dependency as D01/D02. The unchanged D03 Dockerfile creates `vscode` UID 1000. Its official-CLI `up`/`exec` probe observes `container_env=container-value`, `expanded_env=container-value`, `remote_env=remote-value`, `home=/home/vscode`, `post_create=user-post-create`, `uid=1000` and `user=vscode`, with verified cleanup. UID remapping, TTY, Features and the full lifecycle matrix are outside this fixture. D03 retains the released Docker closure and CLI 0.88.0, local legacy build path, bounded execution and raw phase timings; authoritative quiet comparisons wait for the performance phase.

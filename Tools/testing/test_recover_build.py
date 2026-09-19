@@ -264,5 +264,14 @@ class DevcontainerUsersRecoveryTests(DevcontainerRecoveryTests):
         return stack
 
 
+class DevcontainerLifecycleRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D04-lifecycle-hooks"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_lifecycle_reference.DevcontainerLifecycleReference", return_value=self.fixture))
+        return stack
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from case_evidence import canonical
 from devcontainer_reference import DevcontainerReference, IMAGE
 from devcontainer_build_reference import DevcontainerBuildReference
 from devcontainer_users_reference import DevcontainerUsersReference
+from devcontainer_lifecycle_reference import DevcontainerLifecycleReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -169,3 +170,7 @@ class DevcontainerBuildCandidate(DevcontainerCandidate, DevcontainerBuildReferen
 
 class DevcontainerUsersCandidate(DevcontainerBuildCandidate, DevcontainerUsersReference):
     """D03 uses native ownership/build lifetime and unchanged non-root observations."""
+
+
+class DevcontainerLifecycleCandidate(DevcontainerCandidate, DevcontainerLifecycleReference):
+    """D04 uses the same hook assertions with native image/process ownership."""

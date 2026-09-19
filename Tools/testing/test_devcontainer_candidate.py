@@ -12,7 +12,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical
-from devcontainer_candidate import CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate, DevcontainerUsersCandidate
+from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate,
+                                   DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
 from guest_runtime import ReleasedGuest, require_guest_cleanup
@@ -21,6 +22,7 @@ from service_journal import ServiceJournal
 import test_devcontainer_reference as reference_tests
 import test_devcontainer_build_reference as build_reference_tests
 import test_devcontainer_users_reference as users_reference_tests
+import test_devcontainer_lifecycle_reference as lifecycle_reference_tests
 
 
 class CandidateTests(reference_tests.ReferenceTests):
@@ -175,6 +177,32 @@ class UsersCandidateTests(users_reference_tests.UsersReferenceTests):
         self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(self.fixture.workspace.stat().st_mode & 0o777, 0o755)
         self.assertEqual((self.fixture.workspace / "probe.sh").stat().st_mode & 0o777, 0o644)
+        self.fixture.cleanup()
+        self.vm.close.assert_called_once()
+        self.assertIsNone(self.server.guest)
+
+
+class LifecycleCandidateTests(lifecycle_reference_tests.LifecycleReferenceTests):
+    test_slow_cleanup_response_obeys_whole_phase_deadline = CandidateTests.test_slow_cleanup_response_obeys_whole_phase_deadline
+    test_native_uuid_is_preserved_not_normalized = CandidateTests.test_native_uuid_is_preserved_not_normalized
+
+    def reopen(self):
+        super().reopen()
+        self.vm.container = "/prepared/container"
+        self.vm.close, self.vm.prepare_cleanup = Mock(), Mock()
+        self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/prepared/devcontainer"}}
+        return DevcontainerLifecycleCandidate(self.vm, self.inputs, self.owner)
+
+    def test_full_contract_uses_exact_pins_isolated_paths_and_verified_cleanup(self):
+        self.assertEqual(self.start(), lifecycle_reference_tests.EXPECTED)
+        self.assertEqual(self.commands[0][1], ["/prepared/container", "image", "pull", "--arch", "arm64", IMAGE])
+        self.assertEqual([item[2] for item in self.commands], [120, 120, 60])
+        for _, arguments, _ in self.commands[1:]:
+            self.assertEqual(arguments[2], "/prepared/devcontainer")
+            self.assertNotIn("--docker-path", arguments)
+            self.assertNotIn("--buildkit", arguments)
+        self.assertEqual(self.fixture.workspace.name, "D04-lifecycle-hooks")
+        self.assertFalse((self.fixture.workspace / ".lifecycle-host").exists())
         self.fixture.cleanup()
         self.vm.close.assert_called_once()
         self.assertIsNone(self.server.guest)

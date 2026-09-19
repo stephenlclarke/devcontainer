@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+D04 lifecycle hooks is the active native-harness fixture. It retains the original host-initialization and ordered guest-hook assertions, using the same isolated image and command/cleanup ownership as D01. Reference and stock live qualification remain required; the existing candidate package is reused unless a product change becomes necessary. See the [D04 contract](docs/bazel-test-harness.md#d04-lifecycle-hooks).
+
 D03 users/environment passes all seven observations and cleanup in the Docker reference and the Docker-free stock Apple candidate: non-root UID 1000, home directory, container/remote variables, expansion and post-create output through the pinned official CLI. Stock proof uses source `533f9a7`, invocation `495adb97-3b5e-435f-83ec-2e9bccd9b674`; enhanced qualification remains blocked by its pinned guest-release prerequisite. See the [exact evidence and isolation boundary](docs/bazel-test-harness.md#d03-users-and-environment). These functional runs are not quiet paired benchmarks or full three-lane release qualification.
 
 In current source, Compose project ownership follows the selected runtime backend, independently of the selected Compose frontend. Switching frontends cannot migrate an existing runtime claim. A missing selected frontend fails before creating project state, without trying Docker as a fallback. This correction does not change the published compatibility matrix or remove the remaining Docker client dependencies.

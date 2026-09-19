@@ -63,6 +63,16 @@ class ReleasedEngineTests(unittest.TestCase):
         admit.assert_not_called()
         self.keychains.assert_not_called()
 
+    def test_d04_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
+        with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D04-lifecycle-hooks"]), \
+                patch("released_engine.platform.system", return_value="Darwin"), \
+                patch("released_engine.platform.machine", return_value="arm64"), \
+                patch("released_engine.admit") as admit, \
+                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
+            released_engine.main()
+        admit.assert_not_called()
+        self.keychains.assert_not_called()
+
     def test_required_release_and_supported_adapter_are_explicit(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
         for lane in ("apple-stock", "container-compose"):
@@ -99,6 +109,10 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(users["devcontainerCandidate"], candidate)
         self.assertIn("adduser", users["devcontainerFixture"]["dockerfile"])
         self.assertEqual(json.loads(users["devcontainerFixture"]["configuration"])["containerUser"], "vscode")
+        lifecycle = released_engine.fixture_guest_inputs({"workload": "pin"}, "D04-lifecycle-hooks", candidate, repository)
+        self.assertEqual(lifecycle["devcontainerCandidate"], candidate)
+        self.assertIn("initializeCommand", json.loads(lifecycle["devcontainerFixture"]["configuration"]))
+        self.assertNotIn("dockerfile", lifecycle["devcontainerFixture"])
         for changed in ({}, {**candidate, "scope": "release"}, {**candidate, "executables": {}}):
             with self.assertRaisesRegex(ValueError, "private-runtime"):
                 released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)
