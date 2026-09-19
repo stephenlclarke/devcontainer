@@ -16,7 +16,7 @@ The product has two first-class runtime modes:
 
 The selected provider is immutable while a Dev Container project owns resources. Changing providers requires an explicit down/recreate operation so container identifiers, labels, networks, and volumes never become split-brain state.
 
-D06's captured startup command adds explicit IPv4/fixed TCP publication to the unreleased frontend. It sends `ExposedPorts` and `HostConfig.PortBindings` through the shared Unix transport; it does not create a second forwarding service or invoke Docker. Native inspection derives host bindings from the stored runtime specification, excluding expose-only entries. Dynamic ports, ranges, IPv6 and UDP publish syntax remain rejected by this bounded frontend until qualified. The reference-only Colima VM's narrowly scoped SSH forwarder is test infrastructure, not a candidate dependency. [D06 evidence](docs/bazel-test-harness.md#d06-published-ports) distinguishes reference success from pending native qualification.
+D06's captured startup command adds explicit IPv4/fixed TCP publication to the unreleased frontend. It sends `ExposedPorts` and `HostConfig.PortBindings` through the shared Unix transport; it does not create a second forwarding service or invoke Docker. Native inspection derives host bindings from the stored runtime specification, excluding expose-only entries. Dynamic ports, ranges, IPv6 and UDP publish syntax remain rejected by this bounded frontend until qualified. The reference-only Colima VM's narrowly scoped SSH forwarder is test infrastructure, not a candidate dependency. [D06 evidence](docs/bazel-test-harness.md#d06-published-ports) records passing Docker and stock-native runs; enhanced qualification remains blocked on its exact guest input.
 
 ## Goals
 
