@@ -285,9 +285,6 @@ extension DockerRouter {
             try unsupportedCreateField(field)
         }
         for (field, values) in [
-            ("HostConfig.Dns", host.dns),
-            ("HostConfig.DnsOptions", host.dnsOptions),
-            ("HostConfig.DnsSearch", host.dnsSearch),
             ("HostConfig.ExtraHosts", host.extraHosts),
             ("HostConfig.GroupAdd", host.groupAdd),
             ("HostConfig.Links", host.links),
@@ -664,7 +661,13 @@ extension DockerRouter {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        try ContainerSpec(
+        let dns = request.hostConfig.map {
+            RuntimeDNSConfiguration(
+                nameservers: $0.dns ?? [], searchDomains: $0.dnsSearch ?? [], options: $0.dnsOptions ?? []
+            )
+        }
+        try dns?.validate()
+        return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
@@ -698,7 +701,8 @@ extension DockerRouter {
                     retries: $0.retries ?? 3,
                     startPeriodNanoseconds: $0.startPeriod ?? 0
                 )
-            }
+            },
+            dns: dns
         )
     }
 
@@ -906,14 +910,21 @@ extension DockerRouter {
                 labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
                 healthcheck: dockerHealthcheck(snapshot.spec.healthcheck)
             ),
-            hostConfig: DockerInspectHostConfig(
-                binds: snapshot.spec.mounts.filter { $0.type == .bind }.map {
-                    "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
-                },
-                portBindings: inspectPortBindings(snapshot.spec.ports)
-            ),
+            hostConfig: inspectHostConfig(snapshot.spec),
             mounts: snapshot.spec.mounts.map(mountSummary),
             networkSettings: networkSettings
+        )
+    }
+
+    private func inspectHostConfig(_ spec: ContainerSpec) -> DockerInspectHostConfig {
+        DockerInspectHostConfig(
+            binds: spec.mounts.filter { $0.type == .bind }.map {
+                "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
+            },
+            portBindings: inspectPortBindings(spec.ports),
+            dns: spec.dns?.nameservers ?? [],
+            dnsSearch: spec.dns?.searchDomains ?? [],
+            dnsOptions: spec.dns?.options ?? []
         )
     }
 

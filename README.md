@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+The unreleased gateway now retains explicit DNS settings through Apple creation, inspection and recovery from older metadata. Component tests pass; this is preparation for the Compose startup-path fix, not a new stable release or live parity claim. See [candidate evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
 C02 passes on the real Docker reference. The stock candidate passes running-state DNS, actual database health and service selection, but the strengthened test proves hostname lookup fails in the application's first command. Both lanes clean up with zero owned resources. Gateway-managed startup hosts are implemented, but Compose creation still bypasses that path; connecting creation without losing service configuration remains required. C02 parity is not yet claimed. See the [C02 contract, timings and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
 D06 passes actual CLI forwarding metadata, guest and host HTTP access, a specific owned-container port collision and cleanup in Docker (`524dce17-469a-4819-9258-a210a414d7cb`) and stock Apple Container (`ecf30eb5-335e-4144-8747-65c91e32975b`). The candidate frontend projects explicit IPv4/fixed TCP publish options without Docker, and inspection reports recorded port bindings. Enhanced-lane qualification remains blocked by its exact guest input; these functional runs are neither quiet paired benchmarks nor a released support claim. See the [D06 contract](docs/bazel-test-harness.md#d06-published-ports).

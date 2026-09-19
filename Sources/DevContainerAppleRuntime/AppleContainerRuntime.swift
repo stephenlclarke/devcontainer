@@ -862,16 +862,31 @@ public extension AppleContainerRuntime {
         arguments += spec.capabilitiesToAdd.flatMap { ["--cap-add", $0] }
         arguments += spec.capabilitiesToDrop.flatMap { ["--cap-drop", $0] }
         arguments += spec.securityOptions.flatMap { ["--security-opt", $0] }
-        if optionSupport.dns, Self.requiresHostDNS(spec) {
-            arguments += Self.hostBuildDNSArguments()
-        }
+        arguments += try Self.dnsArguments(spec, supported: optionSupport.dns)
         arguments += Self.optionalArgument("--entrypoint", value: spec.entrypoint.first)
+        return arguments
+    }
+
+    private static func dnsArguments(_ spec: ContainerSpec, supported: Bool) throws -> [String] {
+        try spec.dns?.validate()
+        var arguments = (spec.dns?.nameservers ?? []).flatMap { ["--dns", $0] }
+        arguments += (spec.dns?.searchDomains ?? []).flatMap { ["--dns-search", $0] }
+        arguments += (spec.dns?.options ?? []).flatMap { ["--dns-option", $0] }
+        if !supported, !arguments.isEmpty {
+            throw DevContainerError(
+                .unsupportedCapability, message: "This Apple container distribution cannot configure DNS"
+            )
+        }
+        if supported, requiresHostDNS(spec) {
+            arguments += hostBuildDNSArguments()
+        }
         return arguments
     }
 
     static func requiresHostDNS(_ spec: ContainerSpec) -> Bool {
         spec.name.hasPrefix("buildx_buildkit_")
             && spec.image.contains("buildkit")
+            && (spec.dns?.nameservers.isEmpty ?? true)
     }
 
     private static func optionalArgument(_ flag: String, value: String?) -> [String] {

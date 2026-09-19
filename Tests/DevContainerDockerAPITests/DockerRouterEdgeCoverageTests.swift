@@ -235,7 +235,6 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["ReadonlyRootfs": true]],
         ["Image": "edge:latest", "HostConfig": ["OomKillDisable": true]],
         ["Image": "edge:latest", "HostConfig": ["OomScoreAdj": 1]],
-        ["Image": "edge:latest", "HostConfig": ["Dns": ["192.0.2.53"]]],
         ["Image": "edge:latest", "HostConfig": ["VolumesFrom": ["fixture"]]],
         ["Image": "edge:latest", "HostConfig": ["Annotations": ["test": "value"]]],
         ["Image": "edge:latest", "HostConfig": ["Tmpfs": ["/tmp": "size=1m"]]],

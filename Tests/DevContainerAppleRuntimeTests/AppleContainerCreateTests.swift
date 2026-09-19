@@ -809,6 +809,36 @@ extension AppleContainerCreateTests {
         )
     }
 
+    @Test func `native DNS projection preserves resolver policy and explicit BuildKit precedence`() async throws {
+        var spec = ContainerSpec(name: "buildx_buildkit_fixture", image: "buildkit:test")
+        #expect(AppleContainerRuntime.requiresHostDNS(spec))
+        spec.dns = .init(searchDomains: ["example.test"], options: ["ndots:2"])
+        #expect(AppleContainerRuntime.requiresHostDNS(spec))
+        spec.dns?.nameservers = ["192.0.2.53", "2001:db8::53"]
+        #expect(!AppleContainerRuntime.requiresHostDNS(spec))
+        let native = try configuration(spec)
+        #expect(native.dns?.nameservers == spec.dns?.nameservers)
+        #expect(native.dns?.searchDomains == ["example.test"])
+        #expect(native.dns?.options == ["ndots:2"])
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(native)) as? [String: Any])
+        let adopted = AppleContainerRuntime.observedContainerSpec(id: spec.name, configuration: object, labels: [:])
+        #expect(adopted.dns == spec.dns)
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime()
+        let typed = try await runtime.containerRecord(.init(configuration: native, status: .stopped, networks: []))
+        #expect(typed.spec.dns == spec.dns)
+        var legacy = spec
+        legacy.dns = nil
+        #expect(AppleContainerRuntime.effectiveContainerSpec(requested: legacy, observed: typed.spec).dns == spec.dns)
+        var explicitDefaults = spec
+        explicitDefaults.dns = .init()
+        let effective = AppleContainerRuntime.effectiveContainerSpec(requested: explicitDefaults, observed: typed.spec)
+        #expect(effective.dns == .init())
+        spec.dns?.nameservers = ["invalid"]
+        #expect(throws: DevContainerError.self) { try configuration(spec) }
+    }
+
     @Test func `native projection retains image defaults and descriptor`() throws {
         let config = try configuration(ContainerSpec(name: "fixture", image: digest))
         #expect(config.image.descriptor.digest == digest)

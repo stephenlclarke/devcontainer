@@ -54,7 +54,8 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
             let arguments = AppleContainerRuntime.hostBuildDNSArguments()
             configuration.dns = .init(
                 nameservers: stride(from: 1, to: arguments.count, by: 2).map { arguments[$0] },
-                domain: system.dns.domain
+                domain: configuration.dns?.domain,
+                searchDomains: configuration.dns?.searchDomains ?? [], options: configuration.dns?.options ?? []
             )
         }
         try context.checkActive()
@@ -165,6 +166,7 @@ enum AppleContainerCreateProjection {
         imageConfig: ImageConfig?, system: ContainerSystemConfig, builtinNetwork: String?
     ) throws -> ContainerConfiguration {
         let (image, platform) = identity
+        try spec.dns?.validate()
         var configuration = try ContainerConfiguration(
             id: spec.name, image: image, process: process(spec, image: imageConfig)
         )
@@ -181,7 +183,10 @@ enum AppleContainerCreateProjection {
         configuration.capAdd = capabilities.capAdd
         configuration.capDrop = capabilities.capDrop
         configuration.networks = try networks(spec, builtin: builtinNetwork, domain: system.dns.domain)
-        configuration.dns = .init(nameservers: [], domain: system.dns.domain)
+        configuration.dns = .init(
+            nameservers: spec.dns?.nameservers ?? [], domain: system.dns.domain,
+            searchDomains: spec.dns?.searchDomains ?? [], options: spec.dns?.options ?? []
+        )
         configuration.publishedPorts = try Parser.publishPorts(spec.ports.compactMap {
             AppleContainerRuntime.nativePublishArguments($0)?.last
         })

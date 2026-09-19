@@ -58,7 +58,12 @@ extension AppleContainerRuntime {
                 initProcess: configuration.useInit,
                 capabilitiesToAdd: configuration.capAdd,
                 capabilitiesToDrop: configuration.capDrop,
-                healthcheck: Self.composeHealthPolicy(labels: labels)
+                healthcheck: Self.composeHealthPolicy(labels: labels),
+                dns: configuration.dns.map {
+                    RuntimeDNSConfiguration(
+                        nameservers: $0.nameservers, searchDomains: $0.searchDomains, options: $0.options
+                    )
+                }
             ),
             state: value.status.rawValue,
             createdAt: configuration.creationDate,
@@ -280,7 +285,14 @@ extension AppleContainerRuntime {
             initProcess: configuration["useInit"] as? Bool ?? false,
             capabilitiesToAdd: configuration["capAdd"] as? [String] ?? [],
             capabilitiesToDrop: configuration["capDrop"] as? [String] ?? [],
-            securityOptions: securityOptions(configuration)
+            securityOptions: securityOptions(configuration),
+            dns: (configuration["dns"] as? [String: Any]).map {
+                RuntimeDNSConfiguration(
+                    nameservers: $0["nameservers"] as? [String] ?? [],
+                    searchDomains: $0["searchDomains"] as? [String] ?? [],
+                    options: $0["options"] as? [String] ?? []
+                )
+            }
         )
     }
 
@@ -289,6 +301,9 @@ extension AppleContainerRuntime {
         observed: ContainerSpec
     ) -> ContainerSpec {
         var spec = requested
+        if requested.dns == nil {
+            spec.dns = observed.dns
+        }
         if observed.labels[composeHealthPolicyLabel] != nil {
             spec.healthcheck = observed.healthcheck
         }

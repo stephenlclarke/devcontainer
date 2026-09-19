@@ -353,10 +353,6 @@ func `known unsupported create fields fail before runtime side effects`() async 
             "HostConfig.DeviceRequests"
         ),
         (
-            #"{"Image":"alpine:test","HostConfig":{"Dns":["1.1.1.1"]}}"#,
-            "HostConfig.Dns"
-        ),
-        (
             #"{"Image":"alpine:test","HostConfig":{"PidMode":"host"}}"#,
             "HostConfig.PidMode"
         ),

@@ -309,6 +309,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var capabilitiesToDrop: [String]
     public var securityOptions: [String]
     public var healthcheck: ContainerHealthcheck?
+    public var dns: RuntimeDNSConfiguration?
 
     public init(
         name: String,
@@ -331,7 +332,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         capabilitiesToAdd: [String] = [],
         capabilitiesToDrop: [String] = [],
         securityOptions: [String] = [],
-        healthcheck: ContainerHealthcheck? = nil
+        healthcheck: ContainerHealthcheck? = nil,
+        dns: RuntimeDNSConfiguration? = nil
     ) {
         self.name = name
         self.image = image
@@ -354,6 +356,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.capabilitiesToDrop = capabilitiesToDrop
         self.securityOptions = securityOptions
         self.healthcheck = healthcheck
+        self.dns = dns
     }
 }
 
