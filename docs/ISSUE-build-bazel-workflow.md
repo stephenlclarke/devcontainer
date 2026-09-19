@@ -2,7 +2,7 @@
 
 ## Problem description
 
-The latest stock C02 candidate (`e8796ba`) still fails hostname resolution. [Bounded live diagnostics](bazel-test-harness.md#c02-dependency-health-and-service-selection) establish that services are running, database health passes, observed and adopted network attachments are present, and direct gateway exec preparation still does not install managed hosts. The remaining immediate task is to identify the runtime reconciliation branch, not assume a Compose exec bypass or weaken the original probe. All diagnostic runs cleaned up successfully; no stable release follows from this checkpoint.
+The stock C02 candidate (`e8796ba`) fails hostname resolution despite healthy services and correct observed/adopted networks. [Runtime tracing](bazel-test-harness.md#c02-dependency-health-and-service-selection) identifies the cause: the runtime requires Docker mirrors that the HTTP layer synthesizes only in responses. Native-only identity acceptance is now corrected with conflicting mirrors still rejected and failing-before/passing-after regression evidence. Corrected live C02 qualification remains pending. All diagnostic runs cleaned up successfully; no stable release follows from this checkpoint.
 
 The backing-file store now has gateway creation/lifecycle callers and [focused recovery and ownership proof](PR-83.md#implementation), including the real SQLite completion transaction, absent-native cleanup and bootstrapped preparation-failure recovery. Compose creation still bypasses this boundary and must be moved into it. No new live parity result or release follows from component tests.
 

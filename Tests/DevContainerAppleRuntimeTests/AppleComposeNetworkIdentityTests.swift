@@ -25,16 +25,30 @@ struct AppleComposeNetworkIdentityTests {
         #expect(AppleContainerRuntime.nativeComposeServiceName(labels: [:]) == nil)
     }
 
+    @Test
+    func `native identity does not require Docker response projection`() {
+        let native = labels.filter { !$0.key.hasPrefix("com.docker.compose.") }
+        #expect(AppleContainerRuntime.nativeComposeServiceName(labels: native) == "database")
+    }
+
     @Test(arguments: [
         "com.apple.container.compose.version", "com.apple.container.compose.project",
-        "com.docker.compose.project", "com.apple.container.compose.service",
-        "com.docker.compose.service", "com.apple.container.compose.oneoff", "com.docker.compose.oneoff"
+        "com.apple.container.compose.service", "com.apple.container.compose.oneoff"
     ])
     func `partial and conflicting identities do not supply aliases`(key: String) {
         var value = labels
         value.removeValue(forKey: key)
         #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == nil)
         value[key] = "conflict"
+        #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == nil)
+    }
+
+    @Test(arguments: ["project", "service", "oneoff"])
+    func `optional Docker mirrors must agree when present`(field: String) {
+        var value = labels
+        value.removeValue(forKey: "com.docker.compose." + field)
+        #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == "database")
+        value["com.docker.compose." + field] = "conflict"
         #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == nil)
     }
 

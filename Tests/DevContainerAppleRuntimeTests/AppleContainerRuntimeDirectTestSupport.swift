@@ -259,13 +259,17 @@ actor FakeContainerFileClient: AppleContainerFileClient {
         id: String,
         service: String?,
         address: String,
-        network: String = "shared"
+        network: String = "shared",
+        nativeOnly: Bool = false
     ) throws -> ContainerResource
         .ContainerSnapshot
     {
         var labels: [String: String] = [:]
         if let service {
-            for prefix in ["com.apple.container.compose.", "com.docker.compose."] {
+            let prefixes = nativeOnly
+                ? ["com.apple.container.compose."]
+                : ["com.apple.container.compose.", "com.docker.compose."]
+            for prefix in prefixes {
                 labels[prefix + "project"] = network
                 labels[prefix + "service"] = service
                 labels[prefix + "oneoff"] = "false"

@@ -67,12 +67,19 @@ struct AppleContainerNetworkHostsTests {
             #expect(await !runtime.portForwarding.hasListeners(containerID: "app"))
         }
 
-        @Test
-        func `native exec reconciles complete inventory without touching unrelated guests`() async throws {
+        @Test(arguments: [false, true])
+        func `native exec reconciles complete inventory without touching unrelated guests`(
+            nativeOnly: Bool
+        ) async throws {
             let fixture = try FakeAppleCLI()
             let inventory = try FakeContainerInventory(snapshots: [
-                nativeNetworkSnapshot(id: "app", service: "app", address: "192.0.2.2"),
-                nativeNetworkSnapshot(id: "database-1", service: "database", address: "192.0.2.3"),
+                nativeNetworkSnapshot(id: "app", service: "app", address: "192.0.2.2", nativeOnly: nativeOnly),
+                nativeNetworkSnapshot(
+                    id: "database-1",
+                    service: "database",
+                    address: "192.0.2.3",
+                    nativeOnly: nativeOnly
+                ),
                 nativeNetworkSnapshot(id: "unrelated", service: nil, address: "192.0.2.4"),
                 nativeNetworkSnapshot(
                     id: "other-project",

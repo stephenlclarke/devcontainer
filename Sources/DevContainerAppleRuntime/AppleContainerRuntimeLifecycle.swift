@@ -806,7 +806,6 @@ public extension AppleContainerRuntime {
     ) async throws -> ExecSnapshot {
         let container = try await inspectContainer(id: containerID, context: context)
         try await requireCompletedCreation(id: container.runtimeID.rawValue)
-        Self.networkHostsDiagnostic("exec eligible=\(Self.nativeComposeServiceName(labels: container.spec.labels) != nil)")
         guard container.state == .running else {
             throw DevContainerError(.conflict, message: "container \(containerID) is not running")
         }
