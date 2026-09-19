@@ -58,9 +58,11 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
 
 def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
-    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
+    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}:
         return inputs
-    if fixture == "D04-lifecycle-hooks":
+    if fixture == "D05-features":
+        from devcontainer_features_reference import fixture_inputs
+    elif fixture == "D04-lifecycle-hooks":
         from devcontainer_lifecycle_reference import fixture_inputs
     elif fixture == "D03-users-environment":
         from devcontainer_users_reference import fixture_inputs
@@ -157,7 +159,7 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
-        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
+        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}:
             self.guest.setup_devcontainer()
 
     def operation(self):
@@ -231,7 +233,7 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"} and not args.candidate_invocation:
+    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
@@ -240,7 +242,7 @@ def main():
     if args.fixture in FIXTURES:
         guest_locks = [json.loads((repository / "Tools/bazel" / name).read_text())
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
-        if args.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment"}:
+        if args.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
             builder_lock = json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
     expected = contract_observations(json.loads(
         (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"])
@@ -260,7 +262,8 @@ def main():
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
-        guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock) if guest_locks is not None else None
+        guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock,
+                                   fixture=args.fixture) if guest_locks is not None else None
         if guest_inputs is not None:
             guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
@@ -283,7 +286,7 @@ def main():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
             if guest_locks is not None:
-                current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock)
+                current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock, fixture=args.fixture)
                 if fixture_guest_inputs(current, args.fixture, releases[0], repository) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED, args.candidate_invocation)

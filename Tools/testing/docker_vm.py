@@ -21,7 +21,7 @@ from runtime_services import process_inventory, require_idle
 
 PROFILE = "parity"
 INSTANCE = "colima-" + PROFILE
-DEVCONTAINER_COMMANDS = {"devcontainer-image-pull", "devcontainer-up", "devcontainer-exec"}
+DEVCONTAINER_COMMANDS = {"devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock"}
 
 
 def command_record(name: str, suffix: str) -> bool:

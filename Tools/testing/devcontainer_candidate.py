@@ -7,16 +7,17 @@ from pathlib import Path
 import time
 
 from case_evidence import canonical
-from devcontainer_reference import DevcontainerReference, IMAGE
+from devcontainer_reference import DevcontainerReference
 from devcontainer_build_reference import DevcontainerBuildReference
 from devcontainer_users_reference import DevcontainerUsersReference
 from devcontainer_lifecycle_reference import DevcontainerLifecycleReference
+from devcontainer_features_reference import DevcontainerFeaturesReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
 
 
-COMMANDS = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec")
+COMMANDS = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock")
 
 
 class CandidateCommands:
@@ -134,7 +135,7 @@ class DevcontainerCandidate(DevcontainerReference):
     def prepare_image(self):
         # Preserve the checked-in index digest, not a mutable tag or leaf-only
         # alias. The native provider pulls this exact image into its private store.
-        self.vm.command("devcontainer-image-pull", [self.vm.container, "image", "pull", "--arch", "arm64", IMAGE], timeout=120)
+        self.vm.command("devcontainer-image-pull", [self.vm.container, "image", "pull", "--arch", "arm64", self.reference_image], timeout=120)
 
     def arguments(self, command: str) -> list[str]:
         cli = self.inputs["devcontainerCandidate"]["executables"]["devcontainer"]
@@ -174,3 +175,14 @@ class DevcontainerUsersCandidate(DevcontainerBuildCandidate, DevcontainerUsersRe
 
 class DevcontainerLifecycleCandidate(DevcontainerCandidate, DevcontainerLifecycleReference):
     """D04 uses the same hook assertions with native image/process ownership."""
+
+
+class DevcontainerFeaturesCandidate(DevcontainerBuildCandidate, DevcontainerFeaturesReference):
+    """D05 uses the same locked Features and negative proof on the native engine."""
+
+    negative_stderr_suffix = "-stderr.log"
+
+    def arguments(self, command):
+        # Candidate's facade bypasses Reference.arguments in this MRO.
+        arguments = super().arguments(command)
+        return arguments + (["--frozen-lockfile"] if command == "up" else [])

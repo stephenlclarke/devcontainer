@@ -63,6 +63,8 @@ class DevcontainerReference(GuestFixture):
     fixture = FIXTURE
     keys = KEYS
     up_timeout = 120
+    reference_image = IMAGE
+    commands = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec")
 
     def __init__(self, vm, inputs: dict, owner: dict, *, observe=None):
         token = digest(canonical(owner))
@@ -70,7 +72,7 @@ class DevcontainerReference(GuestFixture):
         super().__init__(vm.socket, token, image, GUEST_API_VERSION, vm.journal, observe=observe)
         self.vm, self.inputs = vm, inputs
         self.workspace = vm.root / "workspace" / self.fixture
-        self.plan = {"owner": token, "workspace": str(self.workspace), "image": IMAGE,
+        self.plan = {"owner": token, "workspace": str(self.workspace), "image": self.reference_image,
                      "inputsSHA256": digest(canonical(inputs["devcontainers"])),
                      "fixtureSHA256": digest(canonical(inputs["devcontainerFixture"]))}
 
@@ -97,7 +99,7 @@ class DevcontainerReference(GuestFixture):
 
     def prepare_image(self):
         self.vm.command("devcontainer-image-pull", [self.inputs["tools"]["docker"], "--host",
-                        "unix://" + str(self.socket), "image", "pull", "--platform=linux/arm64", IMAGE], timeout=120)
+                        "unix://" + str(self.socket), "image", "pull", "--platform=linux/arm64", self.reference_image], timeout=120)
 
     def arguments(self, command: str) -> list[str]:
         tools = self.inputs["devcontainers"]
@@ -124,8 +126,8 @@ class DevcontainerReference(GuestFixture):
     def owned(self, value: dict) -> str:
         identifier = self.owned_workspace(value)
         images = self.inputs["workload"]["image"]
-        permitted = {images["manifest"], images["config"], IMAGE.split("@", 1)[1]}
-        if value["Config"].get("Image") != IMAGE or value.get("Image") not in permitted:
+        permitted = {images["manifest"], images["config"], self.reference_image.split("@", 1)[1]}
+        if value["Config"].get("Image") != self.reference_image or value.get("Image") not in permitted:
             raise ValueError("D01 resource ownership, image or workspace changed")
         return identifier
 
@@ -170,7 +172,7 @@ class DevcontainerReference(GuestFixture):
             return None
         if records["devcontainer-plan.json"] != canonical(self.plan) or self.vm.uncertain:
             raise ValueError("D01 has uncertain process or plan ownership")
-        for command in ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec"):
+        for command in self.commands:
             if command + "-intent.json" in records and command + "-exit.json" not in records:
                 raise ValueError("D01 command completion is unknown")
         known = json.loads(records.get("devcontainer-created.json", b"null"))

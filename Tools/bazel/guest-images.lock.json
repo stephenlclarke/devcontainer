@@ -3,6 +3,13 @@
   "scope": "stock-init-and-shared-workload-images; enhanced-init-and-kernel-qualification-pending",
   "images": [
     {
+      "name": "ubuntu-workload",
+      "repository": "docker.io/library/ubuntu",
+      "reference": "docker.io/library/ubuntu:24.04",
+      "manifest": "sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab",
+      "config": "sha256:ea17ec341c4211d1dd7f184a0dedf7dcb7945e92db20a5dde20544262214b84f"
+    },
+    {
       "name": "stock-vminit",
       "repository": "ghcr.io/apple/containerization/vminit",
       "manifest": "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",

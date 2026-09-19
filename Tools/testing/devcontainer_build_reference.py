@@ -53,17 +53,15 @@ class DevcontainerBuildReference(DevcontainerReference):
     def owned(self, value):
         identifier = self.owned_workspace(value)
         built = self.inspect_image(value["Config"].get("Image"))
-        base = self.inspect_image(IMAGE)
+        base = self.inspect_image(self.reference_image)
         image_id = value.get("Image")
         base_layers = base.get("RootFS", {}).get("Layers")
         built_layers = built.get("RootFS", {}).get("Layers")
-        configuration = json.loads(self.inputs["devcontainerFixture"]["configuration"])
         metadata = json.loads(built.get("Config", {}).get("Labels", {}).get("devcontainer.metadata", "null"))
-        expected = {name: configuration[name] for name in self.metadata_fields}
         admitted = self.inputs["workload"]["image"]
         if (not isinstance(image_id, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None or
-                built.get("Id") != image_id or metadata != [expected] or
-                base.get("Id") not in {admitted["manifest"], admitted["config"], IMAGE.split("@", 1)[1]} or
+                built.get("Id") != image_id or metadata != self.expected_metadata() or
+                base.get("Id") not in {admitted["manifest"], admitted["config"], self.reference_image.split("@", 1)[1]} or
                 not isinstance(base_layers, list) or not base_layers or
                 not isinstance(built_layers, list) or len(built_layers) <= len(base_layers) or
                 built_layers[:len(base_layers)] != base_layers or
@@ -71,3 +69,7 @@ class DevcontainerBuildReference(DevcontainerReference):
                     for layer in built_layers)):
             raise ValueError("D02 built image identity, base ancestry or metadata changed")
         return identifier
+
+    def expected_metadata(self):
+        configuration = json.loads(self.inputs["devcontainerFixture"]["configuration"])
+        return [{name: configuration[name] for name in self.metadata_fields}]

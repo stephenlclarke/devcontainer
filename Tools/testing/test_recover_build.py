@@ -273,5 +273,14 @@ class DevcontainerLifecycleRecoveryTests(DevcontainerRecoveryTests):
         return stack
 
 
+class DevcontainerFeaturesRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D05-features"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_features_reference.DevcontainerFeaturesReference", return_value=self.fixture))
+        return stack
+
+
 if __name__ == "__main__":
     unittest.main()

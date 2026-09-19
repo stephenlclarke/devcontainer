@@ -165,6 +165,20 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_d05_admits_ubuntu_and_original_feature_lock(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        images = json.loads((repository / "Tools/bazel/guest-images.lock.json").read_text())
+        with patch.object(released_docker, "require_retained", return_value={"executables": {}}), \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", side_effect=lambda image, _: {"image": image}):
+            result = released_docker.admit_docker(lock, {}, {}, images, Path("/scratch"), Path("/retained"),
+                                                 fixture="D05-features", repository=repository)
+        self.assertEqual(result["workload"]["image"]["name"], "ubuntu-workload")
+        self.assertIn("2.5.9", result["devcontainerFixture"]["lockfile"])
+        self.assertNotIn("dockerfile", result["devcontainerFixture"])
+
     def test_d04_admission_binds_original_host_and_guest_hooks_without_builder(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

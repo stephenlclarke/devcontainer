@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -60,7 +60,7 @@ def diagnostic_snapshot(path: Path) -> tuple[bytes, bytes]:
     return payload, canonical({"bytes": len(payload), "sha256": digest(payload), "truncated": len(data) > len(payload)})
 
 
-def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, *, builder_lock=None) -> dict:
+def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, *, builder_lock=None, fixture=None) -> dict:
     """Missing enhanced inputs fail before any host-service or store mutation."""
     names = {"apple-stock": "stock-vminit", "container-compose": "enhanced-vminit"}
     if lane not in names:
@@ -71,7 +71,8 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
     for image in images:
         validate_image(image)
     by_name = {image["name"]: image for image in images}
-    if len(by_name) != len(images) or any(name not in by_name for name in (names[lane], "alpine-workload")):
+    workload = "ubuntu-workload" if fixture == "D05-features" else "alpine-workload"
+    if len(by_name) != len(images) or any(name not in by_name for name in (names[lane], workload)):
         raise ValueError("Exact provider initialization/workload image is missing or ambiguous")
     init_reference = ("ghcr.io/apple/containerization/vminit:0.45.0" if lane == "apple-stock" else
                       "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567")
@@ -86,7 +87,7 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
                               retained / "prepared-releases", retained / "prepared-receipts")
     result = {"kernel": kernel,
               "initialization": require_image(by_name[names[lane]], retained / "guest-images"),
-              "workload": require_image(by_name["alpine-workload"], retained / "guest-images")}
+              "workload": require_image(by_name[workload], retained / "guest-images")}
     if builder_lock is not None:
         result["builder"] = admit_builder(builder_lock, lane, retained)
     return result
@@ -165,7 +166,7 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
-        if self.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment"}:
+        if self.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
             self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
             with deadline(300):
                 self.builder.provision()
@@ -173,17 +174,20 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"} or self.guest is not None:
+        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
-        if self.fixture in {"D02-dockerfile-config", "D03-users-environment"} and self.builder is None:
+        if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
-                                           DevcontainerBuildCandidate, DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
+                                           DevcontainerBuildCandidate, DevcontainerUsersCandidate,
+                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
-        if self.fixture in {"D02-dockerfile-config", "D03-users-environment"}:
-            adapter = DevcontainerUsersCandidate if self.fixture == "D03-users-environment" else DevcontainerBuildCandidate
+        if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+            adapter = {"D02-dockerfile-config": DevcontainerBuildCandidate,
+                       "D03-users-environment": DevcontainerUsersCandidate,
+                       "D05-features": DevcontainerFeaturesCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner,
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
@@ -194,7 +198,7 @@ class ReleasedGuest:
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks"}:
+        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()
@@ -284,7 +288,7 @@ def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
     steps = []
     builder_steps = [name.removesuffix("-intent.json") for name in records
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]
-    d01_steps = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec")
+    d01_steps = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock")
     for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))

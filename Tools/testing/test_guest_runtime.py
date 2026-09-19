@@ -139,6 +139,20 @@ class GuestRuntimeTests(unittest.TestCase):
                                                   'absent': True})
         require_guest_cleanup(records)
 
+    def test_d05_requires_builder_and_selects_features_adapter(self):
+        self.case.fixture = 'D05-features'
+        with self.assertRaisesRegex(ValueError, 'private builder'):
+            self.case.setup_devcontainer()
+        self.case.builder = Mock()
+        with patch('devcontainer_candidate.DevcontainerFeaturesCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            self.assertEqual(fixture.call_args.kwargs['before_build'], self.case.builder.verify_for_build)
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            self.case.cleanup()
+            fixture.return_value.cleanup.assert_called_once()
+            self.case.builder.cleanup.assert_called_once()
+
     def test_recovery_requires_both_build_output_and_builder_closure(self):
         for prefix in ('e04-images', 'e04-builder'):
             intent = canonical({'owner': 'test'})
@@ -188,8 +202,9 @@ class GuestRuntimeTests(unittest.TestCase):
                 patch("guest_runtime.require_image", side_effect=lambda image, root: {"image": image, "root": str(root)}) as i:
             result = admit_guest(kernel, images, "apple-stock", self.root)
         self.assertEqual(result["kernel"], {"kernel": "verified"})
-        self.assertEqual(result["initialization"]["image"], images["images"][0])
-        self.assertEqual(result["workload"]["image"], images["images"][1])
+        by_name = {image["name"]: image for image in images["images"]}
+        self.assertEqual(result["initialization"]["image"], by_name["stock-vminit"])
+        self.assertEqual(result["workload"]["image"], by_name["alpine-workload"])
         self.assertEqual(i.call_count, 2)
         self.assertEqual(k.call_args.args[2], self.root / "prepared-releases")
 
@@ -201,6 +216,17 @@ class GuestRuntimeTests(unittest.TestCase):
             k.assert_not_called()
             i.assert_not_called()
 
+    def test_d05_admission_selects_ubuntu_without_changing_other_fixtures(self):
+        kernel, images = self.locks()
+        with patch("guest_runtime.require_retained", return_value={"kernel": "verified"}), \
+                patch("guest_runtime.require_image", side_effect=lambda image, _: {"image": image}):
+            result = admit_guest(kernel, images, "apple-stock", self.root, fixture="D05-features")
+        self.assertEqual(result["workload"]["image"]["name"], "ubuntu-workload")
+        self.assertEqual(result["initialization"]["image"]["name"], "stock-vminit")
+        images["images"] = [image for image in images["images"] if image["name"] != "ubuntu-workload"]
+        with self.assertRaisesRegex(ValueError, "missing or ambiguous"):
+            admit_guest(kernel, images, "apple-stock", self.root, fixture="D05-features")
+
     def test_malformed_locks_unknown_provider_and_wrong_init_reference_fail(self):
         kernel, images = self.locks()
         for lane, k, i in [("other", kernel, images), ("apple-stock", kernel, {}),
@@ -209,7 +235,7 @@ class GuestRuntimeTests(unittest.TestCase):
             with self.subTest(lane=lane), self.assertRaises(ValueError):
                 admit_guest(k, i, lane, self.root)
         wrong = copy.deepcopy(images)
-        wrong["images"][0]["reference"] = "ghcr.io/apple/containerization/vminit:latest"
+        next(image for image in wrong["images"] if image["name"] == "stock-vminit")["reference"] = "ghcr.io/apple/containerization/vminit:latest"
         with self.assertRaisesRegex(ValueError, "reference differs"):
             admit_guest(kernel, wrong, "apple-stock", self.root)
         wrong_kernel = copy.deepcopy(kernel)
