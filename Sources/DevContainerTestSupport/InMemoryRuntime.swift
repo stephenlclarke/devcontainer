@@ -42,6 +42,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
         version: String = "test",
         commit: String = "test",
         distribution: String = "test",
+        capabilities: [RuntimeCapability: CapabilityStatus]? = nil,
         execSession: (any RuntimeProcessSession)? = nil,
         descriptorDelay: Duration? = nil,
         pullImageStream: (@Sendable (String) async throws
@@ -58,7 +59,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
             providerVersion: version,
             providerCommit: commit,
             distribution: distribution,
-            capabilities: Dictionary(
+            capabilities: capabilities ?? Dictionary(
                 uniqueKeysWithValues: RuntimeCapability.allCases.map { ($0, .native) }
             )
         )

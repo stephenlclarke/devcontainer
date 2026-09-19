@@ -78,7 +78,7 @@ public struct ExecutableComposeProvider: ComposeProvider {
                         .native
                     case .archive, .attach, .events, .exec, .portForwarding:
                         .emulated
-                    case .registryAuthentication:
+                    case .registryAuthentication, .composeHealthPolicy:
                         .unsupported
                     }
                     return (capability, status)

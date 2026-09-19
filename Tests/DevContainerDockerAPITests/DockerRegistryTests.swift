@@ -60,7 +60,7 @@ func `active exec registry routes resize to the original session`() async throws
 }
 
 @Test
-func `health registry observes intervals retries start periods and resets`() async {
+func `health registry observes intervals retries start periods and resets`() async throws {
     let registry = ContainerHealthRegistry()
     let start = Date(timeIntervalSince1970: 1000)
     let check = ContainerHealthcheck(
@@ -68,13 +68,8 @@ func `health registry observes intervals retries start periods and resets`() asy
         intervalNanoseconds: 1_000_000_000,
         retries: 2
     )
-    #expect(await healthDecisionIsCheck(
+    let first = try await recordHealthObservation(
         registry,
-        startedAt: start,
-        healthcheck: check,
-        now: start
-    ))
-    let first = await registry.record(
         id: "fixture",
         startedAt: start,
         healthcheck: check,
@@ -93,13 +88,8 @@ func `health registry observes intervals retries start periods and resets`() asy
         now: start.addingTimeInterval(0.2)
     )
     #expect(cached == first)
-    #expect(await healthDecisionIsCheck(
+    let second = try await recordHealthObservation(
         registry,
-        startedAt: start,
-        healthcheck: check,
-        now: start.addingTimeInterval(1.2)
-    ))
-    let second = await registry.record(
         id: "fixture",
         startedAt: start,
         healthcheck: check,
@@ -114,11 +104,12 @@ func `health registry observes intervals retries start periods and resets`() asy
 }
 
 @Test
-func `health registry recovers honors start periods and resets`() async {
+func `health registry recovers honors start periods and resets`() async throws {
     let registry = ContainerHealthRegistry()
     let start = Date(timeIntervalSince1970: 1000)
-    let check = ContainerHealthcheck(test: ["CMD", "false"], retries: 2)
-    _ = await registry.record(
+    let check = ContainerHealthcheck(test: ["CMD", "false"], intervalNanoseconds: 1_000_000_000, retries: 2)
+    _ = try await recordHealthObservation(
+        registry,
         id: "fixture",
         startedAt: start,
         healthcheck: check,
@@ -128,7 +119,8 @@ func `health registry recovers honors start periods and resets`() async {
             ended: start.addingTimeInterval(0.1)
         )
     )
-    let recovered = await registry.record(
+    let recovered = try await recordHealthObservation(
+        registry,
         id: "fixture",
         startedAt: start,
         healthcheck: check,
@@ -140,13 +132,27 @@ func `health registry recovers honors start periods and resets`() async {
     )
     #expect(recovered.status == "healthy")
     #expect(recovered.failingStreak == 0)
+    await registry.reset(id: "fixture")
+    #expect(await healthDecisionIsCheck(
+        registry,
+        startedAt: start,
+        healthcheck: check,
+        now: start.addingTimeInterval(3)
+    ))
+    await registry.remove(id: "fixture")
+}
 
+@Test
+func `health registry ignores failure during initial grace`() async throws {
+    let registry = ContainerHealthRegistry()
+    let start = Date(timeIntervalSince1970: 1000)
     let grace = ContainerHealthcheck(
         test: ["CMD", "false"],
         retries: 1,
         startPeriodNanoseconds: 5_000_000_000
     )
-    let warming = await registry.record(
+    let warming = try await recordHealthObservation(
+        registry,
         id: "grace",
         startedAt: start,
         healthcheck: grace,
@@ -158,14 +164,6 @@ func `health registry recovers honors start periods and resets`() async {
     )
     #expect(warming.status == "starting")
     #expect(warming.failingStreak == 0)
-    await registry.reset(id: "fixture")
-    #expect(await healthDecisionIsCheck(
-        registry,
-        startedAt: start,
-        healthcheck: check,
-        now: start.addingTimeInterval(3)
-    ))
-    await registry.remove(id: "fixture")
 }
 
 private func healthDecisionIsCheck(

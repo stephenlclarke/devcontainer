@@ -26,6 +26,7 @@ public enum RuntimeCapability: String, Codable, CaseIterable, Hashable, Sendable
     case attach
     case build
     case containers
+    case composeHealthPolicy
     case events
     case exec
     case images

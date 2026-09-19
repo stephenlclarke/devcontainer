@@ -168,6 +168,7 @@ struct AppleContainerRuntimeTests {
         #expect(descriptor.providerVersion == "1.1.0")
         #expect(descriptor.providerCommit == "fixture-commit")
         #expect(descriptor.capabilities[.events] == .emulated)
+        #expect(descriptor.capabilities[.composeHealthPolicy] == .emulated)
 
         try await assertContainerInventory(runtime, context: context)
         try await assertImageInventory(runtime, context: context)

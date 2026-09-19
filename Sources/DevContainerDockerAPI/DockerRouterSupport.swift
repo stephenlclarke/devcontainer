@@ -1035,8 +1035,12 @@ extension DockerRouter {
             healthcheck: healthcheck,
             now: started
         )
-        if case let .cached(value) = decision {
+        let reservation: UUID
+        switch decision {
+        case let .cached(value):
             return value
+        case let .check(token):
+            reservation = token
         }
 
         let exitCode = await executeHealthCheck(
@@ -1048,6 +1052,7 @@ extension DockerRouter {
         return await healthChecks.record(
             id: identifier,
             startedAt: snapshot.startedAt,
+            reservation: reservation,
             healthcheck: healthcheck,
             observation: ContainerHealthObservation(
                 exitCode: exitCode,

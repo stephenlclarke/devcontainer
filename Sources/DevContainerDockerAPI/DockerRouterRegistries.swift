@@ -59,7 +59,7 @@ actor DockerMutationReplayRegistry {
 }
 
 enum ContainerHealthDecision: Sendable {
-    case check
+    case check(UUID)
     case cached(DockerContainerHealth)
 }
 
@@ -76,6 +76,7 @@ actor ContainerHealthRegistry {
         var status: String
         var failures: Int
         var logs: [DockerHealthLog]
+        var reservation: UUID?
 
         var value: DockerContainerHealth {
             DockerContainerHealth(
@@ -94,22 +95,25 @@ actor ContainerHealthRegistry {
         healthcheck: ContainerHealthcheck,
         now: Date
     ) -> ContainerHealthDecision {
-        var entry = entries[id]
-        if entry?.startedAt != startedAt {
-            entry = Entry(
+        var current = entries[id] ?? Entry(startedAt: startedAt, status: "starting", failures: 0, logs: [])
+        if current.startedAt != startedAt {
+            current = Entry(
                 startedAt: startedAt,
                 status: "starting",
                 failures: 0,
                 logs: []
             )
         }
-        guard var current = entry else {
-            return .check
+        if current.reservation != nil {
+            return .cached(current.value)
         }
-        let interval = max(
-            0.1,
-            Double(healthcheck.intervalNanoseconds) / 1_000_000_000
-        )
+        let inStartup = current.status == "starting" && (startedAt.map {
+            now.timeIntervalSince($0) * 1_000_000_000 < Double(healthcheck.startPeriodNanoseconds)
+        } ?? false)
+        // Docker uses its default five-second startup interval while warming
+        // up. Explicit start_interval is not accepted by native policy v1.
+        let interval = inStartup ? 5 : (healthcheck.intervalNanoseconds > 0
+            ? Double(healthcheck.intervalNanoseconds) / 1_000_000_000 : 30)
         if let lastCheckedAt = current.lastCheckedAt,
            now.timeIntervalSince(lastCheckedAt) < interval
         {
@@ -119,31 +123,23 @@ actor ContainerHealthRegistry {
         // Reserve this check interval so concurrent inspect calls do not
         // launch duplicate health processes in the same container.
         current.lastCheckedAt = now
+        let reservation = UUID()
+        current.reservation = reservation
         entries[id] = current
-        return .check
+        return .check(reservation)
     }
 
     func record(
         id: String,
         startedAt: Date?,
+        reservation: UUID,
         healthcheck: ContainerHealthcheck,
         observation: ContainerHealthObservation
-    ) -> DockerContainerHealth {
-        var entry = entries[id]
-        if entry?.startedAt != startedAt {
-            entry = Entry(
-                startedAt: startedAt,
-                status: "starting",
-                failures: 0,
-                logs: []
-            )
-        }
-        var current = entry ?? Entry(
-            startedAt: startedAt,
-            status: "starting",
-            failures: 0,
-            logs: []
-        )
+    ) -> DockerContainerHealth? {
+        // A probe completing after reset/removal/restart must neither recreate
+        // old state nor release another probe's reservation (including nil dates).
+        guard var current = entries[id], current.startedAt == startedAt,
+              current.reservation == reservation else { return nil }
         let withinStartPeriod = startedAt.map {
             observation.started.timeIntervalSince($0) * 1_000_000_000
                 < Double(healthcheck.startPeriodNanoseconds)
@@ -151,13 +147,12 @@ actor ContainerHealthRegistry {
         if observation.exitCode == 0 {
             current.status = "healthy"
             current.failures = 0
-        } else if withinStartPeriod {
-            current.status = "starting"
-        } else {
+        } else if !(withinStartPeriod && current.status == "starting") {
             current.failures += 1
-            current.status = current.failures >= max(1, healthcheck.retries)
-                ? "unhealthy"
-                : "starting"
+            let retries = healthcheck.retries > 0 ? healthcheck.retries : 3
+            if current.failures >= retries {
+                current.status = "unhealthy"
+            }
         }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -171,6 +166,7 @@ actor ContainerHealthRegistry {
         )
         current.logs = Array(current.logs.suffix(5))
         current.lastCheckedAt = observation.ended
+        current.reservation = nil
         entries[id] = current
         return current.value
     }

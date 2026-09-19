@@ -57,7 +57,8 @@ extension AppleContainerRuntime {
                 privileged: false,
                 initProcess: configuration.useInit,
                 capabilitiesToAdd: configuration.capAdd,
-                capabilitiesToDrop: configuration.capDrop
+                capabilitiesToDrop: configuration.capDrop,
+                healthcheck: Self.composeHealthPolicy(labels: labels)
             ),
             state: value.status.rawValue,
             createdAt: configuration.creationDate,
@@ -135,6 +136,7 @@ extension AppleContainerRuntime {
             descriptorDigest: (image?["descriptor"] as? [String: Any])?["digest"] as? String,
             labels: labels
         )
+        spec.healthcheck = try Self.composeHealthPolicy(labels: labels)
         return AppleContainerRecord(
             id: id,
             dockerID: dockerID,
@@ -287,6 +289,9 @@ extension AppleContainerRuntime {
         observed: ContainerSpec
     ) -> ContainerSpec {
         var spec = requested
+        if observed.labels[composeHealthPolicyLabel] != nil {
+            spec.healthcheck = observed.healthcheck
+        }
         if observed.labels[composeImageReferenceLabel] != nil {
             // containerRecord already proved this alias against the native
             // descriptor; older adopted metadata must not erase its spelling.

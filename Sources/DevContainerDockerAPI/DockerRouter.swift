@@ -667,7 +667,9 @@ extension DockerRouter {
                             "ApiVersion": descriptor.dockerAPIMaximum,
                             "MinAPIVersion": descriptor.dockerAPIMinimum,
                             "Provider": descriptor.provider.rawValue,
-                            "Distribution": descriptor.distribution
+                            "Distribution": descriptor.distribution,
+                            "NativeComposeHealthPolicy":
+                                descriptor.capabilities[.composeHealthPolicy] == .emulated ? "1" : "0"
                         ]
                     )
                 ],

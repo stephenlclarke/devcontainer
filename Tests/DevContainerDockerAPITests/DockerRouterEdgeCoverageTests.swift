@@ -493,7 +493,7 @@ func `health registry accepts a missing container start time`() async {
     let registry = ContainerHealthRegistry()
     let now = Date(timeIntervalSince1970: 1000)
     let check = ContainerHealthcheck(test: ["CMD", "true"])
-    guard case .check = await registry.decision(
+    guard case let .check(reservation) = await registry.decision(
         id: "nil-start",
         startedAt: nil,
         healthcheck: check,
@@ -505,6 +505,7 @@ func `health registry accepts a missing container start time`() async {
     let health = await registry.record(
         id: "nil-start",
         startedAt: nil,
+        reservation: reservation,
         healthcheck: check,
         observation: ContainerHealthObservation(
             exitCode: 0,
@@ -512,7 +513,7 @@ func `health registry accepts a missing container start time`() async {
             ended: now
         )
     )
-    #expect(health.status == "healthy")
+    #expect(health?.status == "healthy")
 }
 
 @Test

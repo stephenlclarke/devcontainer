@@ -224,6 +224,7 @@ public extension AppleContainerRuntime {
                 .attach: .emulated,
                 .build: .native,
                 .containers: .native,
+                .composeHealthPolicy: .emulated,
                 .events: .emulated,
                 .exec: .native,
                 .images: .native,

@@ -22,6 +22,8 @@ D07 adds typed bind/named-volume projection to the same frontend mount parser. I
 
 ## Goals
 
+C02's unreleased stock Compose bridge carries requested health policy in a bounded versioned native label, negotiated before project resources. The stock adapter validates and adopts it; the existing Engine evaluator executes guest probes and derives observed health. Unique probe reservations reject late results across reset/restart/removal. No Docker process or enhanced fork dependency is introduced. This bounded inspect-driven bridge does not claim autonomous Docker health scheduling or event persistence; [the contract](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) records qualification and unsupported fields.
+
 The unreleased Bazel candidate adds a project-owned `devcontainer-docker` frontend beneath its private official Dev Containers CLI bundle. D02 builds use the shared Unix HTTP transport, local tar contexts and the selected stock/enhanced Apple builder. Generated Dockerfiles outside the workspace are injected with archive-only exclusions; build errors remain failures even inside HTTP 200 progress streams. The current bounded frontend rejects existing `.dockerignore` files and unsupported flags rather than claiming full Docker-build semantics. Native image inspection projects ordered uncompressed layer digests from descriptor-bound OCI configuration. Candidate live qualification remains distinct from the immutable stable-release matrix.
 
 - Reach 100% behavioural parity with Docker-based Development Containers across the complete audited Development Containers surface.
