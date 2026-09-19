@@ -202,7 +202,8 @@ extension DockerRouter {
         _ request: DockerCreateContainerRequest
     ) throws {
         if let interval = request.healthcheck?.startInterval,
-           interval != 0 && interval < 1_000_000 {
+           interval != 0 && interval < 1_000_000
+        {
             throw DevContainerError(
                 .invalidRequest, message: "Healthcheck.StartInterval must be zero or at least one millisecond"
             )
@@ -225,10 +226,9 @@ extension DockerRouter {
         if request.shell?.isEmpty == false {
             try unsupportedCreateField("Shell")
         }
-        if request.stdinOnce == true {
-            try unsupportedCreateField("StdinOnce")
+        if let stopTimeout = request.stopTimeout {
+            try Self.validateStopTimeout(Int64(stopTimeout))
         }
-        if let stopTimeout = request.stopTimeout { try Self.validateStopTimeout(Int64(stopTimeout)) }
         for (index, mount) in (request.mounts ?? []).enumerated() {
             try validateAdvancedMountOptions(
                 mount,
@@ -677,6 +677,7 @@ extension DockerRouter {
             networks: networkAttachments(request),
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
+            standardInputOnce: request.stdinOnce,
 
             privileged: request.hostConfig?.privileged ?? false,
             initProcess: request.hostConfig?.initProcess ?? false,
@@ -899,6 +900,7 @@ extension DockerRouter {
                 attachStderr: true,
                 tty: snapshot.spec.terminal,
                 openStdin: snapshot.spec.openStandardInput,
+                stdinOnce: snapshot.spec.standardInputOnce ?? false,
                 env: env,
                 cmd: snapshot.spec.command,
                 image: snapshot.spec.requestedImageReference ?? snapshot.spec.image,
@@ -1051,7 +1053,7 @@ extension DockerRouter {
             startedAt: snapshot.startedAt,
             healthcheck: healthcheck,
             now: started,
-            allowProbe: await recoveryBarrier.healthProbesAllowed
+            allowProbe: recoveryBarrier.healthProbesAllowed
         )
         let reservation: UUID
         switch decision {
@@ -1067,7 +1069,9 @@ extension DockerRouter {
             timeoutNanoseconds: healthcheck.timeoutNanoseconds,
             context: context
         )
-        if exitCode < 0 { await recoveryBarrier.recordUncertainWork() }
+        if exitCode < 0 {
+            await recoveryBarrier.recordUncertainWork()
+        }
         return await healthChecks.record(
             id: identifier,
             startedAt: snapshot.startedAt,

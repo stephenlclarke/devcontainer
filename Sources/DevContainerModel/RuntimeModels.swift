@@ -311,6 +311,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var networks: [NetworkAttachment]
     public var terminal: Bool
     public var openStandardInput: Bool
+    /// Nil preserves legacy metadata; true closes non-TTY stdin after its attached client disconnects.
+    public var standardInputOnce: Bool?
     public var privileged: Bool
     public var initProcess: Bool
     public var autoRemove: Bool
@@ -344,6 +346,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         networks: [NetworkAttachment] = [],
         terminal: Bool = false,
         openStandardInput: Bool = false,
+        standardInputOnce: Bool? = nil,
         privileged: Bool = false,
         initProcess: Bool = false,
         autoRemove: Bool = false,
@@ -372,6 +375,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.networks = networks
         self.terminal = terminal
         self.openStandardInput = openStandardInput
+        self.standardInputOnce = standardInputOnce
         self.privileged = privileged
         self.initProcess = initProcess
         self.autoRemove = autoRemove

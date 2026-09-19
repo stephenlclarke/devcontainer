@@ -124,6 +124,36 @@ struct AppleContainerIOTests {
         #expect(!channel.hasExited)
     }
 
+    @Test func `stdin EOF interrupts another attachment blocked in a write`() async throws {
+        let channel = try AppleContainerIO(createdAt: Date(), terminal: false, openStandardInput: true)
+        let first = channel.attach()
+        let second = channel.attach()
+        let handles = try duplicate(channel.bootstrapHandles())
+        let input = try #require(handles[0])
+        try await channel.bind(AttachProcess())
+        let blocked = Task { try await first.write(Data(repeating: 65, count: 4 * 1024 * 1024)) }
+        var event = pollfd(fd: input.fileDescriptor, events: Int16(POLLIN), revents: 0)
+        #expect(Darwin.poll(&event, 1, 5000) > 0)
+        // Output failure can revoke a subscription before transport cleanup.
+        // Its EOF still belongs to this init, never a replacement generation.
+        await second.cancel()
+        try await second.closeStandardInput()
+        await #expect(throws: CancellationError.self) { try await blocked.value }
+        #expect(!channel.isFinished)
+        let flags = fcntl(input.fileDescriptor, F_GETFL)
+        #expect(fcntl(input.fileDescriptor, F_SETFL, flags | O_NONBLOCK) == 0)
+        var bytes = [UInt8](repeating: 0, count: 16384)
+        var count = Darwin.read(input.fileDescriptor, &bytes, bytes.count)
+        while count > 0 {
+            count = Darwin.read(input.fileDescriptor, &bytes, bytes.count)
+        }
+        #expect(count == 0)
+        await channel.shutdown()
+        for handle in handles {
+            try handle?.close()
+        }
+    }
+
     @Test func `shutdown seals queued resizes and joins accepted control operations`() async throws {
         let channel = try AppleContainerIO(createdAt: Date(), terminal: true, openStandardInput: false)
         let session = channel.attach()

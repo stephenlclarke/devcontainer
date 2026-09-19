@@ -696,6 +696,7 @@ struct DockerContainerConfig: Encodable {
     let attachStderr: Bool
     let tty: Bool
     let openStdin: Bool
+    let stdinOnce: Bool
     let env: [String]
     let cmd: [String]
     let image: String
@@ -723,6 +724,7 @@ struct DockerContainerConfig: Encodable {
         case image = "Image"
         case labels = "Labels"
         case openStdin = "OpenStdin"
+        case stdinOnce = "StdinOnce"
         case tty = "Tty"
         case user = "User"
         case volumes = "Volumes"

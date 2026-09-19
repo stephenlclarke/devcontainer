@@ -216,7 +216,6 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "NetworkDisabled": true],
         ["Image": "edge:latest", "OnBuild": ["RUN true"]],
         ["Image": "edge:latest", "Shell": ["/bin/sh"]],
-        ["Image": "edge:latest", "StdinOnce": true],
         ["Image": "edge:latest", "StopTimeout": -1],
         ["Image": "edge:latest", "HostConfig": ["CpuShares": 1]],
         ["Image": "edge:latest", "HostConfig": ["CpusetCpus": "0"]],

@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-The unreleased init-attachment path now connects input/output before native startup, preserves independent clients and real exit status, and joins cleanup before replacing a process generation. Stock terminal resize is applied only after startup. [Runtime evidence and limitations](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguish this implementation from the unfinished HTTP/Compose foreground path, live parity and release gates. Invalid compiler coverage counters still prevent release-quality certification.
+The unreleased init-attachment path connects input/output before native startup, preserves independent clients and real exit status, and joins cleanup before replacing a process generation. The HTTP adapter now applies stream selection, stdin EOF policy, TTY detach keys, bounded output and generation-checked post-start resize. Native source-aware log history and the prepared Compose foreground client remain unfinished. [Runtime and HTTP evidence](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguishes component tests from live parity and release gates. Invalid compiler coverage counters still prevent release-quality certification.
 
 The gateway candidate also preserves explicit entrypoint clearing, environment removals and descriptor-bound image command defaults through native launch and saved metadata. Native creation projects memory/shm size, read-only rootfs, sysctls and stop signal; this is not a claim of Docker cgroup accounting parity. [Component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) is recorded separately from pending live parity and release gates.
 

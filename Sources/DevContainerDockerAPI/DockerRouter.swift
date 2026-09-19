@@ -428,7 +428,7 @@ extension DockerRouter {
         }
         if method == .post,
            segments.first == "containers",
-           ["wait", "attach"].contains(segments.last ?? "")
+           ["wait", "attach", "resize"].contains(segments.last ?? "")
         {
             return false
         }
@@ -935,15 +935,23 @@ extension DockerRouter {
         case (.post, "attach"):
             return try await containerAttachResponse(
                 id: id,
+                target: target,
                 context: context,
                 webSocket: false
             )
         case (.get, "attach") where segments.count == 4 && segments[3] == "ws":
             return try await containerAttachResponse(
                 id: id,
+                target: target,
                 context: context,
                 webSocket: true
             )
+        case (.post, "resize") where segments.count == 3:
+            try await runtime.resizeContainer(
+                id: id, width: unsigned16(target.first("w"), name: "width"),
+                height: unsigned16(target.first("h"), name: "height"), context: context
+            )
+            return .empty(status: 200)
         default:
             return nil
         }
@@ -951,16 +959,29 @@ extension DockerRouter {
 
     private func containerAttachResponse(
         id: String,
+        target: ParsedTarget,
         context: RuntimeRequestContext,
         webSocket: Bool
     ) async throws -> DockerHTTPResponse {
-        let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
-        let session = try await runtime.attachContainer(
-            id: id,
-            terminal: terminal,
-            context: context
+        let options = try DockerAttachmentOptions(target: target)
+        let snapshot = try await runtime.inspectContainer(id: id, context: context)
+        let terminal = snapshot.spec.terminal
+        let identity = snapshot.dockerID.rawValue
+        let session = options.needsLiveSession(spec: snapshot.spec)
+            ? try await runtime.attachContainer(id: identity, terminal: terminal, context: context) : nil
+        let history: AsyncThrowingStream<RuntimeIOFrame, any Error>?
+        do {
+            history = options.logs ? try await runtime.containerAttachmentHistory(
+                id: identity, standardOutput: options.standardOutput,
+                standardError: options.standardError, context: context
+            ) : nil
+        } catch {
+            await session?.cancel()
+            throw error
+        }
+        let adaptedSession = DockerContainerAttachment(
+            session: session, history: history, options: options, spec: snapshot.spec
         )
-        let adaptedSession = DockerRuntimeHijackSession(session)
         if webSocket {
             return DockerHTTPResponse(
                 status: 101,

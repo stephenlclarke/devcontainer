@@ -192,13 +192,21 @@ final class AppleContainerIO: @unchecked Sendable {
         }
     }
 
-    fileprivate func closeInput(attachment: UUID) async throws {
-        try attachments.requireActive(attachment)
-        try await inputWriter?.close()
+    fileprivate func closeInput(attachment _: UUID) async throws {
+        // A failed output subscriber still owes StdinOnce EOF. Its capability
+        // names this retained generation, never a replacement using the same ID.
+        // Global stdin EOF must also interrupt another attachment's blocked
+        // write. A queue-only close could sit behind that write indefinitely.
+        inputWriter?.cancel()
+        await inputWriter?.waitForCompletion()
     }
 
     fileprivate func resize(width: UInt16, height: UInt16, attachment: UUID) async throws {
         try attachments.requireActive(attachment)
+        try await resize(width: width, height: height)
+    }
+
+    func resize(width: UInt16, height: UInt16) async throws {
         guard terminal else {
             throw DevContainerError(.conflict, message: "Container does not have a terminal")
         }

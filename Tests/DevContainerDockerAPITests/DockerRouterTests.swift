@@ -329,7 +329,6 @@ func `known unsupported create fields fail before runtime side effects`() async 
         (#"{"Image":"alpine:test","NetworkDisabled":true}"#, "NetworkDisabled"),
         (#"{"Image":"alpine:test","OnBuild":["RUN true"]}"#, "OnBuild"),
         (#"{"Image":"alpine:test","Shell":["/bin/sh","-c"]}"#, "Shell"),
-        (#"{"Image":"alpine:test","StdinOnce":true}"#, "StdinOnce"),
         (
             #"{"Image":"alpine:test","HostConfig":{"PublishAllPorts":true}}"#,
             "HostConfig.PublishAllPorts"

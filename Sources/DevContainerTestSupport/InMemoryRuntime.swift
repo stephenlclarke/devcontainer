@@ -23,8 +23,10 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         // This fake's mutations are synchronous and have no native RPCs.
         try context.checkActive()
     }
+
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
+    private let attachmentSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
     private let buildImageStream: (@Sendable (ImageBuildRequest) async throws
         -> AsyncThrowingStream<Data, any Error>)?
@@ -41,6 +43,7 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
     private var eventValues: [RuntimeEvent] = []
     private var nextEventSequence: Int64 = 1
     public private(set) var stopTimeouts: [Duration?] = []
+    public private(set) var attachmentCount = 0
 
     public init(
         provider: BackendProvider = .stock,
@@ -49,6 +52,7 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         distribution: String = "test",
         capabilities: [RuntimeCapability: CapabilityStatus]? = nil,
         execSession: (any RuntimeProcessSession)? = nil,
+        attachmentSession: (any RuntimeProcessSession)? = nil,
         descriptorDelay: Duration? = nil,
         pullImageStream: (@Sendable (String) async throws
             -> AsyncThrowingStream<Data, any Error>)? = nil,
@@ -56,6 +60,7 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
             -> AsyncThrowingStream<Data, any Error>)? = nil
     ) {
         self.execSession = execSession
+        self.attachmentSession = attachmentSession
         self.descriptorDelay = descriptorDelay
         self.buildImageStream = buildImageStream
         self.pullImageStream = pullImageStream
@@ -339,12 +344,24 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         return Self.frameStream(frames)
     }
 
+    public func containerAttachmentHistory(
+        id: String, standardOutput: Bool, standardError: Bool, context: RuntimeRequestContext
+    ) throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
+        try containerLogs(
+            id: id, follow: false, standardOutput: standardOutput, standardError: standardError, context: context
+        )
+    }
+
     public func attachContainer(
         id: String,
         terminal: Bool,
         context _: RuntimeRequestContext
     ) throws -> any RuntimeProcessSession {
         _ = try container(id: id)
+        attachmentCount += 1
+        if let attachmentSession {
+            return attachmentSession
+        }
         return InMemoryProcessSession(
             frames: [
                 RuntimeIOFrame(

@@ -154,6 +154,22 @@ extension AppleContainerRuntime {
         return try await prepareContainerIO(snapshot: snapshot, context: context).attach()
     }
 
+    public func resizeContainer(
+        id: String, width: UInt16, height: UInt16, context: RuntimeRequestContext
+    ) async throws {
+        let snapshot = try await inspectContainer(id: id, context: context)
+        try await requireCompletedCreation(id: snapshot.runtimeID.rawValue)
+        guard snapshot.state == .running, snapshot.spec.terminal,
+              let channel = containerIO[snapshot.runtimeID.rawValue],
+              channel.createdAt == snapshot.createdAt, channel.ownsProcess(startedAt: snapshot.startedAt)
+        else {
+            throw DevContainerError(.conflict, message: "Container has no owned running terminal")
+        }
+        // The broker validates the native generation again and joins admitted
+        // control work before allowing a replacement init to claim this ID.
+        try await channel.resize(width: width, height: height)
+    }
+
     private func prepareContainerIO(
         snapshot: ContainerSnapshot, context: RuntimeRequestContext
     ) async throws -> AppleContainerIO {

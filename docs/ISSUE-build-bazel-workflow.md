@@ -2,7 +2,7 @@
 
 ## Problem description
 
-The prepared foreground path now has a runtime-owned descriptor/lifecycle implementation, rather than attaching only to polled logs. [Current component evidence](bazel-test-harness.md#foreground-init-attachment-development) covers stock-compatible post-start resize, cancellation of queued input without disrupting other clients, and identity-preserving cleanup barriers. The public HTTP/Compose path and live matrix still need completion, and malformed runtime coverage counters remain a release-quality blocker.
+The prepared foreground path now has runtime-owned descriptors and a bounded HTTP adapter. [Current component evidence](bazel-test-harness.md#foreground-init-attachment-development) covers effective stream selection, stdin EOF policy, detach keys, quiet-client cancellation, stock-compatible post-start resize and identity-preserving cleanup barriers. Native source-aware attachment history, prepared Compose foreground integration and the live matrix still need completion; malformed runtime coverage counters remain a release-quality blocker.
 
 The output-cancellation follow-up removes duplicate direct-API reader ownership, joins cleanup even when its waiter is cancelled, and preserves the real terminal process exit status. Both profile-focused regressions pass; [exact evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) records fail-before proof and the remaining foreground/coverage gates.
 

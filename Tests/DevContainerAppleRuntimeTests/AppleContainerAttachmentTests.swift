@@ -119,13 +119,21 @@ struct AppleContainerAttachmentTests {
         spec.terminal = true
         _ = try await runtime.createContainer(spec: spec, context: .init())
         let session = try await runtime.attachContainer(id: "fixture", terminal: true, context: .init())
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.resizeContainer(id: "fixture", width: 80, height: 24, context: .init())
+        }
         try await runtime.startContainer(id: "fixture", context: .init())
         try await session.resize(width: 100, height: 40)
+        try await runtime.resizeContainer(id: "fixture", width: 132, height: 43, context: .init())
+        #expect(await bootstrap.processes.first?.sizes == ["100x40", "132x43"])
         await creator.recordPriorStart()
         await #expect(throws: DevContainerError.self) {
             try await runtime.attachContainer(id: "fixture", terminal: true, context: .init())
         }
         await #expect(throws: DevContainerError.self) { try await session.resize(width: 80, height: 24) }
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.resizeContainer(id: "fixture", width: 80, height: 24, context: .init())
+        }
         try await #require(await bootstrap.processes.first).finish(0)
         #expect(try await session.wait() == 0)
         await runtime.shutdown()
@@ -138,6 +146,22 @@ struct AppleContainerAttachmentTests {
             command: ["/bin/sh"],
             openStandardInput: true
         )
+    }
+
+    @Test func `native attachment history cannot relabel merged raw logs`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime(useDirectProcessAPI: true)
+        // Until a source-aware persisted history reader is connected, no
+        // selection may call the native merged-log API and fabricate channels.
+        for selection in [(true, false), (false, true), (true, true)] {
+            await #expect(throws: DevContainerError.self) {
+                try await runtime.containerAttachmentHistory(
+                    id: "fixture", standardOutput: selection.0, standardError: selection.1, context: .init()
+                )
+            }
+        }
+        await runtime.shutdown()
     }
 
     @Test(arguments: [false, true])
@@ -162,7 +186,7 @@ struct AppleContainerAttachmentTests {
         await #expect(throws: DevContainerError.self) { try await runtime.requireRecoveryQuiescence(context: .init()) }
         let attached = Task { try await runtime.attachContainer(id: "fixture", terminal: true, context: .init()) }
         let starting = Task { try await runtime.startContainer(id: "fixture", context: .init()) }
-        while (await runtime.containerIOClosures)["fixture"]?.waiters != 2 {
+        while await (runtime.containerIOClosures)["fixture"]?.waiters != 2 {
             await Task.yield()
         }
         #expect(await runtime.containerIO["fixture"] == nil)
@@ -225,6 +249,7 @@ private actor AttachedInitProcess: ClientProcess {
     var exit: Int32?
     var waiter: CheckedContinuation<Int32, Never>?
     var kills = 0
+    var sizes: [String] = []
 
     init(creator: AppleContainerCreateTests.Creator, handles: [FileHandle?]) {
         self.creator = creator
@@ -262,7 +287,10 @@ private actor AttachedInitProcess: ClientProcess {
         return await withCheckedContinuation { waiter = $0 }
     }
 
-    func resize(_: Terminal.Size) { /* Nonterminal runtime fixture. */ }
+    func resize(_ size: Terminal.Size) {
+        sizes.append("\(size.width)x\(size.height)")
+    }
+
     func kill(_: Int32) {
         kills += 1
     }

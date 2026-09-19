@@ -159,9 +159,27 @@ public protocol ContainerRuntime: Sendable {
         terminal: Bool,
         context: RuntimeRequestContext
     ) async throws -> any RuntimeProcessSession
+    func resizeContainer(id: String, width: UInt16, height: UInt16, context: RuntimeRequestContext) async throws
+    /// Finite, bounded-acquisition history retaining the original stream tags.
+    /// A provider must not relabel a merged native log to satisfy this contract.
+    func containerAttachmentHistory(
+        id: String, standardOutput: Bool, standardError: Bool, context: RuntimeRequestContext
+    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
 }
 
 public extension ContainerRuntime {
+    func containerAttachmentHistory(
+        id _: String, standardOutput _: Bool, standardError _: Bool, context _: RuntimeRequestContext
+    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
+        throw DevContainerError(
+            .unsupportedCapability, message: "Source-aware container attachment history is unavailable"
+        )
+    }
+
+    func resizeContainer(id _: String, width _: UInt16, height _: UInt16, context _: RuntimeRequestContext) async throws {
+        throw DevContainerError(.unsupportedCapability, message: "Container terminal resize is unavailable")
+    }
+
     /// Compatibility fallback for providers that have not yet adopted an
     /// authority-owned restart transaction.
     func restartContainer(
