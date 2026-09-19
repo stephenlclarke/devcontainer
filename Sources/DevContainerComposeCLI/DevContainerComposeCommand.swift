@@ -73,6 +73,14 @@ enum DevContainerComposeCommand {
         // Reject a missing selected frontend before recording project ownership.
         // Never fall back to a different orchestration tool or runtime.
         try requireExecutable(child.executable)
+        if let version = try await nativeShortVersion(
+            provider: provider, executable: child.executable,
+            arguments: child.arguments, environment: child.environment
+        ) {
+            FileHandle.standardOutput.write(version.standardOutput)
+            FileHandle.standardError.write(version.standardError)
+            return version.exitCode
+        }
         let claim = try await claimIfNeeded(
             envelope: envelope,
             provider: provider,
@@ -371,6 +379,34 @@ enum DevContainerComposeCommand {
             arguments: childArguments,
             environment: childEnvironment
         )
+    }
+
+    static func nativeShortVersion(
+        provider: ComposeProviderKind,
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> CapturedProcessResult? {
+        guard provider == .containerCompose,
+              arguments == ["version", "--short"] || arguments == ["version", "-s"]
+        else {
+            return nil
+        }
+        var result = try await executeCaptured(
+            executable: executable, arguments: arguments, environment: environment
+        )
+        guard result.exitCode == 0 else { return result }
+        guard let value = String(data: result.standardOutput, encoding: .utf8),
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              value.split(whereSeparator: \.isNewline).count == 1
+        else {
+            throw DevContainerError(.providerProtocolMismatch, message: "invalid native Compose short version")
+        }
+        // The upstream CLI compares bare numbers with Docker Compose versions.
+        // Qualify the native version instead of claiming a Docker release: an
+        // unknown vendor version keeps its modern project-name rules enabled.
+        result.standardOutput = Data("container-compose ".utf8) + result.standardOutput
+        return result
     }
 
     private static func execute(

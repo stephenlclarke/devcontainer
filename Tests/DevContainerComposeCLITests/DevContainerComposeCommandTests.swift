@@ -24,6 +24,75 @@ import Foundation
 import Testing
 
 struct DevContainerComposeCommandTests {
+    @Test(arguments: [Int32(0), Int32(7)])
+    func `version entrypoint preserves status without creating project state`(status: Int32) async throws {
+        let fixture = try ComposeCommandFixture(projectName: "version-entrypoint", exitStatus: status)
+        #expect(try await DevContainerComposeCommand.run(
+            arguments: ["version", "--short"], environment: fixture.environment
+        ) == status)
+        #expect(try fixture.invocations() == ["version --short"])
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+    }
+
+    @Test(arguments: ["--short", "-s"])
+    func `native short version cannot be mistaken for Docker Compose v1`(flag: String) async throws {
+        let fixture = try ComposeCommandFixture(projectName: "cf-c01-project")
+        let environment = fixture.environment
+        let executable = try URL(fileURLWithPath: #require(environment["DEVCONTAINER_COMPOSE_BIN"]))
+        let result = try #require(try await DevContainerComposeCommand.nativeShortVersion(
+            provider: .containerCompose,
+            executable: executable,
+            arguments: ["version", flag], environment: environment
+        ))
+        #expect(result.exitCode == 0)
+        #expect(String(data: result.standardOutput, encoding: .utf8) == "container-compose 0.15.1\n")
+        #expect(String(data: result.standardError, encoding: .utf8) == "native diagnostic\n")
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+        #expect(try fixture.invocations() == ["version \(flag)"])
+    }
+
+    @Test
+    func `native version failure preserves status and both streams`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "version-failure", exitStatus: 7)
+        let environment = fixture.environment
+        let executable = try URL(fileURLWithPath: #require(environment["DEVCONTAINER_COMPOSE_BIN"]))
+        let result = try #require(try await DevContainerComposeCommand.nativeShortVersion(
+            provider: .containerCompose,
+            executable: executable,
+            arguments: ["version", "--short"], environment: environment
+        ))
+        #expect(result.exitCode == 7)
+        #expect(String(data: result.standardOutput, encoding: .utf8) == "0.15.1\n")
+        #expect(String(data: result.standardError, encoding: .utf8) == "native diagnostic\n")
+    }
+
+    @Test(arguments: ["", "one\ntwo"])
+    func `invalid native short version is rejected`(version: String) async throws {
+        let fixture = try ComposeCommandFixture(projectName: "invalid-version")
+        var environment = fixture.environment
+        environment["VERSION_OUTPUT"] = version
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.nativeShortVersion(
+                provider: .containerCompose,
+                executable: URL(fileURLWithPath: #require(environment["DEVCONTAINER_COMPOSE_BIN"])),
+                arguments: ["version", "--short"], environment: environment
+            )
+        }
+    }
+
+    @Test(arguments: [ComposeProviderKind.docker, .containerCompose])
+    func `ordinary native and all Docker version commands are untouched`(provider: ComposeProviderKind) async throws {
+        let commands = provider == .docker
+            ? [["version", "--short"], ["version", "-s"]]
+            : [["version"], ["version", "--format", "json"]]
+        for arguments in commands {
+            #expect(try await DevContainerComposeCommand.nativeShortVersion(
+                provider: provider, executable: URL(fileURLWithPath: "/must-not-launch"),
+                arguments: arguments, environment: [:]
+            ) == nil)
+        }
+    }
+
     @Test(arguments: [BackendProvider.stock, .containerCompose], [true, false])
     func `native default receives selected runtime and socket despite ambient conflicts`(
         backend: BackendProvider, useConfiguration: Bool
@@ -456,13 +525,23 @@ private final class ComposeCommandFixture {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        let script = """
+        try Data(Self.script(projectName: projectName, exitStatus: exitStatus).utf8).write(to: executable)
+        #expect(chmod(executable.path, S_IRWXU) == 0)
+    }
+
+    private static func script(projectName: String, exitStatus: Int32) -> String {
+        """
         #!/bin/sh
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
         printf '%s\n' "${CONTAINER_COMPOSE_ENGINE_SOCKET-}" "${CONTAINER_BIN-}" \\
           "${CONTAINER_COMPOSE_CONTAINER-}" >> "$RUNTIME_ENVIRONMENT_LOG"
         case " $* " in
+          *" version --short "*|*" version -s "*)
+            printf '%s\n' "${VERSION_OUTPUT-0.15.1}"
+            printf '%s\n' 'native diagnostic' >&2
+            exit \(exitStatus)
+            ;;
           *" config --format json "*)
             printf '%s\n' '{"name":"\(projectName)"}'
             ;;
@@ -483,8 +562,6 @@ private final class ComposeCommandFixture {
             ;;
         esac
         """
-        try Data(script.utf8).write(to: executable)
-        #expect(chmod(executable.path, S_IRWXU) == 0)
     }
 
     deinit {

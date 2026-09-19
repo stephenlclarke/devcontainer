@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The first C01 stock native run failed post-creation verification (`8b876ed0`) and required exact-resource recovery; it remains failed. Native version `0.15.1` was interpreted as legacy Docker Compose, stripping project-name hyphens. The facade now qualifies short-version output with its real vendor, with 19 focused tests and all 30 new executable lines covered (`0eb79010`). Network/image projection differences remain active work, not waived differences or release proof. [Failure, recovery and focused evidence](bazel-test-harness.md#c01-compose-service) supersede pre-live statements below.
+
 C01 native Compose artifact admission and harness routing are now implemented and component-tested, reusing an authenticated stock candidate instead of rebuilding it. The active remaining step is the first unchanged-fixture stock runtime proof, followed by enhanced proof when its published guest exists. [Candidate identities, component evidence and invocation](bazel-test-harness.md#c01-compose-service) supersede earlier admission-unimplemented checkpoints below. No full parity or new stable release is claimed.
 
 The C01 native default/selection gaps now have focused implementation proof (`6637ba72`, regression `87994af7`): fresh configuration selects native Compose, explicit choices survive and children use the selected socket/executable. The active remaining gap is admitting the correct stock-capable Compose artifact and proving the unchanged live fixture on both native lanes. The published 0.15.1 plugin is fork-built; it must not be assumed equivalent to the current stock Engine adapter. [Evidence and coverage limits](bazel-test-harness.md#c01-compose-service) supersede the earlier default-selection pending checkpoints below.
