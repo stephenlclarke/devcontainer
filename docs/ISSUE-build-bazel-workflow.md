@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The output-cancellation follow-up removes duplicate direct-API reader ownership, joins cleanup even when its waiter is cancelled, and preserves the real terminal process exit status. Both profile-focused regressions pass; [exact evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) records fail-before proof and the remaining foreground/coverage gates.
+
 Backpressured process-input cancellation could deadlock behind its queued write; the candidate now uses bounded nonblocking I/O and owner-thread closure, with real socket/PTY regressions. Enhanced testing also found an incomplete process test double and an incorrect stock-only bind assertion. [Current evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) retains the failures and corrections. Full native instrumentation has an unresolved counter-underflow defect; guards now reject corrupted/missing evidence instead of allowing reduced coverage denominators. Complete foreground attach, all live lanes and release publication remain open.
 
 The partial C02 cleanup gap now has a component-tested receiver/harness implementation: cleanup requires a frozen, unchanged engine epoch with no active/uncertain work or durable pending create, plus a failed CLI's verified stopped command groups and exact owned inventory. This addresses unsafe inference from client exit or empty inventory. Live fault qualification remains required; [current recovery evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the earlier implementation-not-started statements below without changing retained failed results.

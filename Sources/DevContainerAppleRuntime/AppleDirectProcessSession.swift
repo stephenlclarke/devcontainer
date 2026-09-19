@@ -28,10 +28,6 @@ private struct DirectProcessStreams: @unchecked Sendable {
     let standardError: Pipe?
     let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
     let frameContinuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
-    let outputEnd: AsyncStream<Void>
-    let outputEndContinuation: AsyncStream<Void>.Continuation
-    let errorEnd: AsyncStream<Void>
-    let errorEndContinuation: AsyncStream<Void>.Continuation
     let drainState: PipeDrainState
 
     init(
@@ -43,8 +39,6 @@ private struct DirectProcessStreams: @unchecked Sendable {
         self.standardOutput = standardOutput
         self.standardError = standardError
         (frames, frameContinuation) = AsyncThrowingStream.makeStream()
-        (outputEnd, outputEndContinuation) = AsyncStream.makeStream()
-        (errorEnd, errorEndContinuation) = AsyncStream.makeStream()
         drainState = PipeDrainState(
             outputFinished: standardOutput == nil,
             errorFinished: standardError == nil
@@ -53,8 +47,8 @@ private struct DirectProcessStreams: @unchecked Sendable {
 }
 
 private struct DirectProcessMonitors: @unchecked Sendable {
-    let output: DirectPipeMonitor?
-    let error: DirectPipeMonitor?
+    let output: ProcessPipeMonitor?
+    let error: ProcessPipeMonitor?
 }
 
 /// A Docker-style process session backed directly by Apple's public container
@@ -66,8 +60,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
 
     private let process: any ClientProcess
     private let inputWriter: ProcessInputWriter?
-    private let outputMonitor: DirectPipeMonitor?
-    private let errorMonitor: DirectPipeMonitor?
+    private let outputMonitor: ProcessPipeMonitor?
+    private let errorMonitor: ProcessPipeMonitor?
     private let startup: Task<Void, any Error>
     private let completion: Task<Int32, any Error>
 
@@ -138,19 +132,27 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         _ pipe: Pipe?,
         channel: RuntimeIOChannel,
         streams: DirectProcessStreams
-    ) -> DirectPipeMonitor? {
+    ) -> ProcessPipeMonitor? {
         guard let pipe else {
-            if channel == .standardOutput {
-                streams.outputEndContinuation.finish()
-            } else {
-                streams.errorEndContinuation.finish()
-            }
             return nil
         }
-        return DirectPipeMonitor(
-            pipe: pipe,
+        return ProcessPipeMonitor(
+            handle: pipe.fileHandleForReading,
             channel: channel,
-            streams: streams
+            frames: streams.frameContinuation,
+            onRead: { count in
+                streams.drainState.markActivity()
+                trace("\(channel == .standardOutput ? "stdout" : "stderr") produced \(count) bytes")
+            },
+            onFinish: {
+                if channel == .standardOutput {
+                    streams.drainState.finishOutput()
+                    trace("stdout EOF")
+                } else {
+                    streams.drainState.finishError()
+                    trace("stderr EOF")
+                }
+            }
         )
     }
 
@@ -179,8 +181,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 monitors.output?.cancel()
                 monitors.error?.cancel()
                 inputWriter?.cancel()
-                for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
-                for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
+                await monitors.output?.waitForCompletion()
+                await monitors.error?.waitForCompletion()
                 Self.trace("I/O drained for \(process.id)")
                 streams.frameContinuation.finish()
                 return exitCode
@@ -189,8 +191,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 monitors.output?.cancel()
                 monitors.error?.cancel()
                 inputWriter?.cancel()
-                for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
-                for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
+                await monitors.output?.waitForCompletion()
+                await monitors.error?.waitForCompletion()
                 streams.frameContinuation.finish(throwing: error)
                 throw error
             }
@@ -392,91 +394,6 @@ enum AppleXPCFileHandleTransfer {
                 Darwin.close(handle.fileDescriptor)
             }
             throw error
-        }
-    }
-}
-
-private final class DirectPipeMonitor: @unchecked Sendable {
-    private let handle: FileHandle
-    private let descriptor: Int32
-    private let channel: RuntimeIOChannel
-    private let streams: DirectProcessStreams
-    private let stateLock = NSLock()
-    private var finished = false
-
-    init(
-        pipe: Pipe,
-        channel: RuntimeIOChannel,
-        streams: DirectProcessStreams
-    ) {
-        handle = pipe.fileHandleForReading
-        descriptor = pipe.fileHandleForReading.fileDescriptor
-        self.channel = channel
-        self.streams = streams
-        Thread.detachNewThread { [self] in
-            Thread.current.name =
-                "io.github.stephenlclarke.devcontainer.direct-process-\(channel)"
-            drain()
-        }
-    }
-
-    func cancel() {
-        finish()
-    }
-
-    private func drain() {
-        defer { finish() }
-        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count > 0 {
-                let data = Data(buffer.prefix(count))
-                streams.drainState.markActivity()
-                AppleDirectProcessSession.trace(
-                    "\(channel == .standardOutput ? "stdout" : "stderr") produced \(count) bytes"
-                )
-                streams.frameContinuation.yield(
-                    RuntimeIOFrame(channel: channel, data: data)
-                )
-                continue
-            }
-            if count == 0 {
-                return
-            }
-            if errno == EINTR {
-                continue
-            }
-            if stateLock.withLock({ finished }) {
-                return
-            }
-            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
-            streams.frameContinuation.finish(throwing: POSIXError(code))
-            return
-        }
-    }
-
-    private func finish() {
-        let shouldFinish = stateLock.withLock {
-            guard !finished else {
-                return false
-            }
-            finished = true
-            return true
-        }
-        guard shouldFinish else {
-            return
-        }
-        try? handle.close()
-        if channel == .standardOutput {
-            streams.drainState.finishOutput()
-            AppleDirectProcessSession.trace("stdout EOF")
-            streams.outputEndContinuation.finish()
-        } else {
-            streams.drainState.finishError()
-            AppleDirectProcessSession.trace("stderr EOF")
-            streams.errorEndContinuation.finish()
         }
     }
 }

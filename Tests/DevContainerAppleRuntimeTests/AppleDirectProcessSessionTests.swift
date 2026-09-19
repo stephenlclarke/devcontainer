@@ -167,7 +167,7 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
-    func `direct session uses nonblocking input and blocking output drains`() async throws {
+    func `direct session uses nonblocking host IO without changing child output`() async throws {
         let input = Pipe()
         let output = Pipe()
         let process = EchoClientProcess(input: input, output: output)
@@ -178,12 +178,24 @@ struct AppleDirectProcessSessionTests {
             standardError: nil
         )
 
+        // Receiving a real frame proves the reader has configured its handle.
+        let payload = Data(repeating: 42, count: 16 * 1024)
+        try await session.write(payload)
+        var frames = session.frames.makeAsyncIterator()
+        var received = Data()
+        while received.count < payload.count, let frame = try await frames.next() {
+            received.append(frame.data)
+        }
+        #expect(received == payload)
         let inputFlags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
         #expect(inputFlags >= 0)
         #expect(inputFlags & O_NONBLOCK == O_NONBLOCK)
         let outputFlags = fcntl(output.fileHandleForReading.fileDescriptor, F_GETFL)
         #expect(outputFlags >= 0)
-        #expect(outputFlags & O_NONBLOCK == 0)
+        #expect(outputFlags & O_NONBLOCK == O_NONBLOCK)
+        let childOutputFlags = fcntl(process.outputDescriptor, F_GETFL)
+        #expect(childOutputFlags >= 0)
+        #expect(childOutputFlags & O_NONBLOCK == 0)
 
         try await session.closeStandardInput()
         #expect(try await session.wait() == 0)
@@ -407,6 +419,10 @@ private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
 
     private let input: FileHandle
     private let output: FileHandle
+
+    var outputDescriptor: Int32 {
+        output.fileDescriptor
+    }
 
     init(input: Pipe, output: Pipe) {
         self.input = FileHandle(

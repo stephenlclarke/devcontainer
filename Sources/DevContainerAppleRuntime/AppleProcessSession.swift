@@ -74,16 +74,10 @@ private struct ProcessSessionIO: @unchecked Sendable {
     let frameContinuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
     let termination: AsyncStream<Int32>
     let terminationContinuation: AsyncStream<Int32>.Continuation
-    let outputEnd: AsyncStream<Void>
-    let outputEndContinuation: AsyncStream<Void>.Continuation
-    let errorEnd: AsyncStream<Void>
-    let errorEndContinuation: AsyncStream<Void>.Continuation
 
     init() {
         (frames, frameContinuation) = AsyncThrowingStream.makeStream()
         (termination, terminationContinuation) = AsyncStream.makeStream()
-        (outputEnd, outputEndContinuation) = AsyncStream.makeStream()
-        (errorEnd, errorEndContinuation) = AsyncStream.makeStream()
     }
 }
 
@@ -121,7 +115,8 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
         try Self.start(command, streams: streams, termination: termination)
         completion = Self.completionTask(
             streams,
-            inputWriter: inputWriter
+            inputWriter: inputWriter,
+            monitors: monitors
         )
         self.command = command
         self.termination = termination
@@ -134,33 +129,17 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
     private static func configureMonitors(
         streams: ProcessSessionIO
     ) -> (output: ProcessPipeMonitor, error: ProcessPipeMonitor) {
-        let output = drain(
-            streams.standardOutput,
+        let output = ProcessPipeMonitor(
+            handle: streams.standardOutput.fileHandleForReading,
             channel: .standardOutput,
-            end: streams.outputEndContinuation,
             frames: streams.frameContinuation
         )
-        let error = drain(
-            streams.standardError,
+        let error = ProcessPipeMonitor(
+            handle: streams.standardError.fileHandleForReading,
             channel: .standardError,
-            end: streams.errorEndContinuation,
             frames: streams.frameContinuation
         )
         return (output, error)
-    }
-
-    private static func drain(
-        _ pipe: Pipe,
-        channel: RuntimeIOChannel,
-        end: AsyncStream<Void>.Continuation,
-        frames: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
-    ) -> ProcessPipeMonitor {
-        ProcessPipeMonitor(
-            handle: pipe.fileHandleForReading,
-            channel: channel,
-            end: end,
-            frames: frames
-        )
     }
 
     private static func start(
@@ -192,15 +171,14 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
             try? streams.standardError.fileHandleForWriting.close()
             streams.frameContinuation.finish(throwing: error)
             streams.terminationContinuation.finish()
-            streams.outputEndContinuation.finish()
-            streams.errorEndContinuation.finish()
             throw error
         }
     }
 
     private static func completionTask(
         _ streams: ProcessSessionIO,
-        inputWriter: ProcessInputWriter
+        inputWriter: ProcessInputWriter,
+        monitors: (output: ProcessPipeMonitor, error: ProcessPipeMonitor)
     ) -> Task<Int32, any Error> {
         Task {
             var exitCode: Int32 = 255
@@ -209,8 +187,8 @@ final class AppleProcessSession: RuntimeProcessSession, @unchecked Sendable {
                 break
             }
             inputWriter.cancel()
-            for await _ in streams.outputEnd { /* Completion latch for stdout. */ }
-            for await _ in streams.errorEnd { /* Completion latch for stderr. */ }
+            await monitors.output.waitForCompletion()
+            await monitors.error.waitForCompletion()
             streams.frameContinuation.finish()
             return exitCode
         }
@@ -419,59 +397,46 @@ final class ProcessInputWriter: @unchecked Sendable {
     }
 }
 
-/// Drains a launched CLI process on dedicated OS threads. stdout and stderr can
+/// Drains process output on dedicated OS threads. stdout and stderr can
 /// block independently without occupying Swift's cooperative executor or
 /// relying on a one-shot readiness edge while a child performs duplex I/O.
 final class ProcessPipeMonitor: @unchecked Sendable {
     private let handle: FileHandle
     private let descriptor: Int32
     private let channel: RuntimeIOChannel
-    private let end: AsyncStream<Void>.Continuation
     private let frames: AsyncThrowingStream<
         RuntimeIOFrame,
         any Error
     >.Continuation
     private let endOnEIO: Bool
     private let closeHandleOnFinish: Bool
+    private let onRead: (@Sendable (Int) -> Void)?
+    private let onFinish: (@Sendable () -> Void)?
     private let stateLock = NSLock()
     private var finished = false
     private var cancelled = false
-
-    convenience init(
-        pipe: Pipe,
-        channel: RuntimeIOChannel,
-        end: AsyncStream<Void>.Continuation,
-        frames: AsyncThrowingStream<
-            RuntimeIOFrame,
-            any Error
-        >.Continuation
-    ) {
-        self.init(
-            handle: pipe.fileHandleForReading,
-            channel: channel,
-            end: end,
-            frames: frames
-        )
-    }
+    private var completionWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         handle: FileHandle,
         channel: RuntimeIOChannel,
-        end: AsyncStream<Void>.Continuation,
         frames: AsyncThrowingStream<
             RuntimeIOFrame,
             any Error
         >.Continuation,
         endOnEIO: Bool = false,
-        closeHandleOnFinish: Bool = true
+        closeHandleOnFinish: Bool = true,
+        onRead: (@Sendable (Int) -> Void)? = nil,
+        onFinish: (@Sendable () -> Void)? = nil
     ) {
         self.handle = handle
         descriptor = handle.fileDescriptor
         self.channel = channel
-        self.end = end
         self.frames = frames
         self.endOnEIO = endOnEIO
         self.closeHandleOnFinish = closeHandleOnFinish
+        self.onRead = onRead
+        self.onFinish = onFinish
         Thread.detachNewThread { [self] in
             Thread.current.name =
                 "io.github.stephenlclarke.devcontainer.cli-process-\(channel)"
@@ -481,6 +446,23 @@ final class ProcessPipeMonitor: @unchecked Sendable {
 
     func cancel() {
         stateLock.withLock { cancelled = true }
+    }
+
+    func waitForCompletion() async {
+        // Unlike AsyncStream iteration, this join must not terminate early
+        // merely because its caller is cancelled. The reader owns completion.
+        await withCheckedContinuation { continuation in
+            let completed = stateLock.withLock {
+                if finished {
+                    return true
+                }
+                completionWaiters.append(continuation)
+                return false
+            }
+            if completed {
+                continuation.resume()
+            }
+        }
     }
 
     private func drain() {
@@ -508,6 +490,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
                 Darwin.read(descriptor, bytes.baseAddress, bytes.count)
             }
             if count > 0 {
+                onRead?(count)
                 frames.yield(
                     RuntimeIOFrame(
                         channel: channel,
@@ -542,20 +525,19 @@ final class ProcessPipeMonitor: @unchecked Sendable {
     }
 
     private func finish() {
-        let shouldFinish = stateLock.withLock {
-            guard !finished else {
-                return false
-            }
-            finished = true
-            return true
-        }
-        guard shouldFinish else {
-            return
-        }
+        // Called once, by the reader's defer; cancellation never calls finish.
         if closeHandleOnFinish {
             try? handle.close()
         }
-        end.finish()
+        onFinish?()
+        let waiters = stateLock.withLock {
+            finished = true
+            defer { completionWaiters.removeAll() }
+            return completionWaiters
+        }
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 

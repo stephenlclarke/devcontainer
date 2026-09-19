@@ -1,5 +1,7 @@
 # Testing
 
+Process-output regressions now cover shared nonblocking readers, cancellation during a held delivery callback, an already-cancelled cleanup waiter and real PTY child-exit status. Both runtime profiles pass the 32 focused functions. These do not replace the full coverage and live foreground-attachment gates below.
+
 The latest packaged stock C02 run uses devcontainer `35ced5d` and Compose `6af61953`, invocation `1d5b7c55-6f1b-4ec5-bf97-83654756afc1`. All four observations and exact-resource cleanup pass; setup/operation/cleanup take 11.708850750/7.050163500/2.114855959 seconds. This supersedes the earlier stock run below, but is still a single functional lane, not quiet paired benchmarks or fault-injection proof.
 
 New real socket/PTY tests cover task and explicit cancellation of backpressured input, invalid descriptors, idle output cancellation and complete output draining. Full native instrumentation currently emits invalid unsigned counters; functional success therefore cannot qualify its coverage. Both fresh coverage checks and retained-report export reject merger diagnostics and out-of-range counts. No lines are excluded or counters rewritten. Root-cause resolution and clean release coverage remain required; exact development evidence is in `docs/bazel-test-harness.md`.

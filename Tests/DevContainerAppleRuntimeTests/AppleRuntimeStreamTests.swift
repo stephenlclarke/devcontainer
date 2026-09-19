@@ -243,6 +243,30 @@ struct AppleRuntimeStreamTests {
     }
 
     @Test
+    func `terminal cancellation waits for the owned process exit status`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "trap 'exit 42' TERM; printf ready; IFS= read -r line"],
+            environment: [:]
+        )
+        defer { session.cancel() }
+        var output = Data()
+        for try await frame in session.frames {
+            output.append(frame.data)
+            if String(data: output, encoding: .utf8)?.contains("ready") == true {
+                break
+            }
+        }
+        #expect(String(data: output, encoding: .utf8)?.contains("ready") == true)
+        session.cancel()
+        let exitCode = try await session.wait()
+        #expect(exitCode == 42)
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
+        }
+    }
+
+    @Test
     func `terminal session supports duplex input closure and completed guards`() async throws {
         let session = try AppleTerminalProcessSession(
             executable: URL(fileURLWithPath: "/bin/sh"),
