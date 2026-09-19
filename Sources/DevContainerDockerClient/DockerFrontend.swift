@@ -44,21 +44,17 @@ public struct DockerFrontend: Sendable {
             )
         case .clientVersion:
             return versionOutput
+        case let .remove(identifier):
+            let response = try await transport.send(.init(
+                method: .delete, target: "/containers/\(Self.escaped(identifier))?force=true"
+            ))
+            guard response.isEmpty else {
+                throw DockerFrontendError.invalidResponse("container removal returned an unexpected body")
+            }
+            return Data((identifier + "\n").utf8)
         case let .version(format):
             let response = try await transport.send(.init(method: .get, target: "/version"))
-            let server = try object(response)
-            if format == "{{json .}}" {
-                let client: [String: Any] = ["Version": version, "Name": "devcontainer-docker"]
-                return try json(["Client": client, "Server": server])
-            }
-            guard let serverVersion = server["Version"] as? String, !serverVersion.isEmpty,
-                  !serverVersion.contains(where: { $0.isNewline || $0 == "\0" })
-            else {
-                throw DockerFrontendError.invalidResponse("missing or invalid server Version")
-            }
-            return Data((format == nil
-                    ? "Client: devcontainer-docker\n Version: \(version)\n\nServer:\n Version: \(serverVersion)\n"
-                    : "\(serverVersion)\n").utf8)
+            return try versionResponse(response, format: format)
         case .info:
             let response = try await transport.send(.init(method: .get, target: "/info"))
             _ = try object(response)
@@ -88,6 +84,22 @@ public struct DockerFrontend: Sendable {
             }
             return Data(identifiers.joined().utf8)
         }
+    }
+
+    private func versionResponse(_ response: Data, format: String?) throws -> Data {
+        let server = try object(response)
+        if format == "{{json .}}" {
+            let client: [String: Any] = ["Version": version, "Name": "devcontainer-docker"]
+            return try json(["Client": client, "Server": server])
+        }
+        guard let serverVersion = server["Version"] as? String, !serverVersion.isEmpty,
+              !serverVersion.contains(where: { $0.isNewline || $0 == "\0" })
+        else {
+            throw DockerFrontendError.invalidResponse("missing or invalid server Version")
+        }
+        return Data((format == nil
+                ? "Client: devcontainer-docker\n Version: \(version)\n\nServer:\n Version: \(serverVersion)\n"
+                : "\(serverVersion)\n").utf8)
     }
 
     private func object(_ data: Data) throws -> [String: Any] {

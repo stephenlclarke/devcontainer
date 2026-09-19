@@ -2,6 +2,8 @@
 
 ## Current status
 
+The unreleased Bazel candidate frontend supports `rm -f/--force` for one complete 64-character hexadecimal or native UUID container ID through the selected private Engine socket. Names, short IDs, multiple targets and volume-removal flags are deliberately rejected. Component and executable/socket tests pass; corrected live rebuild qualification remains pending. This narrow command does not claim full Docker CLI compatibility or change the stable baseline below.
+
 > [!IMPORTANT]
 > Version 1.0.1 remains the latest immutable stable compatibility baseline. In
 > its exact tag run, real Docker, stock Apple `container` 1.1.0, and the

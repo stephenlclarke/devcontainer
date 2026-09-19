@@ -12,6 +12,37 @@ import Testing
 
 struct DockerFrontendSocketTests {
     @Test
+    func `real executable removes the exact ID and propagates missing container errors`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("dr-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(atPath: root.path) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let server = ContainerUnixHTTPServer(
+            responder: FrontendTestResponder(), socketPath: socket, logger: Logger(label: "frontend-remove-test")
+        )
+        try await server.start()
+        do {
+            let identifier = String(repeating: "a", count: 64)
+            let success = try await FrontendExecutable.run(["rm", "-f", identifier], socket: socket)
+            #expect(success.exitCode == 0)
+            #expect(success.standardOutput == Data((identifier + "\n").utf8))
+            #expect(success.standardError.isEmpty)
+            let failure = try await FrontendExecutable.run(
+                ["rm", "-f", String(repeating: "b", count: 64)], socket: socket
+            )
+            #expect(failure.exitCode == 1)
+            #expect(failure.standardOutput.isEmpty)
+            #expect(String(data: failure.standardError, encoding: .utf8)?.contains("not found") == true)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+    }
+
+    @Test
     func `real executable builds through selected socket and propagates streamed failures without Docker`(
     ) async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("db-\(UUID().uuidString.prefix(8))")
@@ -307,6 +338,9 @@ private struct FrontendTestResponder: DockerHTTPResponder {
                 headers: ["Connection": "Upgrade", "Upgrade": "tcp"],
                 body: .hijack(FrontendEchoSession(), terminal: false)
             )
+        }
+        if request.method == .delete, request.target == "/containers/\(String(repeating: "a", count: 64))?force=true" {
+            return .init(status: 204, body: .bytes(Data()))
         }
         if request.method == .get, request.target == "/version" {
             return .text(#"{"Version":"selected-test-engine"}"#, contentType: "application/json")

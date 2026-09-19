@@ -26,12 +26,13 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     case run(DockerRunCommand)
     case events(DockerEventsCommand)
     case build(DockerBuildCommand)
+    case remove(identifier: String)
 
     public static func parse(_ arguments: [String]) throws -> Self {
         var options = DockerFrontendArguments(arguments)
         guard let command = options.next() else {
             throw DockerFrontendError
-                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events, build")
+                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events, build, rm")
         }
         switch command {
         case "-v", "--version":
@@ -52,6 +53,8 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             return try inspectAlias(command, options: &options)
         case "ps":
             return try containers(&options)
+        case "rm":
+            return try remove(&options)
         default:
             return try streaming(command, options: &options)
         }
@@ -71,6 +74,17 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")
         }
+    }
+
+    private static func remove(_ options: inout DockerFrontendArguments) throws -> Self {
+        guard let flag = options.next(), ["-f", "--force"].contains(flag), let identifier = options.next(),
+              identifier.range(
+                  of: "(?:[0-9a-f]{64}|[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12})",
+                  options: .regularExpression
+              ) == identifier.startIndex ..< identifier.endIndex
+        else { throw DockerFrontendError.usage("rm requires -f/--force and one complete container ID") }
+        try options.requireEnd()
+        return .remove(identifier: identifier)
     }
 
     private static func inspectAlias(_ command: String, options: inout DockerFrontendArguments) throws -> Self {

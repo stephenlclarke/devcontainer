@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Current D07 gap: named-volume startup and reuse succeed, but stock invocation `87b56dd6` fails on rebuild's missing forced-removal command. The narrow full-ID frontend correction passes 75 unit/socket tests (`42086676`) and independent review. Failed resources were recovered with services restored and immutable diagnostics retained. Corrected live rebuild proof and enhanced prerequisites remain open; see the [D07 evidence](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier checkpoints below are historical.
+
 D07's reference passes all six assertions, but stock run `f3177942` rejected the named-volume startup mount. The frontend correction now preserves typed named mounts and rejects malformed bare source fields before mutation. Focused coverage is green (`dd4683df`, 71 functions, 178/178 parser lines), static checks and product review are clean. The failed case was safely recovered without rewriting its failure. Corrected stock live proof and enhanced prerequisites remain open; see the [D07 evidence](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier harness-only status below is historical.
 
 D07 reuse/rebuild/cleanup is the current contract. The legacy harness's global named-volume removal and loosely checked process outputs must be replaced by private-engine ownership, exact generation/counter assertions and immutable command receipts. The new adapter implements those checks without changing fixture semantics or compiling a reference. Bazel component proof is green; live Docker/native evidence is still required. See the [D07 contract](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier D06 status below is historical.

@@ -6,6 +6,38 @@ import Foundation
 import Testing
 
 struct DockerFrontendTests {
+    @Test(arguments: ["-f", "--force"])
+    func `recorded removal command deletes one exact container and preserves its identity`(_ flag: String) async throws {
+        let identifier = String(repeating: "a", count: 64)
+        let transport = RecordingFrontendTransport("")
+        let command = try DockerFrontendCommand.parse(["rm", flag, identifier])
+        let result = try await DockerFrontend(version: "test").execute(command, transport: transport)
+        #expect(result == Data((identifier + "\n").utf8))
+        #expect(await transport.requests.map(\.target) == ["/containers/\(identifier)?force=true"])
+        #expect(await transport.requests.map(\.method) == [.delete])
+    }
+
+    @Test(arguments: [
+        ["rm"], ["rm", "-f"], ["rm", "name"], ["rm", "-f", "name"], ["rm", "-f", "../path"],
+        ["rm", "-f", ""], ["rm", "--force=false", String(repeating: "a", count: 64)],
+        ["rm", "-f", String(repeating: "a", count: 64), "another"], ["rm", "-fv", String(repeating: "a", count: 64)]
+    ])
+    func `removal rejects ambiguous or unsupported forms before mutation`(_ arguments: [String]) {
+        #expect(throws: DockerFrontendError.self) { try DockerFrontendCommand.parse(arguments) }
+    }
+
+    @Test
+    func `removal does not report successful output for engine failures or unexpected bodies`() async throws {
+        let identifier = "ABCDEF01-1234-5678-abcd-123456789012"
+        let command = try DockerFrontendCommand.parse(["rm", "-f", identifier])
+        await #expect(throws: TestFailure.unavailable) {
+            try await DockerFrontend(version: "test").execute(command, transport: UnavailableFrontendTransport())
+        }
+        await #expect(throws: DockerFrontendError.self) {
+            try await DockerFrontend(version: "test").execute(command, transport: RecordingFrontendTransport("{}"))
+        }
+    }
+
     @Test(arguments: ["-v", "--version"])
     func `local version is honest and does not contact the engine`(flag: String) async throws {
         let transport = RecordingFrontendTransport("unused")
