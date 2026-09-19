@@ -323,6 +323,9 @@ extension AppleContainerRuntime {
             spec.image = observed.image
         }
         spec.environment = observed.environment
+        for key in requested.removedEnvironmentKeys ?? [] {
+            spec.environment.removeValue(forKey: key)
+        }
         spec.environment.merge(requested.environment) { _, requestedValue in
             requestedValue
         }

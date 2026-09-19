@@ -2,6 +2,8 @@
 
 ## Current status
 
+The unreleased native gateway distinguishes bare environment-removal keys from empty values through creation, saved metadata and inspection. Legacy CLI creation rejects removal explicitly. [Component proof](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) does not establish live Compose/environment parity.
+
 The unreleased gateway candidate forwards memory bytes, shared-memory size, read-only rootfs, sysctls and stop signal to native creation, with component-tested inspection and recovery. Nonempty settings require native creation; unsupported CLI fallback fails explicitly. VM memory allocation does not establish Docker cgroup accounting parity. Live enforcement and Compose routing remain unqualified; this does not expand the stable matrix. See [component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
 The unreleased gateway candidate preserves omitted/null versus explicitly cleared entrypoints, including the Engine `[""]` reset form. Descriptor-bound image defaults are resolved before launch and retained in metadata. Native/CLI creation and recovery have component coverage; live process parity remains unqualified. See [the pinned reference and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).

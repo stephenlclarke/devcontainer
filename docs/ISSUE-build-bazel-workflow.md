@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Gateway environment-removal collapse is corrected in the native candidate with component-tested creation, metadata and inspection. This closes another semantic loss needed by Compose gateway routing, not the still-open live C02 contract.
+
 Native execution settings now have a component-tested projection for memory/shm bytes, read-only rootfs, sysctls and stop signal. This removes configuration loss at native creation, but not the open Compose routing boundary. VM allocation is not cgroup accounting parity; [the evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) deliberately leaves live enforcement unqualified.
 
 The gateway's omitted/empty entrypoint collapse is corrected in the candidate. Descriptor-bound process defaults now reach native/CLI creation and durable metadata, with [component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection). This removes another configuration-loss issue but does not complete Compose gateway cutover or live C02 proof.

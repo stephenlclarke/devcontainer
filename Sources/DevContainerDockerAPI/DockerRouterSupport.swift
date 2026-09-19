@@ -653,13 +653,14 @@ extension DockerRouter {
             )
         }
         try dns?.validate()
+        let environment = try ContainerEnvironmentOverrides(request.env ?? [])
         return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
             command: request.cmd ?? [],
             entrypoint: request.entrypoint?.values ?? [],
-            environment: environmentDictionary(request.env ?? []),
+            environment: environment.values,
             labels: request.labels ?? [:],
             workingDirectory: request.workingDir,
             user: request.user,
@@ -690,7 +691,8 @@ extension DockerRouter {
             },
             dns: dns,
             inheritImageEntrypoint: request.entrypoint == nil,
-            executionSettings: executionSettings(request)
+            executionSettings: executionSettings(request),
+            removedEnvironmentKeys: environment.removedKeys
         )
     }
 
@@ -860,7 +862,7 @@ extension DockerRouter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let running = snapshot.state == .running
-        let env = environmentList(snapshot.spec.environment)
+        let env = environmentList(snapshot.spec.environment) + (snapshot.spec.removedEnvironmentKeys ?? [])
         let volumeEntries = volumeEntries(snapshot.spec.mounts)
         let networkSettings = networkSettings(snapshot)
         let (executable, args) = containerCommand(snapshot.spec)

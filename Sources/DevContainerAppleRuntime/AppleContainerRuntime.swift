@@ -702,9 +702,10 @@ public extension AppleContainerRuntime {
         optionSupport: CreateOptionSupport, context: RuntimeRequestContext
     ) async throws -> RuntimeContainerCreation? {
         guard useDirectContainerAPI else {
-            if spec.executionSettings?.isEmpty == false {
+            if spec.executionSettings?.isEmpty == false || spec.removedEnvironmentKeys?.isEmpty == false {
                 throw DevContainerError(
-                    .unsupportedCapability, message: "Execution settings require descriptor-bound native creation"
+                    .unsupportedCapability,
+                    message: "Execution settings and environment removal require descriptor-bound native creation"
                 )
             }
             let result = try await command(containerCreateArguments(spec, optionSupport: optionSupport))

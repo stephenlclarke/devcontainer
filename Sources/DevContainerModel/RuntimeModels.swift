@@ -313,6 +313,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     /// Nil retains legacy inference; false preserves an explicitly cleared entrypoint.
     public var inheritImageEntrypoint: Bool?
     public var executionSettings: ContainerExecutionSettings?
+    /// Bare Engine Env keys remove inherited image values; nil is legacy metadata.
+    public var removedEnvironmentKeys: [String]?
 
     public init(
         name: String,
@@ -338,7 +340,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         healthcheck: ContainerHealthcheck? = nil,
         dns: RuntimeDNSConfiguration? = nil,
         inheritImageEntrypoint: Bool? = nil,
-        executionSettings: ContainerExecutionSettings? = nil
+        executionSettings: ContainerExecutionSettings? = nil,
+        removedEnvironmentKeys: [String]? = nil
     ) {
         self.name = name
         self.image = image
@@ -364,6 +367,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.dns = dns
         self.inheritImageEntrypoint = inheritImageEntrypoint
         self.executionSettings = executionSettings
+        self.removedEnvironmentKeys = removedEnvironmentKeys
     }
 }
 

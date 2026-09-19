@@ -217,10 +217,13 @@ enum AppleContainerCreateProjection {
         let arguments = resolved.entrypoint + resolved.command
         let user = spec.user.flatMap { $0.isEmpty ? nil : $0 } ?? image?.user ?? ""
         let directory = spec.workingDirectory.flatMap { $0.isEmpty ? nil : $0 } ?? image?.workingDir ?? "/"
+        let removed = Set(spec.removedEnvironmentKeys ?? [])
         return try ProcessConfiguration(
             executable: arguments[0], arguments: Array(arguments.dropFirst()),
             environment: Parser.allEnv(
-                imageEnvs: image?.env ?? [], envFiles: [],
+                imageEnvs: (image?.env ?? []).filter {
+                    !removed.contains(String($0.prefix { $0 != "=" }))
+                }, envFiles: [],
                 envs: spec.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
             ),
             workingDirectory: directory.isEmpty ? "/" : directory,

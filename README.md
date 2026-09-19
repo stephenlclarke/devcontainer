@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-The gateway candidate also preserves explicit entrypoint clearing and descriptor-bound image command defaults through launch and saved metadata. Native creation projects memory/shm size, read-only rootfs, sysctls and stop signal; this is not a claim of Docker cgroup accounting parity. [Component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) is recorded separately from pending live parity and release gates.
+The gateway candidate also preserves explicit entrypoint clearing, environment removals and descriptor-bound image command defaults through native launch and saved metadata. Native creation projects memory/shm size, read-only rootfs, sysctls and stop signal; this is not a claim of Docker cgroup accounting parity. [Component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) is recorded separately from pending live parity and release gates.
 
 The unreleased gateway now retains explicit DNS settings through Apple creation, inspection and recovery from older metadata. Component tests pass; this is preparation for the Compose startup-path fix, not a new stable release or live parity claim. See [candidate evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
