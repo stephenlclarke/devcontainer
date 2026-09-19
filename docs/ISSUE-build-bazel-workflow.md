@@ -2,6 +2,12 @@
 
 ## Problem description
 
+Current C01 stock proof passes all unchanged observations and cleanup (`178bf269`, devcontainer `aa56f00`, Compose `1fe36f56`). The project-name, network identity/membership and image-spelling defects are corrected and exercised through the real native CLI; zero owned resources remain and recovery is clear. The pinned Docker reference also passes. Enhanced qualification remains blocked on its missing pinned guest image, leaving C01 handed off incomplete. [Current package and sealed runtime evidence](bazel-test-harness.md#c01-compose-service) supersedes the earlier stock-pending checkpoints. Stable release and quiet benchmark gates remain open.
+
+### Historical problem checkpoints
+
+The records below preserve the status when each earlier issue was encountered, not current unresolved C01 stock work.
+
 Network wire/native identity, observed membership and descriptor-bound original image spelling now have component-tested corrections, with matching logical-label/creation metadata changes in Compose PR 708. The active step is rebuilding the corrected pair once and proving the unchanged C01 native fixture. [Current component evidence and exact limitations](bazel-test-harness.md#c01-compose-service) supersede the earlier projection-unimplemented notes; C01 is not yet Verified.
 
 The first C01 stock native run failed post-creation verification (`8b876ed0`) and required exact-resource recovery; it remains failed. Native version `0.15.1` was interpreted as legacy Docker Compose, stripping project-name hyphens. The facade now qualifies short-version output with its real vendor, with 19 focused tests and all 30 new executable lines covered (`0eb79010`). Network/image projection differences remain active work, not waived differences or release proof. [Failure, recovery and focused evidence](bazel-test-harness.md#c01-compose-service) supersede pre-live statements below.
