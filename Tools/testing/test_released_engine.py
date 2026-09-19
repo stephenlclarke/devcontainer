@@ -64,6 +64,20 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(prepared.call_count, 2)
         self.assertTrue(all(call.args[2] == self.root / "prepared-releases" for call in prepared.call_args_list))
 
+    def test_d01_requires_a_complete_admitted_private_bundle(self):
+        repository = Path(__file__).parents[2]
+        required = ("devcontainer", "devcontainer-docker", "devcontainer-compose", "devcontainer-engine", "reference-node")
+        candidate = {"scope": "local-candidate-integration-only", "executables": {name: "/prepared/" + name for name in required}}
+        selected = released_engine.fixture_guest_inputs({"workload": "pin"}, "D01-image-config", candidate, repository)
+        self.assertEqual(selected["devcontainerCandidate"], candidate)
+        self.assertEqual(selected["workload"], "pin")
+        self.assertIn("configuration", selected["devcontainerFixture"])
+        for changed in ({}, {**candidate, "scope": "release"}, {**candidate, "executables": {}}):
+            with self.assertRaisesRegex(ValueError, "private-runtime"):
+                released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)
+        original = {"unchanged": True}
+        self.assertIs(released_engine.fixture_guest_inputs(original, "E01-engine-negotiation", {}, repository), original)
+
     def test_candidate_admission_does_not_substitute_the_published_runtime(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
         for lane, profile in [("apple-stock", "stock"), ("container-compose", "enhanced")]:

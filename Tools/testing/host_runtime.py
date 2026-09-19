@@ -152,7 +152,8 @@ class OwnedProcess:
         self.process = None
         self.spawn_pending = False
 
-    def start(self, arguments: list[str], root: Path, output, *, provider_install: Path | None = None) -> None:
+    def start(self, arguments: list[str], root: Path, output, *, provider_install: Path | None = None,
+              errors=None) -> None:
         if self.process is not None or self.spawn_pending:
             raise ValueError("Case already owns a process")
         environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(root),
@@ -167,7 +168,8 @@ class OwnedProcess:
         # An uncertain launch is quarantined, never interpreted as no child.
         self.spawn_pending = True
         self.process = subprocess.Popen(
-            arguments, cwd=root, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            arguments, cwd=root, stdin=subprocess.DEVNULL, stdout=output,
+            stderr=subprocess.STDOUT if errors is None else errors,
             start_new_session=True, close_fds=True,
             env=environment)
         self.spawn_pending = False

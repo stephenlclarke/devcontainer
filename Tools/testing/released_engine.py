@@ -56,6 +56,17 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
                     for asset in (assets[1:] if candidate else assets)]
 
 
+def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path) -> dict:
+    """D01 consumes only an already authenticated bundle, never global tools."""
+    if fixture != "D01-image-config":
+        return inputs
+    from devcontainer_reference import fixture_inputs
+    required = {"devcontainer", "devcontainer-docker", "devcontainer-compose", "devcontainer-engine", "reference-node"}
+    if candidate.get("scope") != CANDIDATE_SCOPE or set(candidate.get("executables", {})) != required:
+        raise ValueError("D01 requires an admitted private-runtime candidate archive")
+    return {**inputs, "devcontainerCandidate": candidate, "devcontainerFixture": fixture_inputs(repository)}
+
+
 def version(command: Path) -> str:
     result = subprocess.run([str(command), "--version"], check=True, capture_output=True, timeout=10,
                             env={"PATH": "/usr/bin:/bin", "TMPDIR": str(SSD / "tmp")})
@@ -139,6 +150,8 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
+        if self.guest is not None and self.identity["fixture"] == "D01-image-config":
+            self.guest.setup_devcontainer()
 
     def operation(self):
         if self.guest is not None:
@@ -201,7 +214,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES), "D01-image-config"], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -211,8 +224,8 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture == "D01-image-config":
-        raise ValueError("D01 candidate frontend is not implemented; no runtime changes made")
+    if args.fixture == "D01-image-config" and not args.candidate_invocation:
+        raise ValueError("D01 requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None
@@ -241,6 +254,8 @@ def main():
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
         guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock) if guest_locks is not None else None
+        if guest_inputs is not None:
+            guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
@@ -260,8 +275,10 @@ def main():
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
-            if guest_locks is not None and admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock) != guest_inputs:
-                raise ValueError("Released guest inputs changed during execution")
+            if guest_locks is not None:
+                current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock)
+                if fixture_guest_inputs(current, args.fixture, releases[0], repository) != guest_inputs:
+                    raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED, args.candidate_invocation)
 
         def runtime_factory(root, owner):

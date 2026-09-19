@@ -74,6 +74,21 @@ class GuestRuntimeTests(unittest.TestCase):
             deadline.assert_called_once_with(90)
             self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
 
+    def test_d01_setup_is_separate_from_measured_cli_operation(self):
+        self.case.fixture = 'D01-image-config'
+        with self.assertRaisesRegex(ValueError, 'setup did not complete'):
+            self.case.operation()
+        with patch('devcontainer_candidate.CandidateCommands') as commands, \
+                patch('devcontainer_candidate.DevcontainerCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            fixture.return_value.operation.assert_not_called()
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            self.assertEqual(commands.call_args.args, (self.root, self.root / 'socket', self.runtime, '/released/container'))
+            self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+        with self.assertRaisesRegex(ValueError, 'fresh candidate'):
+            self.case.setup_devcontainer()
+
     def test_fault_recovery_requires_all_resource_closure(self):
         records = {'fault-intent.json': canonical({'owner': 'case'})}
         with self.assertRaisesRegex(ValueError, 'explicit reconciliation'):

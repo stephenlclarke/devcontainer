@@ -74,7 +74,7 @@ class DockerCase:
         if self.identity["fixture"] == DEVCONTAINER_FIXTURE:
             self.guest = DevcontainerReference(self.vm, self.inputs, self.owner, observe=self.requests.append)
             self.guest.setup()
-        if self.identity["fixture"] in FIXTURES:
+        elif self.identity["fixture"] in FIXTURES:
             self.vm.command("docker-workload-load", [self.inputs["tools"]["docker"], "--host", "unix://" + str(self.vm.socket),
                             "image", "load", "--input", self.inputs["workload"]["path"]], timeout=60)
             # Docker's containerd store exposes the OCI target digest as Id,

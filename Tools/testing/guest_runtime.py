@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -171,9 +171,24 @@ class ReleasedGuest:
                 self.builder.provision()
         self.runtime.journal.put("guest-provisioned.json", canonical({"inputsSHA256": digest(canonical(self.inputs))}))
 
+    def setup_devcontainer(self):
+        """Image acquisition stays in setup, matching the Docker timing phases."""
+        if self.fixture != "D01-image-config" or self.guest is not None:
+            raise ValueError("D01 setup requires a fresh candidate fixture")
+        from devcontainer_candidate import CandidateCommands, DevcontainerCandidate
+        self.runtime.verify()
+        self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
+        commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
+        self.guest = DevcontainerCandidate(commands, self.inputs, self.owner, observe=self.observe)
+        self.guest.setup()
+
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
+        if self.fixture == "D01-image-config":
+            if self.guest is None:
+                raise ValueError("D01 setup did not complete")
+            return self.guest.operation()
         if self.fixture == "E04-image-build":
             if self.container and self.builder is None:
                 raise ValueError("Apple image builds require an admitted private builder")
@@ -230,6 +245,9 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "devcontainer-plan.json" in records:
+        if json.loads(records.get("devcontainer-removed.json", b"null")) != {"verifiedAbsent": True}:
+            raise ValueError("D01 resources need explicit reconciliation before service recovery")
     for prefix in ("e04-images", "e04-builder"):
         if prefix + "-intent.json" in records:
             removed = json.loads(records.get(prefix + "-removed.json", b"null"))
@@ -257,7 +275,8 @@ def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
     steps = []
     builder_steps = [name.removesuffix("-intent.json") for name in records
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]
-    for name in (*PROVISION_STEPS, *sorted(builder_steps)):
+    d01_steps = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec")
+    for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
@@ -278,6 +297,8 @@ def require_diagnostic(records: dict[str, bytes], name: str):
 def require_guest_cleanup(records: dict[str, bytes]) -> None:
     for name in require_guest_resources_stopped(records):
         require_diagnostic(records, name)
+        if name.startswith("devcontainer-"):
+            require_diagnostic(records, name + "-stderr")
 
 
 def guest_diagnostic_plan(root: Path, records: dict[str, bytes]) -> dict[str, bytes]:
@@ -288,15 +309,16 @@ def guest_diagnostic_plan(root: Path, records: dict[str, bytes]) -> dict[str, by
     """
     plan = {}
     for name in require_guest_resources_stopped(records):
-        names = (name + ".log", name + "-log.json")
-        if all(key in records for key in names):
-            require_diagnostic(records, name)
-            continue
-        payload, metadata = diagnostic_snapshot(root / names[0])
-        for key, data in zip(names, (payload, metadata)):
-            if key in records:
-                if records[key] != data:
-                    raise ValueError("Partial provisioning diagnostic changed; refusing replacement")
-            else:
-                plan[key] = data
+        for stem in ([name, name + "-stderr"] if name.startswith("devcontainer-") else [name]):
+            names = (stem + ".log", stem + "-log.json")
+            if all(key in records for key in names):
+                require_diagnostic(records, stem)
+                continue
+            payload, metadata = diagnostic_snapshot(root / names[0])
+            for key, data in zip(names, (payload, metadata)):
+                if key in records:
+                    if records[key] != data:
+                        raise ValueError("Partial provisioning diagnostic changed; refusing replacement")
+                else:
+                    plan[key] = data
     return plan

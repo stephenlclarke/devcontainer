@@ -28,13 +28,13 @@ def fixture_inputs(repository: Path) -> dict:
     return {"configuration": configuration.decode(), "probe": probe.decode()}
 
 
-def created_id(payload: bytes) -> str:
+def created_id(payload: bytes, pattern: str = r"[0-9a-f]{64}") -> str:
     result = json.loads(payload)
     if not isinstance(result, dict):
         raise ValueError("CLI up must report one result object")
     identifier = result.get("containerId")
     if (result.get("outcome") != "success" or not isinstance(identifier, str) or
-            re.fullmatch(r"[0-9a-f]{64}", identifier) is None):
+            re.fullmatch(pattern, identifier) is None):
         raise ValueError("CLI up did not return a successful immutable container ID")
     return identifier
 
@@ -58,6 +58,8 @@ class DevcontainerReference(GuestFixture):
     commands are journalled by DockerVM. A missing command exit is uncertainty,
     not permission to delete a potentially still-creating resource.
     """
+
+    id_pattern = r"[0-9a-f]{64}"
 
     def __init__(self, vm, inputs: dict, owner: dict, *, observe=None):
         token = digest(canonical(owner))
@@ -83,10 +85,13 @@ class DevcontainerReference(GuestFixture):
         (self.workspace / "probe.sh").write_text(self.inputs["devcontainerFixture"]["probe"])
         # Keep the checked-in index-digest reference unchanged. The private
         # daemon fetches that exact published image; no product/image is built.
-        self.vm.command("devcontainer-image-pull", [self.inputs["tools"]["docker"], "--host",
-                        "unix://" + str(self.socket), "image", "pull", "--platform=linux/arm64", IMAGE], timeout=120)
+        self.prepare_image()
         if self.find() is not None:
             raise ValueError("D01 owner label already exists before CLI execution")
+
+    def prepare_image(self):
+        self.vm.command("devcontainer-image-pull", [self.inputs["tools"]["docker"], "--host",
+                        "unix://" + str(self.socket), "image", "pull", "--platform=linux/arm64", IMAGE], timeout=120)
 
     def arguments(self, command: str) -> list[str]:
         tools = self.inputs["devcontainers"]
@@ -103,7 +108,7 @@ class DevcontainerReference(GuestFixture):
         images = self.inputs["workload"]["image"]
         permitted = {images["manifest"], images["config"], IMAGE.split("@", 1)[1]}
         mounts = value.get("Mounts", [])
-        if (not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None or
+        if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
                 not isinstance(config, dict) or not isinstance(config.get("Labels"), dict) or
                 config["Labels"].get(OWNER_LABEL) != self.owner or config.get("Image") != IMAGE or
                 value.get("Image") not in permitted or not isinstance(mounts, list) or
@@ -122,7 +127,7 @@ class DevcontainerReference(GuestFixture):
         if not values:
             return None
         identifier = values[0].get("Id") if isinstance(values[0], dict) else None
-        if not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None:
+        if not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None:
             raise ValueError("D01 inventory lacks an immutable ID")
         actual = self.inspect(identifier)
         if actual is None or self.owned(actual) != identifier:
@@ -138,7 +143,7 @@ class DevcontainerReference(GuestFixture):
             raise ValueError("D01 plan identity changed")
         output = self.vm.command("devcontainer-up", self.arguments("up") + ["--user-data-folder",
                                  str(self.vm.root / "devcontainer-data")], timeout=120, separate_output=True)
-        self.identifier = created_id(output)
+        self.identifier = created_id(output, self.id_pattern)
         self.journal.put("devcontainer-created.json", canonical({"id": self.identifier}))
         actual = self.find()
         if actual is None or self.owned(actual) != self.identifier:
