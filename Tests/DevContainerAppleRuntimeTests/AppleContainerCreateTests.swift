@@ -227,6 +227,53 @@ struct AppleContainerCreateTests {
         #expect(native.mounts.isEmpty)
     }
 
+    @Test func `live submission preserves typed file mounts in its durable intent`() async throws {
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        var native = try configuration(spec)
+        native.mounts = [.virtiofs(
+            source: "/private/runtime-owned/share/hosts", destination: "/etc/hosts", options: ["ro"]
+        )]
+        let store = TestMetadataStore()
+        let client = LiveAppleContainerCreateClient(client: ContainerClient(), loadKernel: {
+            Kernel(path: URL(fileURLWithPath: "/unused-test-kernel"), platform: .linuxArm)
+        })
+        await #expect(throws: PreflightFailure.stoppedBeforeRPC) {
+            try await client.create(
+                configuration: native, mountOptions: ["--tmpfs", "/work"], context: RuntimeRequestContext()
+            ) { prepared in
+                let intent = try RuntimeContainerCreation(
+                    runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate, imageID: spec.image,
+                    spec: spec, nativeConfiguration: JSONEncoder().encode(prepared)
+                )
+                try await store.beginContainerCreation(intent)
+                throw PreflightFailure.stoppedBeforeRPC
+            }
+        }
+        let intent = try #require(await store.pendingContainerCreation(id: "fixture"))
+        let recorded = try JSONDecoder().decode(ContainerConfiguration.self, from: intent.nativeConfiguration)
+        #expect(recorded.mounts.map(\.destination) == ["/etc/hosts", "/work"])
+        #expect(recorded.mounts[0].source == "/private/runtime-owned/share/hosts")
+        #expect(recorded.mounts[0].isVirtiofs)
+        #expect(recorded.mounts[0].options.readonly)
+    }
+
+    @Test(arguments: ["/etc/hosts", "/etc", "/", "/etc/hosts/child", "/etc/../etc/hosts/"])
+    func `overlapping runtime mounts fail before kernel lookup and journalling`(destination: String) async throws {
+        let spec = ContainerSpec(name: "fixture", image: digest)
+        var native = try configuration(spec)
+        native.mounts = [.virtiofs(
+            source: "/private/runtime-owned/share/hosts", destination: "/etc/hosts", options: ["ro"]
+        )]
+        let client = LiveAppleContainerCreateClient(client: ContainerClient(), loadKernel: {
+            throw PreflightFailure.missingKernel
+        })
+        await #expect(throws: DevContainerError.self) {
+            try await client.create(
+                configuration: native, mountOptions: ["--tmpfs", destination], context: RuntimeRequestContext()
+            ) { _ in throw PreflightFailure.stoppedBeforeRPC }
+        }
+    }
+
     @Test func `metadata completion failure preserves pending create without deletion`() async throws {
         let fixture = try FakeAppleCLI(distribution: "enhanced")
         defer { try? FileManager.default.removeItem(at: fixture.root) }

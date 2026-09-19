@@ -66,7 +66,11 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
     ) async throws -> RuntimeContainerCreation {
         var configuration = configuration
-        configuration.mounts = try await Self.mounts(mountOptions)
+        let requestedMounts = try await Self.mounts(mountOptions)
+        try Self.requireDisjointMounts(prepared: configuration.mounts, requested: requestedMounts)
+        // Runtime-owned file mounts use the typed API: the CLI parser accepts
+        // only directories. Preserve them in the journal and native submission.
+        configuration.mounts += requestedMounts
         let kernel = try await loadKernel()
         try context.checkActive()
         // Finish fallible local preparation before recording possible submission.
@@ -79,6 +83,23 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         try AppleContainerCreateProjection.verify(created.configuration, expected: configuration)
         try context.checkActive()
         return creation
+    }
+
+    static func requireDisjointMounts(prepared: [Filesystem], requested: [Filesystem]) throws {
+        for owned in prepared {
+            let destination = URL(fileURLWithPath: owned.destination).standardizedFileURL.path
+            for mount in requested {
+                let requestedDestination = URL(fileURLWithPath: mount.destination).standardizedFileURL.path
+                guard destination != requestedDestination,
+                      !destination.hasPrefix(requestedDestination == "/" ? "/" : requestedDestination + "/"),
+                      !requestedDestination.hasPrefix(destination == "/" ? "/" : destination + "/")
+                else {
+                    throw DevContainerError(
+                        .invalidRequest, message: "Requested mount overlaps runtime-owned mount at \(destination)"
+                    )
+                }
+            }
+        }
     }
 
     /// Keep parsing testable without contacting the runtime volume service.
@@ -219,7 +240,8 @@ enum AppleContainerCreateProjection {
             }
             names = [builtin]
         }
-        let firstHostname = spec.name.contains(".") ? "\(spec.name)." : domain.map { "\(spec.name).\($0)." } ?? spec.name
+        let firstHostname = spec.name.contains(".") ? "\(spec.name)." : domain.map { "\(spec.name).\($0)." } ?? spec
+            .name
         return names.enumerated().map { index, name in
             AttachmentConfiguration(network: name, options: .init(
                 hostname: index == 0 ? firstHostname : spec.name, mtu: 1280
