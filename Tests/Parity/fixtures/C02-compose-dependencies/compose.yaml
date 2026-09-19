@@ -19,7 +19,12 @@ services:
     command: ["sleep", "infinity"]
   app:
     image: alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
-    command: ["sleep", "infinity"]
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        if getent hosts database >/dev/null; then printf 'true\n'; else printf 'false\n'; fi > /tmp/startup-dependency-dns;
+        exec sleep infinity
     depends_on:
       database:
         condition: service_healthy

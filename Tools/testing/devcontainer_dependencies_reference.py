@@ -21,6 +21,7 @@ def fixture_inputs(repository: Path) -> dict:
     configuration = json.loads(values["configuration"])
     if (configuration.get("dockerComposeFile") != "../compose.yaml" or configuration.get("service") != "app" or
             configuration.get("runServices") != ["app", "database", "helper"] or
+            configuration.get("overrideCommand") is not False or
             configuration.get("shutdownAction") != "stopCompose" or
             values["compose"].count(IMAGE) != 2 or values["compose"].count(DATABASE_IMAGE) != 1):
         raise ValueError("C02 dependency fixture or image pins changed")
@@ -29,7 +30,7 @@ def fixture_inputs(repository: Path) -> dict:
 
 class DevcontainerDependenciesReference(DevcontainerComposeReference):
     fixture = FIXTURE
-    keys = {"dependency_dns", "dependency_health", "run_service"}
+    keys = {"startup_dependency_dns", "dependency_dns", "dependency_health", "run_service"}
     commands = (*DevcontainerReference.commands, "devcontainer-dependency-pull")
 
     def __init__(self, vm, inputs, owner, *, observe=None):

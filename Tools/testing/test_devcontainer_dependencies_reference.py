@@ -167,7 +167,23 @@ class DependenciesTests(unittest.TestCase):
                                    "Labels": {PROJECT_LABEL: self.fixture.project, NETWORK_LABEL: "default"},
                                    "Created": "2026-09-19T11:30:00Z", "Containers": {identifier: {} for identifier in IDS.values()}}
             return canonical({"outcome": "success", "containerId": IDS["app"]})
-        return b"dependency_dns=true\ndependency_health=healthy\nrun_service=true\n" if name == "devcontainer-exec" else b"loaded"
+        return (b"startup_dependency_dns=true\ndependency_dns=true\ndependency_health=healthy\nrun_service=true\n"
+                if name == "devcontainer-exec" else b"loaded")
+
+    def test_later_success_cannot_replace_failed_startup_lookup(self):
+        original = self.command
+
+        def command(name, *args, **kwargs):
+            output = original(name, *args, **kwargs)
+            return output.replace(b"startup_dependency_dns=true", b"startup_dependency_dns=false")
+
+        self.vm.command = command
+        observations = self.start()
+        self.assertEqual(observations["startup_dependency_dns"], "false")
+        self.assertEqual(observations["dependency_dns"], "true")
+        self.assertEqual(observations["dependency_health"], "healthy")
+        expected = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / FIXTURE / "contract.json").read_text())
+        self.assertNotEqual(observations, contract_observations(expected["expected"]))
 
     def start(self):
         self.fixture.setup()

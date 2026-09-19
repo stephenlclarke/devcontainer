@@ -193,7 +193,7 @@
       "id": "C02-compose-dependencies",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["runServices", "health-gated dependencies", "service DNS"]
+      "assertions": ["runServices", "health-gated dependencies", "service DNS", "first application-command DNS lookup"]
     },
     {
       "id": "C03-compose-resources",

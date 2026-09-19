@@ -2,7 +2,7 @@
 
 ## Problem description
 
-The observed C02 stock hostname-resolution defect is fixed and the unchanged live fixture passes at `64db1c6`, invocation `c63c4ae3`, including exact cleanup. [Current proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the diagnostic failure history below. The remaining C02 boundary is startup-time resolution before the original entrypoint and enhanced qualification; complete family release/benchmark/documentation gates remain open.
+The C02 running-state hostname-resolution defect is fixed at `64db1c6`. The strengthened fixture now records the application's first hostname lookup: Docker passes, stock Apple fails, and both clean up with zero owned resources. This is an observed startup defect, not merely missing test coverage. [Current proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the diagnostic history below. Compose creation must connect to managed pre-start hosts without losing service configuration; enhanced qualification and complete family release/benchmark/documentation gates remain open.
 
 The stock C02 candidate (`e8796ba`) fails hostname resolution despite healthy services and correct observed/adopted networks. [Runtime tracing](bazel-test-harness.md#c02-dependency-health-and-service-selection) identifies the cause: the runtime requires Docker mirrors that the HTTP layer synthesizes only in responses. Native-only identity acceptance is now corrected with conflicting mirrors still rejected and failing-before/passing-after regression evidence. Corrected live C02 qualification remains pending. All diagnostic runs cleaned up successfully; no stable release follows from this checkpoint.
 
