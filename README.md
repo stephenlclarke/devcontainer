@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-D04 lifecycle hooks is the active native-harness fixture. It retains the original host-initialization and ordered guest-hook assertions, using the same isolated image and command/cleanup ownership as D01. Reference and stock live qualification remain required; the existing candidate package is reused unless a product change becomes necessary. See the [D04 contract](docs/bazel-test-harness.md#d04-lifecycle-hooks).
+D04 lifecycle hooks passes the original host-initialization and ordered guest-hook assertions plus cleanup in Docker (`7c41a35a-01bc-4aaa-b866-2a580cb3c560`) and stock Apple (`76ebd27c-8b98-4df1-969b-fa12c3f2e159`). The candidate reused the `533f9a7` archive without rebuilding. Enhanced qualification remains blocked; these separate functional runs are not quiet paired benchmarks or complete release proof. See the [D04 evidence](docs/bazel-test-harness.md#d04-lifecycle-hooks).
 
 D03 users/environment passes all seven observations and cleanup in the Docker reference and the Docker-free stock Apple candidate: non-root UID 1000, home directory, container/remote variables, expansion and post-create output through the pinned official CLI. Stock proof uses source `533f9a7`, invocation `495adb97-3b5e-435f-83ec-2e9bccd9b674`; enhanced qualification remains blocked by its pinned guest-release prerequisite. See the [exact evidence and isolation boundary](docs/bazel-test-harness.md#d03-users-and-environment). These functional runs are not quiet paired benchmarks or full three-lane release qualification.
 

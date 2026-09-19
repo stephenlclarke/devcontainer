@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D04 now passes the unchanged lifecycle contract and cleanup in Docker and stock Apple at harness `57ab04c`, invocations `7c41a35a-01bc-4aaa-b866-2a580cb3c560` and `76ebd27c-8b98-4df1-969b-fa12c3f2e159`. Product bytes were reused from `533f9a7`; runtime recovery is clear. D04 is handed off incomplete on enhanced guest publication, not full three-lane Verified. D05 Features is next. The following paragraphs preserve earlier implementation/failure details rather than current pending-native status.
+
 D04 lifecycle hooks is now active. The original fixture must execute host initialization plus five ordered guest hooks through the actual pinned CLI. An adapter must not precreate the host marker, omit hooks, rewrite order or infer success from configuration. It reuses D01 image ownership and bounded normal cleanup without a builder; Docker completed-command recovery is supported, but interrupted native phases remain quarantined pending explicit reconciliation. Reference and stock live proof are required before any support claim. The enhanced guest dependency remains unchanged.
 
 Its first live oracle returned the correct mixed-case hook order, exposing erroneous case-folding in common expected-value loading. The shared reader now preserves contract strings unchanged and formats only booleans; reports use the same rule. The original failed case and red regression are retained, and genuinely wrong string case still fails. This is a harness correction, not a relaxed assertion or product change.
