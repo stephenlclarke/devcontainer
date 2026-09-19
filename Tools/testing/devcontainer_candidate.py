@@ -13,12 +13,13 @@ from devcontainer_users_reference import DevcontainerUsersReference
 from devcontainer_lifecycle_reference import DevcontainerLifecycleReference
 from devcontainer_features_reference import DevcontainerFeaturesReference
 from devcontainer_ports_reference import DevcontainerPortsReference
+from devcontainer_reuse_reference import DevcontainerReuseReference, COMMANDS as REUSE_COMMANDS, UP_COMMANDS
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
 
 
-COMMANDS = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock")
+COMMANDS = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
 
 
 class CandidateCommands:
@@ -66,7 +67,7 @@ class CandidateCommands:
                     self.journal.put(name + "-exit.json", canonical({"code": code,
                                      "durationNS": time.monotonic_ns() - started}))
                 finally:
-                    if name == "devcontainer-up" and name + "-exit.json" in self.journal.records():
+                    if name in UP_COMMANDS and name + "-exit.json" in self.journal.records():
                         # The upstream CLI intentionally leaves its foreground
                         # attachment behind. Do not signal a reaped leader's group;
                         # guest deletion closes the stream before final group proof.
@@ -187,6 +188,10 @@ class DevcontainerFeaturesCandidate(DevcontainerBuildCandidate, DevcontainerFeat
         # Candidate's facade bypasses Reference.arguments in this MRO.
         arguments = super().arguments(command)
         return arguments + (["--frozen-lockfile"] if command == "up" else [])
+
+
+class DevcontainerReuseCandidate(DevcontainerCandidate, DevcontainerReuseReference):
+    """Preserve D07 generations and volume ownership with native command lifetimes."""
 
 
 class DevcontainerPortsCandidate(DevcontainerCandidate, DevcontainerPortsReference):

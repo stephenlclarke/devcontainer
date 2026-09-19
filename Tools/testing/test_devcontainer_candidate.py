@@ -297,9 +297,10 @@ class CandidateCommandTests(unittest.TestCase):
         helper = "from pathlib import Path; import sys,time; p=Path(sys.argv[1]);\nwhile p.exists(): time.sleep(.01)"
         parent = "import subprocess,sys; subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); print('created')"
         self.addCleanup(marker.unlink, missing_ok=True)
-        self.assertEqual(self.runner.command("devcontainer-up", [sys.executable, "-c", parent, helper, str(marker)],
-                                             timeout=2), b"created\n")
-        self.assertNotIn("devcontainer-up-stopped.json", self.journal.records())
+        for name in ("devcontainer-up", "devcontainer-reuse", "devcontainer-rebuild"):
+            self.assertEqual(self.runner.command(name, [sys.executable, "-c", parent, helper, str(marker)],
+                                                 timeout=2), b"created\n")
+            self.assertNotIn(name + "-stopped.json", self.journal.records())
         self.assertFalse(self.runner.uncertain)
         removal = threading.Timer(0.05, lambda: marker.unlink(missing_ok=True))
         removal.start()
@@ -307,8 +308,9 @@ class CandidateCommandTests(unittest.TestCase):
             self.runner.close()
         finally:
             removal.join()
-        self.assertIn("devcontainer-up-stopped.json", self.journal.records())
-        self.assertEqual(self.journal.records()["devcontainer-up.log"], b"created\n")
+        for name in ("devcontainer-up", "devcontainer-reuse", "devcontainer-rebuild"):
+            self.assertIn(name + "-stopped.json", self.journal.records())
+            self.assertEqual(self.journal.records()[name + ".log"], b"created\n")
         self.assertFalse(self.runner.pending_logs)
 
 

@@ -112,15 +112,17 @@ def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard
     from devcontainer_lifecycle_reference import DevcontainerLifecycleReference, FIXTURE as LIFECYCLE_FIXTURE
     from devcontainer_features_reference import DevcontainerFeaturesReference, FIXTURE as FEATURES_FIXTURE
     from devcontainer_ports_reference import DevcontainerPortsReference, FIXTURE as PORTS_FIXTURE
+    from devcontainer_reuse_reference import DevcontainerReuseReference, FIXTURE as REUSE_FIXTURE
     selected = owner["identity"]["fixture"]
-    if selected not in {FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE}:
+    if selected not in {FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE, REUSE_FIXTURE}:
         raise ValueError("Not a devcontainer recovery transaction")
     key = validate_identity(owner["identity"])
     inputs = recovery_inputs(retained, ssd, owner)
     vm = DockerVM(Path(owner["root"]), owner, inputs["tools"], inputs["pins"], journal)
     adapter = {FIXTURE: DevcontainerReference, BUILD_FIXTURE: DevcontainerBuildReference,
                USERS_FIXTURE: DevcontainerUsersReference, LIFECYCLE_FIXTURE: DevcontainerLifecycleReference,
-               FEATURES_FIXTURE: DevcontainerFeaturesReference, PORTS_FIXTURE: DevcontainerPortsReference}[selected]
+               FEATURES_FIXTURE: DevcontainerFeaturesReference, PORTS_FIXTURE: DevcontainerPortsReference,
+               REUSE_FIXTURE: DevcontainerReuseReference}[selected]
     fixture = adapter(vm, inputs, owner)
     with deadline(45):
         verify_running(vm)

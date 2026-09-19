@@ -144,6 +144,17 @@ class DockerCaseTests(unittest.TestCase):
         self.guest.cleanup.assert_called_once_with()
         self.assertFalse(self.case.root.exists())
 
+    def test_d07_uses_reuse_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "D07-reuse-cleanup"
+        with patch.object(released_docker, "DevcontainerReuseReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_matching_image_id_does_not_hide_wrong_manifest_or_architecture(self):
         identifier = "sha256:" + "b" * 64
         for descriptor, architecture in (("sha256:" + "c" * 64, "arm64"), (identifier, "amd64")):

@@ -29,6 +29,8 @@ RELEASE_INPUTS = (
     "Tests/Parity/fixtures/D05-features/probe.sh",
     "Tests/Parity/fixtures/D06-ports/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/D06-ports/probe.sh",
+    "Tests/Parity/fixtures/D07-reuse-cleanup/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/D07-reuse-cleanup/probe.sh",
 )
 PREPARATION_HELPERS = (
     "prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
@@ -40,6 +42,7 @@ RUNTIME_HELPERS = (
     "devcontainer_build_reference.py", "devcontainer_users_reference.py", "devcontainer_lifecycle_reference.py",
     "devcontainer_features_reference.py",
     "devcontainer_ports_reference.py",
+    "devcontainer_reuse_reference.py",
     "engine_probe.py", "exec_probe.py", "fault_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",

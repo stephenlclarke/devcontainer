@@ -282,6 +282,15 @@ class DevcontainerFeaturesRecoveryTests(DevcontainerRecoveryTests):
         return stack
 
 
+class DevcontainerReuseRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D07-reuse-cleanup"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_reuse_reference.DevcontainerReuseReference", return_value=self.fixture))
+        return stack
+
+
 class DevcontainerPortsRecoveryTests(DevcontainerRecoveryTests):
     fixture_name = "D06-ports"
 

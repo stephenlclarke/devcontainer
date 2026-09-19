@@ -113,6 +113,11 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(lifecycle["devcontainerCandidate"], candidate)
         self.assertIn("initializeCommand", json.loads(lifecycle["devcontainerFixture"]["configuration"]))
         self.assertNotIn("dockerfile", lifecycle["devcontainerFixture"])
+        reuse = released_engine.fixture_guest_inputs({"workload": "pin"}, "D07-reuse-cleanup", candidate, repository)
+        self.assertEqual(reuse["devcontainerCandidate"], candidate)
+        self.assertEqual(json.loads(reuse["devcontainerFixture"]["configuration"])["mounts"],
+                         ["source=dcparity-d07-reuse,target=/cache,type=volume"])
+        self.assertNotIn("dockerfile", reuse["devcontainerFixture"])
         for changed in ({}, {**candidate, "scope": "release"}, {**candidate, "executables": {}}):
             with self.assertRaisesRegex(ValueError, "private-runtime"):
                 released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)

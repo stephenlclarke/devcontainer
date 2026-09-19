@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -174,13 +174,13 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"} or self.guest is not None:
+        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
         if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
                                            DevcontainerBuildCandidate, DevcontainerUsersCandidate,
-                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate, DevcontainerPortsCandidate)
+                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate, DevcontainerPortsCandidate, DevcontainerReuseCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
@@ -192,14 +192,14 @@ class ReleasedGuest:
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
             adapter = {"D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
-                       "D06-ports": DevcontainerPortsCandidate}[self.fixture]
+                       "D06-ports": DevcontainerPortsCandidate, "D07-reuse-cleanup": DevcontainerReuseCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()
 
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"}:
+        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()
@@ -259,6 +259,10 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "d07-volume-intent.json" in records:
+        intent = json.loads(records["d07-volume-intent.json"])
+        if json.loads(records.get("d07-volume-removed.json", b"null")) != {"name": intent["Name"], "absent": True}:
+            raise ValueError("D07 volume needs explicit reconciliation")
     if "d06-collision-container-intent.json" in records:
         intent = json.loads(records["d06-collision-container-intent.json"])
         removed = json.loads(records.get("d06-collision-container-removed.json", b"null"))
@@ -294,7 +298,8 @@ def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
     steps = []
     builder_steps = [name.removesuffix("-intent.json") for name in records
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]
-    d01_steps = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock")
+    from devcontainer_reuse_reference import COMMANDS as REUSE_COMMANDS
+    d01_steps = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
     for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))

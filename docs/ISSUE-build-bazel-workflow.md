@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D07 reuse/rebuild/cleanup is the current contract. The legacy harness's global named-volume removal and loosely checked process outputs must be replaced by private-engine ownership, exact generation/counter assertions and immutable command receipts. The new adapter implements those checks without changing fixture semantics or compiling a reference. Bazel component proof is green; live Docker/native evidence is still required. See the [D07 contract](bazel-test-harness.md#d07-reuse-and-cleanup). Earlier D06 status below is historical.
+
 D06 stock live proof now passes at `295489b`, invocation `ecf30eb5-335e-4144-8747-65c91e32975b`, with all original observations, cleanup and clear recovery. The retained Docker proof also passes; enhanced guest publication still blocks full qualification. D06 is handed off incomplete on that dependency, with D07 reuse/rebuild/cleanup next. [Exact current evidence](bazel-test-harness.md#d06-published-ports) supersedes the historical pending-native paragraphs below. No new stable release or quiet benchmark is claimed.
 
 The real D06 Docker reference now passes (`524dce17-469a-4819-9258-a210a414d7cb`) with cleanup and clear recovery. Native frontend publication and inspect binding projection gaps have been reproduced and fixed in components: `5a94e51a` red, `8b71d8e8` green. Native live proof is still required before this contract can qualify; enhanced guest publication remains a dependency. Earlier pre-oracle status paragraphs below are historical. [The D06 record](bazel-test-harness.md#d06-published-ports) contains exact evidence and scope.
