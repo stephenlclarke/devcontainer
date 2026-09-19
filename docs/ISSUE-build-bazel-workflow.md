@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D05 reference and stock execution now pass the four original assertions, including a specifically authenticated missing-lock rejection, with cleanup passed and recovery clear. Evidence is retained at `9cd52ed5-55cc-4245-8058-8671ba0e948d` and `f80ebfc8-b5c8-45d1-b155-b6a1e9006e2e`; no product rebuild was needed. D05 is handed off incomplete on enhanced guest publication, not full three-lane Verified. D06 ports is next. Historical implementation checkpoints follow; [the D05 record](bazel-test-harness.md#d05-locked-features) is authoritative for current evidence and remaining gates.
+
 D05 is the active contract. The prior harness accepted any nonzero exit as frozen-lock rejection, which could hide an unrelated runtime/network failure. The replacement must prove installation of the exact locked Features and the specific missing-lock error, preserve original fixture inputs, bind generated-image ownership and retain negative-command diagnostics through cleanup/recovery. Its 689-test component gate passes; live reference and candidate proof remain required. Details and non-goals are in the [D05 contract](bazel-test-harness.md#d05-locked-features). Historical D04 and earlier checkpoints follow.
 
 D04 now passes the unchanged lifecycle contract and cleanup in Docker and stock Apple at harness `57ab04c`, invocations `7c41a35a-01bc-4aaa-b866-2a580cb3c560` and `76ebd27c-8b98-4df1-969b-fa12c3f2e159`. Product bytes were reused from `533f9a7`; runtime recovery is clear. D04 is handed off incomplete on enhanced guest publication, not full three-lane Verified. D05 Features is next. The following paragraphs preserve earlier implementation/failure details rather than current pending-native status.
