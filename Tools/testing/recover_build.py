@@ -107,12 +107,15 @@ def recover_completed_build(retained: Path, ssd: Path, owner: dict, guard, journ
 def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard, journal, *, apply: bool) -> dict:
     """Reconcile completed CLI commands; never replay up/exec or alter results."""
     from devcontainer_reference import DevcontainerReference, FIXTURE
-    if owner["identity"]["fixture"] != FIXTURE:
-        raise ValueError("Not a D01 recovery transaction")
+    from devcontainer_build_reference import DevcontainerBuildReference, FIXTURE as BUILD_FIXTURE
+    selected = owner["identity"]["fixture"]
+    if selected not in {FIXTURE, BUILD_FIXTURE}:
+        raise ValueError("Not a devcontainer recovery transaction")
     key = validate_identity(owner["identity"])
     inputs = recovery_inputs(retained, ssd, owner)
     vm = DockerVM(Path(owner["root"]), owner, inputs["tools"], inputs["pins"], journal)
-    fixture = DevcontainerReference(vm, inputs, owner)
+    adapter = DevcontainerReference if selected == FIXTURE else DevcontainerBuildReference
+    fixture = adapter(vm, inputs, owner)
     with deadline(45):
         verify_running(vm)
         identifier = fixture.recovery_plan()
@@ -123,7 +126,8 @@ def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard
         if json.loads(guard.path.read_bytes()) != owner or recovery_inputs(retained, ssd, owner) != inputs:
             raise ValueError("D01 recovery ownership or inputs changed")
         verify_running(vm)
-        journal.put("d01-recovery-authorized.json", canonical({"caseID": key, "cleanupOnly": True}))
+        journal.put(selected.split("-", 1)[0].lower() + "-recovery-authorized.json",
+                    canonical({"caseID": key, "cleanupOnly": True}))
         fixture.remove_owned()
         vm.stop()
     from recover_runtime import recover_closed_docker

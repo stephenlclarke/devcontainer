@@ -16,6 +16,9 @@ RELEASE_INPUTS = (
     "Tests/Parity/manifest.json",
     "Tests/Parity/fixtures/D01-image-config/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/D01-image-config/probe.sh",
+    "Tests/Parity/fixtures/D02-dockerfile-config/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/D02-dockerfile-config/Dockerfile",
+    "Tests/Parity/fixtures/D02-dockerfile-config/probe.sh",
 )
 PREPARATION_HELPERS = (
     "prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
@@ -24,6 +27,7 @@ PREPARATION_HELPERS = (
 RUNTIME_HELPERS = (
     "build_probe.py", "build_images.py", "build_fixture.py", "build_runtime.py",
     "archive_probe.py", "campaign_identity.py", "case_evidence.py", "docker_vm.py", "devcontainer_reference.py", "devcontainer_candidate.py",
+    "devcontainer_build_reference.py",
     "engine_probe.py", "exec_probe.py", "fault_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",

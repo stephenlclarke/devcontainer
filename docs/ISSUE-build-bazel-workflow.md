@@ -2,6 +2,8 @@
 
 ## Problem description
 
+D02 must execute the checked-in Dockerfile build arguments/target and lifecycle through the official reference and Docker-free candidates, rather than treat existing Engine build tests as Dev Containers parity. The new reference adapter reuses isolated VM ownership, immutable preparation and recovery; native candidate build-command integration is explicitly missing and refuses before mutation. It is the active contract while D01's enhanced guest publication remains blocked.
+
 Stock D01's attachment cleanup defect is fixed and the live rerun passes all four observations plus cleanup (`46a33e35-686a-45f4-9168-80ba6ecafa31`, harness `e346eed`, unchanged retained product `f8dc210`). Enhanced admission/qualification and complete release gates remain open. Details below preserve the issue's historical findings rather than overriding that scoped result.
 
 First live stock D01 revealed that the official CLI's foreground attachment outlives `up`. Treating that expected lifetime as immediate process residue prevented probe execution. The harness fix preserves the live attachment until verified guest deletion, retries completed-command diagnostics and uses one cleanup deadline. The 525-test component proof and preserved failed-run recovery are recorded in [PR 83](PR-83.md); candidate live qualification is still required.

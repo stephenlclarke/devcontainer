@@ -107,6 +107,14 @@ class DockerCaseTests(unittest.TestCase):
         self.vm.command.assert_not_called()
         self.assertEqual(self.case.operation(), self.guest.operation.return_value)
 
+    def test_d02_uses_build_adapter_before_any_generic_engine_path(self):
+        self.identity["fixture"] = "D02-dockerfile-config"
+        with patch.object(released_docker, "DevcontainerBuildReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+
     def test_setup_rejects_different_loaded_image(self):
         with patch.object(released_docker, "DockerVM", return_value=self.vm), \
                 patch.object(released_docker, "request", return_value=(200, b'{"Id":"wrong"}')), \
@@ -135,6 +143,18 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_d02_admission_includes_exact_dockerfile_source(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        with patch.object(released_docker, "require_retained", return_value={"executables": {}}), \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", return_value={"verified": True}):
+            result = released_docker.admit_docker(lock, {}, {}, {"images": [{"name": "alpine-workload"}]},
+                Path("/scratch"), Path("/retained"), fixture="D02-dockerfile-config", repository=repository)
+        self.assertIn("PARITY_BUILD_ARG", result["devcontainerFixture"]["dockerfile"])
+        self.assertEqual(result["devcontainers"], {"verified": True})
+
     def test_admission_uses_only_retained_pinned_releases(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

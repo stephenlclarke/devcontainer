@@ -214,7 +214,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, "D02-dockerfile-config", *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -224,6 +224,8 @@ def main():
         from released_docker import run_docker
         run_docker(args)
         return
+    if args.fixture == "D02-dockerfile-config":
+        raise ValueError("D02 native candidate build adapter is not implemented; no runtime changes made")
     if args.fixture == "D01-image-config" and not args.candidate_invocation:
         raise ValueError("D01 requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]

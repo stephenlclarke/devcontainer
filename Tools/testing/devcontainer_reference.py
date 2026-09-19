@@ -39,14 +39,14 @@ def created_id(payload: bytes, pattern: str = r"[0-9a-f]{64}") -> str:
     return identifier
 
 
-def observations(payload: bytes) -> dict[str, str]:
+def observations(payload: bytes, keys=KEYS) -> dict[str, str]:
     result = {}
     for line in payload.decode().splitlines():
         key, separator, value = line.partition("=")
-        if not separator or key not in KEYS or key in result:
+        if not separator or key not in keys or key in result:
             raise ValueError("D01 probe returned unexpected or duplicate output")
         result[key] = value
-    if set(result) != KEYS:
+    if set(result) != keys:
         raise ValueError("D01 probe did not return every observation")
     return result
 
@@ -60,13 +60,16 @@ class DevcontainerReference(GuestFixture):
     """
 
     id_pattern = r"[0-9a-f]{64}"
+    fixture = FIXTURE
+    keys = KEYS
+    up_timeout = 120
 
     def __init__(self, vm, inputs: dict, owner: dict, *, observe=None):
         token = digest(canonical(owner))
         image = inputs["workload"]["image"]["manifest"]
         super().__init__(vm.socket, token, image, GUEST_API_VERSION, vm.journal, observe=observe)
         self.vm, self.inputs = vm, inputs
-        self.workspace = vm.root / "workspace" / FIXTURE
+        self.workspace = vm.root / "workspace" / self.fixture
         self.plan = {"owner": token, "workspace": str(self.workspace), "image": IMAGE,
                      "inputsSHA256": digest(canonical(inputs["devcontainers"])),
                      "fixtureSHA256": digest(canonical(inputs["devcontainerFixture"]))}
@@ -79,15 +82,18 @@ class DevcontainerReference(GuestFixture):
         if "devcontainer-plan.json" in self.journal.records():
             raise ValueError("D01 has already been attempted; reconcile instead of retrying")
         self.journal.put("devcontainer-plan.json", canonical(self.plan))
-        self.workspace.mkdir(mode=0o700)
-        (self.workspace / ".devcontainer").mkdir(mode=0o700)
-        (self.workspace / ".devcontainer/devcontainer.json").write_text(self.inputs["devcontainerFixture"]["configuration"])
-        (self.workspace / "probe.sh").write_text(self.inputs["devcontainerFixture"]["probe"])
+        self.write_workspace()
         # Keep the checked-in index-digest reference unchanged. The private
         # daemon fetches that exact published image; no product/image is built.
         self.prepare_image()
         if self.find() is not None:
             raise ValueError("D01 owner label already exists before CLI execution")
+
+    def write_workspace(self):
+        self.workspace.mkdir(mode=0o700)
+        (self.workspace / ".devcontainer").mkdir(mode=0o700)
+        (self.workspace / ".devcontainer/devcontainer.json").write_text(self.inputs["devcontainerFixture"]["configuration"])
+        (self.workspace / "probe.sh").write_text(self.inputs["devcontainerFixture"]["probe"])
 
     def prepare_image(self):
         self.vm.command("devcontainer-image-pull", [self.inputs["tools"]["docker"], "--host",
@@ -102,19 +108,24 @@ class DevcontainerReference(GuestFixture):
         # uses it; exec retains the ordinary stdout contract of the old fixture.
         return arguments + (["--log-format", "json"] if command == "up" else [])
 
-    def owned(self, value: dict) -> str:
+    def owned_workspace(self, value: dict) -> str:
         identifier = value.get("Id")
         config = value.get("Config", {})
-        images = self.inputs["workload"]["image"]
-        permitted = {images["manifest"], images["config"], IMAGE.split("@", 1)[1]}
         mounts = value.get("Mounts", [])
         if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
                 not isinstance(config, dict) or not isinstance(config.get("Labels"), dict) or
-                config["Labels"].get(OWNER_LABEL) != self.owner or config.get("Image") != IMAGE or
-                value.get("Image") not in permitted or not isinstance(mounts, list) or
+                config["Labels"].get(OWNER_LABEL) != self.owner or not isinstance(mounts, list) or
                 sum(isinstance(mount, dict) and mount.get("Type") == "bind" and
                     mount.get("Source") == str(self.workspace) and mount.get("Destination") == WORKSPACE
                     for mount in mounts) != 1):
+            raise ValueError("D01 resource ownership, image or workspace changed")
+        return identifier
+
+    def owned(self, value: dict) -> str:
+        identifier = self.owned_workspace(value)
+        images = self.inputs["workload"]["image"]
+        permitted = {images["manifest"], images["config"], IMAGE.split("@", 1)[1]}
+        if value["Config"].get("Image") != IMAGE or value.get("Image") not in permitted:
             raise ValueError("D01 resource ownership, image or workspace changed")
         return identifier
 
@@ -135,14 +146,14 @@ class DevcontainerReference(GuestFixture):
         return actual
 
     def operation(self):
-        with deadline(195):
+        with deadline(self.up_timeout + 75):
             return self.execute()
 
     def execute(self):
         if self.journal.records().get("devcontainer-plan.json") != canonical(self.plan):
             raise ValueError("D01 plan identity changed")
         output = self.vm.command("devcontainer-up", self.arguments("up") + ["--user-data-folder",
-                                 str(self.vm.root / "devcontainer-data")], timeout=120, separate_output=True)
+                                 str(self.vm.root / "devcontainer-data")], timeout=self.up_timeout, separate_output=True)
         self.identifier = created_id(output, self.id_pattern)
         self.journal.put("devcontainer-created.json", canonical({"id": self.identifier}))
         actual = self.find()
@@ -150,7 +161,7 @@ class DevcontainerReference(GuestFixture):
             raise ValueError("CLI result does not match the owned D01 resource")
         output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["--", "/bin/sh", WORKSPACE + "/probe.sh"],
                                  timeout=60, separate_output=True)
-        return observations(output)
+        return observations(output, self.keys)
 
     def recovery_plan(self):
         """Read-only ownership admission, also used immediately before deletion."""

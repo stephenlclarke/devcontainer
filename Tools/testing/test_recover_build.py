@@ -212,7 +212,7 @@ class DevcontainerRecoveryTests(unittest.TestCase):
             self.assertEqual(finish.call_args.args[2].path, self.guard.path)
             self.assertEqual(finish.call_args.kwargs, {"apply": True})
             self.assertEqual(self.store.begin(self.identity), self.result)
-            self.assertIn("d01-recovery-authorized.json", self.journal.records())
+            self.assertIn(self.fixture_name.split("-", 1)[0].lower() + "-recovery-authorized.json", self.journal.records())
 
     def test_uncertain_ownership_and_changed_inputs_never_stop_vm(self):
         with self.patches(), patch.object(self.vm, "stop") as stop:
@@ -244,6 +244,15 @@ class DevcontainerRecoveryTests(unittest.TestCase):
             self.vm.inventory.return_value[789] = dict(process, pid=789)
             with self.assertRaisesRegex(ValueError, "process remains"):
                 recover_build.verify_running(self.vm)
+
+
+class DevcontainerBuildRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D02-dockerfile-config"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_build_reference.DevcontainerBuildReference", return_value=self.fixture))
+        return stack
 
 
 if __name__ == "__main__":

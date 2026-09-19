@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from case_evidence import canonical
 from devcontainer_reference import DevcontainerReference, IMAGE, WORKSPACE, created_id, fixture_inputs, observations
@@ -38,6 +38,9 @@ class Handler(BaseHTTPRequestHandler):
             if not server.ignore_delete:
                 server.guest = None
             status, body = 204, None
+        elif route.startswith("/images/") and route.endswith("/json"):
+            body = getattr(server, "images", {}).get(unquote(route[len("/images/"):-len("/json")]))
+            status, body = (200, body) if body is not None else (404, {"message": "absent"})
         else:
             status, body = 404, {"message": "absent"}
         payload = canonical(body) if body is not None else b""

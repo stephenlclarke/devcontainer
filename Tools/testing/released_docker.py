@@ -16,6 +16,7 @@ from case_evidence import CaseStore, canonical, digest, run_case, validate_ident
 from campaign_identity import published_fingerprints
 from docker_vm import DockerVM, private_root
 from devcontainer_reference import DevcontainerReference, FIXTURE as DEVCONTAINER_FIXTURE, fixture_inputs
+from devcontainer_build_reference import DevcontainerBuildReference, FIXTURE as BUILD_FIXTURE, fixture_inputs as build_fixture_inputs
 from engine_probe import engine_negotiation, request
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
 from host_runtime import HostGuard, cancellation, cleanup_receipt, deadline, runtime_lease
@@ -46,11 +47,11 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
         raise ValueError("Docker workload image is missing or ambiguous")
     result = {"assets": prepared, "client": client, "tools": tools, "pins": pins,
               "workload": require_image(matches[0], retained / "guest-images")}
-    if fixture == DEVCONTAINER_FIXTURE:
+    if fixture in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE}:
         reference_lock = json.loads((repository / "Tools/bazel/devcontainers-cli.lock.json").read_text())
         reference = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["devcontainersCli"]
         result["devcontainers"] = prepare_devcontainers(reference_lock, reference, scratch, retained, offline=True)
-        result["devcontainerFixture"] = fixture_inputs(repository)
+        result["devcontainerFixture"] = (fixture_inputs if fixture == DEVCONTAINER_FIXTURE else build_fixture_inputs)(repository)
     return result
 
 
@@ -71,8 +72,9 @@ class DockerCase:
         journal = ServiceJournal(self.journal_parent / (digest(canonical(self.owner)) + ".sqlite"), self.owner, create=True)
         self.vm = DockerVM(self.root, self.owner, self.inputs["tools"], self.inputs["pins"], journal)
         self.vm.start()
-        if self.identity["fixture"] == DEVCONTAINER_FIXTURE:
-            self.guest = DevcontainerReference(self.vm, self.inputs, self.owner, observe=self.requests.append)
+        if self.identity["fixture"] in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE}:
+            adapter = DevcontainerReference if self.identity["fixture"] == DEVCONTAINER_FIXTURE else DevcontainerBuildReference
+            self.guest = adapter(self.vm, self.inputs, self.owner, observe=self.requests.append)
             self.guest.setup()
         elif self.identity["fixture"] in FIXTURES:
             self.vm.command("docker-workload-load", [self.inputs["tools"]["docker"], "--host", "unix://" + str(self.vm.socket),
