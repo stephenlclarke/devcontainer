@@ -15,6 +15,32 @@ from input_identity import verify
 from retain_evidence import digest
 
 
+def require_clean_coverage_log(content: bytes) -> None:
+    """A merger warning can mean malformed counters were omitted from LCOV."""
+    if b"WARNING: Tracefile" in content or b"ERROR: Tracefile" in content:
+        raise ValueError("Coverage merger rejected tracefile data; report is not authoritative")
+
+
+def retained_log_names(events: list[dict], expected: set[str]) -> set[str]:
+    """Bind each retained diagnostic to the authenticated test-result inventory."""
+    names, labels = set(), set()
+    for event in events:
+        if "testResult" not in event:
+            continue
+        identity = event["id"]["testResult"]
+        label = identity["label"]
+        outputs = [item for item in event["testResult"].get("testActionOutput", [])
+                   if item.get("name") == "test.log"]
+        name = f"{label}:{json.dumps(identity, sort_keys=True)}:test.log"
+        if len(outputs) != 1 or label in labels:
+            raise ValueError("Coverage requires one diagnostic log per test result")
+        labels.add(label)
+        names.add(name)
+    if not expected or labels != expected:
+        raise ValueError("Coverage diagnostic inventory does not match validated tests")
+    return names
+
+
 def sonar_xml(lcov: bytes, source_roots: tuple[str, ...] = ("Sources",)) -> tuple[bytes, int, int]:
     """Convert the exact first-party LCOV line denominator, without exclusions."""
     files = {}
@@ -38,7 +64,7 @@ def sonar_xml(lcov: bytes, source_roots: tuple[str, ...] = ("Sources",)) -> tupl
             if len(fields) not in {2, 3} or not all(re.fullmatch(r"[0-9]+", field) for field in fields[:2]):
                 raise ValueError("Invalid LCOV line counts")
             line, hits = map(int, fields[:2])
-            if line <= 0 or line in lines:
+            if line <= 0 or line in lines or hits > 2**63 - 1:
                 raise ValueError("Invalid or duplicate LCOV line")
             lines[line] = hits
         found = [row[3:] for row in rows if row.startswith("LF:")]
@@ -91,6 +117,12 @@ def report_bytes(database: Path, invocation: str) -> dict[str, bytes]:
         if outcome != {"bazel_exit_code": 0, "validation_exit_code": 0, "suite": "source"}:
             raise ValueError("Coverage needs a validated complete source inventory")
         report = json.loads(read("source-tests.json"))
+        events = [json.loads(line) for line in read("events.json").splitlines()]
+        logs = retained_log_names(events, set(report["test_cases"]))
+        if logs != {name for name in manifest if name.endswith(":test.log")}:
+            raise ValueError("Missing or unexpected retained coverage diagnostic log")
+        for name in logs:
+            require_clean_coverage_log(read(name))
         lcov = read("build:build:coverage_report.lcov")
         roots = ("Sources",)
         if "policy_sha256" in report:

@@ -99,8 +99,7 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
         let streams = try AppleTerminalSessionIO()
         let inputWriter = ProcessInputWriter(
             handle: streams.controllerInput,
-            label: "io.github.stephenlclarke.devcontainer.terminal-process-input",
-            nonBlocking: false
+            label: "io.github.stephenlclarke.devcontainer.terminal-process-input"
         )
         let outputMonitor = Self.outputMonitor(streams)
         let command = Self.command(

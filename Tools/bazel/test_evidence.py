@@ -7,10 +7,46 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_evidence import case_count, coverage_counts, expected_tests, load_policy, require_source_hits, validate, validate_report
+from check_evidence import case_count, coverage_counts, expected_tests, load_policy, require_coverage_logs, require_source_hits, validate, validate_report
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_default_coverage_suites_reject_out_of_range_counters(self) -> None:
+        required = ["Sources/DevContainerModel/BuildInfo.swift", "Sources/DevContainerState/SQLiteStateStore.swift",
+                    "Tools/version-generator/main.swift", "Sources/DevContainerModel/AtomicFile.swift",
+                    "Sources/DevContainerCore/DevContainerConfiguration.swift", "Sources/DevContainerCLI/PluginCommand.swift",
+                    "Sources/DevContainerService/DevContainerServiceCommand.swift",
+                    "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift"]
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            coverage = Path(directory) / "coverage.lcov"
+            log = Path(directory) / "test.log"
+            log.write_text("All tests passed\n")
+            events = [{"started": {"command": "coverage"}},
+                      {"testResult": {"testActionOutput": [{"name": "test.log", "uri": log.as_uri()}]}},
+                      {"buildToolLogs": {"log": [{"name": "coverage_report.lcov", "uri": coverage.as_uri()}]}}]
+            valid = "".join(f"SF:{source}\nDA:1,1\nLF:1\nLH:1\nend_of_record\n" for source in required)
+            for suite in ("source", "qualification"):
+                with self.subTest(suite=suite):
+                    coverage.write_text(valid)
+                    self.assertEqual(validate_report(events, coverage, suite)["found"], len(required))
+                    coverage.write_text(valid.replace("DA:1,1", "DA:1,18446744073709551615", 1))
+                    with self.assertRaisesRegex(ValueError, "LCOV line"):
+                        validate_report(events, coverage, suite)
+
+    def test_coverage_merger_warning_is_a_gate_failure(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            log = Path(directory) / "test.log"
+            log.write_text("All tests passed\n")
+            events = [{"testResult": {"testActionOutput": [{"name": "test.log", "uri": log.as_uri()}]}}]
+            require_coverage_logs(events)
+            log.write_text("WARNING: Tracefile contains an invalid number on DA line DA:521,18446744073709551615\n")
+            with self.assertRaisesRegex(ValueError, "tracefile"):
+                require_coverage_logs(events)
+            for outputs in ([], events[0]["testResult"]["testActionOutput"] * 2,
+                            [{"name": "test.log", "uri": "https://example.com/test.log"}]):
+                with self.subTest(outputs=outputs), self.assertRaises(ValueError):
+                    require_coverage_logs([{"testResult": {"testActionOutput": outputs}}])
+
     def test_combined_inventory_adds_components_without_changing_unit_evidence(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
             path = Path(directory) / "policy.json"

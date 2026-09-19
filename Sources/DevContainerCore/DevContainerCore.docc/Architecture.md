@@ -30,6 +30,8 @@ For the complete diagrams and decisions, see the repository
 
 ## Development native-create recovery
 
+Native process input workers own their descriptor closure. Backpressured input uses nonblocking writes, bounded readiness polls and a cancellation flag set before queueing close; task cancellation follows the same path. CLI-backed and PTY output workers drain before EOF and relinquish caller-owned descriptors without closing them; the separate direct-API output monitor is unchanged. This prevents cancellation from waiting forever behind a full input queue; it does not implement prepared Compose foreground attachment.
+
 The draft direct-create adapter requires a durable `RuntimeCreationStore`. SQLite schema 4 records intent before native creation, verifies the final native incarnation, and commits successful metadata and intent removal atomically. Failed creates remain observable but cannot be launched, executed, renamed or used for archive transfers through the bridge. Ordinary inventory adoption and name-based deletion never clear the pending record. A different native incarnation may be used without erasing the unresolved operation.
 
 Migration preserves schema-2/3 metadata; rollback to older binaries requires the quiescent pre-upgrade database backup. A safe operator reconciliation interface and live crash/restart qualification remain unfinished. This development behavior is not a stable-release or complete-parity claim.

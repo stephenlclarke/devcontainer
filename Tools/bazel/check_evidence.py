@@ -10,7 +10,7 @@ import re
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote, urlparse
 
-from coverage_report import sonar_xml
+from coverage_report import require_clean_coverage_log, sonar_xml
 
 
 EXPECTED = {
@@ -173,11 +173,31 @@ def validate(events: list[dict], warm: bool, expected: dict[str, int] | None = N
     return {"test_cases": counts, "all_tests_cached": all(s.get("totalNumCached") == 1 for s in summaries.values())}
 
 
+def require_coverage_logs(events: list[dict]) -> None:
+    """Check each executed/cached test's diagnostics before trusting merged data."""
+    for event in events:
+        if "testResult" not in event:
+            continue
+        logs = [item for item in event["testResult"].get("testActionOutput", []) if item.get("name") == "test.log"]
+        if len(logs) != 1:
+            raise ValueError("Coverage requires one diagnostic log per test result")
+        uri = urlparse(logs[0]["uri"])
+        path = Path(unquote(uri.path)).resolve()
+        if uri.scheme != "file" or uri.netloc or not path.is_relative_to("/Volumes/SSD/cf/bazel"):
+            raise ValueError("Coverage diagnostics must be a local SSD file")
+        with path.open("rb") as incoming:
+            contents = incoming.read(128 * 1024**2 + 1)
+        if len(contents) > 128 * 1024**2:
+            raise ValueError("Coverage diagnostic log exceeds the evidence bound")
+        require_clean_coverage_log(contents)
+
+
 def validate_report(events: list[dict], coverage: Path, suite: str = "qualification", policy: dict | None = None) -> dict:
     """Bind coverage to this invocation and require the migrated source modules."""
     starts = [event["started"] for event in events if "started" in event]
     if len(starts) != 1 or starts[0].get("command") != "coverage":
         raise ValueError("Evidence must come from a coverage invocation")
+    require_coverage_logs(events)
     reports = [log for event in events for log in event.get("buildToolLogs", {}).get("log", []) if log.get("name") == "coverage_report.lcov"]
     if len(reports) != 1:
         raise ValueError("Missing unique Bazel combined coverage output")
@@ -199,10 +219,8 @@ def validate_report(events: list[dict], coverage: Path, suite: str = "qualificat
             "Sources/DevContainerAppleRuntime/AppleContainerRuntime.swift",
         }
     require_source_hits(text, set(policy["required_sources"]) if policy else required)
-    if policy:
-        _, hit, found = sonar_xml(contents, tuple(policy["source_roots"]))
-    else:
-        hit, found = coverage_counts(text)
+    roots = tuple(policy["source_roots"]) if policy else ("Sources", "Tools/version-generator")
+    _, hit, found = sonar_xml(contents, roots)
     scope = "qualification subset, not whole project" if suite == "qualification" else "source unit tests; excludes host integration"
     return {"hit": hit, "found": found, "sha256": hashlib.sha256(contents).hexdigest(), "scope": policy["scope"] if policy else scope}
 

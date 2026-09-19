@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from coverage_report import export, report_bytes, require_context, require_minimum, sonar_xml
+from coverage_report import export, report_bytes, require_clean_coverage_log, require_context, require_minimum, sonar_xml
 from retain_evidence import digest
 
 
@@ -28,11 +28,18 @@ class CoverageReportTests(unittest.TestCase):
             "inputs-before.json": json.dumps(identity).encode(),
             "inputs-after.json": json.dumps(identity).encode(),
             "outcome.json": b'{"bazel_exit_code":0,"validation_exit_code":0,"suite":"source"}',
-            "source-tests.json": json.dumps({"runtime_profile": "stock", "coverage": {
+            "source-tests.json": json.dumps({"runtime_profile": "stock", "test_cases": {"//:Consumer": 1, "//:Other": 1}, "coverage": {
                 "sha256": digest(LCOV), "hit": 1, "found": 2, "scope": "unit only",
             }}).encode(),
             "build:build:coverage_report.lcov": LCOV,
         }
+        self.events = [{"id": {"testResult": {"label": label, "run": 1}},
+                        "testResult": {"testActionOutput": [{"name": "test.log"}]}}
+                       for label in ("//:Consumer", "//:Other")]
+        self.contents["events.json"] = b"\n".join(json.dumps(event).encode() for event in self.events)
+        self.logs = [f'{event["id"]["testResult"]["label"]}:{json.dumps(event["id"]["testResult"], sort_keys=True)}:test.log'
+                     for event in self.events]
+        self.contents.update({name: b"All tests passed\n" for name in self.logs})
 
     def store(self, status: int = 0) -> None:
         with sqlite3.connect(self.database) as db:
@@ -50,6 +57,38 @@ class CoverageReportTests(unittest.TestCase):
         root = ET.fromstring(xml)
         self.assertEqual(root[0].get("path"), "Sources/A&B.swift")
         self.assertEqual([line.get("covered") for line in root[0]], ["true", "false"])
+
+    def test_rejected_counters_cannot_be_hidden_by_the_merger(self) -> None:
+        require_clean_coverage_log(b"All tests passed\n")
+        warning = b"WARNING: Tracefile contains an invalid number on DA line DA:521,18446744073709551615\n"
+        with self.assertRaisesRegex(ValueError, "tracefile"):
+            require_clean_coverage_log(warning)
+        self.contents[self.logs[0]] = warning
+        self.store()
+        with self.assertRaisesRegex(ValueError, "tracefile"):
+            report_bytes(self.database, "fixture")
+        self.contents[self.logs[0]] = b"All tests passed\n"
+        self.store()
+        self.assertIn("coverage.xml", report_bytes(self.database, "fixture"))
+        with self.assertRaisesRegex(ValueError, "LCOV line"):
+            sonar_xml(LCOV.replace(b"DA:1,2", b"DA:1,18446744073709551615"))
+
+    def test_missing_retained_diagnostics_never_qualify(self) -> None:
+        for missing in ([self.logs[0]], self.logs):
+            with self.subTest(missing=missing):
+                for name in missing:
+                    del self.contents[name]
+                self.store()
+                with self.assertRaisesRegex(ValueError, "diagnostic log"):
+                    report_bytes(self.database, "fixture")
+                self.contents.update({name: b"All tests passed\n" for name in missing})
+        for events in ([], self.events[:1], self.events * 2,
+                       [{"id": self.events[0]["id"], "testResult": {"testActionOutput": []}}]):
+            with self.subTest(events=events):
+                self.contents["events.json"] = b"\n".join(json.dumps(event).encode() for event in events)
+                self.store()
+                with self.assertRaisesRegex(ValueError, "diagnostic"):
+                    report_bytes(self.database, "fixture")
 
     def test_consumer_roots_are_bound_to_the_retained_policy(self) -> None:
         data = LCOV.replace(b"Sources/Example.swift", b"Tools/helper/main.go")

@@ -134,5 +134,9 @@ extension AppleContainerCreateTests {
         func kill(_: Int32) {
             // These tests assert CLI stop is not issued for a created VM.
         }
+
+        nonisolated func disconnect() {
+            // This in-memory lifecycle fixture owns no transport connection.
+        }
     }
 }
