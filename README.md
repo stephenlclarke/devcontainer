@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-C02 dependency health, DNS and service selection pass on the real Docker reference. The initial stock run exposed unsupported native health flags and was safely recovered. The corrected candidate now adopts negotiated, versioned requested health policy from Compose and evaluates real guest probes; focused tests and full source review pass. Corrected live stock qualification remains pending, so native parity is not yet claimed. See the [C02 contract and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+C02 passes on the real Docker reference. The corrected stock candidate now starts all three services and verifies actual database health, but the guest probe fails service-name resolution. Cleanup passes with zero owned resources and recovery is clear. The next correction is native Compose adoption into the existing network-host reconciliation; C02 parity is not yet claimed. See the [C02 contract, timings and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
 D06 passes actual CLI forwarding metadata, guest and host HTTP access, a specific owned-container port collision and cleanup in Docker (`524dce17-469a-4819-9258-a210a414d7cb`) and stock Apple Container (`ecf30eb5-335e-4144-8747-65c91e32975b`). The candidate frontend projects explicit IPv4/fixed TCP publish options without Docker, and inspection reports recorded port bindings. Enhanced-lane qualification remains blocked by its exact guest input; these functional runs are neither quiet paired benchmarks nor a released support claim. See the [D06 contract](docs/bazel-test-harness.md#d06-published-ports).
 
