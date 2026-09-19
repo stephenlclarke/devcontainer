@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The observed C02 stock hostname-resolution defect is fixed and the unchanged live fixture passes at `64db1c6`, invocation `c63c4ae3`, including exact cleanup. [Current proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the diagnostic failure history below. The remaining C02 boundary is startup-time resolution before the original entrypoint and enhanced qualification; complete family release/benchmark/documentation gates remain open.
+
 The stock C02 candidate (`e8796ba`) fails hostname resolution despite healthy services and correct observed/adopted networks. [Runtime tracing](bazel-test-harness.md#c02-dependency-health-and-service-selection) identifies the cause: the runtime requires Docker mirrors that the HTTP layer synthesizes only in responses. Native-only identity acceptance is now corrected with conflicting mirrors still rejected and failing-before/passing-after regression evidence. Corrected live C02 qualification remains pending. All diagnostic runs cleaned up successfully; no stable release follows from this checkpoint.
 
 The backing-file store now has gateway creation/lifecycle callers and [focused recovery and ownership proof](PR-83.md#implementation), including the real SQLite completion transaction, absent-native cleanup and bootstrapped preparation-failure recovery. Compose creation still bypasses this boundary and must be moved into it. No new live parity result or release follows from component tests.
