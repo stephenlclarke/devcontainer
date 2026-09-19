@@ -152,7 +152,9 @@ extension AppleContainerRuntime {
         try context.checkActive()
         await portForwarding.stop(containerID: identity.runtimeID)
         try await metadataStore.removeContainerMetadata(id: identity.runtimeID)
-        discardContainerState(id: identity.runtimeID, dockerID: metadata.dockerID.rawValue, name: metadata.spec.name)
+        await discardContainerState(
+            id: identity.runtimeID, dockerID: metadata.dockerID.rawValue, name: metadata.spec.name
+        )?.shutdown()
         await signalEventPollers()
         return true
     }

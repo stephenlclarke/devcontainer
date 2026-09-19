@@ -217,11 +217,18 @@ extension AppleContainerRuntime {
         )
     }
 
+    func discardContainerState(snapshot: DevContainerModel.ContainerSnapshot) -> AppleContainerIO? {
+        discardContainerState(
+            id: snapshot.runtimeID.rawValue, dockerID: snapshot.dockerID.rawValue, name: snapshot.spec.name
+        )
+    }
+
+    @discardableResult
     func discardContainerState(
         id: String,
         dockerID: String,
         name: String? = nil
-    ) {
+    ) -> AppleContainerIO? {
         requestedContainers.removeValue(forKey: id)
         requestedContainers.removeValue(forKey: dockerID)
         if let name {
@@ -241,6 +248,9 @@ extension AppleContainerRuntime {
         containerExitTasks.removeValue(forKey: id)?.cancel()
         containerExitRegistrations.removeValue(forKey: id)
         containerExits.removeValue(forKey: id)
+        let channel = containerIO.removeValue(forKey: id)
+        if let channel { scheduleContainerIOClosure(id: id, channel: channel) }
+        return channel
     }
 
     static func containerState(

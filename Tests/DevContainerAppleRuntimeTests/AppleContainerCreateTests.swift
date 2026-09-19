@@ -674,7 +674,7 @@ extension AppleContainerCreateTests {
         try await runtime.stopContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
         #expect(await !runtime.portForwarding.hasListeners(containerID: "fixture"))
         try await runtime.restartContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
-        #expect(await creator.bootstraps == 2)
+        #expect(await creator.bootstraps == 1)
         #expect(await creator.starts == 1)
         #expect(await creator.startedAt != nil)
         #expect(try !fixture.log().split(separator: "\n").contains { $0.hasPrefix("stop ") })

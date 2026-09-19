@@ -1,5 +1,7 @@
 # Testing
 
+The unreleased init-attachment implementation now has descriptor/lifecycle tests for multiple clients, complete output and real exit status, blocked/queued input cancellation, deferred post-start resize, same-incarnation replacement and changed-identity rejection during joined cleanup. Final stock component `6c2d4f56` passes 235 functions and enhanced `bb0830f8` passes 242; the detailed source boundaries and review findings are retained in `docs/bazel-test-harness.md`, under "Foreground init attachment (development)". HTTP/Compose integration and VM-backed parity remain open. Instrumented stock `e800ebe7` again emits invalid runtime counters, so the older warning-free checkpoint below does not establish that coverage is fixed.
+
 At committed runtime checkpoint `73938b6`, the complete Apple-runtime component passes 219 stock and 226 enhanced functions with no merger diagnostics. Separate Compose CLI instrumentation still produces invalid counts despite passing its functional tests. Do not generalize the clean runtime result to whole-project coverage; see the scoped diagnostic handoff in `docs/bazel-test-harness.md`.
 
 Process-output regressions now cover shared nonblocking readers, cancellation during a held delivery callback, an already-cancelled cleanup waiter and real PTY child-exit status. Both runtime profiles pass the 32 focused functions. These do not replace the full coverage and live foreground-attachment gates below.

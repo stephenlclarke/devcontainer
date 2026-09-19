@@ -98,7 +98,7 @@ extension AppleContainerCreateTests {
             )
         }
 
-        func bootstrap(id _: String) throws -> any ClientProcess {
+        func bootstrap(id _: String, stdio _: [FileHandle?]) throws -> any ClientProcess {
             bootstraps += 1
             hostsAtBootstrap = try mountedHosts()
             return self
@@ -122,9 +122,21 @@ extension AppleContainerCreateTests {
             startedAt = Date(timeIntervalSince1970: 100)
         }
 
-        func wait() throws -> Int32 {
-            // No exit event is published by this lifecycle-ordering fixture.
-            throw CancellationError()
+        func recordExit() {
+            running = false
+        }
+
+        func replaceIncarnation() {
+            created[created.count - 1].creationDate.addTimeInterval(10)
+            startedAt = nil
+            running = false
+        }
+
+        func wait() async throws -> Int32 {
+            // This lifecycle fixture stays running until engine shutdown cancels
+            // its wait; a transport error must not impersonate a live process.
+            try await Task.sleep(for: .seconds(3600))
+            return 0
         }
 
         func resize(_: Terminal.Size) {

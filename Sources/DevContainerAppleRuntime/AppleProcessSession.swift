@@ -233,6 +233,11 @@ final class ProcessInputWriter: @unchecked Sendable {
     private var closed = false
     private let cancellationLock = NSLock()
     private var cancelled = false
+    private var pendingWrites = 0
+
+    var pendingWriteCount: Int {
+        cancellationLock.withLock { pendingWrites }
+    }
 
     convenience init(
         pipe: Pipe,
@@ -270,44 +275,55 @@ final class ProcessInputWriter: @unchecked Sendable {
         _ = fcntl(descriptor, F_SETNOSIGPIPE, 1)
     }
 
-    func write(_ data: Data) async throws {
+    func write(
+        _ data: Data,
+        cancelWriterOnCancellation: Bool = true,
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) async throws {
         try Task.checkCancellation()
         guard !data.isEmpty else {
             return
         }
+        let operation = ProcessInputCancellation()
+        let cancelled: @Sendable () -> Bool = { operation.isCancelled || isCancelled() }
         try await withTaskCancellationHandler {
             let _: Void = try await withCheckedThrowingContinuation { continuation in
+                cancellationLock.withLock { pendingWrites += 1 }
+                operation.install(continuation)
                 queue.async { [self] in
+                    defer { cancellationLock.withLock { pendingWrites -= 1 } }
+                    guard !operation.isCancelled else { return }
                     guard !closed else {
-                        continuation.resume(
-                            throwing: DevContainerError(
-                                .conflict,
-                                message: "process standard input is closed"
-                            )
-                        )
+                        operation.complete(.failure(DevContainerError(
+                            .conflict,
+                            message: "process standard input is closed"
+                        )))
                         return
                     }
                     do {
-                        try writeAll(data)
-                        continuation.resume()
+                        try writeAll(data, isCancelled: cancelled)
+                        operation.complete(.success(()))
                     } catch {
-                        continuation.resume(throwing: error)
+                        operation.complete(.failure(error))
                     }
                 }
             }
         } onCancel: {
-            self.cancel()
+            operation.cancel()
+            if cancelWriterOnCancellation {
+                self.cancel()
+            }
         }
     }
 
-    private func writeAll(_ data: Data) throws {
+    private func writeAll(_ data: Data, isCancelled: @Sendable () -> Bool) throws {
         if let setupError {
             throw setupError
         }
         try data.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
-                try checkCancellation()
+                try checkCancellation(isCancelled)
                 let count = min(16 * 1024, bytes.count - offset)
                 let written = Darwin.write(
                     descriptor,
@@ -322,7 +338,7 @@ final class ProcessInputWriter: @unchecked Sendable {
                     continue
                 }
                 if written < 0, errno == EAGAIN || errno == EWOULDBLOCK {
-                    try waitUntilWritable()
+                    try waitUntilWritable(isCancelled)
                     continue
                 }
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
@@ -330,14 +346,14 @@ final class ProcessInputWriter: @unchecked Sendable {
         }
     }
 
-    private func waitUntilWritable() throws {
+    private func waitUntilWritable(_ isCancelled: @Sendable () -> Bool) throws {
         var event = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
         while true {
-            try checkCancellation()
+            try checkCancellation(isCancelled)
             // Closing on another thread risks descriptor reuse. Wake often
             // enough to observe cancellation, then close on the owning queue.
             let result = Darwin.poll(&event, 1, 100)
-            try checkCancellation()
+            try checkCancellation(isCancelled)
             if result == 0 {
                 continue
             }
@@ -354,9 +370,15 @@ final class ProcessInputWriter: @unchecked Sendable {
         }
     }
 
-    private func checkCancellation() throws {
-        if cancellationLock.withLock({ cancelled }) {
+    private func checkCancellation(_ isCancelled: @Sendable () -> Bool) throws {
+        if cancellationLock.withLock({ cancelled }) || isCancelled() {
             throw CancellationError()
+        }
+    }
+
+    func waitForCompletion() async {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume() }
         }
     }
 
@@ -397,6 +419,44 @@ final class ProcessInputWriter: @unchecked Sendable {
     }
 }
 
+private final class ProcessInputCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var result: Result<Void, any Error>?
+    private var continuation: CheckedContinuation<Void, any Error>?
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
+        complete(.failure(CancellationError()))
+    }
+
+    func install(_ continuation: CheckedContinuation<Void, any Error>) {
+        let result: Result<Void, any Error>? = lock.withLock {
+            if let result {
+                return result
+            }
+            self.continuation = continuation
+            return nil
+        }
+        if let result {
+            continuation.resume(with: result)
+        }
+    }
+
+    func complete(_ result: Result<Void, any Error>) {
+        let continuation: CheckedContinuation<Void, any Error>? = lock.withLock {
+            guard self.result == nil else { return nil }
+            self.result = result
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(with: result)
+    }
+}
+
 /// Drains process output on dedicated OS threads. stdout and stderr can
 /// block independently without occupying Swift's cooperative executor or
 /// relying on a one-shot readiness edge while a child performs duplex I/O.
@@ -407,7 +467,9 @@ final class ProcessPipeMonitor: @unchecked Sendable {
     private let frames: AsyncThrowingStream<
         RuntimeIOFrame,
         any Error
-    >.Continuation
+    >.Continuation?
+    private let onFrame: (@Sendable (RuntimeIOFrame) -> Void)?
+    private let onError: (@Sendable (any Error) -> Void)?
     private let endOnEIO: Bool
     private let closeHandleOnFinish: Bool
     private let onRead: (@Sendable (Int) -> Void)?
@@ -423,11 +485,13 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         frames: AsyncThrowingStream<
             RuntimeIOFrame,
             any Error
-        >.Continuation,
+        >.Continuation? = nil,
         endOnEIO: Bool = false,
         closeHandleOnFinish: Bool = true,
         onRead: (@Sendable (Int) -> Void)? = nil,
-        onFinish: (@Sendable () -> Void)? = nil
+        onFinish: (@Sendable () -> Void)? = nil,
+        onFrame: (@Sendable (RuntimeIOFrame) -> Void)? = nil,
+        onError: (@Sendable (any Error) -> Void)? = nil
     ) {
         self.handle = handle
         descriptor = handle.fileDescriptor
@@ -437,6 +501,8 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         self.closeHandleOnFinish = closeHandleOnFinish
         self.onRead = onRead
         self.onFinish = onFinish
+        self.onFrame = onFrame
+        self.onError = onError
         Thread.detachNewThread { [self] in
             Thread.current.name =
                 "io.github.stephenlclarke.devcontainer.cli-process-\(channel)"
@@ -469,7 +535,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         defer { finish() }
         let flags = fcntl(descriptor, F_GETFL)
         guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
-            frames.finish(throwing: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+            fail(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
             return
         }
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
@@ -483,7 +549,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
                 continue
             }
             guard ready > 0 else {
-                frames.finish(throwing: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+                fail(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
                 return
             }
             let count = buffer.withUnsafeMutableBytes { bytes in
@@ -491,12 +557,9 @@ final class ProcessPipeMonitor: @unchecked Sendable {
             }
             if count > 0 {
                 onRead?(count)
-                frames.yield(
-                    RuntimeIOFrame(
-                        channel: channel,
-                        data: Data(buffer.prefix(count))
-                    )
-                )
+                let frame = RuntimeIOFrame(channel: channel, data: Data(buffer.prefix(count)))
+                frames?.yield(frame)
+                onFrame?(frame)
                 continue
             }
             if count == 0 {
@@ -518,7 +581,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
             return false
         default:
             if !stateLock.withLock({ cancelled }) {
-                frames.finish(throwing: POSIXError(POSIXErrorCode(rawValue: readError) ?? .EIO))
+                fail(POSIXError(POSIXErrorCode(rawValue: readError) ?? .EIO))
             }
             return false
         }
@@ -538,6 +601,11 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+
+    private func fail(_ error: any Error) {
+        frames?.finish(throwing: error)
+        onError?(error)
     }
 }
 

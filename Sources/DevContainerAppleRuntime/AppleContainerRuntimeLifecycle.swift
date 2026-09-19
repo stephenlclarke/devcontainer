@@ -136,73 +136,6 @@ public extension AppleContainerRuntime {
         containerStartOperations.removeValue(forKey: id)
     }
 
-    private func launchContainerProcess(id: String, context: RuntimeRequestContext) async throws -> UUID? {
-        try await requireCompletedCreation(id: id)
-        let hostsConfiguration = try await managedHostsConfiguration(id: id)
-        guard useDirectProcessAPI else {
-            guard hostsConfiguration == nil else {
-                throw DevContainerError(
-                    .unsupportedCapability,
-                    message: "Managed hosts startup requires direct process APIs"
-                )
-            }
-            try await requireSuccess(
-                command(["start", id]),
-                operation: "container start"
-            )
-            return nil
-        }
-        if let hostsConfiguration {
-            try await populateManagedHostsBeforeProcess(
-                configuration: hostsConfiguration, includeAllocatedSelf: false, context: context
-            )
-        }
-        let process = try await bootstrapClient.bootstrap(id: id)
-        if let hostsConfiguration {
-            // A failed preparation retains this created container and its owned
-            // bootstrapped VM for retry/removal; never launch the user's process
-            // with incomplete hosts or delete its root filesystem on failure.
-            try await populateManagedHostsBeforeProcess(
-                configuration: hostsConfiguration, includeAllocatedSelf: true, context: context
-            )
-        }
-        do {
-            try await process.start()
-        } catch {
-            guard hostsConfiguration != nil else { throw error }
-            throw DevContainerError(
-                .runtimeUnavailable,
-                message: "Native process start failed; remove and recreate this container before retrying: \(error)"
-            )
-        }
-        return trackContainerProcess(process, id: id)
-    }
-
-    private func trackContainerProcess(_ process: any ClientProcess, id: String) -> UUID {
-        let task = Task {
-            try await ContainerExit(
-                code: process.wait(),
-                finishedAt: Date()
-            )
-        }
-        let registration = UUID()
-        containerExitTasks[id]?.cancel()
-        containerExitTasks[id] = task
-        containerExitRegistrations[id] = registration
-        containerExits.removeValue(forKey: id)
-        Task { [weak self] in
-            guard let exit = try? await task.value else {
-                return
-            }
-            await self?.handleContainerExit(
-                exit,
-                id: id,
-                registration: registration
-            )
-        }
-        return registration
-    }
-
     internal func handleContainerExit(
         _ exit: ContainerExit,
         id: String,
@@ -655,7 +588,7 @@ public extension AppleContainerRuntime {
         }
         await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
-        discardContainerState(id: resolved, dockerID: snapshot.dockerID.rawValue, name: snapshot.spec.name)
+        await discardContainerState(snapshot: snapshot)?.shutdown()
         requestedContainers.removeValue(forKey: id)
         startedContainers.remove(id)
         containerStartedAt.removeValue(forKey: id)
@@ -787,16 +720,6 @@ public extension AppleContainerRuntime {
         }
         arguments.append(resolved)
         return try process(arguments).frames
-    }
-
-    func attachContainer(
-        id: String,
-        terminal _: Bool,
-        context: RuntimeRequestContext
-    ) async throws -> any RuntimeProcessSession {
-        ApplePollingLogSession {
-            try await self.pollLogs(id: id, context: context)
-        }
     }
 
     func createExec(

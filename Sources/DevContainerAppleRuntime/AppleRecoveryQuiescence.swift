@@ -10,9 +10,9 @@ extension AppleContainerRuntime: RuntimeRecoveryProbe {
             throw DevContainerError(.unsupportedCapability, message: "CLI recovery quiescence is unavailable")
         }
         let revision = containerLifecycleMutationRevision
-        guard containerLifecycleMutationRegistrations.isEmpty,
+        guard containerLifecycleMutationRegistrations.isEmpty, containerIOClosures.isEmpty,
               try await !requireCreationStore().hasPendingContainerCreations(),
-              containerLifecycleMutationRegistrations.isEmpty,
+              containerLifecycleMutationRegistrations.isEmpty, containerIOClosures.isEmpty,
               revision == containerLifecycleMutationRevision
         else {
             throw DevContainerError(.conflict, message: "Native container creation is not quiescent")

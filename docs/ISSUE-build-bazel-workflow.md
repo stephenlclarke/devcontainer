@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The prepared foreground path now has a runtime-owned descriptor/lifecycle implementation, rather than attaching only to polled logs. [Current component evidence](bazel-test-harness.md#foreground-init-attachment-development) covers stock-compatible post-start resize, cancellation of queued input without disrupting other clients, and identity-preserving cleanup barriers. The public HTTP/Compose path and live matrix still need completion, and malformed runtime coverage counters remain a release-quality blocker.
+
 The output-cancellation follow-up removes duplicate direct-API reader ownership, joins cleanup even when its waiter is cancelled, and preserves the real terminal process exit status. Both profile-focused regressions pass; [exact evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) records fail-before proof and the remaining foreground/coverage gates.
 
 Backpressured process-input cancellation could deadlock behind its queued write; the candidate now uses bounded nonblocking I/O and owner-thread closure, with real socket/PTY regressions. Enhanced testing also found an incomplete process test double and an incorrect stock-only bind assertion. [Current evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) retains the failures and corrections. Full native instrumentation has an unresolved counter-underflow defect; guards now reject corrupted/missing evidence instead of allowing reduced coverage denominators. Complete foreground attach, all live lanes and release publication remain open.

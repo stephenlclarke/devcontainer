@@ -144,6 +144,8 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var containerExitTasks: [String: Task<ContainerExit, any Error>] = [:]
     var containerExitRegistrations: [String: UUID] = [:]
     var containerExits: [String: ContainerExit] = [:]
+    var containerIO: [String: AppleContainerIO] = [:]
+    var containerIOClosures: [String: AppleContainerIOClosure] = [:]
     var containerStartOperations: [String: ContainerStartOperation] = [:]
     var containerMetadataAdoptionOperations:
         [String: ContainerMetadataAdoptionOperation] = [:]
@@ -301,6 +303,21 @@ public extension AppleContainerRuntime {
     func shutdown() async {
         await eventPollerState?.shutdown()
         await portForwarding.stopAll()
+        for task in containerExitTasks.values {
+            task.cancel()
+        }
+        containerExitTasks.removeAll()
+        containerExitRegistrations.removeAll()
+        let channels = Array(containerIO.values)
+        containerIO.removeAll()
+        for channel in channels {
+            await channel.shutdown()
+        }
+        let closures = Array(containerIOClosures.values)
+        containerIOClosures.removeAll()
+        for closure in closures {
+            await closure.task.value
+        }
     }
 
     func listContainers(
@@ -580,11 +597,11 @@ public extension AppleContainerRuntime {
             try await metadataStore.removeContainerMetadata(
                 id: metadata.runtimeID.rawValue
             )
-            discardContainerState(
+            await discardContainerState(
                 id: metadata.runtimeID.rawValue,
                 dockerID: metadata.dockerID.rawValue,
                 name: metadata.spec.name
-            )
+            )?.shutdown()
         }
     }
 

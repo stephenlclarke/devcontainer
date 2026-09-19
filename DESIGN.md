@@ -173,6 +173,8 @@ or attributed across provider lanes.
 
 ### Apple adapter fast path
 
+The unreleased direct-start path owns init input/output independently of attached clients. It supplies descriptors during bootstrap, preserves them through managed-host preparation, starts init once, and validates the observed native start identity. Stock Apple permits resize only after start; pending sizes are applied at that point. Per-client cancellation does not stop init or close other clients' input, and an ID-scoped closing barrier joins descriptor/control cleanup before replacement. External init descriptors cannot be adopted. The [development evidence and limitations](docs/bazel-test-harness.md#foreground-init-attachment-development) leave complete HTTP/Compose attachment and live parity unqualified.
+
 The adapter keeps reusable official clients for the lifetime of each engine
 process. Stock Apple container inventory and exact inspection use the typed
 1.1.0 schema. A separately fingerprinted enhanced distribution retains its
