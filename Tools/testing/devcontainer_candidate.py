@@ -8,6 +8,7 @@ import time
 
 from case_evidence import canonical
 from devcontainer_reference import DevcontainerReference, IMAGE
+from devcontainer_build_reference import DevcontainerBuildReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -145,3 +146,21 @@ class DevcontainerCandidate(DevcontainerReference):
         # closure. The reference wrapper would install a second alarm.
         self.remove_owned()
         self.vm.close()
+
+
+class DevcontainerBuildCandidate(DevcontainerCandidate, DevcontainerBuildReference):
+    """D02 keeps reference image/observation checks and native process ownership."""
+
+    def __init__(self, commands, inputs, owner, *, before_build, observe=None):
+        super().__init__(commands, inputs, owner, observe=observe)
+        self.before_build = before_build
+
+    def arguments(self, command):
+        arguments = super().arguments(command)
+        return arguments + (["--buildkit", "never"] if command == "up" else [])
+
+    def execute(self):
+        # Recheck the admitted builder and host DNS immediately before the CLI
+        # can submit its build, rather than trusting setup-time ownership alone.
+        self.before_build()
+        return super().execute()

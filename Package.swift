@@ -124,6 +124,7 @@ let package = Package(
         .target(
             name: "DevContainerDockerClient",
             dependencies: [
+                "DevContainerProcess",
                 .product(name: "ContainerEngineWire", package: "container-engine-api"),
                 .product(name: "ContainerUnixHTTPClient", package: "container-engine-api")
             ]

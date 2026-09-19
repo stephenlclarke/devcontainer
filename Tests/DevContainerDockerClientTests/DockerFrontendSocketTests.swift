@@ -12,6 +12,67 @@ import Testing
 
 struct DockerFrontendSocketTests {
     @Test
+    func `real executable builds through selected socket and propagates streamed failures without Docker`(
+    ) async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("db-\(UUID().uuidString.prefix(8))")
+        let context = root.appendingPathComponent("context")
+        try FileManager.default.createDirectory(
+            at: context,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("FROM scratch\n".utf8).write(to: context.appendingPathComponent("Dockerfile"))
+        let socket = root.appendingPathComponent("engine.sock").path
+        let server = ContainerUnixHTTPServer(
+            responder: FrontendTestResponder(),
+            socketPath: socket,
+            logger: Logger(label: "frontend-build-test")
+        )
+        try await server.start()
+        do {
+            try await checkBuildClient(context: context, socket: socket, outputRoot: root)
+            let success = try await FrontendExecutable.run(["build", "-t", "good", context.path], socket: socket)
+            #expect(success.exitCode == 0)
+            #expect(success.standardOutput == Data("Step 1\nBuilt\n".utf8))
+            #expect(success.standardError.isEmpty)
+            let failure = try await FrontendExecutable.run(["build", "-t", "bad", context.path], socket: socket)
+            #expect(failure.exitCode == 1)
+            #expect(failure.standardOutput == Data("Step 1\n".utf8))
+            #expect(String(data: failure.standardError, encoding: .utf8)?.contains("build failed") == true)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+    }
+
+    private func checkBuildClient(context: URL, socket: String, outputRoot: URL) async throws {
+        for tag in ["good", "bad"] {
+            guard case let .build(spec) = try DockerFrontendCommand.parse(["build", "-t", tag, context.path]) else {
+                throw DockerFrontendError.usage("expected build")
+            }
+            let archive = try await DockerBuildArchive.prepare(spec)
+            let output = outputRoot.appendingPathComponent("client-" + tag)
+            try Data().write(to: output)
+            let handle = try FileHandle(forWritingTo: output)
+            defer { try? handle.close() }
+            let frontend = DockerFrontend(version: "test", executionTimeout: .seconds(2))
+            let transport = try UnixDockerFrontendTransport(socketPath: socket)
+            let writer = try DockerFrontendOutput(descriptor: handle.fileDescriptor)
+            if tag == "good" {
+                try await frontend.executeBuild(spec, archive: archive, transport: transport, output: writer)
+                #expect(try Data(contentsOf: output) == Data("Step 1\nBuilt\n".utf8))
+            } else {
+                await #expect(throws: DockerFrontendError.self) {
+                    try await frontend.executeBuild(spec, archive: archive, transport: transport, output: writer)
+                }
+                #expect(try Data(contentsOf: output) == Data("Step 1\n".utf8))
+            }
+        }
+    }
+
+    @Test
     func `real executable streams events and keeps HTTP error bodies off stdout`() async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(
@@ -166,22 +227,26 @@ struct DockerFrontendSocketTests {
 }
 
 enum FrontendExecutable {
+    static var executable: URL {
+        let environment = ProcessInfo.processInfo.environment
+        if let runfile = environment["DEVCONTAINER_DOCKER_TEST_RUNFILE"],
+           let directory = environment["TEST_SRCDIR"],
+           let workspace = environment["TEST_WORKSPACE"]
+        {
+            return URL(fileURLWithPath: directory).appendingPathComponent(workspace).appendingPathComponent(runfile)
+        } else {
+            return Bundle(for: FrontendTestBundle.self).bundleURL.deletingLastPathComponent()
+                .appendingPathComponent("devcontainer-docker")
+        }
+    }
+
     static func run(
         _ arguments: [String],
         socket: String? = nil,
         input: Data? = nil
     ) async throws -> CapturedProcessResult {
-        let environment = ProcessInfo.processInfo.environment
-        let executable: URL = if let runfile = environment["DEVCONTAINER_DOCKER_TEST_RUNFILE"],
-                                 let directory = environment["TEST_SRCDIR"],
-                                 let workspace = environment["TEST_WORKSPACE"]
-        {
-            URL(fileURLWithPath: directory).appendingPathComponent(workspace).appendingPathComponent(runfile)
-        } else {
-            Bundle(for: FrontendTestBundle.self).bundleURL.deletingLastPathComponent()
-                .appendingPathComponent("devcontainer-docker")
-        }
         var childEnvironment = ["PATH": "/no-external-clients", "DEVCONTAINER_CONFIG": "/no-config"]
+        childEnvironment["TMPDIR"] = TestStorage.temporaryDirectory.path
         if let socket {
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
         }
@@ -200,6 +265,12 @@ private final class FrontendTestBundle: NSObject {}
 
 private struct FrontendTestResponder: DockerHTTPResponder {
     func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        if request.method == .post, request.target.hasPrefix("/build?") {
+            guard request.body.count > 512 else { return .text("missing archive", status: 400) }
+            let last = request.target.contains("&t=bad")
+                ? "{\"errorDetail\":{\"message\":\"build failed\"}}" : "{\"stream\":\"Built\\n\"}"
+            return .text("{\"stream\":\"Step 1\\n\"}\n" + last, contentType: "application/json")
+        }
         if request.target.hasPrefix("/events?") {
             if request.target.contains("%22error%22") {
                 return .text(#"{"message":"event failure"}"#, status: 500, contentType: "application/json")

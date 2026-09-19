@@ -14,7 +14,7 @@ public enum DockerFrontendError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// The command forms observed in the pinned Dev Containers CLI's D01 ledger.
+/// The command forms observed in the pinned Dev Containers CLI's parity ledgers.
 /// Unsupported operations fail before contacting an engine; there is no external CLI fallback.
 public enum DockerFrontendCommand: Equatable, Sendable {
     case clientVersion
@@ -25,12 +25,13 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     case exec(DockerExecCommand)
     case run(DockerRunCommand)
     case events(DockerEventsCommand)
+    case build(DockerBuildCommand)
 
     public static func parse(_ arguments: [String]) throws -> Self {
         var options = DockerFrontendArguments(arguments)
         guard let command = options.next() else {
             throw DockerFrontendError
-                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events")
+                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events, build")
         }
         switch command {
         case "-v", "--version":
@@ -51,12 +52,21 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             return try inspectAlias(command, options: &options)
         case "ps":
             return try containers(&options)
+        default:
+            return try streaming(command, options: &options)
+        }
+    }
+
+    private static func streaming(_ command: String, options: inout DockerFrontendArguments) throws -> Self {
+        switch command {
         case "exec":
             return try .exec(DockerExecCommand.parse(&options))
         case "run":
             return try .run(DockerRunCommand.parse(&options))
         case "events":
             return try .events(DockerEventsCommand.parse(&options))
+        case "build":
+            return try .build(DockerBuildCommand.parse(&options))
         default:
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")

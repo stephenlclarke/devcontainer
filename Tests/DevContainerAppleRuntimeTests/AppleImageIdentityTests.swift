@@ -11,18 +11,23 @@ import Testing
 struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
     static let digest = "sha256:" + String(repeating: "b", count: 64)
     var result = Self.digest
+    var layers = ["sha256:" + String(repeating: "d", count: 64)]
 
     func deleteNamedReference(_: String) async throws {
         throw DevContainerError(.unsupportedCapability, message: "This identity-only fixture cannot delete images")
     }
 
-    func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String {
+    func configurationIdentity(
+        reference: String,
+        descriptor: Data,
+        platform: Data
+    ) async throws -> AppleImageConfigurationIdentity {
         #expect(["fixture:latest", "fixture:alias"].contains(reference))
         let description = try #require(JSONSerialization.jsonObject(with: descriptor) as? [String: Any])
         #expect(description["digest"] as? String == "sha256:" + String(repeating: "a", count: 64))
         let selected = try #require(JSONSerialization.jsonObject(with: platform) as? [String: String])
         #expect(selected == ["architecture": "arm64", "os": "linux"])
-        return result
+        return .init(digest: result, rootFSLayers: layers)
     }
 }
 
@@ -34,8 +39,12 @@ private actor NamedImageDeletionClient: AppleImageIdentityClient {
         self.failure = failure
     }
 
-    func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String {
-        try await FakeAppleImageIdentityClient().configurationDigest(
+    func configurationIdentity(
+        reference: String,
+        descriptor: Data,
+        platform: Data
+    ) async throws -> AppleImageConfigurationIdentity {
+        try await FakeAppleImageIdentityClient().configurationIdentity(
             reference: reference, descriptor: descriptor, platform: platform
         )
     }
@@ -49,6 +58,20 @@ private actor NamedImageDeletionClient: AppleImageIdentityClient {
 }
 
 extension AppleContainerRuntimeTests {
+    @Test func `native image layers come from descriptor bound config not unverified CLI fields`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let layers = ["sha256:" + String(repeating: "e", count: 64), "sha256:" + String(repeating: "f", count: 64)]
+        let runtime = try fixture.runtime(images: FakeAppleImageIdentityClient(layers: layers))
+        #expect(try await runtime.inspectImage(reference: "fixture:latest", context: .init()).rootFSLayers == layers)
+        let invalid = try fixture.runtime(images: FakeAppleImageIdentityClient(layers: ["sha256:invalid"]))
+        await #expect(throws: DevContainerError.self) {
+            try await invalid.inspectImage(reference: "fixture:latest", context: .init())
+        }
+        let empty = try fixture.runtime(images: FakeAppleImageIdentityClient(layers: []))
+        #expect(try await empty.inspectImage(reference: "fixture:latest", context: .init()).rootFSLayers == [])
+    }
+
     @Test func `named image deletion uses the native reference without CLI garbage collection`() async throws {
         let fixture = try FakeAppleCLI()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -236,7 +259,7 @@ extension AppleContainerRuntimeTests {
     @Test func `live identity client rejects malformed metadata before XPC`() async throws {
         let client = LiveAppleImageIdentityClient()
         await #expect(throws: DecodingError.self) {
-            try await client.configurationDigest(
+            try await client.configurationIdentity(
                 reference: "fixture:latest",
                 descriptor: Data("{}".utf8),
                 platform: Data("{}".utf8)
@@ -246,7 +269,7 @@ extension AppleContainerRuntimeTests {
         let descriptor = try #require(configuration["descriptor"] as? [String: Any])
         let data = try JSONSerialization.data(withJSONObject: descriptor)
         await #expect(throws: ContainerizationError.self) {
-            try await client.configurationDigest(
+            try await client.configurationIdentity(
                 reference: "fixture:latest",
                 descriptor: data,
                 platform: Data("{}".utf8)

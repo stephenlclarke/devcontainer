@@ -12,17 +12,38 @@ enum DevContainerDockerCommand {
         // This process owns its signal disposition; inherited pipe/socket flags
         // remain unchanged, and disconnected consumers become write errors.
         signal(SIGPIPE, SIG_IGN)
+        let signals = [SIGINT, SIGTERM].map { number in
+            signal(number, SIG_IGN)
+            return DispatchSource.makeSignalSource(signal: number, queue: .global())
+        }
+        let operation = Task { await execute() }
+        for source in signals {
+            source.setEventHandler { @Sendable in operation.cancel() }
+            source.resume()
+        }
+        let status = await operation.value
+        for source in signals {
+            source.cancel()
+        }
+        exit(status)
+    }
+
+    private static func execute() async -> Int32 {
         do {
             let invocation = try DockerFrontendInvocation(
                 arguments: Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment
             )
             let frontend = DockerFrontend(version: BuildInfo.current.version)
+            if case let .build(spec) = invocation.command {
+                try await build(spec, invocation: invocation, frontend: frontend)
+                return 0
+            }
             if case let .events(spec) = invocation.command {
                 try await events(spec, invocation: invocation, frontend: frontend)
-                return
+                return 0
             }
             if case let .run(spec) = invocation.command {
-                try await exit(run(spec, invocation: invocation, frontend: frontend))
+                return try await run(spec, invocation: invocation, frontend: frontend)
             }
             if case let .exec(spec) = invocation.command {
                 let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
@@ -30,7 +51,7 @@ enum DevContainerDockerCommand {
                 let input = try spec.interactive ? DockerFrontendInput() : nil
                 let standardOutput = try DockerFrontendOutput(descriptor: STDOUT_FILENO)
                 let standardError = try DockerFrontendOutput(descriptor: STDERR_FILENO)
-                let status = try await frontend.executeExec(
+                return try await frontend.executeExec(
                     spec,
                     transport: transport,
                     input: { try await input?.read() }, output: { frame in
@@ -38,7 +59,6 @@ enum DevContainerDockerCommand {
                         try await writer.write(frame.data)
                     }
                 )
-                exit(status)
             }
             let output: Data
             if invocation.command == .clientVersion {
@@ -49,14 +69,27 @@ enum DevContainerDockerCommand {
                 output = try await frontend.execute(invocation.command, transport: transport)
             }
             try await emit(output, descriptor: STDOUT_FILENO, timeout: .seconds(30))
+            return 0
         } catch {
             try? await emit(
                 Data("devcontainer-docker: \(error)\n".utf8),
                 descriptor: STDERR_FILENO,
                 timeout: .seconds(5)
             )
-            exit(1)
+            return 1
         }
+    }
+
+    private static func build(
+        _ spec: DockerBuildCommand, invocation: DockerFrontendInvocation, frontend: DockerFrontend
+    ) async throws {
+        let archive = try await DockerBuildArchive.prepare(spec)
+        let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
+        let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
+        try await frontend.executeBuild(
+            spec, archive: archive, transport: transport,
+            output: DockerFrontendOutput(descriptor: STDOUT_FILENO)
+        )
     }
 
     private static func events(

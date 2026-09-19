@@ -11,7 +11,7 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 55,
-        "//:DevContainerDockerClientTests": 55,
+        "//:DevContainerDockerClientTests": 65,
         "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
@@ -43,6 +43,9 @@
         "Sources/DevContainerDockerClient/DockerRunCommand.swift",
         "Sources/DevContainerDockerClient/DockerFrontendRun.swift",
         "Sources/DevContainerDockerClient/DockerFrontendEvents.swift",
+        "Sources/DevContainerDockerClient/DockerBuildCommand.swift",
+        "Sources/DevContainerDockerClient/DockerBuildArchive.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendBuild.swift",
         "Sources/DevContainerCLI/LifecycleCommand.swift"
       ]
     },
@@ -52,7 +55,7 @@
         "//:DevContainerStateTests": 7,
         "//:DevContainerCoreTests": 13,
         "//:DevContainerCLITests": 55,
-        "//:DevContainerDockerClientTests": 55,
+        "//:DevContainerDockerClientTests": 65,
         "//:DevContainerProcessTests": 16,
         "//:DevContainerDockerAPITests": 53,
         "//:DevContainerComposeProviderTests": 12,
@@ -84,6 +87,9 @@
         "Sources/DevContainerDockerClient/DockerRunCommand.swift",
         "Sources/DevContainerDockerClient/DockerFrontendRun.swift",
         "Sources/DevContainerDockerClient/DockerFrontendEvents.swift",
+        "Sources/DevContainerDockerClient/DockerBuildCommand.swift",
+        "Sources/DevContainerDockerClient/DockerBuildArchive.swift",
+        "Sources/DevContainerDockerClient/DockerFrontendBuild.swift",
         "Sources/DevContainerCLI/LifecycleCommand.swift"
       ]
     }

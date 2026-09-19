@@ -18,6 +18,8 @@ The selected provider is immutable while a Dev Container project owns resources.
 
 ## Goals
 
+The unreleased Bazel candidate adds a project-owned `devcontainer-docker` frontend beneath its private official Dev Containers CLI bundle. D02 builds use the shared Unix HTTP transport, local tar contexts and the selected stock/enhanced Apple builder. Generated Dockerfiles outside the workspace are injected with archive-only exclusions; build errors remain failures even inside HTTP 200 progress streams. The current bounded frontend rejects existing `.dockerignore` files and unsupported flags rather than claiming full Docker-build semantics. Native image inspection projects ordered uncompressed layer digests from descriptor-bound OCI configuration. Candidate live qualification remains distinct from the immutable stable-release matrix.
+
 - Reach 100% behavioural parity with Docker-based Development Containers across the complete audited Development Containers surface.
 - Reach comparable or better user-visible performance than the matching Docker oracle, measured independently from functional parity.
 - Work with the stock VS Code Dev Containers extension and the official `@devcontainers/cli` without patching either.

@@ -187,6 +187,7 @@ swift_library(
     srcs = glob(["Sources/DevContainerDockerClient/*.swift"]),
     module_name = "DevContainerDockerClient",
     deps = [
+        ":DevContainerProcess",
         "@swiftpkg_container_engine_api//:ContainerEngineWire",
         "@swiftpkg_container_engine_api//:ContainerUnixHTTPClient",
     ],

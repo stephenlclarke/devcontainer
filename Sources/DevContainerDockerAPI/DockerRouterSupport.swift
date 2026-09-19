@@ -1195,7 +1195,8 @@ extension DockerRouter {
                 entrypoint: image.entrypoint.isEmpty ? nil : image.entrypoint,
                 command: image.command.isEmpty ? nil : image.command,
                 labels: image.labels
-            )
+            ),
+            rootFS: image.rootFSLayers.map { DockerImageRootFS(layers: $0) }
         )
     }
 

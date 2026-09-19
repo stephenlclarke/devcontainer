@@ -12,13 +12,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical
-from devcontainer_candidate import CandidateCommands, DevcontainerCandidate
+from devcontainer_candidate import CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
 from guest_runtime import ReleasedGuest, require_guest_cleanup
 from host_runtime import deadline
 from service_journal import ServiceJournal
 import test_devcontainer_reference as reference_tests
+import test_devcontainer_build_reference as build_reference_tests
 
 
 class CandidateTests(reference_tests.ReferenceTests):
@@ -102,6 +103,49 @@ class CandidateTests(reference_tests.ReferenceTests):
         self.assertIsNone(self.server.guest)
         self.assertFalse(runner.uncertain)
         self.assertFalse(runner.pending_logs)
+
+
+class BuildCandidateTests(build_reference_tests.BuildReferenceTests):
+    test_slow_cleanup_response_obeys_whole_phase_deadline = CandidateTests.test_slow_cleanup_response_obeys_whole_phase_deadline
+
+    def reopen(self):
+        super().reopen()
+        self.vm.container = "/prepared/container"
+        self.vm.close, self.vm.prepare_cleanup = Mock(), Mock()
+        self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/prepared/devcontainer"}}
+        self.before_build = Mock()
+        return DevcontainerBuildCandidate(self.vm, self.inputs, self.owner, before_build=self.before_build)
+
+    def test_full_contract_uses_exact_pins_isolated_paths_and_verified_cleanup(self):
+        self.assertEqual(self.start(), {"build_arg": "from-devcontainer", "build_target": "development",
+                                       "post_create": "dockerfile-post-create", "workspace": WORKSPACE})
+        self.before_build.assert_called_once()
+        self.assertEqual(self.commands[0][1], ["/prepared/container", "image", "pull", "--arch", "arm64", IMAGE])
+        self.assertEqual([item[2] for item in self.commands], [120, 240, 60])
+        for _, arguments, _ in self.commands[1:]:
+            self.assertEqual(arguments[2], "/prepared/devcontainer")
+            self.assertNotIn("--docker-path", arguments)
+        self.assertIn("--buildkit", self.commands[1][1])
+        self.assertNotIn("--buildkit", self.commands[2][1])
+        self.fixture.cleanup()
+        self.vm.close.assert_called_once()
+        self.assertIsNone(self.server.guest)
+
+    def test_changed_builder_prevents_up_and_preserves_cleanup(self):
+        self.fixture.setup()
+        self.before_build.side_effect = ValueError("builder changed")
+        with self.assertRaisesRegex(ValueError, "builder changed"):
+            self.fixture.operation()
+        self.assertEqual([item[0] for item in self.commands], ["devcontainer-image-pull"])
+        self.fixture.cleanup()
+        self.vm.close.assert_called_once()
+
+    def test_build_candidate_preserves_native_uuid(self):
+        identifier = "ABCDEF01-1234-5678-abcd-123456789012"
+        with patch.object(reference_tests, "ID", identifier):
+            self.start()
+            self.assertEqual(self.fixture.identifier, identifier)
+            self.fixture.cleanup()
 
 
 class CandidateCommandTests(unittest.TestCase):

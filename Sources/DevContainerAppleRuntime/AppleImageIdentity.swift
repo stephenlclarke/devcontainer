@@ -8,8 +8,14 @@ import DevContainerRuntimeSPI
 import Foundation
 
 protocol AppleImageIdentityClient: Sendable {
-    func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String
+    func configurationIdentity(reference: String, descriptor: Data, platform: Data) async throws
+        -> AppleImageConfigurationIdentity
     func deleteNamedReference(_ reference: String) async throws
+}
+
+struct AppleImageConfigurationIdentity: Sendable {
+    let digest: String
+    let rootFSLayers: [String]
 }
 
 struct LiveAppleImageIdentityClient: AppleImageIdentityClient {
@@ -19,7 +25,11 @@ struct LiveAppleImageIdentityClient: AppleImageIdentityClient {
         try await ClientImage.delete(reference: reference, garbageCollect: false)
     }
 
-    func configurationDigest(reference: String, descriptor: Data, platform: Data) async throws -> String {
+    func configurationIdentity(
+        reference: String,
+        descriptor: Data,
+        platform: Data
+    ) async throws -> AppleImageConfigurationIdentity {
         let decoder = JSONDecoder()
         let image = try ClientImage(description: ImageDescription(
             reference: reference,
@@ -27,8 +37,16 @@ struct LiveAppleImageIdentityClient: AppleImageIdentityClient {
         ))
         // Hashing re-encoded config JSON would produce the wrong Docker ID.
         // Read the digest of the original config blob from its OCI manifest.
-        let manifest = try await image.manifest(for: decoder.decode(Platform.self, from: platform))
-        return manifest.config.digest
+        let selected = try decoder.decode(Platform.self, from: platform)
+        let manifest = try await image.manifest(for: selected)
+        let configuration = try await image.config(for: selected)
+        guard configuration.rootfs.type == "layers" else {
+            throw DevContainerError(.providerProtocolMismatch, message: "Image root filesystem type is not layers")
+        }
+        return AppleImageConfigurationIdentity(
+            digest: manifest.config.digest,
+            rootFSLayers: configuration.rootfs.diffIDs
+        )
     }
 }
 
@@ -95,17 +113,20 @@ extension AppleContainerRuntime {
                     .providerProtocolMismatch, message: "Image inventory is missing identity metadata"
                 )
             }
-            let configDigest = try await imageIdentityClient.configurationDigest(
+            let identity = try await imageIdentityClient.configurationIdentity(
                 reference: reference,
                 descriptor: JSONSerialization.data(withJSONObject: descriptor),
                 platform: JSONSerialization.data(withJSONObject: platform)
             )
-            guard Self.validImageDigest(configDigest), Self.validImageDigest(nativeDigest) else {
+            guard Self.validImageDigest(identity.digest), Self.validImageDigest(nativeDigest),
+                  identity.rootFSLayers.allSatisfy(Self.validImageDigest)
+            else {
                 throw DevContainerError(
                     .providerProtocolMismatch, message: "Image inventory returned an invalid digest"
                 )
             }
-            snapshot.id = configDigest
+            snapshot.id = identity.digest
+            snapshot.rootFSLayers = identity.rootFSLayers
             if let manifestDigest = variant["digest"] as? String {
                 // The native inventory exposes the selected manifest separately
                 // from its index and config. Preserve that repository-qualified

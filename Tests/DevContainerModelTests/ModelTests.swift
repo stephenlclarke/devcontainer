@@ -19,6 +19,16 @@ import Foundation
 import Testing
 
 @Test
+func `image root filesystem layers round trip without breaking older snapshots`() throws {
+    let original = ImageSnapshot(id: "sha256:image", references: [], createdAt: .distantPast, size: 0)
+    let old = try JSONEncoder().encode(original)
+    #expect(try JSONDecoder().decode(ImageSnapshot.self, from: old).rootFSLayers == nil)
+    var current = original
+    current.rootFSLayers = ["sha256:" + String(repeating: "a", count: 64)]
+    #expect(try JSONDecoder().decode(ImageSnapshot.self, from: JSONEncoder().encode(current)) == current)
+}
+
+@Test
 func `diagnostic redaction covers paths and credential shaped values`() {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let source = """

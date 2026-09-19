@@ -43,12 +43,12 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(properties["operation"], str(failed["durationsNS"]["operation"]))
         self.assertEqual(properties["runtimeSHA256"], self.identity["runtimeSHA256"])
 
-    def test_d02_candidate_refuses_before_runtime_or_asset_mutation(self):
+    def test_d02_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
         with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D02-dockerfile-config"]), \
                 patch("released_engine.platform.system", return_value="Darwin"), \
                 patch("released_engine.platform.machine", return_value="arm64"), \
                 patch("released_engine.admit") as admit, \
-                self.assertRaisesRegex(ValueError, "not implemented"):
+                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
             released_engine.main()
         admit.assert_not_called()
         self.keychains.assert_not_called()
@@ -82,6 +82,9 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(selected["devcontainerCandidate"], candidate)
         self.assertEqual(selected["workload"], "pin")
         self.assertIn("configuration", selected["devcontainerFixture"])
+        build = released_engine.fixture_guest_inputs({"workload": "pin"}, "D02-dockerfile-config", candidate, repository)
+        self.assertIn("dockerfile", build["devcontainerFixture"])
+        self.assertEqual(build["devcontainerCandidate"], candidate)
         for changed in ({}, {**candidate, "scope": "release"}, {**candidate, "executables": {}}):
             with self.assertRaisesRegex(ValueError, "private-runtime"):
                 released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)

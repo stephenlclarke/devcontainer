@@ -897,10 +897,12 @@ struct DockerImageInspect: Encodable {
     let variant: String
     let operatingSystem: String
     let config: DockerImageConfig
+    let rootFS: DockerImageRootFS?
 
     enum CodingKeys: String, CodingKey {
         case architecture = "Architecture"
         case config = "Config"
+        case rootFS = "RootFS"
         case created = "Created"
         case id = "Id"
         case operatingSystem = "Os"
@@ -909,6 +911,16 @@ struct DockerImageInspect: Encodable {
         case size = "Size"
         case variant = "Variant"
         case virtualSize = "VirtualSize"
+    }
+}
+
+struct DockerImageRootFS: Encodable {
+    let type = "layers"
+    let layers: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case layers = "Layers"
     }
 }
 

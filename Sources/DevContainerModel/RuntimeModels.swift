@@ -449,7 +449,8 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         environment: [String] = [],
         entrypoint: [String] = [],
         command: [String] = [],
-        labels: [String: String] = [:]
+        labels: [String: String] = [:],
+        rootFSLayers: [String]? = nil
     ) {
         self.id = id
         self.references = references
@@ -462,7 +463,11 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         self.entrypoint = entrypoint
         self.command = command
         self.labels = labels
+        self.rootFSLayers = rootFSLayers
     }
+
+    /// Ordered OCI uncompressed layer digests; nil means the provider did not report them.
+    public var rootFSLayers: [String]?
 }
 
 public struct ImageBuildRequest: Codable, Equatable, Sendable {

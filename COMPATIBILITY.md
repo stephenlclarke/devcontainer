@@ -25,6 +25,8 @@ startup are not compatibility evidence.
 
 ## Claim vocabulary
 
+Unreleased Bazel D02 work is `candidate`, not `supported`: the Docker reference passes, while native candidate live proof and enhanced prerequisites remain open. The native build frontend currently accepts local contexts, explicit Dockerfile/tag/target/build-argument forms and bounded streamed progress. Existing `.dockerignore` files, remote/stdin contexts, implicit environment arguments, oversized inputs and other unimplemented flags fail explicitly. This does not widen the stable compatibility matrix or certify full Docker-build semantics. Native image-layer inspection is additive; older provider snapshots lacking layer data remain decodable and do not fabricate ancestry.
+
 | State | Meaning |
 | --- | --- |
 | `planned` | Design and fixture exist, but there is no functional support claim. |
