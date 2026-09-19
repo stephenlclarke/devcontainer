@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-D06 port qualification is in progress. Its replacement harness verifies actual CLI forwarding metadata, guest and host HTTP access, and a specific owned-container port collision; synthetic probe output or an unrelated error cannot pass. The Docker reference exposes only the fixture's loopback TCP port through its private VM. Live reference/native proof is still required; this is not a released support claim. See the [D06 contract](docs/bazel-test-harness.md#d06-published-ports).
+D06 port qualification is in progress. The Docker reference passes actual CLI forwarding metadata, guest and host HTTP access, a specific owned-container port collision and cleanup (`524dce17-469a-4819-9258-a210a414d7cb`). The candidate frontend now projects explicit IPv4/fixed TCP publish options without Docker, and inspection reports recorded port bindings. Native live proof is still required; component success is not a released support claim. See the [D06 contract](docs/bazel-test-harness.md#d06-published-ports).
 
 D04 lifecycle hooks passes the original host-initialization and ordered guest-hook assertions plus cleanup in Docker (`7c41a35a-01bc-4aaa-b866-2a580cb3c560`) and stock Apple (`76ebd27c-8b98-4df1-969b-fa12c3f2e159`). The candidate reused the `533f9a7` archive without rebuilding. Enhanced qualification remains blocked; these separate functional runs are not quiet paired benchmarks or complete release proof. See the [D04 evidence](docs/bazel-test-harness.md#d04-lifecycle-hooks).
 

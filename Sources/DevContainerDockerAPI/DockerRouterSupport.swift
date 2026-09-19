@@ -909,7 +909,8 @@ extension DockerRouter {
             hostConfig: DockerInspectHostConfig(
                 binds: snapshot.spec.mounts.filter { $0.type == .bind }.map {
                     "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
-                }
+                },
+                portBindings: inspectPortBindings(snapshot.spec.ports)
             ),
             mounts: snapshot.spec.mounts.map(mountSummary),
             networkSettings: networkSettings
@@ -944,6 +945,15 @@ extension DockerRouter {
                 "\($0.containerPort)/\($0.protocolName)"
             }).sorted().map { ($0, [:]) }
         )
+    }
+
+    func inspectPortBindings(_ ports: [PortBinding]) -> [String: [DockerNetworkPortBinding]] {
+        Dictionary(grouping: ports.filter { $0.published != false }, by: { "\($0.containerPort)/\($0.protocolName)" })
+            .mapValues { values in
+                values.map {
+                    DockerNetworkPortBinding(hostIP: $0.hostAddress, hostPort: $0.hostPort.map(String.init) ?? "")
+                }
+            }
     }
 
     func networkSettings(

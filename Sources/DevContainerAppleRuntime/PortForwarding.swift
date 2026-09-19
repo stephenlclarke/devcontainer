@@ -14,6 +14,7 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import Darwin
 import DevContainerModel
 import Foundation
 import NIOCore
@@ -65,8 +66,11 @@ actor PortForwarding {
             return resolvedBindings
         } catch {
             await close(opened)
+            // Docker rejects occupied publications at start as an allocation
+            // failure (HTTP 500), not a conflicting container identity (409).
+            let allocationFailure = (error as? IOError)?.errnoCode == EADDRINUSE
             throw DevContainerError(
-                .conflict,
+                allocationFailure ? .runtimeUnavailable : .conflict,
                 message: "port forwarding for container \(containerID) failed: \(error)"
             )
         }

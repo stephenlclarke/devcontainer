@@ -6,6 +6,41 @@ import Foundation
 import Testing
 
 struct DockerRunTests {
+    @Test(arguments: ["-p", "--publish", "--publish="])
+    func `run projects captured loopback publish request`(_ option: String) throws {
+        let value = "127.0.0.1:49277:8123"
+        let arguments = option.hasSuffix("=") ? [option + value] : [option, value]
+        let spec = try command(["--sig-proxy=false"] + arguments + ["image"])
+        let body = try #require(try JSONSerialization.jsonObject(with: spec.createBody()) as? [String: Any])
+        let host = try #require(body["HostConfig"] as? [String: Any])
+        #expect(host["PortBindings"] as? [String: [[String: String]]] == [
+            "8123/tcp": [["HostIp": "127.0.0.1", "HostPort": "49277"]]
+        ])
+        #expect(body["ExposedPorts"] as? [String: [String: String]] == ["8123/tcp": [:]])
+    }
+
+    @Test(arguments: [
+        "8123", "49277:8123", "127.0.0.1:0:8123", "127.0.0.1:49277:0", "127.0.0.1:65536:8123",
+        "127.0.0.1:49277:65536", "127.0.0.1:49277:8123/udp", "127.0.0.1:49277:8123-8124",
+        "[::1]:49277:8123", "localhost:49277:8123", "256.0.0.1:49277:8123", "127.0.1:49277:8123",
+        "127.0.0.1:+49277:8123", "127.0.0.1:49277:8123\0"
+    ])
+    func `unsupported publish forms fail before mutation`(_ value: String) {
+        #expect(throws: DockerFrontendError.self) { try command(["--sig-proxy=false", "-p", value, "image"]) }
+    }
+
+    @Test
+    func `multiple explicit TCP bindings retain their addresses and ports`() throws {
+        let spec = try command([
+            "--sig-proxy=false", "-p", "127.0.0.1:49277:8123/tcp", "--publish=127.0.0.2:49278:8123", "image"
+        ])
+        let body = try #require(try JSONSerialization.jsonObject(with: spec.createBody()) as? [String: Any])
+        let host = try #require(body["HostConfig"] as? [String: Any])
+        #expect(host["PortBindings"] as? [String: [[String: String]]] == ["8123/tcp": [
+            ["HostIp": "127.0.0.1", "HostPort": "49277"], ["HostIp": "127.0.0.2", "HostPort": "49278"]
+        ]])
+    }
+
     @Test(arguments: ["-u", "--user", "--user="])
     func `run preserves explicit non-root user in create request`(_ option: String) throws {
         let arguments = option.hasSuffix("=") ? [option + "vscode"] : [option, "vscode"]
@@ -68,6 +103,8 @@ struct DockerRunTests {
         #expect(defaults.standardOutput && defaults.standardError)
         #expect(body["Cmd"] == nil && body["Entrypoint"] == nil)
         #expect(body["User"] == nil)
+        #expect(body["ExposedPorts"] == nil)
+        #expect((body["HostConfig"] as? [String: Any])?["PortBindings"] == nil)
         #expect(try DockerRunMount.parse("type=bind,source=/s,destination=/d,readonly=false").readOnly == false)
     }
 

@@ -21,6 +21,36 @@ import Testing
 
 struct PortForwardingTests {
     @Test
+    func `occupied TCP port is a runtime allocation failure and preserves the original listener`() async throws {
+        let forwarding = PortForwarding()
+        let addresses = ["bridge": "127.0.0.1/8"]
+        do {
+            let bindings = try await forwarding.start(
+                containerID: "original",
+                bindings: [PortBinding(containerPort: 65000, hostPort: nil, hostAddress: "127.0.0.1")],
+                networkAddresses: addresses
+            )
+            do {
+                _ = try await forwarding.start(
+                    containerID: "collision", bindings: bindings, networkAddresses: addresses
+                )
+                Issue.record("A second container acquired an occupied port")
+            } catch let error as DevContainerError {
+                #expect(error.code == .runtimeUnavailable)
+                #expect(error.message.lowercased().contains("address already in use"))
+            }
+            #expect(await forwarding.hasListeners(containerID: "original"))
+            #expect(await !forwarding.hasListeners(containerID: "collision"))
+            await forwarding.stop(containerID: "collision")
+            #expect(await forwarding.hasListeners(containerID: "original"))
+            await forwarding.stopAll()
+        } catch {
+            await forwarding.stopAll()
+            throw error
+        }
+    }
+
+    @Test
     func `forwarder resolves ephemeral listeners and stops all`() async throws {
         let forwarding = PortForwarding()
         let resolved = try await forwarding.start(

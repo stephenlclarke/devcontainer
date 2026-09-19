@@ -12,6 +12,7 @@ public struct DockerRunCommand: Equatable, Sendable {
     public let entrypoint: String?
     public let user: String?
     public let mounts: [DockerRunMount]
+    public let ports: [DockerRunPort]
     public let standardOutput: Bool
     public let standardError: Bool
 
@@ -38,7 +39,7 @@ public struct DockerRunCommand: Equatable, Sendable {
         }
         return Self(
             image: image, command: command, environment: values.environment, labels: values.labels,
-            entrypoint: values.entrypoint, user: values.user, mounts: values.mounts,
+            entrypoint: values.entrypoint, user: values.user, mounts: values.mounts, ports: values.ports,
             standardOutput: values.attachments.isEmpty || values.attachments.contains("stdout"),
             standardError: values.attachments.isEmpty || values.attachments.contains("stderr")
         )
@@ -58,7 +59,41 @@ public struct DockerRunCommand: Equatable, Sendable {
             fields["Entrypoint"] = [entrypoint]
         }
         fields["User"] = user
+        if !ports.isEmpty {
+            let bindings = Dictionary(grouping: ports, by: \.key).mapValues { $0.map(\.fields) }
+            fields["HostConfig"] = ["Mounts": mounts.map(\.fields), "PortBindings": bindings]
+            fields["ExposedPorts"] = bindings.mapValues { _ in [String: String]() }
+        }
         return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+    }
+}
+
+/// Explicit IPv4 TCP publications; ranges, dynamic ports and IPv6 need their own oracle.
+public struct DockerRunPort: Equatable, Sendable {
+    public let hostAddress: String
+    public let hostPort: UInt16
+    public let containerPort: UInt16
+
+    var key: String {
+        "\(containerPort)/tcp"
+    }
+
+    var fields: [String: String] {
+        ["HostIp": hostAddress, "HostPort": String(hostPort)]
+    }
+
+    static func parse(_ value: String) throws -> Self {
+        let publication = value.hasSuffix("/tcp") ? String(value.dropLast(4)) : value
+        let parts = publication.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3 else {
+            throw DockerFrontendError.usage("publish requires explicit IPv4:host-port:container-port[/tcp]")
+        }
+        let address = parts[0].split(separator: ".", omittingEmptySubsequences: false)
+        guard address.count == 4, address.allSatisfy({ UInt8($0).map { String($0) } == String($0) }),
+              let host = UInt16(parts[1]), host > 0, String(host) == parts[1],
+              let container = UInt16(parts[2]), container > 0, String(container) == parts[2]
+        else { throw DockerFrontendError.usage("publish requires canonical IPv4 and nonzero TCP ports in 1...65535") }
+        return Self(hostAddress: String(parts[0]), hostPort: host, containerPort: container)
     }
 }
 
@@ -108,6 +143,7 @@ private struct RunOptions {
     var entrypoint: String?
     var user: String?
     var mounts: [DockerRunMount] = []
+    var ports: [DockerRunPort] = []
     var attachments: Set<String> = []
 
     mutating func consume(_ argument: String, options: inout DockerFrontendArguments) throws {
@@ -119,11 +155,7 @@ private struct RunOptions {
             }
             signalProxyDisabled = true
         case "-a", "--attach":
-            let value = try options.value(for: argument).lowercased()
-            guard ["stdout", "stderr"].contains(value) else {
-                throw DockerFrontendError.usage("run currently supports only stdout/stderr attachment")
-            }
-            attachments.insert(value)
+            try addAttachment(options.value(for: argument))
         case "-e", "--env":
             let value = try options.value(for: argument)
             _ = try keyValue(value)
@@ -137,8 +169,18 @@ private struct RunOptions {
             try setUser(options.value(for: argument))
         case "--mount":
             try mounts.append(DockerRunMount.parse(options.value(for: argument)))
+        case "-p", "--publish":
+            try ports.append(DockerRunPort.parse(options.value(for: argument)))
         default: throw DockerFrontendError.usage("unsupported run option: \(argument)")
         }
+    }
+
+    private mutating func addAttachment(_ value: String) throws {
+        let channel = value.lowercased()
+        guard ["stdout", "stderr"].contains(channel) else {
+            throw DockerFrontendError.usage("run currently supports only stdout/stderr attachment")
+        }
+        attachments.insert(channel)
     }
 
     private mutating func setUser(_ value: String) throws {

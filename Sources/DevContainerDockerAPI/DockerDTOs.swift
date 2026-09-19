@@ -722,16 +722,6 @@ struct DockerContainerConfig: Encodable {
     }
 }
 
-struct DockerInspectHostConfig: Encodable {
-    let binds: [String]
-    let networkMode = "default"
-
-    enum CodingKeys: String, CodingKey {
-        case binds = "Binds"
-        case networkMode = "NetworkMode"
-    }
-}
-
 struct DockerNetworkSettings: Encodable {
     let ports: [String: [DockerNetworkPortBinding]?]
     let networks: [String: DockerEndpointSettings]
