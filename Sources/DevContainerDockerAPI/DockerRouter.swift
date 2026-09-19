@@ -668,6 +668,7 @@ extension DockerRouter {
                             "MinAPIVersion": descriptor.dockerAPIMinimum,
                             "Provider": descriptor.provider.rawValue,
                             "Distribution": descriptor.distribution,
+                            "ContainerImageReference": "1",
                             "NativeComposeHealthPolicy":
                                 descriptor.capabilities[.composeHealthPolicy] == .emulated ? "1" : "0"
                         ]
@@ -738,6 +739,7 @@ extension DockerRouter {
                 schema: .createContainer
             )
             try validateCreateContainerRequest(decoded)
+            try await validateRequestedImageReference(decoded, context: context)
             var spec = try containerSpec(from: decoded, requestedName: name)
             spec.networks = try await resolveNetworkAttachments(spec.networks, context: context)
             try applyOwnershipLabels(to: &spec, context: context)

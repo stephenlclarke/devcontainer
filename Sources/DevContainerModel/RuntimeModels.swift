@@ -321,6 +321,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var removedEnvironmentKeys: [String]?
     /// Engine stop/restart grace period; nil selects the Engine default.
     public var stopTimeoutSeconds: Int?
+    /// Historical caller spelling for display; image remains the immutable launch identity.
+    public var requestedImageReference: String?
 
     public init(
         name: String,
@@ -348,7 +350,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         inheritImageEntrypoint: Bool? = nil,
         executionSettings: ContainerExecutionSettings? = nil,
         removedEnvironmentKeys: [String]? = nil,
-        stopTimeoutSeconds: Int? = nil
+        stopTimeoutSeconds: Int? = nil,
+        requestedImageReference: String? = nil
     ) {
         self.name = name
         self.image = image
@@ -376,6 +379,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.executionSettings = executionSettings
         self.removedEnvironmentKeys = removedEnvironmentKeys
         self.stopTimeoutSeconds = stopTimeoutSeconds
+        self.requestedImageReference = requestedImageReference
     }
 }
 

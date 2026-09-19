@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Typed immutable-image creation would otherwise replace the caller's declared reference in `Config.Image`, breaking existing fixture ownership checks. The negotiated `ContainerImageReference` extension now preserves that declaration separately from immutable launch identity. [Component proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) covers creation, inspection and metadata recovery without current-tag lookup; live qualification remains pending.
+
 The prior gateway rejected nonzero create-time `StopTimeout` and silently treated malformed stop/restart overrides as absent. Finite values now survive creation, inspection and metadata recovery, and both operations honor configured/default grace periods and validated overrides. Negative indefinite waits remain unsupported because stock Apple's negative CLI timeout is not Docker's wait-forever primitive. [Component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) is not live parity proof.
 
 Prepared Compose gateway requests carry `Healthcheck.StartInterval`, which the previous direct API request schema rejected. The candidate now validates, persists, inspects and applies the field in its existing on-demand evaluator, with completion-anchored cadence. Legacy label policy v1 and the unimplemented background monitor remain separate limits; [component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) does not close live C02.

@@ -133,6 +133,7 @@ struct DockerCreateContainerRequest: Decodable {
     var env: [String]?
     var cmd: [String]?
     var image: String
+    var containerImageReference: String?
     var exposedPorts: [String: EmptyObject]?
     var volumes: [String: EmptyObject]?
     var workingDir: String?
@@ -165,6 +166,7 @@ struct DockerCreateContainerRequest: Decodable {
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
         case image = "Image"
+        case containerImageReference = "ContainerImageReference"
         case labels = "Labels"
         case macAddress = "MacAddress"
         case mounts = "Mounts"

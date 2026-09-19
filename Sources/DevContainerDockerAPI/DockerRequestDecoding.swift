@@ -28,6 +28,7 @@ indirect enum DockerRequestSchema: Sendable {
         "AttachStdout": .value,
         "ArgsEscaped": .value,
         "Cmd": .value,
+        "ContainerImageReference": .value,
         "Entrypoint": .value,
         "Env": .value,
         "ExposedPorts": .dictionary(.object([:])),

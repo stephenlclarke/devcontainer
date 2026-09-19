@@ -2,6 +2,8 @@
 
 ## Current status
 
+Prepared Compose gateway creation requires the unreleased `ContainerImageReference=1` capability. It preserves historical image spelling separately from immutable launch identity; no new stable or live parity claim follows from its component tests.
+
 Unreleased gateway work preserves finite per-container stop timeouts, including explicit zero, and honors stop/restart query overrides. Indefinite waits remain unsupported, and live Docker stop/restart parity has not been qualified. [Component evidence and bounds](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) do not expand the stable release claims.
 
 The unreleased native gateway distinguishes bare environment-removal keys from empty values through creation, saved metadata and inspection. Legacy CLI creation rejects removal explicitly. [Component proof](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) does not establish live Compose/environment parity.

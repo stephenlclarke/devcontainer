@@ -698,7 +698,8 @@ extension DockerRouter {
             inheritImageEntrypoint: request.entrypoint == nil,
             executionSettings: executionSettings(request),
             removedEnvironmentKeys: environment.removedKeys,
-            stopTimeoutSeconds: request.stopTimeout
+            stopTimeoutSeconds: request.stopTimeout,
+            requestedImageReference: request.containerImageReference
         )
     }
 
@@ -837,7 +838,7 @@ extension DockerRouter {
         return DockerContainerSummary(
             id: snapshot.dockerID.rawValue,
             names: ["/\(snapshot.spec.name)"],
-            image: snapshot.spec.image,
+            image: snapshot.spec.requestedImageReference ?? snapshot.spec.image,
             imageID: snapshot.imageID ?? "",
             command: (snapshot.spec.entrypoint + snapshot.spec.command).joined(separator: " "),
             created: Int64(snapshot.createdAt.timeIntervalSince1970),
@@ -898,7 +899,7 @@ extension DockerRouter {
                 openStdin: snapshot.spec.openStandardInput,
                 env: env,
                 cmd: snapshot.spec.command,
-                image: snapshot.spec.image,
+                image: snapshot.spec.requestedImageReference ?? snapshot.spec.image,
                 exposedPorts: exposedPorts(snapshot.spec.ports),
                 volumes: volumeEntries,
                 workingDir: snapshot.spec.workingDirectory ?? "",
