@@ -36,6 +36,7 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private var archives: [String: Data] = [:]
     private var eventValues: [RuntimeEvent] = []
     private var nextEventSequence: Int64 = 1
+    public private(set) var stopTimeouts: [Duration?] = []
 
     public init(
         provider: BackendProvider = .stock,
@@ -244,10 +245,11 @@ public actor InMemoryRuntime: DevContainerRuntime {
 
     public func stopContainer(
         id: String,
-        timeout _: Duration?,
+        timeout: Duration?,
         context _: RuntimeRequestContext
     ) throws {
         var snapshot = try container(id: id)
+        stopTimeouts.append(timeout)
         snapshot.state = .stopped
         snapshot.finishedAt = Date()
         snapshot.exitCode = 0

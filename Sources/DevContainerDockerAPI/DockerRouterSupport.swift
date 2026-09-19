@@ -228,9 +228,7 @@ extension DockerRouter {
         if request.stdinOnce == true {
             try unsupportedCreateField("StdinOnce")
         }
-        if let stopTimeout = request.stopTimeout, stopTimeout != 0 {
-            try unsupportedCreateField("StopTimeout")
-        }
+        if let stopTimeout = request.stopTimeout { try Self.validateStopTimeout(Int64(stopTimeout)) }
         for (index, mount) in (request.mounts ?? []).enumerated() {
             try validateAdvancedMountOptions(
                 mount,
@@ -699,7 +697,8 @@ extension DockerRouter {
             dns: dns,
             inheritImageEntrypoint: request.entrypoint == nil,
             executionSettings: executionSettings(request),
-            removedEnvironmentKeys: environment.removedKeys
+            removedEnvironmentKeys: environment.removedKeys,
+            stopTimeoutSeconds: request.stopTimeout
         )
     }
 
@@ -906,7 +905,8 @@ extension DockerRouter {
                 entrypoint: snapshot.spec.entrypoint,
                 labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
                 healthcheck: dockerHealthcheck(snapshot.spec.healthcheck),
-                stopSignal: snapshot.spec.executionSettings?.stopSignal
+                stopSignal: snapshot.spec.executionSettings?.stopSignal,
+                stopTimeout: snapshot.spec.stopTimeoutSeconds
             ),
             hostConfig: inspectHostConfig(snapshot.spec),
             mounts: snapshot.spec.mounts.map(mountSummary),

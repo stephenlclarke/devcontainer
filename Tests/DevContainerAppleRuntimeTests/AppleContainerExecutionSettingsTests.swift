@@ -35,7 +35,8 @@ struct AppleContainerExecutionSettingsTests {
         let store = TestMetadataStore()
         let runtime = try fixture.runtime(metadataStore: store, creator: creator)
         let spec = ContainerSpec(
-            name: "fixture", image: "fixture:latest", command: ["/bin/true"], executionSettings: settings
+            name: "fixture", image: "fixture:latest", command: ["/bin/true"], executionSettings: settings,
+            stopTimeoutSeconds: 7
         )
         let created = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
         let native = try #require(await creator.created.first)
@@ -46,6 +47,16 @@ struct AppleContainerExecutionSettingsTests {
         #expect(native.stopSignal == "SIGUSR1")
         #expect(created.spec.executionSettings == settings)
         #expect(await store.containerMetadata(id: "fixture")?.spec.executionSettings == settings)
+        #expect(await store.containerMetadata(id: "fixture")?.spec.stopTimeoutSeconds == 7)
+        let recovered = try fixture.runtime(metadataStore: store, creator: creator)
+        let recoveredRecord = try await recovered.containerRecord(
+            .init(configuration: native, status: .stopped, networks: [])
+        )
+        let recoveredSnapshot = try await recovered.containerSnapshotWithMetadata(
+            recovered.containerSnapshot(recoveredRecord),
+            metadata: store.containerMetadata(id: "fixture"), imageID: created.imageID
+        )
+        #expect(recoveredSnapshot.spec.stopTimeoutSeconds == 7)
         let typed = try await runtime.containerRecord(.init(configuration: native, status: .stopped, networks: []))
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(native)) as? [String: Any])
         let json = AppleContainerRuntime.observedContainerSpec(id: "fixture", configuration: object, labels: [:])

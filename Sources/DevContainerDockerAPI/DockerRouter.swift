@@ -782,18 +782,18 @@ extension DockerRouter {
             await healthChecks.reset(id: id)
             return .empty(status: 204)
         case (.post, "stop"):
-            let seconds = target.first("t").flatMap(Int64.init)
+            let timeout = try await stopTimeout(id: id, requested: target.first("t"), context: context)
             try await runtime.stopContainer(
                 id: id,
-                timeout: seconds.map(Duration.seconds),
+                timeout: timeout,
                 context: context
             )
             return .empty(status: 204)
         case (.post, "restart"):
-            let seconds = target.first("t").flatMap(Int64.init)
+            let timeout = try await stopTimeout(id: id, requested: target.first("t"), context: context)
             try await runtime.restartContainer(
                 id: id,
-                timeout: seconds.map(Duration.seconds),
+                timeout: timeout,
                 context: context
             )
             await healthChecks.reset(id: id)

@@ -319,6 +319,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var executionSettings: ContainerExecutionSettings?
     /// Bare Engine Env keys remove inherited image values; nil is legacy metadata.
     public var removedEnvironmentKeys: [String]?
+    /// Engine stop/restart grace period; nil selects the Engine default.
+    public var stopTimeoutSeconds: Int?
 
     public init(
         name: String,
@@ -345,7 +347,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         dns: RuntimeDNSConfiguration? = nil,
         inheritImageEntrypoint: Bool? = nil,
         executionSettings: ContainerExecutionSettings? = nil,
-        removedEnvironmentKeys: [String]? = nil
+        removedEnvironmentKeys: [String]? = nil,
+        stopTimeoutSeconds: Int? = nil
     ) {
         self.name = name
         self.image = image
@@ -372,6 +375,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.inheritImageEntrypoint = inheritImageEntrypoint
         self.executionSettings = executionSettings
         self.removedEnvironmentKeys = removedEnvironmentKeys
+        self.stopTimeoutSeconds = stopTimeoutSeconds
     }
 }
 
