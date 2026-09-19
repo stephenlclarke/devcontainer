@@ -108,13 +108,15 @@ def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard
     """Reconcile completed CLI commands; never replay up/exec or alter results."""
     from devcontainer_reference import DevcontainerReference, FIXTURE
     from devcontainer_build_reference import DevcontainerBuildReference, FIXTURE as BUILD_FIXTURE
+    from devcontainer_users_reference import DevcontainerUsersReference, FIXTURE as USERS_FIXTURE
     selected = owner["identity"]["fixture"]
-    if selected not in {FIXTURE, BUILD_FIXTURE}:
+    if selected not in {FIXTURE, BUILD_FIXTURE, USERS_FIXTURE}:
         raise ValueError("Not a devcontainer recovery transaction")
     key = validate_identity(owner["identity"])
     inputs = recovery_inputs(retained, ssd, owner)
     vm = DockerVM(Path(owner["root"]), owner, inputs["tools"], inputs["pins"], journal)
-    adapter = DevcontainerReference if selected == FIXTURE else DevcontainerBuildReference
+    adapter = {FIXTURE: DevcontainerReference, BUILD_FIXTURE: DevcontainerBuildReference,
+               USERS_FIXTURE: DevcontainerUsersReference}[selected]
     fixture = adapter(vm, inputs, owner)
     with deadline(45):
         verify_running(vm)

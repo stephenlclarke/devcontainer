@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+D03 users/environment is the active native-harness fixture: non-root UID 1000, home directory, container/remote variables, expansion and post-create output through the pinned official CLI. The isolated Docker adapter is implemented; live reference and native-candidate qualification remain outstanding. See the [exact contract and isolation boundary](docs/bazel-test-harness.md#d03-users-and-environment). Existing D01/D02 stock passes do not certify this fixture.
+
 In current source, Compose project ownership follows the selected runtime backend, independently of the selected Compose frontend. Switching frontends cannot migrate an existing runtime claim. A missing selected frontend fails before creating project state, without trying Docker as a fallback. This correction does not change the published compatibility matrix or remove the remaining Docker client dependencies.
 
 Native container creation finishes mount and kernel preparation before journalling possible submission. A failed prerequisite can be repaired and retried without leaving a spurious pending-create record; errors after submission still retain recovery evidence. This development correction is covered by focused stock/enhanced tests, not yet a released runtime guarantee.

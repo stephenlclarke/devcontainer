@@ -122,6 +122,17 @@ class DockerCaseTests(unittest.TestCase):
             self.case.setup()
         self.assertIsNone(self.case.guest)
 
+    def test_d03_uses_users_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "D03-users-environment"
+        with patch.object(released_docker, "DevcontainerUsersReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_matching_image_id_does_not_hide_wrong_manifest_or_architecture(self):
         identifier = "sha256:" + "b" * 64
         for descriptor, architecture in (("sha256:" + "c" * 64, "arm64"), (identifier, "amd64")):
@@ -143,6 +154,21 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_d03_admission_binds_nonroot_configuration_and_dockerfile(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        with patch.object(released_docker, "require_retained", return_value={"executables": {}}), \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", return_value={"verified": True}):
+            result = released_docker.admit_docker(lock, {}, {}, {"images": [{"name": "alpine-workload"}]},
+                Path("/scratch"), Path("/retained"), fixture="D03-users-environment", repository=repository)
+        self.assertIn("adduser -D -u 1000", result["devcontainerFixture"]["dockerfile"])
+        config = json.loads(result["devcontainerFixture"]["configuration"])
+        self.assertEqual(config["remoteUser"], "vscode")
+        self.assertFalse(config["updateRemoteUserUID"])
+        self.assertEqual(config["remoteEnv"]["EXPANDED_VALUE"], "${containerEnv:CONTAINER_VALUE}")
+
     def test_d02_admission_includes_exact_dockerfile_source(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

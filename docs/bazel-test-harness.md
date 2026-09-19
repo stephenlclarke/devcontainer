@@ -46,6 +46,14 @@ Seventeen deterministic tests cover immutable reuse after SSD eviction, corrupti
 
 ## Cutover requirements
 
+### D03 users and environment
+
+D03 is the active contract after D01/D02 reference and stock qualification; those contracts remain handed off incomplete on enhanced guest publication. The unchanged D03 Dockerfile creates `vscode` UID 1000. Its official-CLI `up`/`exec` probe must observe `container_env=container-value`, `expanded_env=container-value`, `remote_env=remote-value`, `home=/home/vscode`, `post_create=user-post-create`, `uid=1000` and `user=vscode`, with verified cleanup. UID remapping, TTY, Features and the full lifecycle matrix are outside this fixture. D03 retains the released Docker closure and CLI 0.88.0, local legacy build path, bounded execution and raw phase timings; authoritative quiet comparisons wait for the performance phase.
+
+The reference adapter reuses D02 build ancestry and completed-command recovery. Image metadata must equal the fixture's post-create, container user/environment, remote user/environment and disabled UID-update settings; raw variable expressions are not rewritten into expected results. This matches the pinned CLI's metadata field projection. Only the checked-in disposable fixture workspace becomes readable (directories `0755`, files `0644`) by the non-root guest; the private parent, control state, logs and credentials retain restrictive modes. Admission binds Dockerfile/configuration/probe bytes into the shared comparison identity before any VM work. Candidate D03 currently fails explicitly before runtime mutation until its reference is established. No live D03 result or complete three-lane parity is yet claimed.
+
+Native harness gate `14c62e5f-9070-4290-bafd-410648ddb938` passes all 585 component tests. Focused standard-library tracing executes 26/26 lines of the new reference adapter across 15 tests; this is diagnostic adapter coverage, not overall product coverage. Independent final-diff review is clean. Initial analysis failure `122f09de-e4e2-4425-b16c-4a15add67d2e` identified a missing Bazel fixture export, now corrected; it did not start a VM.
+
 ### D02 Dockerfile-configuration reference
 
 D02 is handed off incomplete after passing reference and stock execution, while the enhanced lane remains blocked. The 19 September 2026 02:06 BST anonymous registry check still returned `manifest unknown` for the exact enhanced initialization tag; Compose 0.15.1 still exposes no guest OCI archive. No stock substitution or repeated unchanged runtime attempt is permitted.

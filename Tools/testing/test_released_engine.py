@@ -53,6 +53,16 @@ class ReleasedEngineTests(unittest.TestCase):
         admit.assert_not_called()
         self.keychains.assert_not_called()
 
+    def test_d03_candidate_refuses_before_runtime_or_asset_mutation(self):
+        with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D03-users-environment"]), \
+                patch("released_engine.platform.system", return_value="Darwin"), \
+                patch("released_engine.platform.machine", return_value="arm64"), \
+                patch("released_engine.admit") as admit, \
+                self.assertRaisesRegex(ValueError, "D03 native adapter"):
+            released_engine.main()
+        admit.assert_not_called()
+        self.keychains.assert_not_called()
+
     def test_required_release_and_supported_adapter_are_explicit(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
         for lane in ("apple-stock", "container-compose"):

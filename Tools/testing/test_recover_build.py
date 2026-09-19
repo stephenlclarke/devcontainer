@@ -255,5 +255,14 @@ class DevcontainerBuildRecoveryTests(DevcontainerRecoveryTests):
         return stack
 
 
+class DevcontainerUsersRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D03-users-environment"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_users_reference.DevcontainerUsersReference", return_value=self.fixture))
+        return stack
+
+
 if __name__ == "__main__":
     unittest.main()

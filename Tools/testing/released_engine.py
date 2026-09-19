@@ -217,7 +217,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, "D03-users-environment", *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
     args = parser.parse_args()
     os.umask(0o077)
@@ -229,6 +229,8 @@ def main():
         return
     if args.fixture in {"D01-image-config", "D02-dockerfile-config"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
+    if args.fixture == "D03-users-environment":
+        raise ValueError("D03 native adapter is not implemented; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None

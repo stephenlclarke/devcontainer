@@ -38,6 +38,10 @@ exports_files([
     "Tests/Parity/fixtures/D02-dockerfile-config/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/D02-dockerfile-config/Dockerfile",
     "Tests/Parity/fixtures/D02-dockerfile-config/probe.sh",
+    "Tests/Parity/fixtures/D03-users-environment/contract.json",
+    "Tests/Parity/fixtures/D03-users-environment/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/D03-users-environment/Dockerfile",
+    "Tests/Parity/fixtures/D03-users-environment/probe.sh",
 ])
 
 candidate_archive(

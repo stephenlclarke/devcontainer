@@ -27,6 +27,7 @@ class DevcontainerBuildReference(DevcontainerReference):
     fixture = FIXTURE
     keys = {"build_arg", "build_target", "post_create", "workspace"}
     up_timeout = 240
+    metadata_fields = ("postCreateCommand", "remoteUser", "overrideCommand")
 
     def write_workspace(self):
         super().write_workspace()
@@ -58,7 +59,7 @@ class DevcontainerBuildReference(DevcontainerReference):
         built_layers = built.get("RootFS", {}).get("Layers")
         configuration = json.loads(self.inputs["devcontainerFixture"]["configuration"])
         metadata = json.loads(built.get("Config", {}).get("Labels", {}).get("devcontainer.metadata", "null"))
-        expected = {name: configuration[name] for name in ("postCreateCommand", "remoteUser", "overrideCommand")}
+        expected = {name: configuration[name] for name in self.metadata_fields}
         admitted = self.inputs["workload"]["image"]
         if (not isinstance(image_id, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None or
                 built.get("Id") != image_id or metadata != [expected] or
