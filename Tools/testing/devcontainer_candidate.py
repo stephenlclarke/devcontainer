@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import time
 
 from case_evidence import canonical
@@ -231,3 +232,19 @@ class DevcontainerDependenciesCandidate(DevcontainerComposeCandidate, Devcontain
         super().prepare_image()
         self.vm.command("devcontainer-dependency-pull", [self.vm.container, "image", "pull", "--arch", "arm64",
                                                        DATABASE_IMAGE], timeout=120)
+
+    def execute(self):
+        result = super().execute()
+        # Inspection projects observed addresses, not the adopted attachment
+        # specification. Retain only the network fields needed to distinguish
+        # adoption/filtering failures, never the full environment-bearing spec.
+        database = self.vm.root / "state.sqlite"
+        try:
+            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+                rows = connection.execute(
+                    "SELECT runtime_id, docker_id, json_extract(specification_json, '$.networks'), created_at, started_at "
+                    "FROM runtime_containers WHERE docker_id=?", (self.identifier,)).fetchall()
+            self.journal.put("c02-app-adopted-networks.json", canonical(rows))
+        except sqlite3.Error as error:
+            self.journal.put("c02-app-adopted-networks.json", canonical({"error": type(error).__name__}))
+        return result

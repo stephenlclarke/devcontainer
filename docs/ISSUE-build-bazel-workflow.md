@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The latest stock C02 candidate (`e8796ba`) still fails hostname resolution. [Bounded live diagnostics](bazel-test-harness.md#c02-dependency-health-and-service-selection) establish that services are running, database health passes, observed and adopted network attachments are present, and direct gateway exec preparation still does not install managed hosts. The remaining immediate task is to identify the runtime reconciliation branch, not assume a Compose exec bypass or weaken the original probe. All diagnostic runs cleaned up successfully; no stable release follows from this checkpoint.
+
 The backing-file store now has gateway creation/lifecycle callers and [focused recovery and ownership proof](PR-83.md#implementation), including the real SQLite completion transaction, absent-native cleanup and bootstrapped preparation-failure recovery. Compose creation still bypasses this boundary and must be moved into it. No new live parity result or release follows from component tests.
 
 The typed-creation adapter retains prepared mounts and rejects conflicting user destinations. The gateway now allocates and recovers the managed file, but Compose has not yet been routed through it and the latest live C02 failure remains authoritative.

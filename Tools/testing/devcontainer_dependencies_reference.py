@@ -98,10 +98,37 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
             raise ValueError("C02 network membership differs from the three-service project")
         self.journal.put("c02-project-created.json", canonical({"services": services, "network": identity}))
         for role, item in services.items():
-            state = self.inspect(item["Id"]).get("State", {})
+            inspected = self.inspect(item["Id"])
+            state = inspected.get("State", {})
+            # Keep diagnostics separate from the stable ownership receipt and
+            # omit environment values, which may contain credentials.
+            self.journal.put("c02-" + role + "-network-state.json", canonical({
+                "Id": item["Id"], "State": state, "NetworkSettings": inspected.get("NetworkSettings"),
+                "NetworkMode": inspected.get("HostConfig", {}).get("NetworkMode")}))
             if state.get("Status") != "running" or (role == "database" and state.get("Health", {}).get("Status") != "healthy"):
                 raise ValueError("C02 selected services are not running and healthy")
         return identifier
+
+    def execute(self):
+        result = super().execute()
+        # Read only after the original probe: another exec could itself trigger
+        # hosts reconciliation and change the behavior under investigation.
+        try:
+            actual = self.find()
+            if actual is None or self.owned(actual) != self.identifier:
+                raise ValueError("C02 diagnostic target changed")
+            if actual.get("State", {}).get("Status") != "running":
+                self.journal.put("c02-app-hosts-status.json", canonical({"skipped": "container-not-running"}))
+                return result
+            status, payload = self.call("GET", f"/containers/{self.identifier}/archive?path=/etc/hosts",
+                                        total_timeout=5)
+            if status == 200:
+                self.journal.put("c02-app-hosts.tar", payload)
+            self.journal.put("c02-app-hosts-status.json", canonical({"status": status}))
+        except Exception as error:
+            # A bounded optional diagnostic must never replace probe results.
+            self.journal.put("c02-app-hosts-status.json", canonical({"error": type(error).__name__}))
+        return result
 
     def recovery_plan(self):
         records = self.journal.records()

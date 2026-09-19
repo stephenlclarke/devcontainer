@@ -39,6 +39,8 @@ class Handler(helpers.Handler):
             item = server.services.get(identifier)
             if item is not None:
                 status, body = 200, item
+                if path.endswith("/archive"):
+                    status, body = server.archive_status, b"retained hosts archive"
                 if self.command == "DELETE":
                     status, body = 204, None
                     if not server.ignore_delete:
@@ -53,7 +55,7 @@ class Handler(helpers.Handler):
                 status, body = 204, None
                 if not server.keep_network:
                     server.network = None
-        payload = canonical(body) if body is not None else b""
+        payload = body if isinstance(body, bytes) else canonical(body) if body is not None else b""
         self.send_response(status)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -70,6 +72,7 @@ class DependenciesTests(unittest.TestCase):
         with patch.object(helpers, "Handler", Handler):
             helpers.ReferenceTests.setUp(self)
         self.server.services, self.server.network, self.server.keep_network = {}, None, False
+        self.server.archive_status = 200
 
     def reopen(self):
         self.inputs["compose"] = {"executables": {"docker-compose": "/prepared/docker-compose"}}
@@ -90,6 +93,68 @@ class DependenciesTests(unittest.TestCase):
                 "Config": {"Labels": labels, "Image": DATABASE_IMAGE if role == "database" else IMAGE,
                            "Cmd": ["sleep", "infinity"], "Entrypoint": None},
                 "State": {"Status": "running", "Health": {"Status": "healthy"}}}
+
+    def test_diagnostics_retain_network_state_and_hosts_after_probe(self):
+        original = self.command
+
+        def command(name, *args, **kwargs):
+            if name == "devcontainer-exec":
+                self.assertFalse(any("/archive" in route for _, route in self.server.routes))
+            output = original(name, *args, **kwargs)
+            if name == "devcontainer-up":
+                for item in self.server.services.values():
+                    item["NetworkSettings"] = {"Networks": {self.fixture.network_name: {"IPAddress": "192.0.2.3"}}}
+                    item["HostConfig"] = {"NetworkMode": self.fixture.network_name}
+                    item["Config"]["Env"] = ["SECRET=must-not-be-retained"]
+            return output
+
+        self.vm.command = command
+        self.start()
+        records = self.vm.journal.records()
+        for role in SERVICES:
+            payload = records["c02-" + role + "-network-state.json"]
+            value = json.loads(payload)
+            self.assertEqual(value["State"]["Status"], "running")
+            self.assertEqual(value["NetworkMode"], self.fixture.network_name)
+            self.assertEqual(value["NetworkSettings"]["Networks"][self.fixture.network_name]["IPAddress"], "192.0.2.3")
+            self.assertNotIn(b"SECRET", payload)
+        self.assertEqual(records["c02-app-hosts.tar"], b"retained hosts archive")
+        self.assertEqual(json.loads(records["c02-app-hosts-status.json"]), {"status": 200})
+
+    def test_diagnostic_failure_preserves_probe_observations(self):
+        self.server.archive_status = 500
+        result = self.start()
+        self.assertEqual(result["dependency_dns"], "true")
+        records = self.vm.journal.records()
+        self.assertNotIn("c02-app-hosts.tar", records)
+        self.assertEqual(json.loads(records["c02-app-hosts-status.json"]), {"status": 500})
+
+    def test_diagnostic_exception_preserves_probe_observations(self):
+        original = self.fixture.call
+
+        def call(method, route, *args, **kwargs):
+            if "/archive" in route:
+                raise TimeoutError("diagnostic expired")
+            return original(method, route, *args, **kwargs)
+
+        with patch.object(self.fixture, "call", side_effect=call):
+            self.assertEqual(self.start()["dependency_dns"], "true")
+        self.assertEqual(json.loads(self.vm.journal.records()["c02-app-hosts-status.json"]), {"error": "TimeoutError"})
+
+    def test_diagnostic_does_not_request_archive_for_stopped_app(self):
+        original = self.command
+
+        def command(name, *args, **kwargs):
+            output = original(name, *args, **kwargs)
+            if name == "devcontainer-exec":
+                self.server.services[IDS["app"]]["State"]["Status"] = "exited"
+            return output
+
+        self.vm.command = command
+        self.assertEqual(self.start()["dependency_dns"], "true")
+        self.assertFalse(any("/archive" in route for _, route in self.server.routes))
+        self.assertEqual(json.loads(self.vm.journal.records()["c02-app-hosts-status.json"]),
+                         {"skipped": "container-not-running"})
 
     def command(self, name, arguments, *, timeout, separate_output=False):
         self.commands.append((name, arguments, timeout))

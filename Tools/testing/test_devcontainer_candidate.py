@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,8 @@ from unittest.mock import Mock, patch
 from case_evidence import canonical
 from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate, DevcontainerComposeCandidate,
                                    DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
+from devcontainer_candidate import DevcontainerDependenciesCandidate
+from devcontainer_dependencies_reference import DevcontainerDependenciesReference
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
 from guest_runtime import ReleasedGuest, require_guest_cleanup
@@ -24,6 +27,42 @@ import test_devcontainer_build_reference as build_reference_tests
 import test_devcontainer_users_reference as users_reference_tests
 import test_devcontainer_lifecycle_reference as lifecycle_reference_tests
 import test_devcontainer_compose_reference as compose_reference_tests
+import test_devcontainer_dependencies_reference as dependencies_reference_tests
+
+
+class DependenciesCandidateTests(dependencies_reference_tests.DependenciesTests):
+    def reopen(self):
+        super().reopen()
+        self.vm.container = "/prepared/container"
+        self.vm.close = Mock()
+        self.vm.prepare_cleanup = Mock()
+        self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/prepared/devcontainer"}}
+        self.inputs["composeCandidate"] = {"executables": {"compose": "/prepared/native-compose"}, "runtimeProfile": "stock"}
+        return DevcontainerDependenciesCandidate(self.vm, self.inputs, self.owner)
+
+    def test_metadata_diagnostic_is_selected_read_only_and_omits_environment(self):
+        database = self.root / "state.sqlite"
+        identifier = dependencies_reference_tests.IDS["app"]
+        spec = {"networks": [{"name": "project_default"}], "environment": {"SECRET": "not-retained"}}
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE runtime_containers (runtime_id, docker_id, specification_json, created_at, started_at)")
+            connection.execute("INSERT INTO runtime_containers VALUES (?,?,?,?,?)", ("native", identifier, json.dumps(spec), 1, 2))
+            connection.execute("INSERT INTO runtime_containers VALUES (?,?,?,?,?)", ("foreign", "other", json.dumps(spec), 1, 2))
+        self.fixture.identifier = identifier
+        with patch.object(DevcontainerDependenciesReference, "execute", return_value={"dependency_dns": "false"}):
+            self.assertEqual(self.fixture.execute(), {"dependency_dns": "false"})
+        payload = self.vm.journal.records()["c02-app-adopted-networks.json"]
+        self.assertNotIn(b"SECRET", payload)
+        self.assertNotIn(b"foreign", payload)
+        rows = json.loads(payload)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(json.loads(rows[0][2]), spec["networks"])
+
+    def test_absent_metadata_database_is_not_created(self):
+        self.start()
+        self.assertFalse((self.root / "state.sqlite").exists())
+        self.assertEqual(json.loads(self.vm.journal.records()["c02-app-adopted-networks.json"]),
+                         {"error": "OperationalError"})
 
 
 class ComposeCandidateTests(compose_reference_tests.ComposeTests):
