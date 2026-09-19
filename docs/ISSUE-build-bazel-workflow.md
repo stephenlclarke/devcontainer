@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The backing-file storage primitive now has [focused recovery and ownership proof](PR-83.md#implementation), but has no runtime callers yet. The next implementation must connect the existing creation journal, prepare/start/restart boundaries and exact-incarnation removal, then move Compose creation into that boundary. No new live parity result or release follows from these storage tests.
+
 The typed-creation adapter now retains prepared mounts and rejects conflicting user destinations, with [focused creation proof](PR-83.md#implementation). This removes the overwrite barrier to a managed hosts-file mount but does not yet allocate or recover that file, route Compose creation through the gateway, or change the latest live C02 failure.
 
 Running-state native Compose reconciliation now has a local implementation and focused regression proof, including cross-project isolation, cancellation, stale creation/start identity and preservation of the startup inventory-read budget. The remaining creation/start boundary must install a private, generation-owned hosts-file mount before the original entrypoint runs. Stock preboot copy/dial APIs cannot provide this because the lower container layer requires a started workload. [The startup design](../DESIGN.md#startup-time-name-resolution-remaining-c02-implementation) retains these constraints; the original live failure below remains authoritative until new candidates qualify.
