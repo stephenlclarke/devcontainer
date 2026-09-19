@@ -28,6 +28,7 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
     private let execSession: (any RuntimeProcessSession)?
     private let attachmentSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
+    private let containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)?
     private let buildImageStream: (@Sendable (ImageBuildRequest) async throws
         -> AsyncThrowingStream<Data, any Error>)?
     private let pullImageStream: (@Sendable (String) async throws
@@ -57,11 +58,13 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         pullImageStream: (@Sendable (String) async throws
             -> AsyncThrowingStream<Data, any Error>)? = nil,
         buildImageStream: (@Sendable (ImageBuildRequest) async throws
-            -> AsyncThrowingStream<Data, any Error>)? = nil
+            -> AsyncThrowingStream<Data, any Error>)? = nil,
+        containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)? = nil
     ) {
         self.execSession = execSession
         self.attachmentSession = attachmentSession
         self.descriptorDelay = descriptorDelay
+        self.containerExitWait = containerExitWait
         self.buildImageStream = buildImageStream
         self.pullImageStream = pullImageStream
         runtimeDescriptor = ProtocolDescriptor(
@@ -324,6 +327,21 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
             try removeContainer(id: id, force: true, context: context)
         }
         return snapshot.exitCode ?? 0
+    }
+
+    public var supportsContainerExitWaitRegistration: Bool {
+        containerExitWait != nil
+    }
+
+    public func prepareContainerExitWait(
+        id: String, context: RuntimeRequestContext
+    ) async throws -> any RuntimeContainerExitWait {
+        try context.checkActive()
+        let snapshot = try container(id: id)
+        guard let containerExitWait else {
+            throw DevContainerError(.unsupportedCapability, message: "Test exit registration is unavailable")
+        }
+        return try await containerExitWait(snapshot)
     }
 
     public func containerLogs(

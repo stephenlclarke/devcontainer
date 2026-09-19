@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Foreground auto-removal can erase inspectable state before a post-start wait is installed. The candidate now registers an exact native generation before returning wait headers, retains its true exit independently of output and removal, refuses unsupported providers and releases cancelled waiters. Late registration during old output drainage cannot inherit the old exit. The matching Compose client is component-tested; [fail-before and corrected evidence](bazel-test-harness.md#foreground-init-attachment-development) keeps this implementation distinct from pending native history, live parity and stable publication.
+
 The local enhanced initialization-image prerequisite is resolved by exact archive import and verified offline reuse. [Preparation evidence](bazel-test-harness.md#pinned-guest-image-preparation) supersedes earlier missing-local-image statements below; it does not resolve fresh-machine distribution or prove any enhanced live fixture. C02 foreground integration and the complete release gates remain outstanding.
 
 The prepared foreground path now has runtime-owned descriptors and a bounded HTTP adapter. [Current component evidence](bazel-test-harness.md#foreground-init-attachment-development) covers effective stream selection, stdin EOF policy, detach keys, quiet-client cancellation, stock-compatible post-start resize and identity-preserving cleanup barriers. Native source-aware attachment history, prepared Compose foreground integration and the live matrix still need completion; malformed runtime coverage counters remain a release-quality blocker.

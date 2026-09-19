@@ -10,6 +10,50 @@ import Foundation
 import Testing
 
 struct AppleContainerAttachmentTests {
+    @Test(arguments: [true, false])
+    func `acknowledged wait capability requires direct process ownership`(direct: Bool) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime(useDirectProcessAPI: direct)
+        #expect(await runtime.supportsContainerExitWaitRegistration == direct)
+        if !direct {
+            await #expect(throws: DevContainerError.self) {
+                try await runtime.prepareContainerExitWait(id: "not-created", context: .init())
+            }
+        }
+        await runtime.shutdown()
+    }
+
+    @Test func `late exit registration waits for a fresh generation while old output drains`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = AppleContainerCreateTests.Creator()
+        let bootstrap = AttachmentBootstrap(creator: creator)
+        let runtime = try fixture.runtime(useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap)
+        _ = try await runtime.createContainer(spec: specification(), context: .init())
+        let first = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
+        try await runtime.startContainer(id: "fixture", context: .init())
+        let process = try #require(await bootstrap.processes.first)
+        let output = try await process.holdOutputOpen()
+        defer { try? output.close() }
+        try await process.finish(12)
+        #expect(try await first.wait() == 12)
+        let ready = LateExitRegistration()
+        let next = Task {
+            let waiter = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
+            ready.mark()
+            return waiter
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!ready.finished)
+        try output.close()
+        let second = try await next.value
+        try await runtime.startContainer(id: "fixture", context: .init())
+        try await #require(await bootstrap.processes.last).finish(23)
+        #expect(try await second.wait() == 23)
+        await runtime.shutdown()
+    }
+
     @Test func `runtime attaches before start and preserves init output input and exit`() async throws {
         let fixture = try FakeAppleCLI()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -17,6 +61,9 @@ struct AppleContainerAttachmentTests {
         let bootstrap = AttachmentBootstrap(creator: creator)
         let runtime = try fixture.runtime(useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap)
         let snapshot = try await runtime.createContainer(spec: specification(), context: .init())
+        let exit = try await runtime.prepareContainerExitWait(id: snapshot.dockerID.rawValue, context: .init())
+        let cancelledExit = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
+        await cancelledExit.cancel()
         let first = try await runtime.attachContainer(id: snapshot.dockerID.rawValue, terminal: false, context: .init())
         let second = try await runtime.attachContainer(id: "fixture", terminal: false, context: .init())
         #expect(await creator.starts == 0)
@@ -40,6 +87,9 @@ struct AppleContainerAttachmentTests {
         #expect(output == Data("first outputafter detach".utf8))
         #expect(error == Data("first error".utf8))
         #expect(try await second.wait() == 37)
+        #expect(try await exit.wait() == 37)
+        #expect(exit.snapshot.dockerID == snapshot.dockerID)
+        await #expect(throws: CancellationError.self) { try await cancelledExit.wait() }
         await #expect(throws: CancellationError.self) { try await first.wait() }
         #expect(await process.kills == 0)
         #expect(await creator.starts == 1)
@@ -53,10 +103,12 @@ struct AppleContainerAttachmentTests {
         let bootstrap = AttachmentBootstrap(creator: creator)
         let runtime = try fixture.runtime(useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap)
         _ = try await runtime.createContainer(spec: specification(), context: .init())
+        let firstExit = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
         let first = try await runtime.attachContainer(id: "fixture", terminal: false, context: .init())
         try await runtime.startContainer(id: "fixture", context: .init())
         try await #require(await bootstrap.processes.first).finish(12)
         #expect(try await first.wait() == 12)
+        let secondExit = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
         let second = try await runtime.attachContainer(id: "fixture", terminal: false, context: .init())
         try await runtime.startContainer(id: "fixture", context: .init())
         #expect(await bootstrap.calls == 2)
@@ -68,6 +120,8 @@ struct AppleContainerAttachmentTests {
         #expect(output == Data("first output".utf8))
         #expect(try await first.wait() == 12)
         #expect(try await second.wait() == 23)
+        #expect(try await firstExit.wait() == 12)
+        #expect(try await secondExit.wait() == 23)
         await runtime.shutdown()
     }
 
@@ -79,12 +133,14 @@ struct AppleContainerAttachmentTests {
         let runtime = try fixture.runtime(useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap)
         _ = try await runtime.createContainer(spec: specification(), context: .init())
         let session = try await runtime.attachContainer(id: "fixture", terminal: false, context: .init())
+        let exit = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
         for _ in 0 ..< 2 {
             await #expect(throws: DevContainerError.self) {
                 try await runtime.startContainer(id: "fixture", context: .init())
             }
         }
         await #expect(throws: DevContainerError.self) { try await session.wait() }
+        await #expect(throws: DevContainerError.self) { try await exit.wait() }
         #expect(await bootstrap.calls == 1)
         #expect(await creator.starts == 0)
         await runtime.shutdown()
@@ -214,6 +270,18 @@ struct AppleContainerAttachmentTests {
     }
 }
 
+private final class LateExitRegistration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    var finished: Bool {
+        lock.withLock { completed }
+    }
+
+    func mark() {
+        lock.withLock { completed = true }
+    }
+}
+
 private actor AttachmentBootstrap: AppleContainerBootstrapClient {
     let creator: AppleContainerCreateTests.Creator
     let failBootstrap: Bool
@@ -278,6 +346,13 @@ private actor AttachedInitProcess: ClientProcess {
         exit = code
         waiter?.resume(returning: code)
         waiter = nil
+    }
+
+    func holdOutputOpen() throws -> FileHandle {
+        let source = try #require(handles[1])
+        let descriptor = dup(source.fileDescriptor)
+        guard descriptor >= 0 else { throw POSIXError(.EMFILE) }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     func wait() async -> Int32 {

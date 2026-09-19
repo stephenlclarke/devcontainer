@@ -18,6 +18,7 @@ final class AppleContainerIO: @unchecked Sendable {
     private let outputMonitor: ProcessPipeMonitor
     private let errorMonitor: ProcessPipeMonitor?
     private let attachments = AppleContainerAttachmentState()
+    private let exits = AppleContainerExitState()
     private let lock = NSLock()
     private var process: (any ClientProcess)?
     private var pendingSize: Terminal.Size?
@@ -54,6 +55,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     deinit {
+        exits.complete(.failure(CancellationError()))
         inputWriter?.cancel()
         outputMonitor.cancel()
         errorMonitor?.cancel()
@@ -127,8 +129,13 @@ final class AppleContainerIO: @unchecked Sendable {
         AppleContainerAttachment(owner: self, subscription: attachments.subscribe())
     }
 
+    func prepareExitWait(snapshot: ContainerSnapshot) -> (any RuntimeContainerExitWait)? {
+        exits.subscribe(snapshot: snapshot)
+    }
+
     func finish(exitCode: Int32, drainTimeout: Duration = .seconds(30)) async {
         lock.withLock { nativeExitObserved = true }
+        exits.complete(.success(exitCode))
         let controls = sealControls()
         closeTransferredEnds()
         let timeout = Task {
@@ -159,6 +166,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     func cancel() {
+        exits.complete(.failure(CancellationError()))
         _ = sealControls()
         closeTransferredEnds()
         inputWriter?.cancel()
@@ -176,6 +184,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     func fail(_ error: any Error) async {
+        exits.complete(.failure(error))
         attachments.complete(.failure(error))
         await shutdown()
     }

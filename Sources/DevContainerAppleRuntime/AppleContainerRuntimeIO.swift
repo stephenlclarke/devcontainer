@@ -170,6 +170,38 @@ extension AppleContainerRuntime {
         try await channel.resize(width: width, height: height)
     }
 
+    public var supportsContainerExitWaitRegistration: Bool {
+        useDirectProcessAPI
+    }
+
+    public func prepareContainerExitWait(
+        id: String, context: RuntimeRequestContext
+    ) async throws -> any RuntimeContainerExitWait {
+        guard useDirectProcessAPI else {
+            throw DevContainerError(.unsupportedCapability, message: "Exit registration requires direct process APIs")
+        }
+        let initial = try await inspectContainer(id: id, context: context)
+        while true {
+            try context.checkActive()
+            let snapshot = try await inspectContainer(id: initial.dockerID.rawValue, context: context)
+            guard snapshot.createdAt == initial.createdAt, snapshot.runtimeID == initial.runtimeID else {
+                throw DevContainerError(.conflict, message: "Container changed during exit registration")
+            }
+            try await requireCompletedCreation(id: snapshot.runtimeID.rawValue)
+            let channel = try await prepareContainerIO(snapshot: snapshot, context: context)
+            if let waiter = channel.prepareExitWait(snapshot: snapshot) {
+                return waiter
+            }
+            // Native exit can precede output drainage. Join the old generation
+            // before fresh registration without cancelling its wait or readers.
+            if let previous = containerExitTasks[snapshot.runtimeID.rawValue] {
+                _ = try await previous.value
+            } else if !channel.hasExited {
+                throw DevContainerError(.conflict, message: "Container exit authority is unavailable")
+            }
+        }
+    }
+
     private func prepareContainerIO(
         snapshot: ContainerSnapshot, context: RuntimeRequestContext
     ) async throws -> AppleContainerIO {

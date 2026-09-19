@@ -695,7 +695,7 @@ extension DockerRouter {
             return nil
         }
         let descriptor = try await runtime.descriptor(context: context)
-        return try .json(
+        return try await .json(
             DockerVersionResponse(
                 platform: DockerVersionPlatform(name: "devcontainer Apple runtime bridge"),
                 components: [
@@ -708,6 +708,8 @@ extension DockerRouter {
                             "Provider": descriptor.provider.rawValue,
                             "Distribution": descriptor.distribution,
                             "ContainerImageReference": "1",
+                            "ContainerExitWaitRegistration":
+                                runtime.supportsContainerExitWaitRegistration ? "1" : "0",
                             "NativeComposeHealthPolicy":
                                 descriptor.capabilities[.composeHealthPolicy] == .emulated ? "1" : "0"
                         ]
@@ -874,11 +876,11 @@ extension DockerRouter {
         let id = segments[1]
         switch (request.method, segments[2]) {
         case (.post, "wait"):
-            return DockerHTTPResponse(
+            return try await DockerHTTPResponse(
                 status: 200,
                 headers: ["Content-Type": "application/json"],
                 body: .stream(
-                    containerWaitStream(
+                    preparedContainerWaitStream(
                         id: id,
                         condition: target.first("condition"),
                         context: context

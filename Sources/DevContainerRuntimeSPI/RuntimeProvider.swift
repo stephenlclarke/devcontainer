@@ -27,6 +27,15 @@ public protocol RuntimeProcessSession: Sendable {
     func cancel() async
 }
 
+/// An acknowledged subscription to one container's next native process exit.
+/// Registration precedes startup; cancellation releases only this waiter.
+/// The authenticated snapshot/result remain usable after automatic removal.
+public protocol RuntimeContainerExitWait: Sendable {
+    var snapshot: ContainerSnapshot { get }
+    func wait() async throws -> Int32
+    func cancel() async
+}
+
 public protocol RuntimeIdentityProvider: Sendable {
     func descriptor(context: RuntimeRequestContext) async throws -> ProtocolDescriptor
 }
@@ -131,6 +140,7 @@ public protocol ImageRuntime: Sendable {
 }
 
 public protocol ContainerRuntime: Sendable {
+    var supportsContainerExitWaitRegistration: Bool { get async }
     func listContainers(
         all: Bool,
         labels: [String: String],
@@ -147,6 +157,8 @@ public protocol ContainerRuntime: Sendable {
     func renameContainer(id: String, name: String, context: RuntimeRequestContext) async throws
     func removeContainer(id: String, force: Bool, context: RuntimeRequestContext) async throws
     func waitContainer(id: String, context: RuntimeRequestContext) async throws -> Int32
+    func prepareContainerExitWait(id: String, context: RuntimeRequestContext) async throws
+        -> any RuntimeContainerExitWait
     func containerLogs(
         id: String,
         follow: Bool,
@@ -168,6 +180,18 @@ public protocol ContainerRuntime: Sendable {
 }
 
 public extension ContainerRuntime {
+    var supportsContainerExitWaitRegistration: Bool {
+        get async { false }
+    }
+
+    func prepareContainerExitWait(id _: String, context _: RuntimeRequestContext) async throws
+        -> any RuntimeContainerExitWait
+    {
+        throw DevContainerError(
+            .unsupportedCapability, message: "Acknowledged container exit registration is unavailable"
+        )
+    }
+
     func containerAttachmentHistory(
         id _: String, standardOutput _: Bool, standardError _: Bool, context _: RuntimeRequestContext
     ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
