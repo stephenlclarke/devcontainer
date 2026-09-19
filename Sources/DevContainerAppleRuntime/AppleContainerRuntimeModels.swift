@@ -33,6 +33,7 @@ struct AppleContainerRecord {
 
 struct AppleManagedHostsState: Equatable, Sendable {
     let createdAt: Date
+    let startedAt: Date?
     let managedHosts: String
 }
 

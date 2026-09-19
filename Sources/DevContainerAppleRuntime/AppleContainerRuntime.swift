@@ -145,6 +145,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     var createOptionSupport: CreateOptionSupport?
     var directContainerInventorySupported: Bool?
     var managedHostsState: [String: AppleManagedHostsState] = [:]
+    var networkHostsOperation: (id: UUID, task: Task<[ContainerSnapshot], any Error>)?
     var eventPollerState: AppleEventPoller?
 
     public init(

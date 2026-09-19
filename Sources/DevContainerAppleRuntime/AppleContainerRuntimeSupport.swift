@@ -338,7 +338,9 @@ extension AppleContainerRuntime {
         snapshot.dockerID = metadata.dockerID
         snapshot.imageID = metadata.imageID
         snapshot.createdAt = metadata.createdAt
-        snapshot.startedAt = metadata.startedAt ?? observed.startedAt
+        // A native restart preserves creation identity but replaces the start
+        // generation. Persisted gateway timestamps cannot override runtime truth.
+        snapshot.startedAt = observed.startedAt ?? metadata.startedAt
         if observed.state == .stopped, metadata.startedAt == nil {
             snapshot.state = .created
             snapshot.exitCode = nil

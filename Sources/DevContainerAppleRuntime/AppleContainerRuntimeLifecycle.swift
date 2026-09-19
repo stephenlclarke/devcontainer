@@ -120,18 +120,12 @@ public extension AppleContainerRuntime {
             runtimeID: resolved,
             startedAt: startedAt
         )
-        let inventory = try await listContainers(
-            all: true,
-            labels: [:],
-            context: context
-        )
-        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
-        try await startPortForwarding(
-            snapshot: snapshot,
-            startedAt: startedAt,
-            processGeneration: processGeneration
-        )
-        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        _ = try await synchronizeNetworkHostsAndInventory(context: context) { inventory in
+            let snapshot = try await self.resolvedContainerSnapshot(id: resolved, in: inventory)
+            try await self.startPortForwarding(
+                snapshot: snapshot, startedAt: startedAt, processGeneration: processGeneration
+            )
+        }
         await signalEventPollers()
     }
 
@@ -467,18 +461,12 @@ public extension AppleContainerRuntime {
             runtimeID: resolved,
             startedAt: startedAt
         )
-        let inventory = try await listContainers(
-            all: true,
-            labels: [:],
-            context: context
-        )
-        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
-        try await startPortForwarding(
-            snapshot: snapshot,
-            startedAt: startedAt,
-            processGeneration: processGeneration
-        )
-        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        _ = try await synchronizeNetworkHostsAndInventory(context: context) { inventory in
+            let snapshot = try await self.resolvedContainerSnapshot(id: resolved, in: inventory)
+            try await self.startPortForwarding(
+                snapshot: snapshot, startedAt: startedAt, processGeneration: processGeneration
+            )
+        }
         await signalEventPollers()
     }
 
@@ -777,6 +765,12 @@ public extension AppleContainerRuntime {
         try await requireCompletedCreation(id: container.runtimeID.rawValue)
         guard container.state == .running else {
             throw DevContainerError(.conflict, message: "container \(containerID) is not running")
+        }
+        if Self.nativeComposeServiceName(labels: container.spec.labels) != nil {
+            // Native Compose can start containers outside gateway lifecycle
+            // calls. Reconcile from a fresh, unfiltered inventory before an
+            // exec, without making ordinary inspect/list calls mutate guests.
+            try await synchronizeNetworkHosts(context: context, targetID: container.runtimeID)
         }
         let exec = ExecSnapshot(
             id: .random(),

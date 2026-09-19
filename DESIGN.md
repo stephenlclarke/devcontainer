@@ -200,10 +200,18 @@ flowchart LR
 The event loop wakes immediately after an in-process mutation and retains a
 200ms reconciliation fallback for changes made by another process. Managed
 host-file content is cached by container runtime identifier, creation
-timestamp, and desired block. Runtime bootstrap recreates the guest's default
+timestamp, observed start timestamp, and desired block. Runtime bootstrap recreates the guest's default
 `/etc/hosts`, so the cache is invalidated on every adapter-owned start,
 including transient archive starts, as well as container recreation, removal,
 or archive upload.
+
+Running-state reconciliation is serialized across file-transfer awaits and obtains an unfiltered inventory after entering that queue. Native Compose service names are eligible only when the versioned native identity and Docker label mirrors agree, the container is not a one-off, and the name is safe for a hosts entry. Addresses come exclusively from observed shared network attachments. Native Compose exec preparation reconciles only the requested target, not every project; ordinary inventory and inspect calls do not write guest files. Reconciliation propagates request cancellation, checks target creation/start identity before transfers and before caching success, and preserves unmanaged hosts entries. These changes are supporting C02 work, not proof of startup-time resolution or a completed parity contract.
+
+#### Startup-time name resolution: remaining C02 implementation
+
+The pinned stock runtime's global DNS lookup traverses all networks, so assigning bare service names to it is not a network-isolated replacement. A pre-entrypoint file-copy shortcut is also invalid: the outer API requires a running container, and although the runtime-service copy/dial methods accept a booted state, their underlying `LinuxContainer` calls require the started state. Stopping that partly bootstrapped container also needs care because the outer service's cached stopped snapshot can skip normal exit cleanup. No preboot copy adapter is connected to the product.
+
+The viable stock primitive is a single-file bind mount, installed by `FileMountContext` before `LinuxProcess.start`. Its source parent is shared through VirtioFS, so the proposed backing file must live alone in a private, generation-owned directory; ownership metadata and credentials must never share that directory. Integrate allocation/adoption/removal with the existing creation journal rather than creating a second resource authority. Preserve the bound inode during updates, retain unmanaged entries, define explicit behavior for a user-provided `/etc/hosts` mount, and validate incarnation and mount provenance before writes or cleanup. Native Compose creation must negotiate and enter this managed creation/start boundary rather than bypassing it with detached CLI `run`. Running-peer updates and restart recovery must not depend on an event-stream subscriber or a later exec. This path still requires implementation, failure/recovery tests, a pre-entrypoint reference fixture, and stock/enhanced live proof before a DNS parity claim.
 
 For a coordinated provider migration, the adapter exports one atomic,
 quiescence-checked identity/lifecycle view. Each record preserves the canonical

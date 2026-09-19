@@ -550,17 +550,53 @@ extension AppleContainerRuntime {
 
     func synchronizeNetworkHosts(
         context: RuntimeRequestContext,
-        containers: [ContainerSnapshot]? = nil
+        targetID: RuntimeID? = nil
     ) async throws {
-        let inventory: [ContainerSnapshot] = if let containers {
-            containers
-        } else {
-            try await listContainers(
-                all: true,
-                labels: [:],
-                context: context
+        _ = try await synchronizeNetworkHostsAndInventory(context: context, targetID: targetID)
+    }
+
+    func synchronizeNetworkHostsAndInventory(
+        context: RuntimeRequestContext,
+        targetID: RuntimeID? = nil,
+        beforeTransfers: (@Sendable ([ContainerSnapshot]) async throws -> Void)? = nil
+    ) async throws -> [ContainerSnapshot] {
+        let previous = networkHostsOperation?.task
+        let identifier = UUID()
+        let task = Task {
+            // Actor isolation alone does not serialize file transfers across
+            // awaits. A failed predecessor must not poison later recovery.
+            _ = try? await previous?.value
+            try context.checkActive()
+            return try await self.performNetworkHostsSynchronization(
+                context: context,
+                targetID: targetID,
+                beforeTransfers: beforeTransfers
             )
         }
+        networkHostsOperation = (identifier, task)
+        defer {
+            if networkHostsOperation?.id == identifier {
+                networkHostsOperation = nil
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func performNetworkHostsSynchronization(
+        context: RuntimeRequestContext,
+        targetID: RuntimeID?,
+        beforeTransfers: (@Sendable ([ContainerSnapshot]) async throws -> Void)?
+    ) async throws -> [ContainerSnapshot] {
+        // Read after acquiring the transfer queue: caller snapshots may have
+        // become stale while another reconciliation was uploading files.
+        let inventory = try await listContainers(all: true, labels: [:], context: context)
+        // Start forwarding before copies can suspend: an intervening process
+        // exit must close existing listeners, never precede a stale late open.
+        try await beforeTransfers?(inventory)
         let observed = Dictionary(
             uniqueKeysWithValues: inventory.map {
                 ($0.runtimeID.rawValue, $0.createdAt)
@@ -576,16 +612,20 @@ extension AppleContainerRuntime {
                 }
         }
         guard !running.isEmpty else {
-            return
+            return inventory
         }
 
         for target in running {
+            if let targetID, target.runtimeID != targetID {
+                continue
+            }
             try await synchronizeNetworkHosts(
                 target: target,
                 containers: running,
                 context: context
             )
         }
+        return inventory
     }
 
     // Direct and CLI fallback copies intentionally retain identical
@@ -600,11 +640,13 @@ extension AppleContainerRuntime {
         let targetID = target.runtimeID.rawValue
         let nextState = AppleManagedHostsState(
             createdAt: target.createdAt,
+            startedAt: target.startedAt,
             managedHosts: hosts
         )
         guard managedHostsState[targetID] != nextState else {
             return
         }
+        guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
         let temporary = try TemporaryDirectory(base: transferRoot)
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
@@ -618,6 +660,7 @@ extension AppleContainerRuntime {
                 )
                 try context.checkActive()
             } catch {
+                try context.checkActive()
                 let observedState = await (try? inspectContainer(
                     id: targetID,
                     context: context
@@ -633,6 +676,7 @@ extension AppleContainerRuntime {
                 "\(targetID):/etc/hosts",
                 localHosts.path
             ])
+            try context.checkActive()
             let observedState = await (try? inspectContainer(
                 id: targetID,
                 context: context
@@ -649,6 +693,7 @@ extension AppleContainerRuntime {
         let current = try String(contentsOf: localHosts, encoding: .utf8)
         let updated = Self.replacingManagedHosts(in: current, with: hosts)
         if current != updated {
+            guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
             // This private staging copy needs no atomic publication. Keep its
             // downloaded permissions rather than changing transfer metadata.
             try Data(updated.utf8).write(to: localHosts)
@@ -662,6 +707,7 @@ extension AppleContainerRuntime {
                     )
                     try context.checkActive()
                 } catch {
+                    try context.checkActive()
                     let observedState = await (try? inspectContainer(
                         id: targetID,
                         context: context
@@ -677,6 +723,7 @@ extension AppleContainerRuntime {
                     localHosts.path,
                     "\(targetID):/etc/hosts"
                 ])
+                try context.checkActive()
                 if upload.exitCode != 0 {
                     let observedState = await (try? inspectContainer(
                         id: targetID,
@@ -691,7 +738,22 @@ extension AppleContainerRuntime {
                 try requireSuccess(upload, operation: "container hosts upload")
             }
         }
-        managedHostsState[targetID] = nextState
+        if try await networkHostsTargetIsCurrent(target, context: context) {
+            managedHostsState[targetID] = nextState
+        }
+    }
+
+    private func networkHostsTargetIsCurrent(
+        _ target: ContainerSnapshot,
+        context: RuntimeRequestContext
+    ) async throws -> Bool {
+        do {
+            let current = try await inspectContainer(id: target.runtimeID.rawValue, context: context)
+            return current.state == .running && current.createdAt == target.createdAt
+                && current.startedAt == target.startedAt
+        } catch let error as DevContainerError where error.code == .notFound {
+            return false
+        }
     }
 
     static func isTransientContainerCopyFailure(
@@ -744,7 +806,11 @@ extension AppleContainerRuntime {
             return nil
         }
         let names = Set(
-            [source.spec.name, source.spec.hostname].compactMap(\.self)
+            [
+                source.spec.name,
+                source.spec.hostname,
+                nativeComposeServiceName(labels: source.spec.labels)
+            ].compactMap(\.self)
                 + attachment.aliases
         ).filter(isSafeHostName)
         guard !names.isEmpty else {
