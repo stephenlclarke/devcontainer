@@ -835,6 +835,9 @@ struct FakeAppleCLI {
         useDirectProcessAPI: Bool = false,
         images: any AppleImageIdentityClient = FakeAppleImageIdentityClient(),
         creator: (any AppleContainerCreateClient)? = nil,
+        bootstrap: (any AppleContainerBootstrapClient)? = nil,
+        networks: any AppleNetworkClient = AppleNetworkClientAdapter(),
+        allocations: any AppleNetworkAllocationClient = LiveAppleNetworkAllocationClient(),
         inventory: (any AppleContainerInventoryClient)? = nil
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
@@ -852,7 +855,9 @@ struct FakeAppleCLI {
                 inventory: inventory ?? (creator as? any AppleContainerInventoryClient)
                     ?? LiveAppleContainerInventoryClient(client: ContainerClient()),
                 files: LiveAppleContainerFileClient(client: ContainerClient()),
-                networks: AppleNetworkClientAdapter(),
+                networks: networks,
+                allocatedNetworks: allocations,
+                bootstrap: bootstrap,
                 images: images,
                 creator: creator
             )

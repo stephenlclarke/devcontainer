@@ -103,6 +103,15 @@ struct ManagedNetworkHostsStore: Sendable {
     /// Call only after native removal has been proved for this exact incarnation.
     func remove(identity: Identity) throws {
         let name = identity.operationID.uuidString
+        // Absence of the active slot is valid after a prior retirement. Only
+        // this boundary is idempotent; missing members inside it are corruption.
+        do {
+            let active = try Self.openDirectory(directory(for: identity).path)
+            close(active)
+        } catch let error as POSIXError where error.code == .ENOENT {
+            try recoverRemoval(identity: identity)
+            return
+        }
         try withVerifiedFile(identity: identity) { parent, _ in
             guard renameatx_np(parent, name, parent, name + ".retired", UInt32(RENAME_EXCL)) == 0 else {
                 throw Self.failure()

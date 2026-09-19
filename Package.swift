@@ -203,6 +203,7 @@ let package = Package(
                 .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerAPIClient", package: "container"),
                 .product(name: "ContainerBuild", package: "container"),
+                .product(name: "ContainerNetworkClient", package: "container"),
                 .product(name: "ContainerPersistence", package: "container"),
                 .product(name: "ContainerResource", package: "container"),
                 .product(name: "Containerization", package: "containerization"),

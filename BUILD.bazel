@@ -247,6 +247,7 @@ swift_library(
         ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
         "@swiftpkg_container//:ContainerAPIClient", "@swiftpkg_container//:ContainerBuild",
+        "@swiftpkg_container//:ContainerNetworkClient",
         "@swiftpkg_container//:ContainerPersistence",
         "@swiftpkg_container//:ContainerResource", "@swiftpkg_container//:SocketForwarder",
         "@swiftpkg_containerization//:Containerization",

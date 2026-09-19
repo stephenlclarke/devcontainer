@@ -4,11 +4,13 @@ import ContainerAPIClient
 import Containerization
 import ContainerizationError
 import ContainerizationOCI
+import ContainerizationOS
 import ContainerPersistence
 import ContainerResource
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
+import DevContainerState
 import Foundation
 import Testing
 
@@ -22,14 +24,23 @@ struct AppleContainerCreateTests {
         "sha256:" + String(repeating: "a", count: 64)
     }
 
-    private actor Creator: AppleContainerCreateClient, AppleContainerInventoryClient {
+    private actor Creator: AppleContainerCreateClient, AppleContainerInventoryClient, AppleContainerBootstrapClient,
+        ClientProcess
+    {
+        nonisolated let id = "fixture"
         var prepared: [ContainerConfiguration] = []
         var created: [ContainerConfiguration] = []
         let failCreate: Bool
         let failAfterCreate: Bool
         let replacement: Bool
+        var starts = 0
+        var bootstraps = 0
+        var startedAt: Date?
+        var running = false
 
-        init(failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false) {
+        init(
+            failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false
+        ) {
             self.failCreate = failCreate
             self.failAfterCreate = failAfterCreate
             self.replacement = replacement
@@ -59,13 +70,23 @@ struct AppleContainerCreateTests {
             }
             created.append(configuration)
             if failAfterCreate {
-                throw DevContainerError(.providerProtocolMismatch, message: "Injected post-create verification failure")
+                throw DevContainerError(
+                    .providerProtocolMismatch,
+                    message: "Injected post-create verification failure"
+                )
             }
             return creation
         }
 
         func list() -> [ContainerResource.ContainerSnapshot] {
-            created.map { .init(configuration: $0, status: .stopped, networks: []) }
+            created.map {
+                .init(
+                    configuration: $0,
+                    status: running ? .running : .stopped,
+                    networks: [],
+                    startedDate: startedAt
+                )
+            }
         }
 
         func get(id _: String) throws -> ContainerResource.ContainerSnapshot {
@@ -75,7 +96,38 @@ struct AppleContainerCreateTests {
             if replacement {
                 configuration.creationDate = configuration.creationDate.addingTimeInterval(1)
             }
-            return .init(configuration: configuration, status: .stopped, networks: [])
+            return .init(
+                configuration: configuration, status: running ? .running : .stopped,
+                networks: [], startedDate: startedAt
+            )
+        }
+
+        func bootstrap(id _: String) -> any ClientProcess {
+            bootstraps += 1
+            return self
+        }
+
+        func start() throws {
+            starts += 1
+            startedAt = Date()
+            running = true
+        }
+
+        func recordPriorStart() {
+            startedAt = Date(timeIntervalSince1970: 100)
+        }
+
+        func wait() throws -> Int32 {
+            // No exit event is published by this lifecycle-ordering fixture.
+            throw CancellationError()
+        }
+
+        func resize(_: Terminal.Size) {
+            // Headless lifecycle tests never request terminal resizing.
+        }
+
+        func kill(_: Int32) {
+            // These tests assert CLI stop is not issued for a created VM.
         }
     }
 
@@ -517,6 +569,282 @@ struct AppleContainerCreateTests {
         {"Entrypoint":["/bin/sh","-c"],"Cmd":["echo image"],"User":"1000:1000",
         "WorkingDir":"/image","Env":["A=original","B=retained"],"StopSignal":"SIGTERM"}
         """.utf8))
+    }
+}
+
+extension AppleContainerCreateTests {
+    private func nativeComposeSpec() -> ContainerSpec {
+        var labels = ["com.apple.container.compose.version": "1"]
+        for prefix in ["com.apple.container.compose.", "com.docker.compose."] {
+            labels[prefix + "project"] = "test-project"
+            labels[prefix + "service"] = "app"
+            labels[prefix + "oneoff"] = "false"
+        }
+        return ContainerSpec(
+            name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"], labels: labels
+        )
+    }
+
+    @Test func `native Compose allocation shares the durable creation operation identity`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let snapshot = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        let native = try #require(await creator.created.first)
+        let identity = try #require(await runtime.managedNetworkHostsIdentity(configuration: native))
+        let hosts = try #require(native.mounts.first)
+        #expect(hosts.options.readonly)
+        #expect(try String(contentsOfFile: hosts.source, encoding: .utf8) == AppleContainerRuntime.initialNetworkHosts)
+        #expect(await store.pendingContainerCreation(id: "fixture") == nil)
+        let metadata = try #require(await store.containerMetadata(id: "fixture"))
+        #expect(metadata.spec.labels[AppleContainerRuntime.managedNetworkHostsLabel] == identity.operationID.uuidString)
+        #expect(snapshot.spec.labels[AppleContainerRuntime.managedNetworkHostsLabel] == identity.operationID.uuidString)
+        let restarted = try fixture.runtime(metadataStore: store, creator: creator)
+        #expect(try await restarted.managedNetworkHostsIdentity(configuration: native) == identity)
+    }
+
+    @Test(arguments: [false, true])
+    func `mounted hosts reject a stopped or restarted generation before writing`(restarted: Bool) async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        var target = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        let native = try #require(await creator.created.first)
+        let hosts = try #require(native.mounts.first)
+        let original = try String(contentsOfFile: hosts.source, encoding: .utf8)
+        let started = Date(timeIntervalSince1970: 100)
+        target.state = .running
+        target.startedAt = started
+        let changed = ContainerResource.ContainerSnapshot(
+            configuration: native, status: restarted ? .running : .stopped, networks: [],
+            startedDate: restarted ? started.addingTimeInterval(1) : started
+        )
+        let bridge = try fixture.runtime(
+            metadataStore: store,
+            creator: creator,
+            inventory: Inventory(snapshot: changed)
+        )
+        await #expect(throws: DevContainerError.self) {
+            _ = try await bridge.updateMountedNetworkHosts(
+                target: target, hosts: "192.0.2.1 stale-peer\n", context: RuntimeRequestContext()
+            )
+        }
+        #expect(try String(contentsOfFile: hosts.source, encoding: .utf8) == original)
+    }
+
+    @Test(arguments: ["active", "retired", "removed"])
+    func `native absence cleanup resumes from durable ownership`(phase: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let target = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        let native = try #require(await creator.created.first)
+        let identity = try #require(await runtime.managedNetworkHostsIdentity(configuration: native))
+        let backing = try ManagedNetworkHostsStore(root: fixture.root.appendingPathComponent("network-hosts"))
+        let slot = backing.fileURL(for: identity).deletingLastPathComponent().deletingLastPathComponent()
+        if phase == "retired" {
+            try FileManager.default.moveItem(at: slot, to: slot.appendingPathExtension("retired"))
+        } else if phase == "removed" {
+            try backing.remove(identity: identity)
+        }
+        let bridge = try fixture.runtime(metadataStore: store, creator: creator, inventory: Inventory(snapshot: nil))
+        // Inventory must not discard the only durable identity before recovery.
+        _ = try await bridge.listContainers(all: true, labels: [:], context: RuntimeRequestContext())
+        #expect(await store.containerMetadata(id: "fixture") != nil)
+        try await bridge.removeContainer(id: target.dockerID.rawValue, force: false, context: RuntimeRequestContext())
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        #expect(!FileManager.default.fileExists(atPath: slot.path))
+        #expect(!FileManager.default.fileExists(atPath: slot.appendingPathExtension("retired").path))
+    }
+
+    @Test func `absent container retains cleanup identity when backing provenance is unsafe`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        _ = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        let native = try #require(await creator.created.first)
+        let hosts = try URL(fileURLWithPath: #require(native.mounts.first).source)
+        let extra = hosts.deletingLastPathComponent().appendingPathComponent("unexpected")
+        try Data("retain".utf8).write(to: extra)
+        let bridge = try fixture.runtime(metadataStore: store, creator: creator, inventory: Inventory(snapshot: nil))
+        await #expect(throws: (any Error).self) {
+            try await bridge.removeContainer(id: "fixture", force: true, context: RuntimeRequestContext())
+        }
+        #expect(await store.containerMetadata(id: "fixture") != nil)
+        #expect(try String(contentsOf: extra, encoding: .utf8) == "retain")
+        #expect(FileManager.default.fileExists(atPath: hosts.path))
+    }
+
+    @Test func `SQLite journal completes owned creation and retains recovery authority`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let path = fixture.root.appendingPathComponent("state.sqlite")
+        let store = try SQLiteStateStore(path: path)
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let created = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        #expect(try await store.pendingContainerCreation(id: "fixture") == nil)
+        let reopened = try SQLiteStateStore(path: path)
+        let metadata = try #require(try await reopened.containerMetadata(id: "fixture"))
+        #expect(metadata.spec.labels[AppleContainerRuntime.managedNetworkHostsLabel] != nil)
+        let replacement = Creator()
+        let bridge = try fixture.runtime(
+            metadataStore: reopened,
+            creator: replacement,
+            inventory: Inventory(snapshot: nil)
+        )
+        await #expect(throws: DevContainerError.self) {
+            _ = try await bridge.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        }
+        #expect(await replacement.created.isEmpty)
+        #expect(try await reopened.containerMetadata(id: "fixture") == metadata)
+        try await bridge.removeContainer(id: created.dockerID.rawValue, force: false, context: RuntimeRequestContext())
+        #expect(try await reopened.containerMetadata(id: "fixture") == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `managed restart rejects CLI fallback without changing lifecycle`(running: Bool) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        _ = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        if running {
+            try await creator.start()
+        }
+        let metadata = await store.containerMetadata(id: "fixture")
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.restartContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
+        }
+        #expect(await store.containerMetadata(id: "fixture") == metadata)
+        #expect(try !fixture.log().split(separator: "\n").contains {
+            $0.hasPrefix("stop ") || $0.hasPrefix("restart ")
+        })
+    }
+
+    @Test(arguments: [false, true])
+    func `failed hosts preparation survives stop and restart without stopping the booted VM`(
+        previouslyStarted: Bool
+    ) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let attachment = try ContainerResource.Attachment(
+            network: "shared", hostname: "fixture", ipv4Address: .init("192.0.2.8/24"),
+            ipv4Gateway: .init("192.0.2.1"), ipv6Address: nil, macAddress: nil
+        )
+        let runtime = try fixture.runtime(
+            useDirectProcessAPI: true, creator: creator, bootstrap: creator,
+            networks: FakeNetworkClient(snapshot: .init(
+                id: "shared", spec: NetworkSpec(name: "shared"), createdAt: Date()
+            )), allocations: FakeManagedNetworkAllocations(attachment: attachment, failOnce: true)
+        )
+        var spec = nativeComposeSpec()
+        spec.networks = [.init(name: "shared")]
+        _ = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        if previouslyStarted {
+            await creator.recordPriorStart()
+        }
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.startContainer(id: "fixture", context: RuntimeRequestContext())
+        }
+        #expect(await creator.bootstraps == 1)
+        #expect(await creator.starts == 0)
+        _ = try await runtime.portForwarding.start(
+            containerID: "fixture", bindings: [PortBinding(
+                containerPort: 80, hostPort: 0, hostAddress: "127.0.0.1"
+            )], networkAddresses: ["shared": "192.0.2.8"]
+        )
+        #expect(await runtime.portForwarding.hasListeners(containerID: "fixture"))
+        try await runtime.stopContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
+        #expect(await !runtime.portForwarding.hasListeners(containerID: "fixture"))
+        try await runtime.restartContainer(id: "fixture", timeout: nil, context: RuntimeRequestContext())
+        #expect(await creator.bootstraps == 2)
+        #expect(await creator.starts == 1)
+        #expect(await creator.startedAt != nil)
+        #expect(try !fixture.log().split(separator: "\n").contains { $0.hasPrefix("stop ") })
+        await runtime.shutdown()
+    }
+
+    @Test(arguments: ["missing", "wrong-network", "wrong-host", "allocated"])
+    func `pre-entrypoint hosts require the exact bootstrapped network allocation`(mode: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let attachment = try ContainerResource.Attachment(
+            network: mode == "wrong-network" ? "isolated" : "shared",
+            hostname: mode == "wrong-host" ? "another-container" : "fixture",
+            ipv4Address: .init("192.0.2.8/24"), ipv4Gateway: .init("192.0.2.1"),
+            ipv6Address: nil, macAddress: nil
+        )
+        let networks = FakeNetworkClient(snapshot: .init(
+            id: "shared", spec: NetworkSpec(name: "shared"), createdAt: Date()
+        ))
+        let runtime = try fixture.runtime(
+            creator: creator, networks: networks,
+            allocations: FakeManagedNetworkAllocations(attachment: mode == "missing" ? nil : attachment)
+        )
+        var spec = nativeComposeSpec()
+        spec.networks = [.init(name: "shared")]
+        _ = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        let native = try #require(await creator.created.first)
+        let hosts = try #require(native.mounts.first)
+        if mode == "allocated" {
+            try await runtime.populateManagedHostsBeforeProcess(
+                configuration: native, includeAllocatedSelf: true, context: RuntimeRequestContext()
+            )
+            let contents = try String(contentsOfFile: hosts.source, encoding: .utf8)
+            #expect(contents.contains("192.0.2.8"))
+            #expect(contents.contains("app"))
+            #expect(contents.contains("localhost"))
+        } else {
+            await #expect(throws: DevContainerError.self) {
+                try await runtime.populateManagedHostsBeforeProcess(
+                    configuration: native, includeAllocatedSelf: true, context: RuntimeRequestContext()
+                )
+            }
+            #expect(try String(contentsOfFile: hosts.source, encoding: .utf8) == AppleContainerRuntime
+                .initialNetworkHosts)
+        }
+    }
+
+    @Test func `failed creation intent never allocates a shared hosts file`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let runtime = try fixture.runtime(metadataStore: TestMetadataStore(failCreationIntent: true), creator: creator)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        }
+        #expect(await creator.created.isEmpty)
+        let files = try FileManager.default
+            .contentsOfDirectory(atPath: fixture.root.appendingPathComponent("network-hosts").path)
+        #expect(files.isEmpty)
+    }
+
+    @Test func `uncertain native creation retains the journalled backing file`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(metadataStore: store, creator: Creator(failAfterCreate: true))
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        }
+        let intent = try #require(await store.pendingContainerCreation(id: "fixture"))
+        let native = try JSONDecoder().decode(ContainerConfiguration.self, from: intent.nativeConfiguration)
+        let identity = try #require(await runtime.managedNetworkHostsIdentity(configuration: native))
+        #expect(identity.operationID == intent.operationID)
+        #expect(try FileManager.default.fileExists(atPath: #require(native.mounts.first).source))
+        #expect(await store.containerMetadata(id: "fixture") == nil)
     }
 
     private func configuration(_ spec: ContainerSpec) throws -> ContainerConfiguration {

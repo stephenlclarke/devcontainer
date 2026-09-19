@@ -26,14 +26,16 @@ actor TestMetadataStore: RuntimeCreationStore {
     private var records = 0
     private var creations: [String: RuntimeContainerCreation] = [:]
     private let failCreationCompletion: Bool
+    private let failCreationIntent: Bool
 
-    init(recordDelay: Duration? = nil, failCreationCompletion: Bool = false) {
+    init(recordDelay: Duration? = nil, failCreationCompletion: Bool = false, failCreationIntent: Bool = false) {
         self.recordDelay = recordDelay
         self.failCreationCompletion = failCreationCompletion
+        self.failCreationIntent = failCreationIntent
     }
 
     func beginContainerCreation(_ creation: RuntimeContainerCreation) throws {
-        guard creations[creation.runtimeID] == nil else { throw MetadataTestError.writeFailed }
+        guard !failCreationIntent, creations[creation.runtimeID] == nil else { throw MetadataTestError.writeFailed }
         creations[creation.runtimeID] = creation
     }
 
@@ -42,7 +44,10 @@ actor TestMetadataStore: RuntimeCreationStore {
     }
 
     func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
-        guard !failCreationCompletion, creations[metadata.runtimeID.rawValue]?.operationID == operationID else {
+        guard !failCreationCompletion, let creation = creations[metadata.runtimeID.rawValue],
+              creation.operationID == operationID, creation.imageID == metadata.imageID,
+              creation.spec == metadata.spec, creation.nativeCreatedAt == metadata.createdAt
+        else {
             throw MetadataTestError.writeFailed
         }
         records += 1

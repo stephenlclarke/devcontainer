@@ -79,9 +79,11 @@ public actor AppleContainerRuntime: DevContainerRuntime {
 
     struct DirectClients {
         let api: ContainerClient
+        let bootstrap: any AppleContainerBootstrapClient
         let inventory: any AppleContainerInventoryClient
         let files: any AppleContainerFileClient
         let networks: any AppleNetworkClient
+        let allocatedNetworks: any AppleNetworkAllocationClient
         let images: any AppleImageIdentityClient
         let creator: any AppleContainerCreateClient
         let loggingRecords: any AppleContainerLoggingRecordClient
@@ -92,14 +94,18 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             inventory: any AppleContainerInventoryClient,
             files: any AppleContainerFileClient,
             networks: any AppleNetworkClient,
+            allocatedNetworks: any AppleNetworkAllocationClient = LiveAppleNetworkAllocationClient(),
+            bootstrap: (any AppleContainerBootstrapClient)? = nil,
             images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
             creator: (any AppleContainerCreateClient)? = nil,
             logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
         ) {
             self.api = api
+            self.bootstrap = bootstrap ?? LiveAppleContainerBootstrapClient(client: api)
             self.inventory = inventory
             self.files = files
             self.networks = networks
+            self.allocatedNetworks = allocatedNetworks
             self.images = images
             self.creator = creator ?? LiveAppleContainerCreateClient(client: api)
             loggingRecords = logging.records
@@ -117,15 +123,18 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let useDirectProcessAPI: Bool
     let useDirectContainerAPI: Bool
     let apiClient: ContainerClient
+    let bootstrapClient: any AppleContainerBootstrapClient
     let loggingRecordClient: any AppleContainerLoggingRecordClient
     let loggingHandoffClientOverride: (any AppleContainerLoggingHandoffClient)?
     let inventoryClient: any AppleContainerInventoryClient
     let fileClient: any AppleContainerFileClient
     let networkClient: any AppleNetworkClient
+    let networkAllocationClient: any AppleNetworkAllocationClient
     let metadataStore: (any RuntimeMetadataStore)?
     let imageIdentityClient: any AppleImageIdentityClient
     let containerCreateClient: any AppleContainerCreateClient
     let managedVolumes: ManagedVolumeStore
+    let managedNetworkHosts: ManagedNetworkHostsStore
     let transferRoot: URL
     let portForwarding = PortForwarding()
     var execs: [ExecID: ExecSnapshot] = [:]
@@ -195,17 +204,23 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         self.useDirectProcessAPI = useDirectProcessAPI
         self.useDirectContainerAPI = useDirectContainerAPI
         apiClient = clients.api
+        bootstrapClient = clients.bootstrap
         loggingRecordClient = clients.loggingRecords
         loggingHandoffClientOverride = clients.loggingHandoffClientOverride
         inventoryClient = clients.inventory
         fileClient = clients.files
         networkClient = clients.networks
+        networkAllocationClient = clients.allocatedNetworks
         imageIdentityClient = clients.images
         containerCreateClient = clients.creator
         self.metadataStore = metadataStore
         transferRoot = storageRoots.transfers ?? Self.transferDirectory
         managedVolumes = try ManagedVolumeStore(
             root: storageRoots.volumes ?? Self.defaultVolumeRoot
+        )
+        managedNetworkHosts = try ManagedNetworkHostsStore(
+            root: (storageRoots.volumes ?? Self.defaultVolumeRoot)
+                .deletingLastPathComponent().appendingPathComponent("network-hosts", isDirectory: true)
         )
     }
 }
@@ -419,6 +434,9 @@ public extension AppleContainerRuntime {
             }
             // Native Compose may recreate a stable name. Never project the
             // previous Docker identity onto that new native container.
+            guard metadata.spec.labels[Self.managedNetworkHostsLabel] == nil else {
+                throw DevContainerError(.conflict, message: "Managed hosts ownership must be recovered before adoption")
+            }
             try await metadataStore.removeContainerMetadata(
                 id: snapshot.runtimeID.rawValue
             )
@@ -556,6 +574,9 @@ public extension AppleContainerRuntime {
         for metadata in metadata.values
             where !observedRuntimeIDs.contains(metadata.runtimeID.rawValue)
         {
+            // Native absence is not proof that the owned backing files have
+            // been removed. Retain the durable identity for explicit recovery.
+            guard metadata.spec.labels[Self.managedNetworkHostsLabel] == nil else { continue }
             try await metadataStore.removeContainerMetadata(
                 id: metadata.runtimeID.rawValue
             )
@@ -619,6 +640,9 @@ public extension AppleContainerRuntime {
         spec: ContainerSpec,
         context: RuntimeRequestContext
     ) async throws -> ContainerSnapshot {
+        guard spec.labels[Self.managedNetworkHostsLabel] == nil else {
+            throw DevContainerError(.invalidRequest, message: "Managed network hosts label is runtime-owned")
+        }
         let digestAddressed = spec.image.hasPrefix("sha256:") || spec.image.contains("@")
         if digestAddressed, !useDirectContainerAPI {
             try Self.requireNamedImageMutation(spec.image)
@@ -678,10 +702,17 @@ public extension AppleContainerRuntime {
         }
         let store = try requireCreationStore()
         try await requireCompletedCreation(id: spec.name, forCreate: true)
+        if let prior = try await metadataStore?.containerMetadata(id: spec.name),
+           prior.spec.labels[Self.managedNetworkHostsLabel] != nil
+        {
+            throw DevContainerError(.conflict, message: "Prior managed container must be removed before recreation")
+        }
         // Validate flags before preparing mounts or creating native resources.
         _ = try containerConfigurationArguments(spec, optionSupport: optionSupport)
         try Self.validateNativeMounts(spec.mounts)
-        let configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
+        var configuration = try await containerCreateClient.prepare(spec: spec, image: image, context: context)
+        let hostsIdentity = try prepareManagedNetworkHosts(configuration: &configuration, spec: spec)
+        let hostsStore = managedNetworkHosts
         var mountOptions: [String] = []
         for mount in spec.mounts {
             mountOptions += try await mountArguments(mount)
@@ -689,12 +720,20 @@ public extension AppleContainerRuntime {
         return try await containerCreateClient.create(
             configuration: configuration, mountOptions: mountOptions, context: context
         ) { prepared in
+            var journalSpec = spec
+            if let hostsIdentity {
+                journalSpec.labels[Self.managedNetworkHostsLabel] = hostsIdentity.operationID.uuidString
+            }
             let creation = try RuntimeContainerCreation(
+                operationID: hostsIdentity?.operationID ?? UUID(),
                 runtimeID: prepared.id, nativeCreatedAt: prepared.creationDate,
-                imageID: image.snapshot.id, spec: spec,
+                imageID: image.snapshot.id, spec: journalSpec,
                 nativeConfiguration: JSONEncoder().encode(prepared)
             )
             try await store.beginContainerCreation(creation)
+            if let hostsIdentity {
+                try hostsStore.create(identity: hostsIdentity, contents: Self.initialNetworkHosts)
+            }
             return creation
         }
     }

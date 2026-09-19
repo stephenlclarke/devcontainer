@@ -647,6 +647,12 @@ extension AppleContainerRuntime {
             return
         }
         guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
+        if try await updateMountedNetworkHosts(target: target, hosts: hosts, context: context) {
+            if try await networkHostsTargetIsCurrent(target, context: context) {
+                managedHostsState[targetID] = nextState
+            }
+            return
+        }
         let temporary = try TemporaryDirectory(base: transferRoot)
         defer { temporary.remove() }
         let localHosts = temporary.url.appendingPathComponent("hosts")
@@ -740,19 +746,6 @@ extension AppleContainerRuntime {
         }
         if try await networkHostsTargetIsCurrent(target, context: context) {
             managedHostsState[targetID] = nextState
-        }
-    }
-
-    private func networkHostsTargetIsCurrent(
-        _ target: ContainerSnapshot,
-        context: RuntimeRequestContext
-    ) async throws -> Bool {
-        do {
-            let current = try await inspectContainer(id: target.runtimeID.rawValue, context: context)
-            return current.state == .running && current.createdAt == target.createdAt
-                && current.startedAt == target.startedAt
-        } catch let error as DevContainerError where error.code == .notFound {
-            return false
         }
     }
 

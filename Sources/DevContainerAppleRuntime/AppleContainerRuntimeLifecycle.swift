@@ -109,7 +109,7 @@ public extension AppleContainerRuntime {
         runtimeID resolved: String,
         context: RuntimeRequestContext
     ) async throws {
-        let processGeneration = try await launchContainerProcess(id: resolved)
+        let processGeneration = try await launchContainerProcess(id: resolved, context: context)
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)
@@ -136,20 +136,49 @@ public extension AppleContainerRuntime {
         containerStartOperations.removeValue(forKey: id)
     }
 
-    private func launchContainerProcess(id: String) async throws -> UUID? {
+    private func launchContainerProcess(id: String, context: RuntimeRequestContext) async throws -> UUID? {
         try await requireCompletedCreation(id: id)
+        let hostsConfiguration = try await managedHostsConfiguration(id: id)
         guard useDirectProcessAPI else {
+            guard hostsConfiguration == nil else {
+                throw DevContainerError(
+                    .unsupportedCapability,
+                    message: "Managed hosts startup requires direct process APIs"
+                )
+            }
             try await requireSuccess(
                 command(["start", id]),
                 operation: "container start"
             )
             return nil
         }
-        let process = try await apiClient.bootstrap(
-            id: id,
-            stdio: [nil, nil, nil]
-        )
-        try await process.start()
+        if let hostsConfiguration {
+            try await populateManagedHostsBeforeProcess(
+                configuration: hostsConfiguration, includeAllocatedSelf: false, context: context
+            )
+        }
+        let process = try await bootstrapClient.bootstrap(id: id)
+        if let hostsConfiguration {
+            // A failed preparation retains this created container and its owned
+            // bootstrapped VM for retry/removal; never launch the user's process
+            // with incomplete hosts or delete its root filesystem on failure.
+            try await populateManagedHostsBeforeProcess(
+                configuration: hostsConfiguration, includeAllocatedSelf: true, context: context
+            )
+        }
+        do {
+            try await process.start()
+        } catch {
+            guard hostsConfiguration != nil else { throw error }
+            throw DevContainerError(
+                .runtimeUnavailable,
+                message: "Native process start failed; remove and recreate this container before retrying: \(error)"
+            )
+        }
+        return trackContainerProcess(process, id: id)
+    }
+
+    private func trackContainerProcess(_ process: any ClientProcess, id: String) -> UUID {
         let task = Task {
             try await ContainerExit(
                 code: process.wait(),
@@ -354,6 +383,10 @@ public extension AppleContainerRuntime {
         mutationIdentifiers.insert(resolved)
         includeContainerLifecycleMutation(id: resolved, registration: mutation)
         var arguments = ["stop"]
+        // Stock bootstrap retains a client before the application has started.
+        // Stopping that VM poisons its next bootstrap, including after a prior
+        // successful run. A stop of an already-stopped container is a no-op.
+        let alreadyStopped = try await managedContainerIsStopped(id: resolved)
         if let timeout {
             let components = timeout.components
             let seconds = components.seconds
@@ -361,10 +394,12 @@ public extension AppleContainerRuntime {
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(
-            command(arguments),
-            operation: "container stop"
-        )
+        if !alreadyStopped {
+            try await requireSuccess(
+                command(arguments),
+                operation: "container stop"
+            )
+        }
         await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
@@ -435,6 +470,11 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws {
         try await requireCompletedCreation(id: resolved)
+        if !useDirectProcessAPI, try await managedHostsConfiguration(id: resolved) != nil {
+            throw DevContainerError(
+                .unsupportedCapability, message: "Managed hosts restart requires direct process APIs"
+            )
+        }
         var arguments = [useDirectProcessAPI ? "stop" : "restart"]
         if let timeout {
             let components = timeout.components
@@ -443,12 +483,14 @@ public extension AppleContainerRuntime {
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(
-            command(arguments),
-            operation: "container restart"
-        )
+        if try await !managedContainerIsStopped(id: resolved) {
+            try await requireSuccess(
+                command(arguments),
+                operation: "container restart"
+            )
+        }
         let processGeneration = useDirectProcessAPI
-            ? try await launchContainerProcess(id: resolved)
+            ? try await launchContainerProcess(id: resolved, context: context)
             : nil
 
         // Restart/bootstrap recreates the guest's default /etc/hosts.
@@ -578,7 +620,15 @@ public extension AppleContainerRuntime {
                 registration: mutation
             )
         }
-        let snapshot = try await inspectContainer(id: id, context: context)
+        let snapshot: ContainerSnapshot
+        do {
+            snapshot = try await inspectContainer(id: id, context: context)
+        } catch let error as DevContainerError where error.code == .notFound {
+            if try await recoverRemovedManagedContainer(id: id, context: context) {
+                return
+            }
+            throw error
+        }
         let resolved = snapshot.runtimeID.rawValue
         mutationIdentifiers.formUnion([
             resolved,
@@ -589,6 +639,8 @@ public extension AppleContainerRuntime {
             identifiers: mutationIdentifiers,
             registration: mutation
         )
+        let hostsConfiguration = snapshot.spec.labels[Self.managedNetworkHostsLabel] == nil
+            ? nil : try await managedHostsConfiguration(id: resolved)
         var arguments = ["delete"]
         if force {
             arguments.append("--force")
@@ -598,24 +650,15 @@ public extension AppleContainerRuntime {
             command(arguments),
             operation: "container delete"
         )
+        if let hostsConfiguration {
+            try await removeManagedHostsAfterNativeDeletion(configuration: hostsConfiguration)
+        }
         await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
+        discardContainerState(id: resolved, dockerID: snapshot.dockerID.rawValue, name: snapshot.spec.name)
         requestedContainers.removeValue(forKey: id)
-        requestedContainers.removeValue(forKey: resolved)
-        requestedContainers.removeValue(forKey: snapshot.dockerID.rawValue)
-        requestedContainers.removeValue(forKey: snapshot.spec.name)
-        managedHostsState.removeValue(forKey: resolved)
         startedContainers.remove(id)
-        startedContainers.remove(resolved)
-        startedContainers.remove(snapshot.dockerID.rawValue)
-        startedContainers.remove(snapshot.spec.name)
         containerStartedAt.removeValue(forKey: id)
-        containerStartedAt.removeValue(forKey: resolved)
-        containerStartedAt.removeValue(forKey: snapshot.dockerID.rawValue)
-        containerStartedAt.removeValue(forKey: snapshot.spec.name)
-        containerExitTasks.removeValue(forKey: resolved)?.cancel()
-        containerExitRegistrations.removeValue(forKey: resolved)
-        containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
         // A name-based delete cannot prove which create operation it removed,
         // or that an earlier timed-out create cannot still complete. Keep any

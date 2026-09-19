@@ -18,6 +18,7 @@ extension AppleContainerRuntime {
             return snapshot
         }
         var snapshot = try await verifiedCreationSnapshot(creation)
+        let storedSpec = creation.spec
         if spec.labels[Self.dockerIDLabel] == nil {
             snapshot.dockerID = DockerID(rawValue: Self.syntheticDockerIdentifier())
         }
@@ -25,12 +26,12 @@ extension AppleContainerRuntime {
         try await requireCreationStore().finishContainerCreation(
             RuntimeContainerMetadata(
                 runtimeID: snapshot.runtimeID, dockerID: snapshot.dockerID,
-                imageID: imageID, spec: spec, createdAt: snapshot.createdAt
+                imageID: imageID, spec: storedSpec, createdAt: snapshot.createdAt
             ),
             operationID: creation.operationID
         )
         requestedContainers[spec.name] = RequestedContainer(
-            spec: spec, imageID: imageID, createdAt: snapshot.createdAt
+            spec: storedSpec, imageID: imageID, createdAt: snapshot.createdAt
         )
         snapshot.imageID = imageID
         snapshot.spec = Self.effectiveContainerSpec(requested: spec, observed: snapshot.spec)
@@ -52,10 +53,21 @@ extension AppleContainerRuntime {
 
     /// Revalidate the final observation, not an earlier create RPC response.
     /// Never persist a replacement's timestamp with the requested image/spec.
-    func verifiedCreationSnapshot(_ creation: RuntimeContainerCreation) async throws -> DevContainerModel.ContainerSnapshot {
+    func verifiedCreationSnapshot(_ creation: RuntimeContainerCreation) async throws -> DevContainerModel
+        .ContainerSnapshot
+    {
         let expected = try JSONDecoder().decode(ContainerConfiguration.self, from: creation.nativeConfiguration)
         let observed = try await inventoryClient.get(id: creation.runtimeID)
         try AppleContainerCreateProjection.verify(observed.configuration, expected: expected)
+        let expectedHosts = try managedNetworkHostsIdentity(configuration: expected)
+        let observedHosts = try managedNetworkHostsIdentity(configuration: observed.configuration)
+        guard expectedHosts == observedHosts else {
+            throw DevContainerError(.providerProtocolMismatch, message: "Created network hosts mount identity changed")
+        }
+        if let observedHosts {
+            // Validate persisted inode provenance without changing the file.
+            try managedNetworkHosts.update(identity: observedHosts) { $0 }
+        }
         guard observed.configuration.creationDate == creation.nativeCreatedAt else {
             throw DevContainerError(
                 .providerProtocolMismatch, message: "created container incarnation changed before completion"
