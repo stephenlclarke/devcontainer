@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+The gateway candidate also preserves explicit entrypoint clearing and descriptor-bound image command defaults through launch and saved metadata. [Component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) is recorded separately from pending live parity and release gates.
+
 The unreleased gateway now retains explicit DNS settings through Apple creation, inspection and recovery from older metadata. Component tests pass; this is preparation for the Compose startup-path fix, not a new stable release or live parity claim. See [candidate evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
 C02 passes on the real Docker reference. The stock candidate passes running-state DNS, actual database health and service selection, but the strengthened test proves hostname lookup fails in the application's first command. Both lanes clean up with zero owned resources. Gateway-managed startup hosts are implemented, but Compose creation still bypasses that path; connecting creation without losing service configuration remains required. C02 parity is not yet claimed. See the [C02 contract, timings and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).

@@ -310,6 +310,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var securityOptions: [String]
     public var healthcheck: ContainerHealthcheck?
     public var dns: RuntimeDNSConfiguration?
+    /// Nil retains legacy inference; false preserves an explicitly cleared entrypoint.
+    public var inheritImageEntrypoint: Bool?
 
     public init(
         name: String,
@@ -333,7 +335,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         capabilitiesToDrop: [String] = [],
         securityOptions: [String] = [],
         healthcheck: ContainerHealthcheck? = nil,
-        dns: RuntimeDNSConfiguration? = nil
+        dns: RuntimeDNSConfiguration? = nil,
+        inheritImageEntrypoint: Bool? = nil
     ) {
         self.name = name
         self.image = image
@@ -357,6 +360,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.securityOptions = securityOptions
         self.healthcheck = healthcheck
         self.dns = dns
+        self.inheritImageEntrypoint = inheritImageEntrypoint
     }
 }
 

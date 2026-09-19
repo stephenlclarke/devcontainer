@@ -210,16 +210,14 @@ enum AppleContainerCreateProjection {
     }
 
     static func process(_ spec: ContainerSpec, image: ImageConfig?) throws -> ProcessConfiguration {
-        let entrypoint = spec.entrypoint.isEmpty ? (image?.entrypoint ?? []) : spec.entrypoint
-        let command = spec.command.isEmpty && spec.entrypoint.isEmpty ? (image?.cmd ?? []) : spec.command
-        let arguments = entrypoint + command
-        guard let executable = arguments.first, !executable.isEmpty else {
-            throw DevContainerError(.invalidRequest, message: "Container command/entrypoint is empty")
-        }
+        let resolved = try spec.resolvingImageProcess(
+            imageEntrypoint: image?.entrypoint ?? [], imageCommand: image?.cmd ?? []
+        )
+        let arguments = resolved.entrypoint + resolved.command
         let user = spec.user.flatMap { $0.isEmpty ? nil : $0 } ?? image?.user ?? ""
         let directory = spec.workingDirectory.flatMap { $0.isEmpty ? nil : $0 } ?? image?.workingDir ?? "/"
         return try ProcessConfiguration(
-            executable: executable, arguments: Array(arguments.dropFirst()),
+            executable: arguments[0], arguments: Array(arguments.dropFirst()),
             environment: Parser.allEnv(
                 imageEnvs: image?.env ?? [], envFiles: [],
                 envs: spec.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }

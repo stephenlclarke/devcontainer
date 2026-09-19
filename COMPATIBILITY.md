@@ -2,6 +2,8 @@
 
 ## Current status
 
+The unreleased gateway candidate preserves omitted/null versus explicitly cleared entrypoints, including the Engine `[""]` reset form. Descriptor-bound image defaults are resolved before launch and retained in metadata. Native/CLI creation and recovery have component coverage; live process parity remains unqualified. See [the pinned reference and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
 The unreleased gateway candidate preserves `HostConfig.Dns`, `DnsSearch` and `DnsOptions` through Apple native creation and inspection. Nameservers must be IPv4/IPv6 literals; search domains/options must be nonempty single tokens. Backward-compatible metadata and typed/JSON adoption have component coverage. Live DNS parity and Compose gateway cutover remain unqualified; this does not expand the stable matrix. See [candidate evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
 
 C02 health-policy projection is an unreleased candidate. It requires a matching Compose stock adapter and an explicitly negotiated gateway capability; unknown gateways or malformed policy fail rather than silently losing health checks. The evaluator uses actual guest probes, but remains inspect-driven and rejects explicit `start_interval`. Stock running-state DNS, health and service-selection observations pass, but the stronger original-command startup lookup fails where Docker passes. Compose creation must use managed pre-start host installation; full C02 and enhanced/release evidence remain incomplete. This does not expand the stable compatibility matrix. See [C02 evidence and limits](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).

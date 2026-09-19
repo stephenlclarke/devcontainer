@@ -12,6 +12,8 @@ struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
     static let digest = "sha256:" + String(repeating: "b", count: 64)
     var result = Self.digest
     var layers = ["sha256:" + String(repeating: "d", count: 64)]
+    var entrypoint: [String] = []
+    var command: [String] = []
 
     func deleteNamedReference(_: String) async throws {
         throw DevContainerError(.unsupportedCapability, message: "This identity-only fixture cannot delete images")
@@ -27,7 +29,7 @@ struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
         #expect(description["digest"] as? String == "sha256:" + String(repeating: "a", count: 64))
         let selected = try #require(JSONSerialization.jsonObject(with: platform) as? [String: String])
         #expect(selected == ["architecture": "arm64", "os": "linux"])
-        return .init(digest: result, rootFSLayers: layers)
+        return .init(digest: result, rootFSLayers: layers, entrypoint: entrypoint, command: command)
     }
 }
 

@@ -668,6 +668,7 @@ public extension AppleContainerRuntime {
         containerExits.removeValue(forKey: spec.name)
         let resolved = try await resolvedImage(reference: spec.image, context: context)
         let image = resolved.snapshot
+        spec = try Self.resolveCreateProcess(spec, image: image)
         let creation: RuntimeContainerCreation?
         do {
             creation = try await performContainerCreate(
@@ -689,6 +690,11 @@ public extension AppleContainerRuntime {
         )
         await signalEventPollers()
         return snapshot
+    }
+
+    private static func resolveCreateProcess(_ spec: ContainerSpec, image: ImageSnapshot) throws -> ContainerSpec {
+        guard spec.inheritImageEntrypoint != nil else { return spec }
+        return try spec.resolvingImageProcess(imageEntrypoint: image.entrypoint, imageCommand: image.command)
     }
 
     private func performContainerCreate(
@@ -754,7 +760,9 @@ public extension AppleContainerRuntime {
         }
         arguments += spec.networks.flatMap { ["--network", $0.name] }
         arguments.append(spec.image)
-        arguments += Array(spec.entrypoint.dropFirst()) + spec.command
+        arguments += Array(spec.entrypoint.dropFirst())
+            + (spec.inheritImageEntrypoint == false && spec.entrypoint.isEmpty
+                ? Array(spec.command.dropFirst()) : spec.command)
         return arguments
     }
 
@@ -863,7 +871,9 @@ public extension AppleContainerRuntime {
         arguments += spec.capabilitiesToDrop.flatMap { ["--cap-drop", $0] }
         arguments += spec.securityOptions.flatMap { ["--security-opt", $0] }
         arguments += try Self.dnsArguments(spec, supported: optionSupport.dns)
-        arguments += Self.optionalArgument("--entrypoint", value: spec.entrypoint.first)
+        let executable = spec.entrypoint.first
+            ?? (spec.inheritImageEntrypoint == false ? spec.command.first : nil)
+        arguments += Self.optionalArgument("--entrypoint", value: executable)
         return arguments
     }
 

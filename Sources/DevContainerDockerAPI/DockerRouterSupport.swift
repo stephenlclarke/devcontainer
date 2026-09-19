@@ -702,7 +702,8 @@ extension DockerRouter {
                     startPeriodNanoseconds: $0.startPeriod ?? 0
                 )
             },
-            dns: dns
+            dns: dns,
+            inheritImageEntrypoint: request.entrypoint == nil
         )
     }
 

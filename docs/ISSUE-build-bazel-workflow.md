@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The gateway's omitted/empty entrypoint collapse is corrected in the candidate. Descriptor-bound process defaults now reach native/CLI creation and durable metadata, with [component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection). This removes another configuration-loss issue but does not complete Compose gateway cutover or live C02 proof.
+
 The gateway DNS configuration gap has a tested candidate fix: native/CLI submission and inspection retain resolver settings, including direct inventory adoption and older persisted metadata. [The component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) does not resolve the still-open Compose creation/start routing or establish live DNS parity.
 
 The C02 running-state hostname-resolution defect is fixed at `64db1c6`. The strengthened fixture now records the application's first hostname lookup: Docker passes, stock Apple fails, and both clean up with zero owned resources. This is an observed startup defect, not merely missing test coverage. [Current proof](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the diagnostic history below. Compose creation must connect to managed pre-start hosts without losing service configuration; enhanced qualification and complete family release/benchmark/documentation gates remain open.

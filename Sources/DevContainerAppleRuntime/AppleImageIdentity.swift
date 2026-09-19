@@ -16,6 +16,8 @@ protocol AppleImageIdentityClient: Sendable {
 struct AppleImageConfigurationIdentity: Sendable {
     let digest: String
     let rootFSLayers: [String]
+    let entrypoint: [String]
+    let command: [String]
 }
 
 struct LiveAppleImageIdentityClient: AppleImageIdentityClient {
@@ -45,7 +47,8 @@ struct LiveAppleImageIdentityClient: AppleImageIdentityClient {
         }
         return AppleImageConfigurationIdentity(
             digest: manifest.config.digest,
-            rootFSLayers: configuration.rootfs.diffIDs
+            rootFSLayers: configuration.rootfs.diffIDs,
+            entrypoint: configuration.config?.entrypoint ?? [], command: configuration.config?.cmd ?? []
         )
     }
 }
@@ -127,6 +130,8 @@ extension AppleContainerRuntime {
             }
             snapshot.id = identity.digest
             snapshot.rootFSLayers = identity.rootFSLayers
+            snapshot.entrypoint = identity.entrypoint
+            snapshot.command = identity.command
             if let manifestDigest = variant["digest"] as? String {
                 // The native inventory exposes the selected manifest separately
                 // from its index and config. Preserve that repository-qualified
