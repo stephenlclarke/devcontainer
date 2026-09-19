@@ -26,7 +26,7 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 
 
-FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}
+FIXTURES = {"E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -71,7 +71,7 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
     for image in images:
         validate_image(image)
     by_name = {image["name"]: image for image in images}
-    workload = "ubuntu-workload" if fixture == "D05-features" else "alpine-workload"
+    workload = {"D05-features": "ubuntu-workload", "D06-ports": "python-workload"}.get(fixture, "alpine-workload")
     if len(by_name) != len(images) or any(name not in by_name for name in (names[lane], workload)):
         raise ValueError("Exact provider initialization/workload image is missing or ambiguous")
     init_reference = ("ghcr.io/apple/containerization/vminit:0.45.0" if lane == "apple-stock" else
@@ -174,13 +174,13 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"} or self.guest is not None:
+        if self.fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
         if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
                                            DevcontainerBuildCandidate, DevcontainerUsersCandidate,
-                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate)
+                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate, DevcontainerPortsCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
@@ -191,14 +191,15 @@ class ReleasedGuest:
             self.guest = adapter(commands, self.inputs, self.owner,
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
-            adapter = DevcontainerLifecycleCandidate if self.fixture == "D04-lifecycle-hooks" else DevcontainerCandidate
+            adapter = {"D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
+                       "D06-ports": DevcontainerPortsCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()
 
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features"}:
+        if self.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()
@@ -258,6 +259,11 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "d06-collision-container-intent.json" in records:
+        intent = json.loads(records["d06-collision-container-intent.json"])
+        removed = json.loads(records.get("d06-collision-container-removed.json", b"null"))
+        if removed != {"name": intent["name"], "absent": True}:
+            raise ValueError("D06 collision resource needs explicit reconciliation")
     if "devcontainer-plan.json" in records:
         if json.loads(records.get("devcontainer-removed.json", b"null")) != {"verifiedAbsent": True}:
             raise ValueError("D01 resources need explicit reconciliation before service recovery")

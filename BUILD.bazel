@@ -49,6 +49,9 @@ exports_files([
     "Tests/Parity/fixtures/D05-features/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/D05-features/.devcontainer/devcontainer-lock.json",
     "Tests/Parity/fixtures/D05-features/probe.sh",
+    "Tests/Parity/fixtures/D06-ports/contract.json",
+    "Tests/Parity/fixtures/D06-ports/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/D06-ports/probe.sh",
 ])
 
 candidate_archive(

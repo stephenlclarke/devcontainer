@@ -53,13 +53,14 @@ def environment(root: Path, tools: dict) -> dict[str, str]:
             "XDG_RUNTIME_DIR": str(root / "run"), "LANG": "en_US.UTF-8", "TERM": "dumb"}
 
 
-def start_arguments(tools: dict, root: Path) -> list[str]:
+def start_arguments(tools: dict, root: Path, fixture: str | None = None) -> list[str]:
+    forwarder = "ssh" if fixture == "D06-ports" else "none"
     return [tools["colima"], "start", PROFILE, "--vm-type=vz", "--arch=aarch64", "--cpus=2", "--memory=2",
             "--disk=10", "--root-disk=10", "--runtime=docker", "--disk-image", tools["disk-image"],
             "--force-disk-image=false", "--activate=false", "--template=false", "--ssh-config=false",
             "--ssh-agent=false", "--binfmt=false", "--vz-rosetta=false", "--kubernetes=false",
             "--network-address=false", "--network-host-addresses=false", "--mount-inotify=false",
-            "--mount", str(root / "workspace") + ":w", "--mount-type=virtiofs", "--port-forwarder=none"]
+            "--mount", str(root / "workspace") + ":w", "--mount-type=virtiofs", "--port-forwarder=" + forwarder]
 
 
 def scoped_processes(root: Path, tools: dict, inventory: dict) -> dict:
@@ -163,7 +164,8 @@ def require_closed_vm(root: Path, owner: dict, records: dict, *, inventory=None)
             not isinstance(plan.get("tools"), dict)):
         raise ValueError("Docker recovery plan identity is missing or changed")
     tools = plan["tools"]
-    if plan.get("environment") != environment(root, tools) or plan.get("start") != start_arguments(tools, root):
+    if (plan.get("environment") != environment(root, tools) or
+            plan.get("start") != start_arguments(tools, root, owner["identity"]["fixture"])):
         raise ValueError("Docker recovery plan differs from the admitted runtime")
     current = (inventory or process_inventory)()
     require_idle([item["program"] for item in current.values()])
@@ -251,8 +253,12 @@ class DockerVM:
         require_idle([item["program"] for item in current.values()])
         if any(Path(item["program"]).name in {"limactl", "gvproxy", "qemu-system-aarch64"} for item in current.values()):
             raise ValueError("Another VM prevents Docker oracle admission")
+        fixture = self.owner["identity"]["fixture"]
+        if fixture == "D06-ports":
+            from devcontainer_ports_reference import require_free_port
+            require_free_port()
         plan = {"owner": self.owner, "tools": self.tools, "environment": self.env,
-                "start": start_arguments(self.tools, self.root), "socket": str(self.socket)}
+                "start": start_arguments(self.tools, self.root, fixture), "socket": str(self.socket)}
         self.journal.put("docker-plan.json", canonical(plan))
         for name in ("tmp", "colima", "lima", "docker", "config", "cache", "run", "workspace"):
             (self.root / name).mkdir(mode=0o700)
@@ -262,6 +268,13 @@ class DockerVM:
         # Dependency provisioning can validate the image, never install packages.
         override = {"provision": [{"mode": "dependency", "skipDefaultDependencyResolution": True,
                     "script": "#!/bin/sh\nset -eu\ncommand -v dockerd\ncommand -v iptables\ncommand -v tar\n"}]}
+        if fixture == "D06-ports":
+            # Lima 2.2 prepends override rules and uses first-match semantics.
+            # Only this loopback TCP port is exposed; socket forwarding and
+            # the existing authenticated VM/SSH lifetime remain unchanged.
+            override["portForwards"] = [
+                {"guestIP": "127.0.0.1", "guestPort": 49277, "hostIP": "127.0.0.1", "hostPort": 49277, "proto": "tcp"},
+                {"guestIP": "0.0.0.0", "guestIPMustBeZero": False, "proto": "any", "ignore": True}]
         (config / "override.yaml").write_bytes(canonical(override))
         self.journal.put("docker-lima-override.json", canonical(override))
 
@@ -306,7 +319,7 @@ class DockerVM:
 
     def start(self):
         self.configure()
-        self.command("docker-vm-start", start_arguments(self.tools, self.root), timeout=300)
+        self.command("docker-vm-start", start_arguments(self.tools, self.root, self.owner["identity"]["fixture"]), timeout=300)
         value = inspect_instance(self.command("docker-vm-ready", [self.tools["limactl"], "list", "--json"]), self.root)
         if value["status"] != "Running":
             raise ValueError("Docker VM did not become ready")

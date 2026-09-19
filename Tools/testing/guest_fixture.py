@@ -24,6 +24,8 @@ OWNER_LABEL = "devcontainer.parity.case"
 class GuestFixture:
     """Create once; reconcile uncertain creation/deletion by exact ID and owner."""
 
+    id_pattern = r"[0-9a-f]{64}"
+
     def __init__(self, socket: Path, owner: str, image: str, api_version: str, journal,
                  *, command: tuple[str, ...] = ("sleep", "300"), network="none", mounts=(), aliases=(), observe=None):
         if (re.fullmatch(r"[0-9a-f]{64}", owner) is None or
@@ -80,7 +82,7 @@ class GuestFixture:
         identifier = value.get("Id")
         config = value.get("Config")
         labels = config.get("Labels") if isinstance(config, dict) else None
-        if (not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None or
+        if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
                 value.get("Name") != "/" + self.name or not isinstance(config, dict) or
                 not isinstance(labels, dict) or labels.get(OWNER_LABEL) != self.owner or config.get("Image") != self.image or
                 config.get("Cmd") != self.intent["command"] or
@@ -108,10 +110,10 @@ class GuestFixture:
         if self.configuration["aliases"]:
             body["NetworkingConfig"] = {"EndpointsConfig": {
                 self.configuration["network"]: {"Aliases": self.configuration["aliases"]}}}
-        status, payload = self.call("POST", f"/containers/create?name={self.name}", body)
+        status, payload = self.call("POST", f"/containers/create?name={self.name}", self.creation_body(body))
         value = json.loads(payload)
         identifier = value.get("Id") if isinstance(value, dict) else None
-        if status != 201 or not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None:
+        if status != 201 or not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None:
             raise ValueError("Guest creation failed or returned an invalid ID")
         # Retain the returned ID before further requests; uncertain responses
         # are recoverable by the already-journalled unique name and labels.
@@ -121,6 +123,10 @@ class GuestFixture:
             raise ValueError("Created guest is not the admitted resource")
         self.identifier = identifier
         return actual
+
+    def creation_body(self, body: dict) -> dict:
+        """Subclasses can project additional journal-bound resource settings."""
+        return body
 
     def start(self):
         if self.identifier is None:
@@ -184,7 +190,7 @@ class GuestFixture:
                 raise ValueError("Guest remains after deletion")
         elif known is not None:
             identifier = known.get("id")
-            if not isinstance(identifier, str) or re.fullmatch(r"[0-9a-f]{64}", identifier) is None:
+            if not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None:
                 raise ValueError("Guest journal has invalid created identity")
             if self.inspect(identifier) is not None:
                 raise ValueError("Guest was renamed; refusing unverified cleanup")

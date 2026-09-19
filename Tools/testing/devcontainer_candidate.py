@@ -12,6 +12,7 @@ from devcontainer_build_reference import DevcontainerBuildReference
 from devcontainer_users_reference import DevcontainerUsersReference
 from devcontainer_lifecycle_reference import DevcontainerLifecycleReference
 from devcontainer_features_reference import DevcontainerFeaturesReference
+from devcontainer_ports_reference import DevcontainerPortsReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -186,3 +187,11 @@ class DevcontainerFeaturesCandidate(DevcontainerBuildCandidate, DevcontainerFeat
         # Candidate's facade bypasses Reference.arguments in this MRO.
         arguments = super().arguments(command)
         return arguments + (["--frozen-lockfile"] if command == "up" else [])
+
+
+class DevcontainerPortsCandidate(DevcontainerCandidate, DevcontainerPortsReference):
+    """Preserve D06 observations and owned collision cleanup on native IDs."""
+
+    def arguments(self, command):
+        arguments = super().arguments(command)
+        return arguments + (["--include-configuration"] if command == "up" else [])

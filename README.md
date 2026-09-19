@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+D06 port qualification is in progress. Its replacement harness verifies actual CLI forwarding metadata, guest and host HTTP access, and a specific owned-container port collision; synthetic probe output or an unrelated error cannot pass. The Docker reference exposes only the fixture's loopback TCP port through its private VM. Live reference/native proof is still required; this is not a released support claim. See the [D06 contract](docs/bazel-test-harness.md#d06-published-ports).
+
 D04 lifecycle hooks passes the original host-initialization and ordered guest-hook assertions plus cleanup in Docker (`7c41a35a-01bc-4aaa-b866-2a580cb3c560`) and stock Apple (`76ebd27c-8b98-4df1-969b-fa12c3f2e159`). The candidate reused the `533f9a7` archive without rebuilding. Enhanced qualification remains blocked; these separate functional runs are not quiet paired benchmarks or complete release proof. See the [D04 evidence](docs/bazel-test-harness.md#d04-lifecycle-hooks).
 
 D05 locked Features passes all four original observations and cleanup in Docker (`9cd52ed5-55cc-4245-8058-8671ba0e948d`) and stock Apple (`f80ebfc8-b5c8-45d1-b155-b6a1e9006e2e`), without a product rebuild. Missing frozen locks must fail for the specific lockfile reason; unrelated errors cannot pass. Enhanced qualification remains blocked, and these are functional observations rather than quiet benchmarks. See the [D05 evidence](docs/bazel-test-harness.md#d05-locked-features). This does not change the stable release's support claims.

@@ -87,6 +87,33 @@ class DockerVMTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ownership"):
             self.vm.configure()
 
+    def ports_owner(self):
+        self.owner["identity"]["fixture"] = "D06-ports"
+        (self.root / "owner.json").write_bytes(canonical(self.owner))
+        self.vm.journal = ServiceJournal(self.root / "ports.sqlite", self.owner, create=True)
+
+    def test_ports_reference_forwards_only_fixture_loopback_tcp_before_catchall_ignore(self):
+        self.ports_owner()
+        with patch("devcontainer_ports_reference.require_free_port") as check:
+            self.vm.configure()
+        check.assert_called_once_with()
+        plan = json.loads(self.vm.journal.records()["docker-plan.json"])
+        self.assertIn("--port-forwarder=ssh", plan["start"])
+        self.assertEqual(plan["start"], docker_vm.start_arguments(self.tools, self.root, "D06-ports"))
+        rules = json.loads((self.root / "lima/_config/override.yaml").read_bytes())["portForwards"]
+        self.assertEqual(rules, [
+            {"guestIP": "127.0.0.1", "guestPort": 49277, "hostIP": "127.0.0.1", "hostPort": 49277, "proto": "tcp"},
+            {"guestIP": "0.0.0.0", "guestIPMustBeZero": False, "proto": "any", "ignore": True}])
+        self.assertEqual(self.vm.journal.records()["docker-lima-override.json"],
+                         (self.root / "lima/_config/override.yaml").read_bytes())
+
+    def test_ports_foreign_listener_fails_before_vm_intent_or_configuration(self):
+        self.ports_owner()
+        with patch("devcontainer_ports_reference.require_free_port", side_effect=OSError("busy")), self.assertRaises(OSError):
+            self.vm.configure()
+        self.assertNotIn("docker-plan.json", self.vm.journal.records())
+        self.assertFalse((self.root / "lima").exists())
+
     def test_alias_executable_is_not_admitted(self):
         alias = self.root / "alias"
         alias.symlink_to(self.tools["docker"])

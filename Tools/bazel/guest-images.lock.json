@@ -3,6 +3,13 @@
   "scope": "stock-init-and-shared-workload-images; enhanced-init-and-kernel-qualification-pending",
   "images": [
     {
+      "name": "python-workload",
+      "repository": "docker.io/library/python",
+      "reference": "docker.io/library/python:3.13-alpine",
+      "manifest": "sha256:0515d7a37d0febc8bd7d88b4879b8598f4e1a1aae16307c733fd34f36be18f15",
+      "config": "sha256:8916b0d1897684408d57200dbe62d6b718655110b8911a66bc8eeec3c8a6e3e4"
+    },
+    {
       "name": "ubuntu-workload",
       "repository": "docker.io/library/ubuntu",
       "reference": "docker.io/library/ubuntu:24.04",

@@ -156,7 +156,7 @@ class DevcontainerReference(GuestFixture):
             raise ValueError("D01 plan identity changed")
         output = self.vm.command("devcontainer-up", self.arguments("up") + ["--user-data-folder",
                                  str(self.vm.root / "devcontainer-data")], timeout=self.up_timeout, separate_output=True)
-        self.identifier = created_id(output, self.id_pattern)
+        self.identifier = self.up_identity(output)
         self.journal.put("devcontainer-created.json", canonical({"id": self.identifier}))
         actual = self.find()
         if actual is None or self.owned(actual) != self.identifier:
@@ -164,6 +164,9 @@ class DevcontainerReference(GuestFixture):
         output = self.vm.command("devcontainer-exec", self.arguments("exec") + ["--", "/bin/sh", WORKSPACE + "/probe.sh"],
                                  timeout=60, separate_output=True)
         return observations(output, self.keys)
+
+    def up_identity(self, output: bytes) -> str:
+        return created_id(output, self.id_pattern)
 
     def recovery_plan(self):
         """Read-only ownership admission, also used immediately before deletion."""

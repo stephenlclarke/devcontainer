@@ -39,7 +39,7 @@ def verify_running(vm: DockerVM) -> None:
     private_root(vm.root, vm.owner)
     records = vm.journal.records()
     expected = {"owner": vm.owner, "tools": vm.tools, "environment": environment(vm.root, vm.tools),
-                "start": start_arguments(vm.tools, vm.root), "socket": str(vm.socket)}
+                "start": start_arguments(vm.tools, vm.root, vm.owner["identity"]["fixture"]), "socket": str(vm.socket)}
     if records.get("docker-plan.json") != canonical(expected):
         raise ValueError("Docker recovery plan differs from its original admission")
     if "docker-vm-stop-intent.json" in records:
@@ -111,15 +111,16 @@ def recover_completed_devcontainer(retained: Path, ssd: Path, owner: dict, guard
     from devcontainer_users_reference import DevcontainerUsersReference, FIXTURE as USERS_FIXTURE
     from devcontainer_lifecycle_reference import DevcontainerLifecycleReference, FIXTURE as LIFECYCLE_FIXTURE
     from devcontainer_features_reference import DevcontainerFeaturesReference, FIXTURE as FEATURES_FIXTURE
+    from devcontainer_ports_reference import DevcontainerPortsReference, FIXTURE as PORTS_FIXTURE
     selected = owner["identity"]["fixture"]
-    if selected not in {FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE}:
+    if selected not in {FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE}:
         raise ValueError("Not a devcontainer recovery transaction")
     key = validate_identity(owner["identity"])
     inputs = recovery_inputs(retained, ssd, owner)
     vm = DockerVM(Path(owner["root"]), owner, inputs["tools"], inputs["pins"], journal)
     adapter = {FIXTURE: DevcontainerReference, BUILD_FIXTURE: DevcontainerBuildReference,
                USERS_FIXTURE: DevcontainerUsersReference, LIFECYCLE_FIXTURE: DevcontainerLifecycleReference,
-               FEATURES_FIXTURE: DevcontainerFeaturesReference}[selected]
+               FEATURES_FIXTURE: DevcontainerFeaturesReference, PORTS_FIXTURE: DevcontainerPortsReference}[selected]
     fixture = adapter(vm, inputs, owner)
     with deadline(45):
         verify_running(vm)

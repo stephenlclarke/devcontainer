@@ -53,7 +53,7 @@ class BuildRecoveryTests(unittest.TestCase):
                                       self.owner, create=True)
         self.vm = DockerVM(self.root, self.owner, tools, {}, self.journal, inventory=Mock(return_value={}))
         self.journal.put("docker-plan.json", canonical({"owner": self.owner, "tools": tools,
-            "environment": environment(self.root, tools), "start": start_arguments(tools, self.root),
+            "environment": environment(self.root, tools), "start": start_arguments(tools, self.root, self.identity["fixture"]),
             "socket": str(self.vm.socket)}))
         self.images = Mock()
         self.images.recovery_plan.return_value = [{"id": "sha256:" + "c" * 64}]
@@ -279,6 +279,15 @@ class DevcontainerFeaturesRecoveryTests(DevcontainerRecoveryTests):
     def patches(self):
         stack = super().patches()
         stack.enter_context(patch("devcontainer_features_reference.DevcontainerFeaturesReference", return_value=self.fixture))
+        return stack
+
+
+class DevcontainerPortsRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "D06-ports"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_ports_reference.DevcontainerPortsReference", return_value=self.fixture))
         return stack
 
 
