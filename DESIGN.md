@@ -283,6 +283,8 @@ Schema 4 introduced `runtime_container_creations`; current schema 5 also adds th
 
 ### Source-aware output history
 
+Live E07 reference evidence exposes a required distinction between raw attachment bytes and saved Docker `json-file` history: invalid UTF-8 bytes are replaced when logical log records are encoded, while live attachment remains byte-exact. The current schema-5 raw journal is not a qualified Docker logging driver. Its follow-up must persist ordered generation and per-source natural EOF boundaries, assemble each source's newline/16-KiB records across raw frame boundaries, and project saved records without normalizing client-visible results in the test harness. Snapshot cutoffs are not EOF; cancellation/error is not natural EOF; legacy journals without boundary evidence must not be silently upgraded to equivalent history. [Exact Docker evidence and the independent expected-value model](docs/bazel-test-harness.md#foreground-init-attachment-development) retain this gap as open.
+
 The unreleased direct provider captures stdout/stderr at the descriptors it supplies before bootstrap. `RuntimeContainerOutputStore` and `RuntimeContainerOutputJournal` keep persistence behind runtime-neutral interfaces; neither stock Apple packages nor Compose libraries are modified or required for this capture. Production uses `SQLiteStateStore`. External processes whose descriptors were never owned cannot acquire fabricated history from Apple's merged log file.
 
 ```mermaid

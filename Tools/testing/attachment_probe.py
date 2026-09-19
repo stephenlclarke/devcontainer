@@ -9,6 +9,7 @@ import time
 from exec_probe import BINARY_INPUT, duplex, remaining, streams, upgrade
 from guest_fixture import GuestFixture
 from case_evidence import canonical, digest
+from json_file_oracle import history_bytes
 
 
 FIXTURE = "E07-init-attachment"
@@ -89,13 +90,17 @@ class AttachmentFixture(GuestFixture):
         created = self.create()
         if created.get("State", {}).get("Status") != "created":
             raise ValueError("Init ran before attachment was registered")
+        driver = created.get("HostConfig", {}).get("LogConfig")
+        if driver != {"Type": "json-file", "Config": {}}:
+            raise ValueError("Init history requires the pinned json-file driver without options")
+        self.journal.put("init-log-driver.json", canonical(driver))
         history = (b"", b"")
         for generation, incoming in enumerate((BINARY_INPUT, BINARY_INPUT[::-1]), 1):
             expected = (OUTPUT_PREFIX + incoming + OUTPUT_SUFFIX, ERROR_OUTPUT)
             if self.transfer(history=False, live=True, incoming=incoming) != expected:
                 raise ValueError("Init binary output or stdout/stderr separation differs")
             self.require_exit()
-            history = tuple(before + after for before, after in zip(history, expected))
+            history = tuple(before + history_bytes(after) for before, after in zip(history, expected))
             observed = self.transfer(history=True, live=False)
             self.journal.put(f"init-history-{generation}.json", canonical({
                 name: {"expectedBytes": len(wanted), "actualBytes": len(actual),

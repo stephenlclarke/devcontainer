@@ -26,6 +26,10 @@ class Handler(helpers.Handler):
     def dispatch(self):
         server = self.server
         path = urlsplit(self.path).path
+        if path.endswith("/create"):
+            result = super().dispatch()
+            server.guest["HostConfig"] = {"LogConfig": server.log_driver}
+            return result
         if path.endswith("/start"):
             if server.attached.is_set():
                 status, value = super().dispatch()
@@ -66,7 +70,10 @@ class Handler(helpers.Handler):
         self.connection.sendall(payload)
         while chunk := self.rfile.read1(65536):
             value = frame(chunk)
-            payload.extend(value)
+            # The fixture's two binary patterns contain no valid multibyte
+            # sequence. Model the fake driver independently of the oracle.
+            logged = b"".join(bytes((byte,)) if byte < 128 else b"\xef\xbf\xbd" for byte in chunk)
+            payload.extend(frame(logged))
             self.connection.sendall(value)
         last = frame(OUTPUT_SUFFIX)
         payload.extend(last)
@@ -94,6 +101,7 @@ class AttachmentTests(unittest.TestCase):
         self.server.handle_error = lambda *_: self.errors.append(sys.exc_info()[1])
         self.server.started, self.server.attached = threading.Event(), threading.Event()
         self.server.history, self.server.exit_code, self.server.truncate_history = b"", 17, False
+        self.server.log_driver = {"Type": "json-file", "Config": {}}
         self.server.first_history, self.server.duplicate_first = b"", False
         self.events = []
         self.fixture.observe = self.events.append
@@ -143,4 +151,11 @@ class AttachmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Attached init start failed"):
             self.fixture.transfer(history=False, live=True)
         self.assertEqual(self.events[-1]["error"], "ValueError")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_unmatched_logging_driver_is_not_silently_accepted(self):
+        self.server.log_driver = {"Type": "local", "Config": {}}
+        with self.assertRaisesRegex(ValueError, "pinned json-file driver"):
+            self.fixture.operation()
+        self.assertFalse(any(path.endswith("/start") for _, path in self.server.routes))
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
