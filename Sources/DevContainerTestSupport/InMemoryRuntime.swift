@@ -391,6 +391,17 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         )
     }
 
+    public func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) throws -> RuntimeContainerAttachment {
+        // Finite fixture history and registration have no suspension point.
+        let saved = history ? try containerAttachmentHistory(
+            id: id, standardOutput: true, standardError: true, context: context
+        ) : nil
+        let session = live ? try attachContainer(id: id, terminal: terminal, context: context) : nil
+        return RuntimeContainerAttachment(history: saved, session: session)
+    }
+
     public func createExec(
         containerID: String,
         spec: ExecSpec,

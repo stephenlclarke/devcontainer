@@ -305,7 +305,7 @@ struct SQLiteStateStoreTests {
         UPDATE schema_meta SET version = 3;
         """)
         let migrated = try SQLiteStateStore(path: path)
-        #expect(try scalar(path: path, sql: "SELECT version FROM schema_meta") == 4)
+        #expect(try scalar(path: path, sql: "SELECT version FROM schema_meta") == Int64(SQLiteStateStore.schemaVersion))
         #expect(try await migrated.containerMetadata(id: "pending") == completed(intent))
         try await migrated.beginContainerCreation(intent)
         #expect(try await migrated.pendingContainerCreation(id: "pending") == intent)

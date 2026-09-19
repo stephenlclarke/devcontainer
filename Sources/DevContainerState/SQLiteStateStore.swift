@@ -24,7 +24,7 @@ import Foundation
 // swiftlint:disable file_length
 
 public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
-    public static let schemaVersion = 4
+    public static let schemaVersion = 5
 
     private let handle: SQLiteHandle
     private var database: OpaquePointer {
@@ -50,6 +50,11 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
         self.handle = SQLiteHandle(pointer: handle)
 
         do {
+            // Native output uses its own short WAL transactions. Lifecycle
+            // writes must tolerate that bounded contention, not fail at once.
+            guard sqlite3_busy_timeout(handle, 1000) == SQLITE_OK else {
+                throw Self.sqliteError(handle, prefix: "cannot bound state database contention")
+            }
             try Self.execute(handle, sql: "PRAGMA foreign_keys = ON")
             try Self.execute(handle, sql: "PRAGMA journal_mode = WAL")
             try Self.execute(handle, sql: "PRAGMA synchronous = FULL")
@@ -811,6 +816,11 @@ extension SQLiteStateStore {
                     // schemaSQL has created the separate write-ahead intent table.
                     version = 4
                 }
+                if version == 4 {
+                    // Existing containers have no inferred/merged history.
+                    // schemaSQL adds journals only when source capture begins.
+                    version = 5
+                }
                 guard version == Int64(schemaVersion) else {
                     throw DevContainerError(
                         .stateCorruption,
@@ -896,6 +906,21 @@ extension SQLiteStateStore {
         runtime_id TEXT PRIMARY KEY,
         intent_json BLOB NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS runtime_output_journals (
+        docker_id TEXT PRIMARY KEY REFERENCES runtime_containers(docker_id) ON DELETE CASCADE,
+        created_at REAL NOT NULL,
+        generation TEXT NOT NULL,
+        complete INTEGER NOT NULL CHECK(complete IN (-1, 0, 1)),
+        last_sequence INTEGER NOT NULL CHECK(last_sequence >= 0),
+        stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0)
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_frames (
+        docker_id TEXT NOT NULL REFERENCES runtime_output_journals(docker_id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK(sequence > 0),
+        channel INTEGER NOT NULL CHECK(channel IN (1, 2)),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+        PRIMARY KEY(docker_id, sequence)
+    );
     CREATE INDEX IF NOT EXISTS resources_project_idx
         ON resources(project_key);
     CREATE INDEX IF NOT EXISTS operations_phase_idx
@@ -929,7 +954,11 @@ extension SQLiteStateStore {
                 "runtime_id", "docker_id", "image_id", "specification_json",
                 "created_at", "started_at"
             ],
-            "runtime_container_creations": ["runtime_id", "intent_json"]
+            "runtime_container_creations": ["runtime_id", "intent_json"],
+            "runtime_output_journals": [
+                "docker_id", "created_at", "generation", "complete", "last_sequence", "stored_bytes"
+            ],
+            "runtime_output_frames": ["docker_id", "sequence", "channel", "payload"]
         ]
         for (table, expected) in expectedColumns {
             let actual = try tableColumns(database, table: table)

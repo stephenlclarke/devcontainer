@@ -17,7 +17,8 @@ final class AppleContainerIO: @unchecked Sendable {
     private let inputWriter: ProcessInputWriter?
     private let outputMonitor: ProcessPipeMonitor
     private let errorMonitor: ProcessPipeMonitor?
-    private let attachments = AppleContainerAttachmentState()
+    private let attachments: AppleContainerAttachmentState
+    private let capturePreparation: Task<Void, any Error>?
     private let exits = AppleContainerExitState()
     private let lock = NSLock()
     private var process: (any ClientProcess)?
@@ -33,7 +34,10 @@ final class AppleContainerIO: @unchecked Sendable {
     private var startedAt: Date?
     private var validateGeneration: (@Sendable () async throws -> Void)?
 
-    init(createdAt: Date, terminal: Bool, openStandardInput: Bool) throws {
+    init(
+        createdAt: Date, terminal: Bool, openStandardInput: Bool,
+        outputCapture: (@Sendable () async throws -> any RuntimeContainerOutputJournal)? = nil
+    ) throws {
         self.createdAt = createdAt
         self.terminal = terminal
         input = try openStandardInput ? .socketPair() : nil
@@ -41,7 +45,14 @@ final class AppleContainerIO: @unchecked Sendable {
         inputWriter = input.map {
             ProcessInputWriter(channel: $0, label: "io.github.stephenlclarke.devcontainer.container-input")
         }
-        let state = attachments
+        let state = AppleContainerAttachmentState(requiresJournal: outputCapture != nil)
+        attachments = state
+        capturePreparation = outputCapture.map { factory in
+            Task {
+                let journal = try await factory()
+                try state.installJournal(journal)
+            }
+        }
         outputMonitor = ProcessPipeMonitor(
             handle: output.fileHandleForReading, channel: .standardOutput,
             onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
@@ -55,6 +66,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     deinit {
+        capturePreparation?.cancel()
         exits.complete(.failure(CancellationError()))
         inputWriter?.cancel()
         outputMonitor.cancel()
@@ -94,7 +106,8 @@ final class AppleContainerIO: @unchecked Sendable {
 
     /// A failed/ambiguous bootstrap must not send replacement descriptors.
     func bootstrapHandles() throws -> [FileHandle?] {
-        try lock.withLock {
+        try attachments.requireCaptureReady()
+        return try lock.withLock {
             guard !bootstrapStarted, !attachments.isFinished else {
                 throw DevContainerError(.conflict, message: "Container I/O bootstrap was already attempted")
             }
@@ -129,6 +142,26 @@ final class AppleContainerIO: @unchecked Sendable {
         AppleContainerAttachment(owner: self, subscription: attachments.subscribe())
     }
 
+    func prepareOutputCapture() async throws {
+        do {
+            try await capturePreparation?.value
+        } catch {
+            await fail(error)
+            throw error
+        }
+        // A cancelled reader does not cancel the generation's shared capture.
+        try Task.checkCancellation()
+    }
+
+    func prepareAttachment(
+        history: Bool, live: Bool, context: RuntimeRequestContext
+    ) throws -> RuntimeContainerAttachment {
+        let (saved, subscription) = try attachments.prepare(history: history, live: live, context: context)
+        return RuntimeContainerAttachment(
+            history: saved, session: subscription.map { AppleContainerAttachment(owner: self, subscription: $0) }
+        )
+    }
+
     func prepareExitWait(snapshot: ContainerSnapshot) -> (any RuntimeContainerExitWait)? {
         exits.subscribe(snapshot: snapshot)
     }
@@ -153,9 +186,6 @@ final class AppleContainerIO: @unchecked Sendable {
         inputWriter?.cancel()
         await inputWriter?.waitForCompletion()
         _ = try? await controls?.value
-        // Replacement is safe only after both the native wait and reader joins.
-        // Output failure or attachment cancellation alone never proves exit.
-        lock.withLock { processExited = true }
         if lock.withLock({ drainTimedOut }) {
             attachments.complete(.failure(DevContainerError(
                 .runtimeUnavailable, message: "Container output did not reach EOF after process exit"
@@ -163,6 +193,9 @@ final class AppleContainerIO: @unchecked Sendable {
         } else {
             attachments.complete(.success(exitCode))
         }
+        // Replacement also waits for durable completion publication. Otherwise
+        // a new generation could cancel this writer while it is still closing.
+        lock.withLock { processExited = true }
     }
 
     func cancel() {
@@ -177,6 +210,7 @@ final class AppleContainerIO: @unchecked Sendable {
 
     func shutdown() async {
         cancel()
+        _ = try? await capturePreparation?.value
         await outputMonitor.waitForCompletion()
         await errorMonitor?.waitForCompletion()
         await inputWriter?.waitForCompletion()

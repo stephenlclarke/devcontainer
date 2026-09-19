@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The source-aware output/history implementation now closes the native merged-log attribution and history/live ordering gaps in component tests. Real SQLite integration additionally exposed and corrected lifecycle write contention and a generation-replacement-before-durable-completion race. Demand-driven HTTP replay avoids eager history overflow. [Current proof and remaining compatibility limits](bazel-test-harness.md#foreground-init-attachment-development) supersede the older implementation-pending checkpoints below; full live foreground qualification and stable publication remain outstanding.
+
 Foreground auto-removal can erase inspectable state before a post-start wait is installed. The candidate now registers an exact native generation before returning wait headers, retains its true exit independently of output and removal, refuses unsupported providers and releases cancelled waiters. Late registration during old output drainage cannot inherit the old exit. The matching Compose client is component-tested; [fail-before and corrected evidence](bazel-test-harness.md#foreground-init-attachment-development) keeps this implementation distinct from pending native history, live parity and stable publication.
 
 The local enhanced initialization-image prerequisite is resolved by exact archive import and verified offline reuse. [Preparation evidence](bazel-test-harness.md#pinned-guest-image-preparation) supersedes earlier missing-local-image statements below; it does not resolve fresh-machine distribution or prove any enhanced live fixture. C02 foreground integration and the complete release gates remain outstanding.

@@ -969,20 +969,12 @@ extension DockerRouter {
         let snapshot = try await runtime.inspectContainer(id: id, context: context)
         let terminal = snapshot.spec.terminal
         let identity = snapshot.dockerID.rawValue
-        let session = options.needsLiveSession(spec: snapshot.spec)
-            ? try await runtime.attachContainer(id: identity, terminal: terminal, context: context) : nil
-        let history: AsyncThrowingStream<RuntimeIOFrame, any Error>?
-        do {
-            history = options.logs ? try await runtime.containerAttachmentHistory(
-                id: identity, standardOutput: options.standardOutput,
-                standardError: options.standardError, context: context
-            ) : nil
-        } catch {
-            await session?.cancel()
-            throw error
-        }
+        let prepared = try await runtime.prepareContainerAttachment(
+            id: identity, terminal: terminal, history: options.logs,
+            live: options.needsLiveSession(spec: snapshot.spec), context: context
+        )
         let adaptedSession = DockerContainerAttachment(
-            session: session, history: history, options: options, spec: snapshot.spec
+            session: prepared.session, history: prepared.history, options: options, spec: snapshot.spec
         )
         if webSocket {
             return DockerHTTPResponse(

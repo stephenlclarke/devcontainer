@@ -190,32 +190,43 @@ struct DockerContainerAttachmentTests {
         await attachment.cancel()
     }
 
-    @Test(arguments: [false, true])
-    func `output failure closes StdinOnce before revoking the subscription`(overflow: Bool) async throws {
+    @Test func `output failure closes StdinOnce before revoking the subscription`() async throws {
         let probe = AttachmentProbe()
         let history = AsyncThrowingStream<RuntimeIOFrame, any Error> { continuation in
-            if overflow {
-                for _ in 0 ..< 257 {
-                    continuation.yield(.init(channel: .standardOutput, data: Data([65])))
-                }
-                continuation.finish()
-            } else {
-                continuation.finish(throwing: DevContainerError(.runtimeUnavailable, message: "log read failed"))
-            }
+            continuation.finish(throwing: DevContainerError(.runtimeUnavailable, message: "log read failed"))
         }
         let attachment = try DockerContainerAttachment(
             session: probe, history: history, options: options("logs=1&stream=1&stdin=1&stdout=1"),
             spec: .init(name: "test", image: "test", openStandardInput: true, standardInputOnce: true)
         )
-        // Deliberately do not consume output: prove the bounded queue's failure
-        // cleanup independently of the outer HTTP transport calling cancel.
+        await #expect(throws: DevContainerError.self) {
+            for try await _ in attachment.frames { /* Read the injected failure on demand. */ }
+        }
         await expectCancellation(probe)
         #expect(await probe.inputCloses == 1)
-        await #expect(throws: DevContainerError.self) {
-            for try await _ in attachment.frames { /* Drain retained pre-failure frames. */ }
-        }
         await attachment.cancel()
         #expect(await probe.inputCloses == 1)
+    }
+
+    @Test func `large history reads on demand without overflow or eager consumption`() async throws {
+        let source = DemandHistorySource()
+        let history = AsyncThrowingStream<RuntimeIOFrame, any Error>(unfolding: { await source.next() })
+        let attachment = try DockerContainerAttachment(
+            session: nil, history: history, options: options("logs=1&stdout=1"), spec: .init(
+                name: "test",
+                image: "test"
+            )
+        )
+        #expect(await source.reads == 0)
+        var iterator = attachment.frames.makeAsyncIterator()
+        for index in 0 ..< 512 {
+            let frame = try #require(await iterator.next())
+            #expect(frame.data == Data(repeating: UInt8(index % 256), count: 65536))
+            #expect(await source.reads == index + 1)
+        }
+        #expect(try await iterator.next() == nil)
+        #expect(await source.reads == 513)
+        await attachment.cancel()
     }
 
     @Test func `router persists StdinOnce and supports logs without live attachment`() async throws {
@@ -264,6 +275,15 @@ struct DockerContainerAttachmentTests {
             await Task.yield()
         }
         #expect(await probe.cancellations > 0)
+    }
+}
+
+private actor DemandHistorySource {
+    var reads = 0
+    func next() -> RuntimeIOFrame? {
+        defer { reads += 1 }
+        guard reads < 512 else { return nil }
+        return .init(channel: .standardOutput, data: Data(repeating: UInt8(reads % 256), count: 65536))
     }
 }
 

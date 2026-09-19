@@ -1,15 +1,70 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 
-/// Broadcast only live output. Historical log replay is a separate API operation.
-/// A slow attachment fails explicitly rather than losing bytes or stopping init.
+/// Commit source records before publication, and capture history plus live
+/// registration atomically under the same output ordering boundary.
 final class AppleContainerAttachmentState: @unchecked Sendable {
     typealias Frames = AsyncThrowingStream<RuntimeIOFrame, any Error>
     private let lock = NSLock()
     private var subscribers: [UUID: AppleContainerSubscription] = [:]
     private var result: Result<Int32, any Error>?
+    private var journal: (any RuntimeContainerOutputJournal)?
+    private let requiresJournal: Bool
+
+    init(requiresJournal: Bool = false) {
+        self.requiresJournal = requiresJournal
+    }
+
+    func installJournal(_ journal: any RuntimeContainerOutputJournal) throws {
+        try lock.withLock {
+            guard result == nil, self.journal == nil else {
+                try journal.finish(complete: false)
+                throw CancellationError()
+            }
+            self.journal = journal
+        }
+    }
+
+    func requireCaptureReady() throws {
+        try lock.withLock {
+            guard !requiresJournal || journal != nil else {
+                throw DevContainerError(.conflict, message: "Container output capture is not prepared")
+            }
+        }
+    }
+
+    func prepare(
+        history: Bool, live: Bool, context: RuntimeRequestContext
+    ) throws -> (Frames?, AppleContainerSubscription?) {
+        let subscription = live ? AppleContainerSubscription() : nil
+        let saved: Frames? = try lock.withLock {
+            try context.checkActive()
+            let saved: Frames?
+            if history {
+                guard let journal else {
+                    throw DevContainerError(
+                        .unsupportedCapability,
+                        message: "Source-aware output capture is unavailable"
+                    )
+                }
+                saved = try journal.captureHistory(context: context)
+            } else {
+                saved = nil
+            }
+            if let subscription, result == nil {
+                subscribers[subscription.id] = subscription
+            }
+            return saved
+        }
+        // Complete outside the lock: cancellation callbacks may reenter controls.
+        if let subscription, let completed = lock.withLock({ result }) {
+            subscription.finish(completed)
+        }
+        return (saved, subscription)
+    }
 
     var isFinished: Bool {
         lock.withLock { result != nil }
@@ -31,21 +86,33 @@ final class AppleContainerAttachmentState: @unchecked Sendable {
     }
 
     func publish(_ frame: RuntimeIOFrame) {
-        let targets = lock.withLock { Array(subscribers.values) }
-        for subscription in targets {
-            let id = subscription.id
-            switch subscription.continuation.yield(frame) {
-            case .enqueued: break
-            case .terminated: detach(id)
-            case .dropped:
-                detach(id, error: DevContainerError(
-                    .runtimeUnavailable, message: "Container attachment output buffer exhausted"
-                ))
-            @unknown default:
-                detach(id, error: DevContainerError(
-                    .runtimeUnavailable, message: "Container attachment output delivery failed"
-                ))
+        var failed: [(AppleContainerSubscription, any Error)] = []
+        lock.withLock {
+            guard result == nil else { return }
+            do {
+                try journal?.append(frame)
+                for subscription in subscribers.values {
+                    switch subscription.continuation.yield(frame) {
+                    case .enqueued: break
+                    case .terminated: failed.append((subscription, CancellationError()))
+                    default:
+                        failed.append((subscription, DevContainerError(
+                            .runtimeUnavailable, message: "Container attachment output buffer exhausted"
+                        )))
+                    }
+                }
+                for (subscription, _) in failed {
+                    subscribers.removeValue(forKey: subscription.id)
+                }
+            } catch {
+                result = .failure(error)
+                try? journal?.finish(complete: false)
+                failed = subscribers.values.map { ($0, error) }
+                subscribers.removeAll()
             }
+        }
+        for (subscription, error) in failed {
+            subscription.finish(.failure(error))
         }
     }
 
@@ -65,14 +132,22 @@ final class AppleContainerAttachmentState: @unchecked Sendable {
     }
 
     func complete(_ result: Result<Int32, any Error>) {
+        var completion = result
         let completed: [AppleContainerSubscription] = lock.withLock {
             guard self.result == nil else { return [] }
-            self.result = result
+            do {
+                if case .success = result {
+                    try journal?.finish(complete: true)
+                } else {
+                    try journal?.finish(complete: false)
+                }
+            } catch { completion = .failure(error) }
+            self.result = completion
             defer { subscribers.removeAll() }
             return Array(subscribers.values)
         }
         for subscriber in completed {
-            subscriber.finish(result)
+            subscriber.finish(completion)
         }
     }
 }

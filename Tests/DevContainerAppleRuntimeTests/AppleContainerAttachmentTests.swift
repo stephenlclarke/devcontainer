@@ -6,10 +6,65 @@ import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
+import DevContainerState
 import Foundation
 import Testing
 
 struct AppleContainerAttachmentTests {
+    @Test func `source tagged native capture replays across restart and engine reopen`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try SQLiteStateStore(path: fixture.root.appendingPathComponent("journal/state.sqlite"))
+        let creator = AppleContainerCreateTests.Creator()
+        let bootstrap = AttachmentBootstrap(creator: creator)
+        let runtime = try fixture.runtime(
+            metadataStore: store, useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap
+        )
+        let snapshot = try await runtime.createContainer(spec: specification(), context: .init())
+        for generation in 0 ..< 2 {
+            let prepared = try await runtime.prepareContainerAttachment(
+                id: snapshot.dockerID.rawValue, terminal: false, history: true, live: true, context: .init()
+            )
+            let saved = try await collectHistory(#require(prepared.history))
+            #expect(saved[.standardOutput, default: Data()] ==
+                Data(String(repeating: "first output", count: generation).utf8))
+            #expect(saved[.standardError, default: Data()] ==
+                Data(String(repeating: "first error", count: generation).utf8))
+            try await runtime.startContainer(id: "fixture", context: .init())
+            try await #require(await bootstrap.processes.last).finish(Int32(generation + 7))
+            let session = try #require(prepared.session)
+            let live = try await collectHistory(session.frames)
+            #expect(live[.standardOutput] == Data("first output".utf8))
+            #expect(live[.standardError] == Data("first error".utf8))
+            #expect(try await session.wait() == Int32(generation + 7))
+            await session.cancel()
+        }
+        await runtime.shutdown()
+        let reopened = try await SQLiteStateStore(path: store.path)
+        let restartedEngine = try fixture.runtime(
+            metadataStore: reopened, useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap
+        )
+        let prepared = try await restartedEngine.prepareContainerAttachment(
+            id: snapshot.dockerID.rawValue, terminal: false, history: true, live: false, context: .init()
+        )
+        #expect(prepared.session == nil)
+        let saved = try await collectHistory(#require(prepared.history))
+        #expect(saved[.standardOutput] == Data("first outputfirst output".utf8))
+        #expect(saved[.standardError] == Data("first errorfirst error".utf8))
+        #expect(await bootstrap.calls == 2)
+        await restartedEngine.shutdown()
+    }
+
+    private func collectHistory(
+        _ frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
+    ) async throws -> [RuntimeIOChannel: Data] {
+        var collected: [RuntimeIOChannel: Data] = [:]
+        for try await frame in frames {
+            collected[frame.channel, default: Data()].append(frame.data)
+        }
+        return collected
+    }
+
     @Test(arguments: [true, false])
     func `acknowledged wait capability requires direct process ownership`(direct: Bool) async throws {
         let fixture = try FakeAppleCLI()

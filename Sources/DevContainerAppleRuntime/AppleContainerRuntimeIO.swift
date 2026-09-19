@@ -202,7 +202,7 @@ extension AppleContainerRuntime {
         }
     }
 
-    private func prepareContainerIO(
+    func prepareContainerIO(
         snapshot: ContainerSnapshot, context: RuntimeRequestContext
     ) async throws -> AppleContainerIO {
         let id = snapshot.runtimeID.rawValue
@@ -229,6 +229,7 @@ extension AppleContainerRuntime {
                 metadataCreatedAt: channel.createdAt, observedCreatedAt: snapshot.createdAt
             )
             if sameIncarnation, !channel.hasExited {
+                try await channel.prepareOutputCapture()
                 return channel
             }
             containerIO.removeValue(forKey: id)
@@ -238,11 +239,20 @@ extension AppleContainerRuntime {
         guard snapshot.state != .running else {
             throw DevContainerError(.conflict, message: "Container init descriptors belong to another generation")
         }
+        let capture: (@Sendable () async throws -> any RuntimeContainerOutputJournal)? = if let store =
+            metadataStore as? any RuntimeContainerOutputStore
+        {
+            { try await store.beginContainerOutputCapture(snapshot: snapshot) }
+        } else {
+            nil
+        }
         let channel = try AppleContainerIO(
             createdAt: snapshot.createdAt, terminal: snapshot.spec.terminal,
-            openStandardInput: snapshot.spec.openStandardInput
+            openStandardInput: snapshot.spec.openStandardInput, outputCapture: capture
         )
+        // Reentrant attach/start calls join this exact preparation.
         containerIO[id] = channel
+        try await channel.prepareOutputCapture()
         return channel
     }
 

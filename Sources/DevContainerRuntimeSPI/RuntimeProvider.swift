@@ -172,6 +172,9 @@ public protocol ContainerRuntime: Sendable {
         context: RuntimeRequestContext
     ) async throws -> any RuntimeProcessSession
     func resizeContainer(id: String, width: UInt16, height: UInt16, context: RuntimeRequestContext) async throws
+    func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) async throws -> RuntimeContainerAttachment
     /// Finite, bounded-acquisition history retaining the original stream tags.
     /// A provider must not relabel a merged native log to satisfy this contract.
     func containerAttachmentHistory(
@@ -180,6 +183,19 @@ public protocol ContainerRuntime: Sendable {
 }
 
 public extension ContainerRuntime {
+    func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) async throws -> RuntimeContainerAttachment {
+        guard !history || !live else {
+            throw DevContainerError(.unsupportedCapability, message: "Atomic history/live attachment is unavailable")
+        }
+        let saved = history ? try await containerAttachmentHistory(
+            id: id, standardOutput: true, standardError: true, context: context
+        ) : nil
+        let session = live ? try await attachContainer(id: id, terminal: terminal, context: context) : nil
+        return RuntimeContainerAttachment(history: saved, session: session)
+    }
+
     var supportsContainerExitWaitRegistration: Bool {
         get async { false }
     }
@@ -200,7 +216,12 @@ public extension ContainerRuntime {
         )
     }
 
-    func resizeContainer(id _: String, width _: UInt16, height _: UInt16, context _: RuntimeRequestContext) async throws {
+    func resizeContainer(
+        id _: String,
+        width _: UInt16,
+        height _: UInt16,
+        context _: RuntimeRequestContext
+    ) async throws {
         throw DevContainerError(.unsupportedCapability, message: "Container terminal resize is unavailable")
     }
 

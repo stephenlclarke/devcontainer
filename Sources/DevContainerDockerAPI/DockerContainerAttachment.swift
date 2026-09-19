@@ -65,7 +65,7 @@ struct DockerAttachmentOptions: Sendable {
 final class DockerContainerAttachment: DockerHijackSession, @unchecked Sendable {
     let frames: AsyncThrowingStream<DockerStreamFrame, any Error>
     private let session: (any RuntimeProcessSession)?
-    private let pump: Task<Void, Never>
+    private let output: DockerAttachmentOutput
     private let input: DockerAttachmentInput
 
     init(
@@ -75,33 +75,12 @@ final class DockerContainerAttachment: DockerHijackSession, @unchecked Sendable 
         self.session = session
         let input = DockerAttachmentInput(session: session, options: options, spec: spec)
         self.input = input
-        // The native broker also has bounded buffers; the HTTP adapter must not
-        // turn those into an unbounded intermediate queue for a slow client.
-        let pair = AsyncThrowingStream<DockerStreamFrame, any Error>.makeStream(bufferingPolicy: .bufferingOldest(256))
-        frames = pair.stream
-        pump = Task {
-            do {
-                if let history {
-                    try await Self.copy(history, options: options, to: pair.continuation)
-                }
-                if let session {
-                    try await Self.copy(session.frames, options: options, to: pair.continuation)
-                }
-                pair.continuation.finish()
-            } catch {
-                pair.continuation.finish(throwing: error)
-                await input.cancel()
-            }
+        let output = DockerAttachmentOutput(history: history, live: session?.frames, options: options) {
+            await input.cancel()
         }
-        let pump = pump
-        pair.continuation.onTermination = { termination in
-            if case .cancelled = termination {
-                pump.cancel()
-            }
-        }
+        self.output = output
+        frames = AsyncThrowingStream(unfolding: { try await output.next() })
     }
-
-    deinit { pump.cancel() }
 
     func write(_ data: Data) async throws {
         try await input.write(data)
@@ -125,46 +104,11 @@ final class DockerContainerAttachment: DockerHijackSession, @unchecked Sendable 
 
     func cancel() async {
         await input.cancel()
-        pump.cancel()
-        await pump.value
-    }
-
-    private static func copy(
-        _ source: AsyncThrowingStream<RuntimeIOFrame, any Error>, options: DockerAttachmentOptions,
-        to continuation: AsyncThrowingStream<DockerStreamFrame, any Error>.Continuation
-    ) async throws {
-        for try await frame in source {
-            try Task.checkCancellation()
-            let channel: DockerStreamChannel
-            switch frame.channel {
-            case .standardOutput where options.standardOutput: channel = .standardOutput
-            case .standardError where options.standardError: channel = .standardError
-            default: continue
-            }
-            // Split large historical log records to keep the queue's byte bound.
-            var offset = 0
-            while offset < frame.data.count {
-                let end = min(offset + 65536, frame.data.count)
-                let data = frame.data.subdata(in: offset ..< end)
-                switch continuation.yield(.init(channel: channel, data: data)) {
-                case .enqueued: break
-                case .dropped:
-                    throw DevContainerError(
-                        .runtimeUnavailable, message: "Attachment output exceeded its bounded buffer"
-                    )
-                case .terminated: throw CancellationError()
-                @unknown default: throw CancellationError()
-                }
-                offset = end
-            }
-        }
-        // Cancellation can end a quiet AsyncThrowingStream without throwing.
-        // Propagate it so the pump always joins stdin/subscription cleanup.
-        try Task.checkCancellation()
+        await output.cancel()
     }
 }
 
-/// Shared by transport teardown and the output pump so either failure applies
+/// Shared by transport teardown and the output reader so either failure applies
 /// stdin EOF before detaching the native subscription that authorizes it.
 private final class DockerAttachmentInput: @unchecked Sendable {
     private let session: (any RuntimeProcessSession)?
