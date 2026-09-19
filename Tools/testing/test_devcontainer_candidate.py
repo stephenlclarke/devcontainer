@@ -4,7 +4,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -12,7 +15,8 @@ from case_evidence import canonical
 from devcontainer_candidate import CandidateCommands, DevcontainerCandidate
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
-from guest_runtime import require_guest_cleanup
+from guest_runtime import ReleasedGuest, require_guest_cleanup
+from host_runtime import deadline
 from service_journal import ServiceJournal
 import test_devcontainer_reference as reference_tests
 
@@ -21,6 +25,7 @@ class CandidateTests(reference_tests.ReferenceTests):
     def reopen(self):
         self.vm.container = "/prepared/container"
         self.vm.close = Mock()
+        self.vm.prepare_cleanup = Mock()
         self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/prepared/devcontainer"}}
         return DevcontainerCandidate(self.vm, self.inputs, self.owner)
 
@@ -47,6 +52,57 @@ class CandidateTests(reference_tests.ReferenceTests):
         with self.assertRaisesRegex(ValueError, "immutable"):
             created_id(canonical({"outcome": "success", "containerId": identifier}))
 
+    def test_real_guest_cleanup_owns_only_one_deadline(self):
+        self.start()
+        guest = ReleasedGuest(self.inputs, "D01-image-config", self.root, self.owner,
+                              Mock(journal=self.vm.journal), "/usr/bin/true", self.vm.socket)
+        guest.guest = self.fixture
+        guest.cleanup()
+        self.assertIsNone(self.server.guest)
+        self.vm.close.assert_called_once()
+
+    def test_slow_cleanup_response_obeys_whole_phase_deadline(self):
+        self.start()
+        self.server.drip = True
+        guest = ReleasedGuest(self.inputs, "D01-image-config", self.root, self.owner,
+                              Mock(journal=self.vm.journal), "/usr/bin/true", self.vm.socket)
+        guest.guest = self.fixture
+
+        def short_bound(seconds):
+            self.assertEqual(seconds, 45)
+            return deadline(0.08)
+
+        started = time.monotonic()
+        with patch("guest_runtime.deadline", side_effect=short_bound), self.assertRaises(TimeoutError):
+            guest.cleanup()
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertIsNotNone(self.server.guest)
+        self.assertNotIn("devcontainer-removed.json", self.vm.journal.records())
+
+    def test_exec_log_failure_is_reconciled_before_guest_cleanup(self):
+        self.fixture.setup()
+        runner = CandidateCommands(self.root, self.vm.socket, Mock(journal=self.vm.journal), "/usr/bin/true")
+        original = self.vm.command
+
+        def command(name, arguments, **kwargs):
+            if name != "devcontainer-exec":
+                result = original(name, arguments, **kwargs)
+                self.vm.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
+                return result
+            with patch("devcontainer_candidate.diagnostic_snapshot", side_effect=OSError("retention failure")):
+                return runner.command(name, ["/usr/bin/true"], timeout=2)
+
+        self.vm.journal.put("devcontainer-image-pull-stopped.json", canonical({"verifiedStopped": True}))
+        self.vm.command = command
+        with self.assertRaisesRegex(OSError, "retention failure"):
+            self.fixture.operation()
+        self.assertTrue(runner.uncertain)
+        self.fixture.vm = runner
+        self.fixture.cleanup()
+        self.assertIsNone(self.server.guest)
+        self.assertFalse(runner.uncertain)
+        self.assertFalse(runner.pending_logs)
+
 
 class CandidateCommandTests(unittest.TestCase):
     def setUp(self):
@@ -62,6 +118,7 @@ class CandidateCommandTests(unittest.TestCase):
         with patch.dict(os.environ, NODE_OPTIONS="must-not-leak", DOCKER_HOST="must-not-leak"):
             output = self.runner.command("devcontainer-up", ["/bin/sh", "-c", script], timeout=2, separate_output=True)
         self.assertEqual(output, (str(self.root / "container") + "\n").encode())
+        self.runner.close()
         records = self.journal.records()
         self.assertEqual(records["devcontainer-up-stderr.log"], b"diagnostic")
         self.assertEqual(json.loads(records["devcontainer-up-exit.json"])["code"], 0)
@@ -75,6 +132,7 @@ class CandidateCommandTests(unittest.TestCase):
     def test_nonzero_result_keeps_diagnostics_and_known_process_completion(self):
         with self.assertRaisesRegex(RuntimeError, "failed"):
             self.runner.command("devcontainer-up", ["/bin/sh", "-c", "printf failure >&2; exit 7"], timeout=2)
+        self.runner.close()
         records = self.journal.records()
         self.assertEqual(json.loads(records["devcontainer-up-exit.json"])["code"], 7)
         self.assertEqual(records["devcontainer-up-stderr.log"], b"failure")
@@ -101,7 +159,7 @@ class CandidateCommandTests(unittest.TestCase):
         with patch("devcontainer_candidate.diagnostic_snapshot", side_effect=OSError("retention failure")), \
                 self.assertRaisesRegex(OSError, "retention"):
             self.runner.command("devcontainer-up", ["/usr/bin/true"], timeout=2)
-        self.assertTrue(self.runner.uncertain)
+        self.assertFalse(self.runner.uncertain)
         self.runner.close()
         self.assertFalse(self.runner.uncertain)
         self.assertFalse(self.runner.pending_logs)
@@ -118,6 +176,7 @@ class CandidateCommandTests(unittest.TestCase):
 
     def test_recovery_requires_workload_closure_and_both_diagnostics(self):
         self.runner.command("devcontainer-up", ["/usr/bin/true"], timeout=2)
+        self.runner.close()
         records = self.journal.records()
         records["devcontainer-plan.json"] = b"{}"
         with self.assertRaisesRegex(ValueError, "D01 resources"):
@@ -127,6 +186,26 @@ class CandidateCommandTests(unittest.TestCase):
         del records["devcontainer-up-stderr.log"]
         with self.assertRaisesRegex(ValueError, "diagnostics"):
             require_guest_cleanup(records)
+
+    def test_foreground_attachment_outlives_up_and_closes_after_resource_removal(self):
+        marker = self.root / "resource-present"
+        marker.touch()
+        helper = "from pathlib import Path; import sys,time; p=Path(sys.argv[1]);\nwhile p.exists(): time.sleep(.01)"
+        parent = "import subprocess,sys; subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); print('created')"
+        self.addCleanup(marker.unlink, missing_ok=True)
+        self.assertEqual(self.runner.command("devcontainer-up", [sys.executable, "-c", parent, helper, str(marker)],
+                                             timeout=2), b"created\n")
+        self.assertNotIn("devcontainer-up-stopped.json", self.journal.records())
+        self.assertFalse(self.runner.uncertain)
+        removal = threading.Timer(0.05, lambda: marker.unlink(missing_ok=True))
+        removal.start()
+        try:
+            self.runner.close()
+        finally:
+            removal.join()
+        self.assertIn("devcontainer-up-stopped.json", self.journal.records())
+        self.assertEqual(self.journal.records()["devcontainer-up.log"], b"created\n")
+        self.assertFalse(self.runner.pending_logs)
 
 
 if __name__ == "__main__":

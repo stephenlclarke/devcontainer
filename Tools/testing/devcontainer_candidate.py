@@ -25,10 +25,13 @@ class CandidateCommands:
         self.uncertain = False
         self.children = []
         self.pending_logs = {}
+        self.attachments = []
 
     def retain_logs(self):
         for name, paths in list(self.pending_logs.items()):
             if name + "-stopped.json" not in self.journal.records():
+                if any(name == pending for pending, _ in self.attachments):
+                    continue  # Foreground run helpers live until the guest is removed.
                 raise ValueError("D01 command shutdown is unverified")
             for suffix, path in paths:
                 data, metadata = diagnostic_snapshot(path)
@@ -58,20 +61,52 @@ class CandidateCommands:
                     self.journal.put(name + "-exit.json", canonical({"code": code,
                                      "durationNS": time.monotonic_ns() - started}))
                 finally:
-                    child.stop()
-                    self.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
+                    if name == "devcontainer-up" and name + "-exit.json" in self.journal.records():
+                        # The upstream CLI intentionally leaves its foreground
+                        # attachment behind. Do not signal a reaped leader's group;
+                        # guest deletion closes the stream before final group proof.
+                        self.attachments.append((name, child))
+                    else:
+                        child.stop()
+                        self.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
         finally:
             self.retain_logs()
         self.uncertain = False
         self.runtime.verify()
-        records = self.journal.records()
-        if any(json.loads(records[name + suffix + "-log.json"])["truncated"] for suffix, _ in paths):
+        snapshots = [diagnostic_snapshot(path) for _, path in paths]
+        if any(json.loads(metadata)["truncated"] for _, metadata in snapshots):
             raise ValueError("D01 command output exceeded its bound")
         if code != 0:
             raise RuntimeError("D01 command failed; private diagnostic logs retained")
-        return records[name + ".log"]
+        return snapshots[0][0]
+
+    def prepare_cleanup(self):
+        attached = {child for _, child in self.attachments}
+        for child in self.children:
+            if child not in attached:
+                child.stop()
+        self.retain_logs()
+        records = self.journal.records()
+        deferred = {name for name, _ in self.attachments}
+        self.uncertain = any(name + "-intent.json" in records and
+                             (name + "-exit.json" not in records or
+                              (name + "-stopped.json" not in records and name not in deferred))
+                             for name in COMMANDS)
 
     def close(self):
+        self.prepare_cleanup()
+        for name, child in self.attachments:
+            end = time.monotonic() + 5
+            while True:
+                try:
+                    child.stop()
+                    break
+                except RuntimeError:
+                    if time.monotonic() >= end:
+                        raise
+                    time.sleep(0.02)
+            self.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
+        self.attachments.clear()
         for child in self.children:
             child.stop()
         self.retain_logs()
@@ -105,5 +140,8 @@ class DevcontainerCandidate(DevcontainerReference):
         return arguments + (["--log-format", "json"] if command == "up" else [])
 
     def cleanup(self):
+        self.vm.prepare_cleanup()
+        # ReleasedGuest owns the whole cleanup deadline, including attachment
+        # closure. The reference wrapper would install a second alarm.
+        self.remove_owned()
         self.vm.close()
-        super().cleanup()
