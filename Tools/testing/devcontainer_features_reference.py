@@ -117,11 +117,12 @@ class DevcontainerFeaturesReference(DevcontainerBuildReference):
         output, meta = diagnostic_snapshot(self.vm.root / (NEGATIVE + ".log"))
         errors, error_meta = diagnostic_snapshot(self.vm.root / (NEGATIVE + self.negative_stderr_suffix))
         result = json.loads(output)
-        logs = [json.loads(line) for line in errors.splitlines() if line.strip()]
-        diagnostic = any(isinstance(event, dict) and isinstance(event.get("text"), str) and
-                         "Error: Lockfile does not exist." in event["text"].splitlines() for event in logs)
+        # The pinned CLI emits JSON stdout but raw stack traces and Node
+        # warnings alongside JSON stderr events. Match the actual error line,
+        # and independently require its structured result message.
+        diagnostic = b"Error: Lockfile does not exist." in errors.splitlines()
         if (self.vm.uncertain or not isinstance(exited, dict) or type(exited.get("code")) is not int or
                 exited["code"] != 1 or json.loads(meta)["truncated"] or json.loads(error_meta)["truncated"] or
                 not isinstance(result, dict) or result.get("outcome") != "error" or
-                result.get("containerId") is not None or not diagnostic):
+                result.get("containerId") is not None or result.get("message") != "Lockfile does not exist." or not diagnostic):
             raise ValueError("D05 did not reject the missing frozen lockfile for the expected reason")

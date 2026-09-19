@@ -46,10 +46,12 @@ class FeaturesReferenceTests(reference_tests.ReferenceTests):
         self.assertNotIn("--remove-existing-container", arguments)
         self.vm.journal.put(name + "-intent.json", canonical({"arguments": arguments}))
         self.vm.journal.put(name + "-exit.json", canonical({"code": getattr(self, "exit_code", 1)}))
-        result = getattr(self, "negative_result", {"outcome": "error", "description": "Lockfile does not exist."})
+        result = getattr(self, "negative_result", {"outcome": "error", "message": "Lockfile does not exist.",
+                                                  "description": "An error occurred setting up the container."})
         (self.root / (name + ".log")).write_bytes(canonical(result))
-        event = {"type": "text", "text": getattr(self, "negative_message", "Error: Lockfile does not exist.\n    at FQ")}
-        (self.root / (name + self.fixture.negative_stderr_suffix)).write_bytes(canonical(event))
+        message = getattr(self, "negative_message", "Error: Lockfile does not exist.\n    at FQ")
+        prefix = canonical({"type": "text", "text": "Resolving Remote"}) + b"\n(node:123) [DEP0169] DeprecationWarning\n"
+        (self.root / (name + self.fixture.negative_stderr_suffix)).write_bytes(prefix + message.encode())
         if getattr(self, "exit_code", 1) == 0:
             return canonical(result)
         raise RuntimeError("expected CLI exit")
@@ -76,6 +78,16 @@ class FeaturesReferenceTests(reference_tests.ReferenceTests):
         self.assertEqual(self.fixture.lock_path.read_text(), self.inputs["devcontainerFixture"]["lockfile"])
         self.assertNotIn("devcontainer-frozen-rejected.json", self.vm.journal.records())
         self.assertNotIn("devcontainer-up-intent.json", self.vm.journal.records())
+        self.fixture.cleanup()
+
+    def test_real_cli_mixed_stderr_still_requires_exact_structured_failure(self):
+        self.start()
+        self.fixture.cleanup()
+
+    def test_diagnostic_line_alone_cannot_hide_different_structured_error(self):
+        self.negative_result = {"outcome": "error", "message": "Network unavailable"}
+        with self.assertRaisesRegex(ValueError, "expected reason"):
+            self.start()
         self.fixture.cleanup()
 
     def test_accepted_missing_lock_fails_even_if_output_claims_error(self):
@@ -188,8 +200,8 @@ class FeaturesCandidateTests(FeaturesReferenceTests):
 
     def test_real_native_command_rejection_uses_retained_native_stderr(self):
         runner = CandidateCommands(self.root, self.vm.socket, Mock(journal=self.vm.journal), "/usr/bin/true")
-        script = ('import json,sys; print(json.dumps({"outcome":"error"})); '
-                  'print(json.dumps({"type":"text","text":"Error: Lockfile does not exist."}),file=sys.stderr); '
+        script = ('import json,sys; print(json.dumps({"outcome":"error","message":"Lockfile does not exist."})); '
+                  'print("Error: Lockfile does not exist.",file=sys.stderr); '
                   'sys.exit(1)')
         with self.assertRaises(RuntimeError):
             runner.command(NEGATIVE, [sys.executable, "-I", "-c", script], timeout=3, separate_output=True)
