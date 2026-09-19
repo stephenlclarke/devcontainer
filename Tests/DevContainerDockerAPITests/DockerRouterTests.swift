@@ -330,7 +330,6 @@ func `known unsupported create fields fail before runtime side effects`() async 
         (#"{"Image":"alpine:test","OnBuild":["RUN true"]}"#, "OnBuild"),
         (#"{"Image":"alpine:test","Shell":["/bin/sh","-c"]}"#, "Shell"),
         (#"{"Image":"alpine:test","StdinOnce":true}"#, "StdinOnce"),
-        (#"{"Image":"alpine:test","StopSignal":"SIGUSR1"}"#, "StopSignal"),
         (
             #"{"Image":"alpine:test","HostConfig":{"PublishAllPorts":true}}"#,
             "HostConfig.PublishAllPorts"
@@ -347,7 +346,6 @@ func `known unsupported create fields fail before runtime side effects`() async 
             #"{"Image":"alpine:test","Tty":true,"HostConfig":{"ConsoleSize":[24,80]}}"#,
             "HostConfig.ConsoleSize"
         ),
-        (#"{"Image":"alpine:test","HostConfig":{"Memory":1048576}}"#, "HostConfig.Memory"),
         (
             #"{"Image":"alpine:test","HostConfig":{"DeviceRequests":[{"Count":-1,"Capabilities":[["gpu"]]}]}}"#,
             "HostConfig.DeviceRequests"

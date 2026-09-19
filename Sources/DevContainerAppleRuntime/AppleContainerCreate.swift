@@ -179,6 +179,7 @@ enum AppleContainerCreateProjection {
         configuration.labels = spec.labels
         configuration.useInit = spec.initProcess
         configuration.stopSignal = imageConfig?.stopSignal
+        try AppleContainerExecutionSettings.apply(spec.executionSettings, to: &configuration)
         let capabilities = try Parser.capabilities(capAdd: spec.capabilitiesToAdd, capDrop: spec.capabilitiesToDrop)
         configuration.capAdd = capabilities.capAdd
         configuration.capDrop = capabilities.capDrop

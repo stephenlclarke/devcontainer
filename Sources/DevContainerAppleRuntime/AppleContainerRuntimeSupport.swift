@@ -63,7 +63,8 @@ extension AppleContainerRuntime {
                     RuntimeDNSConfiguration(
                         nameservers: $0.nameservers, searchDomains: $0.searchDomains, options: $0.options
                     )
-                }
+                },
+                executionSettings: AppleContainerExecutionSettings.observed(configuration)
             ),
             state: value.status.rawValue,
             createdAt: configuration.creationDate,
@@ -292,7 +293,8 @@ extension AppleContainerRuntime {
                     searchDomains: $0["searchDomains"] as? [String] ?? [],
                     options: $0["options"] as? [String] ?? []
                 )
-            }
+            },
+            executionSettings: AppleContainerExecutionSettings.observed(configuration)
         )
     }
 
@@ -301,6 +303,14 @@ extension AppleContainerRuntime {
         observed: ContainerSpec
     ) -> ContainerSpec {
         var spec = requested
+        if var settings = requested.executionSettings {
+            if settings.stopSignal == nil {
+                settings.stopSignal = observed.executionSettings?.stopSignal
+            }
+            spec.executionSettings = settings
+        } else {
+            spec.executionSettings = observed.executionSettings
+        }
         if requested.dns == nil {
             spec.dns = observed.dns
         }

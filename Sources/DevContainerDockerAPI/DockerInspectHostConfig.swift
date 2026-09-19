@@ -7,6 +7,10 @@ struct DockerInspectHostConfig: Encodable {
     var dns: [String] = []
     var dnsSearch: [String] = []
     var dnsOptions: [String] = []
+    var memory: UInt64 = 0
+    var shmSize: UInt64 = 64 * 1024 * 1024
+    var readOnlyRootFilesystem = false
+    var sysctls: [String: String] = [:]
 
     enum CodingKeys: String, CodingKey {
         case binds = "Binds"
@@ -15,5 +19,9 @@ struct DockerInspectHostConfig: Encodable {
         case dns = "Dns"
         case dnsSearch = "DnsSearch"
         case dnsOptions = "DnsOptions"
+        case memory = "Memory"
+        case shmSize = "ShmSize"
+        case readOnlyRootFilesystem = "ReadonlyRootfs"
+        case sysctls = "Sysctls"
     }
 }

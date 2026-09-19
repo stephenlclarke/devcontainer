@@ -222,12 +222,6 @@ extension DockerRouter {
         if request.stdinOnce == true {
             try unsupportedCreateField("StdinOnce")
         }
-        if let stopSignal = request.stopSignal,
-           !stopSignal.isEmpty,
-           !["SIGTERM", "TERM"].contains(stopSignal.uppercased())
-        {
-            try unsupportedCreateField("StopSignal")
-        }
         if let stopTimeout = request.stopTimeout, stopTimeout != 0 {
             try unsupportedCreateField("StopTimeout")
         }
@@ -243,7 +237,6 @@ extension DockerRouter {
         }
 
         let numericFields: [(String, Int64?)] = [
-            ("HostConfig.Memory", host.memory),
             ("HostConfig.MemorySwap", host.memorySwap),
             ("HostConfig.MemoryReservation", host.memoryReservation),
             ("HostConfig.NanoCpus", host.nanoCPUs),
@@ -254,8 +247,7 @@ extension DockerRouter {
             ("HostConfig.CpuQuota", host.cpuQuota),
             ("HostConfig.CpuRealtimePeriod", host.cpuRealtimePeriod),
             ("HostConfig.CpuRealtimeRuntime", host.cpuRealtimeRuntime),
-            ("HostConfig.PidsLimit", host.pidsLimit),
-            ("HostConfig.ShmSize", host.shmSize)
+            ("HostConfig.PidsLimit", host.pidsLimit)
         ]
         if let field = numericFields.first(where: { ($0.1 ?? 0) != 0 })?.0 {
             try unsupportedCreateField(field)
@@ -339,14 +331,8 @@ extension DockerRouter {
         if host.publishAllPorts == true {
             try unsupportedCreateField("HostConfig.PublishAllPorts")
         }
-        if host.sysctls?.isEmpty == false {
-            try unsupportedCreateField("HostConfig.Sysctls")
-        }
         if host.ulimits?.isEmpty == false {
             try unsupportedCreateField("HostConfig.Ulimits")
-        }
-        if host.readOnlyRootFilesystem == true {
-            try unsupportedCreateField("HostConfig.ReadonlyRootfs")
         }
         if host.oomKillDisable == true {
             try unsupportedCreateField("HostConfig.OomKillDisable")
@@ -703,7 +689,8 @@ extension DockerRouter {
                 )
             },
             dns: dns,
-            inheritImageEntrypoint: request.entrypoint == nil
+            inheritImageEntrypoint: request.entrypoint == nil,
+            executionSettings: executionSettings(request)
         )
     }
 
@@ -909,7 +896,8 @@ extension DockerRouter {
                 workingDir: snapshot.spec.workingDirectory ?? "",
                 entrypoint: snapshot.spec.entrypoint,
                 labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
-                healthcheck: dockerHealthcheck(snapshot.spec.healthcheck)
+                healthcheck: dockerHealthcheck(snapshot.spec.healthcheck),
+                stopSignal: snapshot.spec.executionSettings?.stopSignal
             ),
             hostConfig: inspectHostConfig(snapshot.spec),
             mounts: snapshot.spec.mounts.map(mountSummary),
@@ -925,7 +913,11 @@ extension DockerRouter {
             portBindings: inspectPortBindings(spec.ports),
             dns: spec.dns?.nameservers ?? [],
             dnsSearch: spec.dns?.searchDomains ?? [],
-            dnsOptions: spec.dns?.options ?? []
+            dnsOptions: spec.dns?.options ?? [],
+            memory: spec.executionSettings?.memoryLimitInBytes ?? 0,
+            shmSize: spec.executionSettings?.sharedMemorySizeInBytes ?? 64 * 1024 * 1024,
+            readOnlyRootFilesystem: spec.executionSettings?.readOnlyRootFilesystem ?? false,
+            sysctls: spec.executionSettings?.sysctls ?? [:]
         )
     }
 

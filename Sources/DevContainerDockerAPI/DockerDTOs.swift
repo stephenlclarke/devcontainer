@@ -701,6 +701,7 @@ struct DockerContainerConfig: Encodable {
     let entrypoint: [String]
     let labels: [String: String]
     let healthcheck: DockerHealthcheck?
+    var stopSignal: String?
 
     enum CodingKeys: String, CodingKey {
         case attachStderr = "AttachStderr"
@@ -712,6 +713,7 @@ struct DockerContainerConfig: Encodable {
         case exposedPorts = "ExposedPorts"
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
+        case stopSignal = "StopSignal"
         case image = "Image"
         case labels = "Labels"
         case openStdin = "OpenStdin"
