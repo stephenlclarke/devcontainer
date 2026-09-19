@@ -12,7 +12,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from prepare_candidate import PRODUCTS, SCOPE, admit_candidate, main, prepare_candidate, retained_candidate
+from prepare_candidate import COMPOSE_PRODUCTS, PRODUCTS, SCOPE, admit_candidate, main, prepare_candidate, retained_candidate
 from release_inputs import canonical
 from retain_evidence import digest
 
@@ -274,6 +274,126 @@ class CandidateAdmissionTests(unittest.TestCase):
         (self.scratch / "prepared-candidates").symlink_to(self.scratch / "tmp")
         with self.assertRaisesRegex(ValueError, "Aliased"):
             self.prepare()
+
+
+class ComposeCandidateAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.base = CandidateAdmissionTests(methodName="runTest")
+        self.base.setUp()
+        self.addCleanup(self.base.doCleanups)
+        self.base.invocation = "compose-fixture"
+        self.receipt = {**self.base.receipt, "productFamily": "container-compose",
+                        "products": {name: digest(name.encode()) for name in COMPOSE_PRODUCTS},
+                        "dependencyNoticesSHA256": digest(b"notices"),
+                        "goModSHA256": digest(b"go-mod"), "goSumSHA256": digest(b"go-sum")}
+        for key in ("archiveSize", "archiveSHA256"):
+            del self.receipt[key]
+        self.info = {"commit": "a" * 40, "version": "1.2.3", "source": "stephenlclarke/container-compose",
+                     "lane": "candidate", "buildType": "release", "containerSource": "apple/container",
+                     "containerizationSource": "apple/containerization", "containerRef": "b" * 40,
+                     "containerizationRef": "c" * 40}
+        self.files = {("bin/compose" if name == "compose" else "resources/" +
+                      ("volume-initializer/" if "initializer" in name else "") + name):
+                      (name.encode(), 0o755) for name in COMPOSE_PRODUCTS}
+        self.files["resources/THIRD-PARTY-NOTICES.txt"] = (b"notices", 0o644)
+        inputs = json.loads(self.base.contents["inputs-before.json"])
+        inputs["files"].update({"Tools/compose-normalizer/" + name: {"sha256": digest(payload)}
+                                for name, payload in (("go.mod", b"go-mod"), ("go.sum", b"go-sum"))})
+        self.base.contents["inputs-before.json"] = self.base.contents["inputs-after.json"] = canonical(inputs).encode()
+        self.publish()
+
+    def publish(self):
+        files = {**self.files, "resources/build-info.json": (canonical(self.info).encode(), 0o644),
+                 "resources/candidate.json": (canonical(self.receipt).encode(), 0o644)}
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+            for path, (payload, mode) in files.items():
+                entry = tarfile.TarInfo("compose/" + path)
+                entry.size, entry.mode = len(payload), mode
+                tar.addfile(entry, io.BytesIO(payload))
+        payload = archive.getvalue()
+        self.base.invocation = "compose-" + digest(payload)[:16]
+        self.base.contents["artifact:candidate_archive.tar.gz"] = payload
+        self.base.contents["artifact:candidate_archive.json"] = canonical({
+            **self.receipt, "archiveSHA256": digest(payload), "archiveSize": len(payload)}).encode()
+        self.base.save()
+
+    def prepare(self):
+        return prepare_candidate(self.base.retained, self.base.scratch, self.base.invocation, "container-compose")
+
+    def test_explicit_family_admission_reuses_after_scratch_eviction(self):
+        prepared = self.prepare()
+        self.assertEqual(prepared["scope"], SCOPE)
+        self.assertEqual(prepared["productFamily"], "container-compose")
+        self.assertEqual(set(prepared["executables"]), COMPOSE_PRODUCTS)
+        shutil.rmtree(self.base.scratch)
+        self.assertEqual(prepared, admit_candidate(self.base.retained, self.base.invocation, "stock", "container-compose"))
+        for family in ("devcontainer", "unknown"):
+            with self.subTest(family=family), self.assertRaises(ValueError):
+                admit_candidate(self.base.retained, self.base.invocation, "stock", family)
+        with self.assertRaisesRegex(ValueError, "profile"):
+            admit_candidate(self.base.retained, self.base.invocation, "enhanced", "container-compose")
+
+    def test_enhanced_provenance_is_independent_of_stock(self):
+        self.receipt["runtimeProfile"] = "enhanced"
+        inputs = json.loads(self.base.contents["inputs-before.json"])
+        inputs["files"]["Package.resolved"] = inputs["files"].pop("Package.stock.resolved")
+        self.base.contents["inputs-before.json"] = self.base.contents["inputs-after.json"] = canonical(inputs).encode()
+        self.info.update(containerSource="stephenlclarke/container", containerizationSource="stephenlclarke/containerization")
+        self.publish()
+        self.assertEqual(self.prepare()["runtimeProfile"], "enhanced")
+
+    def test_family_schema_and_go_locks_rejected_before_extraction(self):
+        original = dict(self.base.contents)
+        for field, value in (("productFamily", "devcontainer"), ("schemaVersion", 2),
+                             ("goModSHA256", "0" * 64), ("goSumSHA256", None)):
+            with self.subTest(field=field):
+                self.base.contents = dict(original)
+                receipt = json.loads(original["artifact:candidate_archive.json"])
+                receipt[field] = value
+                self.base.contents["artifact:candidate_archive.json"] = canonical(receipt).encode()
+                self.base.save()
+                with patch("prepare_candidate.restore_candidate", side_effect=AssertionError("must not extract")), \
+                        self.assertRaises(ValueError):
+                    self.prepare()
+
+    def test_build_metadata_cannot_change_profile_or_source(self):
+        original = dict(self.info)
+        for field, value in (("commit", "e" * 40), ("version", "9.9.9"), ("buildType", "debug"),
+                             ("lane", "stable"), ("source", "other/project"),
+                             ("containerSource", "stephenlclarke/container"),
+                             ("containerizationSource", "stephenlclarke/containerization"),
+                             ("containerRef", "unknown"), ("containerizationRef", "unknown")):
+            with self.subTest(field=field):
+                self.info = {**original, field: value}
+                self.publish()
+                with self.assertRaisesRegex(ValueError, "provenance"):
+                    self.prepare()
+
+    def test_product_and_notice_bytes_are_bound_beyond_archive_integrity(self):
+        original = dict(self.files)
+        for name in self.files:
+            with self.subTest(name=name):
+                self.files = {**original, name: (b"changed", original[name][1])}
+                self.publish()
+                with self.assertRaisesRegex(ValueError, "notices|product digests"):
+                    self.prepare()
+
+    def test_prepared_tampering_is_never_repaired(self):
+        prepared = self.prepare()
+        binary = Path(prepared["executables"]["compose"])
+        binary.write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "bytes or modes"):
+            self.prepare()
+        self.assertEqual(binary.read_bytes(), b"tampered")
+
+    def test_command_forwards_explicit_compose_family(self):
+        with patch("sys.argv", ["prepare-candidate", self.base.invocation, "--family=container-compose"]), \
+                patch("prepare_candidate.Path.stat", return_value=SimpleNamespace(st_dev=1)), \
+                patch("prepare_candidate.prepare_candidate", return_value={}) as prepare, \
+                patch("sys.stdout", new_callable=io.StringIO):
+            main()
+            self.assertEqual(prepare.call_args.args[3], "container-compose")
 
 
 if __name__ == "__main__":

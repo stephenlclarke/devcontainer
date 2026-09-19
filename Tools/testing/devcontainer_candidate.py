@@ -14,6 +14,7 @@ from devcontainer_lifecycle_reference import DevcontainerLifecycleReference
 from devcontainer_features_reference import DevcontainerFeaturesReference
 from devcontainer_ports_reference import DevcontainerPortsReference
 from devcontainer_reuse_reference import DevcontainerReuseReference, COMMANDS as REUSE_COMMANDS, UP_COMMANDS
+from devcontainer_compose_reference import DevcontainerComposeReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -200,3 +201,23 @@ class DevcontainerPortsCandidate(DevcontainerCandidate, DevcontainerPortsReferen
     def arguments(self, command):
         arguments = super().arguments(command)
         return arguments + (["--include-configuration"] if command == "up" else [])
+
+
+class DevcontainerComposeCandidate(DevcontainerCandidate, DevcontainerComposeReference):
+    """Keep original C01 observations and ownership without any Docker client."""
+
+    def compose_executable(self):
+        return self.inputs["composeCandidate"]["executables"]["compose"]
+
+    def arguments(self, command):
+        arguments = super().arguments(command)
+        backend = "stock" if self.inputs["composeCandidate"]["runtimeProfile"] == "stock" else "container-compose"
+        # HOME alone does not isolate Foundation's user-directory resolution.
+        # Select every facade-owned state path and the admitted native frontend.
+        values = {"COMPOSE_PROJECT_NAME": self.project, "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+                  "DEVCONTAINER_COMPOSE_BIN": self.compose_executable(), "DEVCONTAINER_BACKEND": backend,
+                  "DEVCONTAINER_SOCKET": str(self.socket), "DEVCONTAINER_CONTAINER_BIN": self.vm.container,
+                  "DEVCONTAINER_CONFIG": str(self.vm.root / "config.toml"),
+                  "DEVCONTAINER_STATE": str(self.vm.root / "state.sqlite")}
+        arguments[2:2] = [key + "=" + value for key, value in values.items()]
+        return arguments

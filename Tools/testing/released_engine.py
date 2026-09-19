@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from prepare_releases import require_retained
-from prepare_candidate import admit_candidate, SCOPE as CANDIDATE_SCOPE
+from prepare_candidate import COMPOSE_PRODUCTS, admit_candidate, SCOPE as CANDIDATE_SCOPE
 from private_keychain import run_keychain
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, contract_observations, digest, run_case, validate_identity
@@ -56,11 +56,20 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
                     for asset in (assets[1:] if candidate else assets)]
 
 
-def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path) -> dict:
+def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path, compose=None) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
-    if fixture not in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
+    if fixture not in {"C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
         return inputs
-    if fixture == "D07-reuse-cleanup":
+    if fixture == "C01-compose-service":
+        from devcontainer_compose_reference import fixture_inputs
+        if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
+                compose.get("productFamily") != "container-compose" or
+                compose.get("runtimeProfile") not in {"stock", "enhanced"} or
+                compose.get("runtimeProfile") != candidate.get("runtimeProfile") or
+                set(compose.get("executables", {})) != COMPOSE_PRODUCTS):
+            raise ValueError("C01 requires an admitted matching native Compose candidate")
+        inputs = {**inputs, "composeCandidate": compose}
+    elif fixture == "D07-reuse-cleanup":
         from devcontainer_reuse_reference import fixture_inputs
     elif fixture == "D06-ports":
         from devcontainer_ports_reference import fixture_inputs
@@ -163,7 +172,7 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
-        if self.guest is not None and self.identity["fixture"] in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
+        if self.guest is not None and self.identity["fixture"] in {"C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
             self.guest.setup_devcontainer()
 
     def operation(self):
@@ -227,19 +236,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
-    parser.add_argument("--fixture", choices=[FIXTURE, "C01-compose-service", *sorted(FIXTURES)], default=FIXTURE)
+    parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
+    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Engine cases require Apple silicon macOS")
+    if args.compose_candidate_invocation and (args.fixture != "C01-compose-service" or args.lane == "docker"):
+        raise ValueError("Native Compose candidate is only valid for native C01")
     if args.lane == "docker":
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture == "C01-compose-service":
-        raise ValueError("C01 native Compose admission is not implemented; no runtime changes made")
-    if args.fixture in {"D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} and not args.candidate_invocation:
+    if args.fixture == "C01-compose-service" and not args.compose_candidate_invocation:
+        raise ValueError("C01 requires a prepared native Compose candidate; no runtime changes made")
+    if args.fixture in {"C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
@@ -268,10 +280,16 @@ def main():
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
+        def selected_compose():
+            if not args.compose_candidate_invocation:
+                return None
+            return admit_candidate(RETAINED, args.compose_candidate_invocation,
+                                   "stock" if args.lane == "apple-stock" else "enhanced", "container-compose")
+        compose = selected_compose()
         guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock,
                                    fixture=args.fixture) if guest_locks is not None else None
         if guest_inputs is not None:
-            guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository)
+            guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository, compose)
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
@@ -285,7 +303,8 @@ def main():
                     "contractSHA256": digest(canonical(expected)), **fingerprints,
                     "runtimeSHA256": digest(canonical(runtime))}
         if args.candidate_invocation:
-            identity["releaseSetSHA256"] = release_set_identity(fingerprints, None, releases[0])
+            candidates = {"devcontainer": releases[0], "compose": compose} if compose else releases[0]
+            identity["releaseSetSHA256"] = release_set_identity(fingerprints, None, candidates)
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         def revalidate():
@@ -293,7 +312,7 @@ def main():
                 raise ValueError("SSD ownership or volume identity changed during execution")
             if guest_locks is not None:
                 current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock, fixture=args.fixture)
-                if fixture_guest_inputs(current, args.fixture, releases[0], repository) != guest_inputs:
+                if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose()) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED, args.candidate_invocation)
 

@@ -40,6 +40,12 @@ def layout(asset: dict) -> dict:
         return {"format": "tar", "executables": {
             key: f"devcontainer-{asset['tag']}/bin/{key}"
             for key in ("devcontainer", "devcontainer-engine", "devcontainer-compose")}}
+    if repository == "local/container-compose-candidate" and name == "candidate_archive.tar.gz":
+        return {"format": "tar", "executables": {"compose": "compose/bin/compose",
+                "compose-normalizer": "compose/resources/compose-normalizer", **{
+                    "compose-volume-initializer-linux-" + arch:
+                        "compose/resources/volume-initializer/compose-volume-initializer-linux-" + arch
+                    for arch in ("arm64", "amd64")}}}
     if repository == "local/devcontainer-candidate" and name == "candidate_archive_v2.tar.gz":
         prefix = f"devcontainer-{asset['tag']}/"
         reference = prefix + "libexec/devcontainer/reference/"

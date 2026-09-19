@@ -135,6 +135,68 @@ class ReleasedEngineTests(unittest.TestCase):
                 self.assertEqual(prepared.call_count, 1)
                 self.assertNotEqual(prepared.call_args.args[0]["repository"], "stephenlclarke/devcontainer")
 
+    def test_native_compose_options_fail_before_any_admission_when_incomplete(self):
+        cases = [(["--fixture=C01-compose-service"], "prepared native Compose"),
+                 (["--fixture=C01-compose-service", "--compose-candidate-invocation=compose"], "private-runtime"),
+                 (["--compose-candidate-invocation=compose"], "only valid for native C01")]
+        for options, message in cases:
+            with self.subTest(options=options), patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", *options]), \
+                    patch("released_engine.admit", side_effect=AssertionError("must not admit")), \
+                    self.assertRaisesRegex(ValueError, message):
+                released_engine.main()
+
+    def test_c01_entrypoint_binds_compose_inputs_and_refuses_artifact_drift(self):
+        candidate = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock", "executables": {
+            name: "/candidate/" + name for name in
+            ("devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker", "reference-node")}}
+        compose = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock", "productFamily": "container-compose",
+                   "executables": {name: "/compose/" + name for name in released_engine.COMPOSE_PRODUCTS}, "assetSHA256": "a" * 64}
+        releases = [candidate, {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}]
+        guard = HostGuard(self.root / "admission.json")
+        argv = ["case", "--campaign=c01-entrypoint", "--lane=apple-stock", "--fixture=C01-compose-service",
+                "--candidate-invocation=dev", "--compose-candidate-invocation=compose"]
+        with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
+                patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
+                patch("released_engine.admit", return_value=releases), \
+                patch("released_engine.admit_candidate", return_value=compose) as selected, \
+                patch("released_engine.admit_guest", return_value={"workload": "fixture"}), \
+                patch("released_engine.version", return_value="fixture"), \
+                patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
+                patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
+                patch("released_engine.ReleasedCase") as factory, patch("sys.stdout", new_callable=io.StringIO), \
+                patch("sys.argv", argv):
+            case = factory.return_value
+            case.operation.return_value = {"compose_env": "compose-service", "post_create": "compose-post-create",
+                                           "workspace": "/workspaces/devcontainer-parity"}
+            case.cleanup.return_value = {"status": "passed", "remainingOwnedResources": []}
+            with self.assertRaises(SystemExit) as status:
+                released_engine.main()
+            self.assertEqual(status.exception.code, 0)
+            selected.assert_called_once_with(Path.home(), "compose", "stock", "container-compose")
+            self.assertEqual(factory.call_args.kwargs["guest_inputs"]["composeCandidate"], compose)
+            runtime = factory.call_args.kwargs["admission"]["runtime"]
+            self.assertEqual(runtime["guestInputs"]["composeCandidate"], compose)
+            revalidate = factory.call_args.args[4]
+            self.assertEqual(revalidate(), releases)
+            selected.return_value = {**compose, "assetSHA256": "b" * 64}
+            with self.assertRaisesRegex(ValueError, "guest inputs changed"):
+                revalidate()
+
+    def test_c01_requires_matching_complete_compose_candidate(self):
+        candidate = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock", "executables": {
+            name: "/candidate/" + name for name in
+            ("devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker", "reference-node")}}
+        compose = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock", "productFamily": "container-compose",
+                   "executables": {name: "/compose/" + name for name in released_engine.COMPOSE_PRODUCTS}}
+        repository = Path(__file__).parents[2]
+        selected = released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, compose)
+        self.assertEqual(selected["composeCandidate"], compose)
+        self.assertIn("compose", selected["devcontainerFixture"])
+        for invalid in (None, {}, {**compose, "runtimeProfile": "enhanced"}, {**compose, "scope": "release"},
+                        {**compose, "productFamily": "docker-compose"}, {**compose, "executables": {}}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "matching native Compose"):
+                released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, invalid)
+
     def test_candidate_evidence_cannot_compare_as_published_release_parity(self):
         published = released_engine.release_set_identity({"lock": "published"}, None, None)
         candidate = released_engine.release_set_identity({"lock": "published"}, None, {"candidateInvocation": "first"})

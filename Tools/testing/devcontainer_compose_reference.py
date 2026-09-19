@@ -34,7 +34,10 @@ class DevcontainerComposeReference(DevcontainerReference):
         super().__init__(vm, inputs, owner, observe=observe)
         self.project = "cf-c01-" + self.owner[:32]
         self.network_name = self.project + "_default"
-        self.plan.update(project=self.project, compose=inputs["compose"]["executables"]["docker-compose"])
+        self.plan.update(project=self.project, compose=self.compose_executable())
+
+    def compose_executable(self):
+        return self.inputs["compose"]["executables"]["docker-compose"]
 
     def write_workspace(self):
         super().write_workspace()
@@ -78,7 +81,7 @@ class DevcontainerComposeReference(DevcontainerReference):
     def arguments(self, command):
         arguments = super().arguments(command)
         arguments.insert(2, "COMPOSE_PROJECT_NAME=" + self.project)
-        return arguments + ["--docker-compose-path", self.inputs["compose"]["executables"]["docker-compose"]]
+        return arguments + ["--docker-compose-path", self.compose_executable()]
 
     def owned(self, value):
         identifier = super().owned(value)

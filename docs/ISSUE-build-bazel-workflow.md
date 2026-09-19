@@ -2,6 +2,8 @@
 
 ## Problem description
 
+C01 native Compose artifact admission and harness routing are now implemented and component-tested, reusing an authenticated stock candidate instead of rebuilding it. The active remaining step is the first unchanged-fixture stock runtime proof, followed by enhanced proof when its published guest exists. [Candidate identities, component evidence and invocation](bazel-test-harness.md#c01-compose-service) supersede earlier admission-unimplemented checkpoints below. No full parity or new stable release is claimed.
+
 The C01 native default/selection gaps now have focused implementation proof (`6637ba72`, regression `87994af7`): fresh configuration selects native Compose, explicit choices survive and children use the selected socket/executable. The active remaining gap is admitting the correct stock-capable Compose artifact and proving the unchanged live fixture on both native lanes. The published 0.15.1 plugin is fork-built; it must not be assumed equivalent to the current stock Engine adapter. [Evidence and coverage limits](bazel-test-harness.md#c01-compose-service) supersede the earlier default-selection pending checkpoints below.
 
 C01 Docker reference proof now passes all three observations and cleanup (`4dcb1ff0`, source `e59a071`), with zero residue and clear recovery. The remaining active gap is the Docker-free native Compose provider/default path and its stock/enhanced proof, not the reference harness. [Exact phase timings and qualification limits](bazel-test-harness.md#c01-compose-service) are retained; earlier pre-live statements below are historical.

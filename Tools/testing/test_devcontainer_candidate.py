@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical
-from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate,
+from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate, DevcontainerComposeCandidate,
                                    DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
@@ -23,6 +23,50 @@ import test_devcontainer_reference as reference_tests
 import test_devcontainer_build_reference as build_reference_tests
 import test_devcontainer_users_reference as users_reference_tests
 import test_devcontainer_lifecycle_reference as lifecycle_reference_tests
+import test_devcontainer_compose_reference as compose_reference_tests
+
+
+class ComposeCandidateTests(compose_reference_tests.ComposeTests):
+    def reopen(self):
+        self.vm.container = "/prepared/container"
+        self.vm.close = Mock()
+        self.vm.prepare_cleanup = Mock()
+        self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/prepared/devcontainer"}}
+        self.inputs["composeCandidate"] = {"executables": {"compose": "/prepared/native-compose"}, "runtimeProfile": "stock"}
+        self.inputs["devcontainerFixture"] = compose_reference_tests.fixture_inputs(Path(__file__).parents[2])
+        return DevcontainerComposeCandidate(self.vm, self.inputs, self.owner)
+
+    def test_original_fixture_and_complete_project_cleanup(self):
+        self.assertEqual(self.start(), {"compose_env": "compose-service", "post_create": "compose-post-create",
+                                       "workspace": WORKSPACE})
+        self.assertEqual((self.fixture.workspace / "compose.yaml").read_text(), self.inputs["devcontainerFixture"]["compose"])
+        for _, arguments, _ in self.commands[1:]:
+            for expected in ("COMPOSE_PROJECT_NAME=" + self.fixture.project, "DEVCONTAINER_BACKEND=stock",
+                             "DEVCONTAINER_COMPOSE_PROVIDER=container-compose", "DEVCONTAINER_CONTAINER_BIN=/prepared/container",
+                             "DEVCONTAINER_COMPOSE_BIN=/prepared/native-compose", "DEVCONTAINER_SOCKET=" + str(self.vm.socket),
+                             "DEVCONTAINER_CONFIG=" + str(self.root / "config.toml"),
+                             "DEVCONTAINER_STATE=" + str(self.root / "state.sqlite")):
+                self.assertIn(expected, arguments)
+            self.assertIn("/prepared/devcontainer", arguments)
+            self.assertNotIn("--docker-path", arguments)
+            self.assertNotIn("--docker-compose-path", arguments)
+        self.fixture.cleanup()
+        self.vm.close.assert_called_once()
+        self.assertIsNone(self.server.guest)
+        self.assertIsNone(self.server.network)
+        self.reopen().cleanup()
+
+    def test_enhanced_backend_remains_explicit(self):
+        self.inputs["composeCandidate"]["runtimeProfile"] = "enhanced"
+        self.assertIn("DEVCONTAINER_BACKEND=container-compose", self.fixture.arguments("up"))
+
+    def test_native_uuid_ownership_is_preserved(self):
+        identifier = "ABCDEF01-1234-5678-abcd-123456789012"
+        with patch.object(reference_tests, "ID", identifier):
+            self.start()
+            self.assertEqual(self.fixture.identifier, identifier)
+            self.fixture.cleanup()
+            self.assertIsNone(self.server.network)
 
 
 class CandidateTests(reference_tests.ReferenceTests):

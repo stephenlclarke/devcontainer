@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
-# USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|recover-runtime [--apply --case ID]|cleanup [--days N] [--apply]|restore-candidate ID|prepare-candidate ID|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline]|prepare-guest-images LOCK [--offline]|prepare-docker-cli LOCK [--offline]|prepare-devcontainers-cli LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
+# USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|recover-runtime [--apply --case ID]|cleanup [--days N] [--apply]|restore-candidate ID|prepare-candidate ID [--family=container-compose]|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline]|prepare-guest-images LOCK [--offline]|prepare-docker-cli LOCK [--offline]|prepare-devcontainers-cli LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -28,7 +28,7 @@ usage() {
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
     printf '       %s prepare-releases LOCK [--offline] (extract on SSD; retain executables internally; never install/build)\n' "$SCRIPT_NAME"
-    printf '       %s prepare-candidate ID (retained clean native build; integration only, not release proof)\n' "$SCRIPT_NAME"
+    printf '       %s prepare-candidate ID [--family=container-compose] (retained clean build; integration only)\n' "$SCRIPT_NAME"
     printf '       %s prepare-guest-images LOCK [--offline] (digest-pinned OCI data; no Docker, VM or build)\n' "$SCRIPT_NAME"
     printf '       %s prepare-docker-cli LOCK [--offline] (pinned public GitHub bottle; no install, VM or build)\n' "$SCRIPT_NAME"
     printf '       %s prepare-devcontainers-cli LOCK [--offline] (pinned official Node/npm reference tools; no install or build)\n' "$SCRIPT_NAME"
@@ -352,9 +352,9 @@ main() {
         return
     fi
     if [[ "$command" == prepare-candidate ]]; then
-        [[ $# == 1 ]] || { error 'prepare-candidate requires one retained invocation ID.'; return 2; }
+        [[ $# == 1 || ( $# == 2 && "$second_argument" == --family=container-compose ) ]] || { error 'prepare-candidate requires ID [--family=container-compose].'; return 2; }
         clean_environment /usr/bin/lockf -k -t 300 "$SSD_ROOT/locks/reference-store.lock" \
-            /usr/bin/python3 "$TOOL_DIRECTORY/prepare_candidate.py" "$first_argument"
+            /usr/bin/python3 "$TOOL_DIRECTORY/prepare_candidate.py" "$@"
         return
     fi
     if [[ "$command" == restore-candidate ]]; then
