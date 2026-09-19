@@ -15,12 +15,13 @@ from devcontainer_features_reference import DevcontainerFeaturesReference
 from devcontainer_ports_reference import DevcontainerPortsReference
 from devcontainer_reuse_reference import DevcontainerReuseReference, COMMANDS as REUSE_COMMANDS, UP_COMMANDS
 from devcontainer_compose_reference import DevcontainerComposeReference
+from devcontainer_dependencies_reference import DevcontainerDependenciesReference, DATABASE_IMAGE
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
 
 
-COMMANDS = ("devcontainer-image-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
+COMMANDS = ("devcontainer-image-pull", "devcontainer-dependency-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
 
 
 class CandidateCommands:
@@ -221,3 +222,12 @@ class DevcontainerComposeCandidate(DevcontainerCandidate, DevcontainerComposeRef
                   "DEVCONTAINER_STATE": str(self.vm.root / "state.sqlite")}
         arguments[2:2] = [key + "=" + value for key, value in values.items()]
         return arguments
+
+
+class DevcontainerDependenciesCandidate(DevcontainerComposeCandidate, DevcontainerDependenciesReference):
+    """C02 uses the same three-service contract with native command ownership."""
+
+    def prepare_image(self):
+        super().prepare_image()
+        self.vm.command("devcontainer-dependency-pull", [self.vm.container, "image", "pull", "--arch", "arm64",
+                                                       DATABASE_IMAGE], timeout=120)

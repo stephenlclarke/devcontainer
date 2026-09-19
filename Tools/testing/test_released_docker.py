@@ -155,6 +155,17 @@ class DockerCaseTests(unittest.TestCase):
         self.guest.cleanup.assert_called_once_with()
         self.assertFalse(self.case.root.exists())
 
+    def test_c02_uses_dependency_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "C02-compose-dependencies"
+        with patch.object(released_docker, "DevcontainerDependenciesReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_d07_uses_reuse_adapter_and_keeps_normal_owned_cleanup(self):
         self.identity["fixture"] = "D07-reuse-cleanup"
         with patch.object(released_docker, "DevcontainerReuseReference", return_value=self.guest) as adapter:
@@ -187,6 +198,26 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_c02_admits_both_exact_workload_images_and_published_compose(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+        images = json.loads((repository / "Tools/bazel/guest-images.lock.json").read_text())
+        with patch.object(released_docker, "require_retained", return_value={"executables": {}}), \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers", return_value={"verified": True}), \
+                patch.object(released_docker, "require_image", side_effect=lambda image, _: {"image": image}):
+            result = released_docker.admit_docker(lock, {}, pins, images, Path("/scratch"), Path("/retained"),
+                                                 fixture="C02-compose-dependencies", repository=repository)
+            self.assertEqual(result["workload"]["image"]["name"], "alpine-workload")
+            self.assertEqual(result["dependencyWorkload"]["image"]["name"], "python-workload")
+            self.assertIn("compose", result)
+            self.assertIn("service_healthy", result["devcontainerFixture"]["compose"])
+            for dependencies in ([], [{"name": "python-workload"}] * 2):
+                with self.assertRaisesRegex(ValueError, "dependency image"):
+                    released_docker.admit_docker(lock, {}, pins, {"images": [{"name": "alpine-workload"}, *dependencies]},
+                        Path("/scratch"), Path("/retained"), fixture="C02-compose-dependencies", repository=repository)
+
     def test_c01_admits_published_compose_and_unchanged_configuration(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

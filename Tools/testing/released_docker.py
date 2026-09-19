@@ -22,6 +22,7 @@ from devcontainer_lifecycle_reference import DevcontainerLifecycleReference, FIX
 from devcontainer_features_reference import DevcontainerFeaturesReference, FIXTURE as FEATURES_FIXTURE, fixture_inputs as features_fixture_inputs
 from devcontainer_reuse_reference import DevcontainerReuseReference, FIXTURE as REUSE_FIXTURE, fixture_inputs as reuse_fixture_inputs
 from devcontainer_compose_reference import DevcontainerComposeReference, FIXTURE as COMPOSE_FIXTURE, fixture_inputs as compose_fixture_inputs
+from devcontainer_dependencies_reference import DevcontainerDependenciesReference, FIXTURE as DEPENDENCIES_FIXTURE, fixture_inputs as dependencies_fixture_inputs
 from devcontainer_ports_reference import DevcontainerPortsReference, FIXTURE as PORTS_FIXTURE, fixture_inputs as ports_fixture_inputs
 from engine_probe import engine_negotiation, request
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest
@@ -54,7 +55,12 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
         raise ValueError("Docker workload image is missing or ambiguous")
     result = {"assets": prepared, "client": client, "tools": tools, "pins": pins,
               "workload": require_image(matches[0], retained / "guest-images")}
-    if fixture == COMPOSE_FIXTURE:
+    if fixture == DEPENDENCIES_FIXTURE:
+        dependencies = [image for image in images.get("images", []) if image.get("name") == "python-workload"]
+        if len(dependencies) != 1:
+            raise ValueError("C02 dependency image is missing or ambiguous")
+        result["dependencyWorkload"] = require_image(dependencies[0], retained / "guest-images")
+    if fixture in {COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE}:
         compose_lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
         compose_assets = [asset for asset in validate_lock(compose_lock) if asset["repository"] == "docker/compose"]
         if (len(compose_assets) != 1 or compose_assets[0]["tag"] != "v" + pins["composeVersion"] or
@@ -63,14 +69,14 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
         asset = compose_assets[0]
         result["compose"] = require_retained(asset, retained / "release-objects" / asset["sha256"],
                                              retained / "prepared-releases", retained / "prepared-receipts")
-    if fixture in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE, REUSE_FIXTURE, COMPOSE_FIXTURE}:
+    if fixture in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE, REUSE_FIXTURE, COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE}:
         reference_lock = json.loads((repository / "Tools/bazel/devcontainers-cli.lock.json").read_text())
         reference = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["devcontainersCli"]
         result["devcontainers"] = prepare_devcontainers(reference_lock, reference, scratch, retained, offline=True)
         readers = {DEVCONTAINER_FIXTURE: fixture_inputs, BUILD_FIXTURE: build_fixture_inputs,
                    USERS_FIXTURE: users_fixture_inputs, LIFECYCLE_FIXTURE: lifecycle_fixture_inputs,
                    FEATURES_FIXTURE: features_fixture_inputs, PORTS_FIXTURE: ports_fixture_inputs, REUSE_FIXTURE: reuse_fixture_inputs,
-                   COMPOSE_FIXTURE: compose_fixture_inputs}
+                   COMPOSE_FIXTURE: compose_fixture_inputs, DEPENDENCIES_FIXTURE: dependencies_fixture_inputs}
         result["devcontainerFixture"] = readers[fixture](repository)
     return result
 
@@ -92,11 +98,11 @@ class DockerCase:
         journal = ServiceJournal(self.journal_parent / (digest(canonical(self.owner)) + ".sqlite"), self.owner, create=True)
         self.vm = DockerVM(self.root, self.owner, self.inputs["tools"], self.inputs["pins"], journal)
         self.vm.start()
-        if self.identity["fixture"] in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE, REUSE_FIXTURE, COMPOSE_FIXTURE}:
+        if self.identity["fixture"] in {DEVCONTAINER_FIXTURE, BUILD_FIXTURE, USERS_FIXTURE, LIFECYCLE_FIXTURE, FEATURES_FIXTURE, PORTS_FIXTURE, REUSE_FIXTURE, COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE}:
             adapter = {DEVCONTAINER_FIXTURE: DevcontainerReference, BUILD_FIXTURE: DevcontainerBuildReference,
                        USERS_FIXTURE: DevcontainerUsersReference, LIFECYCLE_FIXTURE: DevcontainerLifecycleReference,
                        FEATURES_FIXTURE: DevcontainerFeaturesReference, PORTS_FIXTURE: DevcontainerPortsReference, REUSE_FIXTURE: DevcontainerReuseReference,
-                       COMPOSE_FIXTURE: DevcontainerComposeReference}[self.identity["fixture"]]
+                       COMPOSE_FIXTURE: DevcontainerComposeReference, DEPENDENCIES_FIXTURE: DevcontainerDependenciesReference}[self.identity["fixture"]]
             self.guest = adapter(self.vm, self.inputs, self.owner, observe=self.requests.append)
             self.guest.setup()
         elif self.identity["fixture"] in FIXTURES:

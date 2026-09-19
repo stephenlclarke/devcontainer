@@ -33,6 +33,9 @@ RELEASE_INPUTS = (
     "Tests/Parity/fixtures/D07-reuse-cleanup/probe.sh",
     "Tests/Parity/fixtures/C01-compose-service/.devcontainer/devcontainer.json",
     "Tests/Parity/fixtures/C01-compose-service/compose.yaml",
+    "Tests/Parity/fixtures/C02-compose-dependencies/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/C02-compose-dependencies/compose.yaml",
+    "Tests/Parity/fixtures/C02-compose-dependencies/probe.sh",
     "Tests/Parity/fixtures/C01-compose-service/probe.sh",
 )
 PREPARATION_HELPERS = (
@@ -47,6 +50,7 @@ RUNTIME_HELPERS = (
     "devcontainer_ports_reference.py",
     "devcontainer_reuse_reference.py",
     "devcontainer_compose_reference.py",
+    "devcontainer_dependencies_reference.py",
     "engine_probe.py", "exec_probe.py", "fault_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",

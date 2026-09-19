@@ -137,6 +137,8 @@ class ReleasedEngineTests(unittest.TestCase):
 
     def test_native_compose_options_fail_before_any_admission_when_incomplete(self):
         cases = [(["--fixture=C01-compose-service"], "prepared native Compose"),
+                 (["--fixture=C02-compose-dependencies"], "prepared native Compose"),
+                 (["--fixture=C02-compose-dependencies", "--compose-candidate-invocation=compose"], "private-runtime"),
                  (["--fixture=C01-compose-service", "--compose-candidate-invocation=compose"], "private-runtime"),
                  (["--compose-candidate-invocation=compose"], "only valid for native C01")]
         for options, message in cases:
@@ -192,6 +194,12 @@ class ReleasedEngineTests(unittest.TestCase):
         selected = released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, compose)
         self.assertEqual(selected["composeCandidate"], compose)
         self.assertIn("compose", selected["devcontainerFixture"])
+        dependencies = released_engine.fixture_guest_inputs(
+            {"dependencyWorkload": "admitted"}, "C02-compose-dependencies", candidate, repository, compose)
+        self.assertEqual(dependencies["composeCandidate"], compose)
+        self.assertEqual(dependencies["dependencyWorkload"], "admitted")
+        self.assertEqual(json.loads(dependencies["devcontainerFixture"]["configuration"])["runServices"],
+                         ["app", "database", "helper"])
         for invalid in (None, {}, {**compose, "runtimeProfile": "enhanced"}, {**compose, "scope": "release"},
                         {**compose, "productFamily": "docker-compose"}, {**compose, "executables": {}}):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "matching native Compose"):

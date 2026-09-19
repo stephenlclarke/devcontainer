@@ -46,6 +46,14 @@ Seventeen deterministic tests cover immutable reuse after SSD eviction, corrupti
 
 ## Cutover requirements
 
+### C02 dependency health and service selection
+
+Status: active, implemented/component-tested; live Docker and native qualification pending. The original three-service Compose file, devcontainer configuration and DNS/health/runServices probe are unchanged. Both Alpine and Python workload pins are admitted before execution; the reference uses the retained published Docker Compose and official CLI, and the native lane uses the separately admitted stock/enhanced Compose candidate. Product binaries are unchanged from C01 and remain reusable.
+
+The adapter records all three service generations and the exact default-network membership before checking database health. Sibling services are bound to the unique project, role, working directory, image and creation identity, while the app additionally retains the original devcontainer label and workspace checks. Cleanup revalidates the entire observed project before each exact-ID deletion, removes app/helper/database before the network, and resumes partial cleanup without recreating resources. Unknown creation, missing command completion, foreign or replaced identities, extra members and reappearance after closure preserve quarantine. The dependency-image pull participates in process shutdown and diagnostic recovery; no broad Compose shutdown is used.
+
+Final native Bazel component invocation `a117c4cb-7efd-440f-b71d-b506582e40a8` passes the affected harness suite. Fifteen focused real-Unix-socket component tests cover the C02 boundary; standard-library trace records 149/159 executable adapter lines (93.71%). Full independent diff review is clean. These are development component results, not live DNS/health proof, aggregate SonarQube coverage, quiet benchmarks or release qualification. Run `make bazel-engine-case CAMPAIGN=<unique-id> LANE=docker CASE_FIXTURE=C02-compose-dependencies` for the reference; native lanes additionally require the existing `CANDIDATE_INVOCATION` and `COMPOSE_CANDIDATE_INVOCATION` inputs.
+
 ### C01 Compose service
 
 Status: stock and Docker live proofs pass; handed off incomplete for the missing enhanced guest prerequisite. No full three-lane or release qualification is claimed.

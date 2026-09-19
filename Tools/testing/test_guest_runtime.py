@@ -109,6 +109,16 @@ class GuestRuntimeTests(unittest.TestCase):
             self.assertIsNone(self.case.builder)
             fixture.return_value.cleanup.assert_called_once()
 
+    def test_c02_uses_dependency_adapter_and_owned_cleanup(self):
+        self.case.fixture = 'C02-compose-dependencies'
+        with patch('devcontainer_candidate.DevcontainerDependenciesCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+            self.assertIsNone(self.case.builder)
+            fixture.return_value.cleanup.assert_called_once()
+
     def test_d02_requires_owned_builder_and_removes_guest_before_builder(self):
         self.case.fixture = 'D02-dockerfile-config'
         with self.assertRaisesRegex(ValueError, 'private builder'):
@@ -256,6 +266,17 @@ class GuestRuntimeTests(unittest.TestCase):
         images["images"] = [image for image in images["images"] if image["name"] != "ubuntu-workload"]
         with self.assertRaisesRegex(ValueError, "missing or ambiguous"):
             admit_guest(kernel, images, "apple-stock", self.root, fixture="D05-features")
+
+    def test_c02_admits_distinct_dependency_image_and_refuses_missing_pin(self):
+        kernel, images = self.locks()
+        with patch("guest_runtime.require_retained", return_value={"kernel": "verified"}), \
+                patch("guest_runtime.require_image", side_effect=lambda image, _: {"image": image}):
+            result = admit_guest(kernel, images, "apple-stock", self.root, fixture="C02-compose-dependencies")
+            self.assertEqual(result["workload"]["image"]["name"], "alpine-workload")
+            self.assertEqual(result["dependencyWorkload"]["image"]["name"], "python-workload")
+            images["images"] = [item for item in images["images"] if item["name"] != "python-workload"]
+            with self.assertRaisesRegex(ValueError, "dependency image"):
+                admit_guest(kernel, images, "apple-stock", self.root, fixture="C02-compose-dependencies")
 
     def test_malformed_locks_unknown_provider_and_wrong_init_reference_fail(self):
         kernel, images = self.locks()

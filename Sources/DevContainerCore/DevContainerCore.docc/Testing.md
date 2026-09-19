@@ -1,5 +1,7 @@
 # Testing
 
+C02 dependency health/DNS/runServices is the active unreleased harness contract. The unchanged three-service fixture now has separate image admission, generation-bound service/network ownership, bounded commands and exact partial-cleanup recovery. Fifteen focused socket tests and the affected Bazel harness suite pass; new-adapter focused line coverage is 93.71%. Live Docker/native qualification remains pending. No existing product binary or reference release was rebuilt for this harness change; exact evidence is in the repository's `docs/bazel-test-harness.md`.
+
 Current C01 Compose-service proof passes all three original observations and exact-resource cleanup on both the pinned Docker reference and the Docker-free stock Apple candidate. Stock invocation `178bf269-d0d4-48e1-ac73-8ca375c2707d` uses devcontainer `aa56f00` with Compose `1fe36f56`; setup/operation/cleanup take 7.059474833/4.164177458/1.628399333 seconds. Zero owned resources remain and recovery is clear. Enhanced qualification remains blocked on its missing pinned guest image. These separate functional runs are not quiet paired benchmarks or a stable release. The repository's `docs/bazel-test-harness.md` contains exact package, source and sealed evidence identities.
 
 ## Historical development checkpoints
