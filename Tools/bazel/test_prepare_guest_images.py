@@ -5,13 +5,14 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from prepare_guest_images import download, main, prepare, require_image, validate_image, verify_archive
+from prepare_guest_images import download, main, prepare, require_image, source_file, validate_image, verify_archive
 from release_inputs import canonical
 
 
@@ -65,6 +66,117 @@ class GuestImageTests(unittest.TestCase):
         self.assertTrue(Path(first["path"]).is_relative_to(self.retained))
         self.assertFalse(list(self.root.glob("guest-image-*")))
         self.assertFalse(list(self.retained.glob("*.pending.json")))
+
+    def indexed_aliases(self):
+        leaf = json.loads(self.files["index.json"])["manifests"][0]
+        nested = canonical({"schemaVersion": 2, "manifests": [leaf]}).encode()
+        root = blob(nested, "application/vnd.oci.image.index.v1+json")
+        root["annotations"] = {"org.opencontainers.image.ref.name": self.image["reference"]}
+        alias = dict(root, annotations={"org.opencontainers.image.ref.name": "fixture:local"})
+        self.files["blobs/sha256/" + root["digest"].split(":")[1]] = nested
+        self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [alias, root]}).encode()
+        self.image["manifest"] = root["digest"]
+
+    def test_exact_published_archive_with_two_aliases_is_imported_without_repacking(self):
+        self.indexed_aliases()
+        source = self.archive(self.root)
+        source.chmod(0o444)
+        original = source.read_bytes()
+        self.image["archiveSHA256"] = hashlib.sha256(original).hexdigest()
+        with patch("prepare_guest_images.download", side_effect=AssertionError("must not download")):
+            result = prepare(self.image, self.root, self.retained, source_archive=source,
+                             fetch=lambda *_: self.fail("import must not fetch"))
+        self.assertEqual(Path(result["path"]).read_bytes(), original)
+        self.assertEqual(source.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(source.stat().st_mode), 0o444)
+        self.assertEqual(require_image(self.image, self.retained), result)
+        self.assertEqual(self.prepare(offline=True), result)
+        self.assertFalse(list(self.root.glob("guest-image-*")))
+
+    def test_source_import_rejects_missing_pin_mismatch_symlink_and_writable_file(self):
+        source = self.archive(self.root)
+        source.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "published archive pin"):
+            prepare(self.image, self.root, self.retained, source_archive=source)
+        self.image["archiveSHA256"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "published pin"):
+            prepare(self.image, self.root, self.retained, source_archive=source)
+        self.image["archiveSHA256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        alias = self.root / "alias.tar"
+        alias.symlink_to(source)
+        with self.assertRaisesRegex(ValueError, "source archive"):
+            prepare(self.image, self.root, self.retained, source_archive=alias)
+        source.chmod(0o666)
+        with self.assertRaisesRegex(ValueError, "source archive"):
+            prepare(self.image, self.root, self.retained, source_archive=source)
+        self.assertFalse(list(self.retained.iterdir()))
+
+    def test_source_archive_permissions_allow_public_reads_not_execution_or_other_writers(self):
+        source = self.archive(self.root)
+        for mode in (0o400, 0o444, 0o600, 0o644):
+            source.chmod(mode)
+            source_file(source)
+            self.assertEqual(stat.S_IMODE(source.stat().st_mode), mode)
+        for mode in (0o000, 0o004, 0o664, 0o646, 0o700, 0o610, 0o601):
+            source.chmod(mode)
+            with self.subTest(mode=oct(mode)), self.assertRaisesRegex(ValueError, "source archive"):
+                source_file(source)
+        source.chmod(0o600)
+        # Sandboxed filesystems may clear special bits instead of storing them.
+        for special in (stat.S_ISUID, stat.S_ISGID, stat.S_ISVTX):
+            info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600 | special, st_nlink=1, st_uid=os.getuid())
+            with patch("prepare_guest_images.Path.lstat", return_value=info), \
+                    self.assertRaisesRegex(ValueError, "source archive"):
+                source_file(source)
+        with patch("prepare_guest_images.os.getuid", return_value=os.getuid() + 1), \
+                self.assertRaisesRegex(ValueError, "source archive"):
+            source_file(source)
+        alias = self.root / "hardlink.tar"
+        os.link(source, alias)
+        with self.assertRaisesRegex(ValueError, "source archive"):
+            source_file(source)
+        with self.assertRaisesRegex(ValueError, "source archive"):
+            source_file(self.root)
+
+    def test_aliases_cannot_introduce_a_second_root_or_unpinned_nested_config(self):
+        leaf = json.loads(self.files["index.json"])["manifests"][0]
+        self.indexed_aliases()
+        index = json.loads(self.files["index.json"])
+        index["manifests"].append(dict(leaf, annotations={"org.opencontainers.image.ref.name": "foreign:tag"}))
+        self.files["index.json"] = canonical(index).encode()
+        with self.assertRaisesRegex(ValueError, "differs from the pin"):
+            verify_archive(self.archive(self.root), self.image)
+        index["manifests"].pop()
+        self.files["index.json"] = canonical(index).encode()
+        self.image["config"] = "sha256:" + "a" * 64
+        with self.assertRaisesRegex(ValueError, "config differs"):
+            verify_archive(self.archive(self.root), self.image)
+
+    def test_index_with_multiple_images_is_not_an_implicit_platform_selection(self):
+        leaf = json.loads(self.files["index.json"])["manifests"][0]
+        nested = canonical({"schemaVersion": 2, "manifests": [leaf, leaf]}).encode()
+        root = blob(nested, "application/vnd.oci.image.index.v1+json")
+        root["annotations"] = {"org.opencontainers.image.ref.name": self.image["reference"]}
+        self.files["blobs/sha256/" + root["digest"].split(":")[1]] = nested
+        self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [root]}).encode()
+        self.image["manifest"] = root["digest"]
+        with self.assertRaisesRegex(ValueError, "unambiguous"):
+            verify_archive(self.archive(self.root), self.image)
+
+    def test_published_archive_pin_does_not_fall_back_to_registry_repacking(self):
+        self.image["archiveSHA256"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "source-archive"):
+            self.prepare()
+        self.assertEqual(self.fetches, 0)
+
+    def test_source_arguments_reject_unknown_duplicate_and_relative_paths(self):
+        lock = self.root / "lock.json"
+        lock.write_text(canonical({"schemaVersion": 1, "images": [self.image]}))
+        for args in (["bad=/path"], ["fixture=/path", "fixture=/other"], ["fixture=relative"], ["fixture"]):
+            options = [item for arg in args for item in ("--source-archive", arg)]
+            with patch("sys.argv", ["prepare", str(lock), *options]), patch("prepare_guest_images.os.umask"), \
+                    self.assertRaises(ValueError):
+                main()
 
     def test_no_offline_download_or_repair(self):
         with self.assertRaisesRegex(ValueError, "offline"):
@@ -226,7 +338,8 @@ class GuestImageTests(unittest.TestCase):
 
     def test_lock_validation_rejects_mutable_and_unsafe_identities(self):
         invalid = [None, {}, dict(self.image, config="latest"), dict(self.image, name="../x"),
-                   dict(self.image, repository="--option"), dict(self.image, reference="other.test/image:tag")]
+                   dict(self.image, repository="--option"), dict(self.image, reference="other.test/image:tag"),
+                   dict(self.image, archiveSHA256=None), dict(self.image, archiveSHA256="a" * 63)]
         for item in invalid:
             with self.subTest(item=item), self.assertRaises(ValueError):
                 validate_image(item)

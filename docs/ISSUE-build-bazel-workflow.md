@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The local enhanced initialization-image prerequisite is resolved by exact archive import and verified offline reuse. [Preparation evidence](bazel-test-harness.md#pinned-guest-image-preparation) supersedes earlier missing-local-image statements below; it does not resolve fresh-machine distribution or prove any enhanced live fixture. C02 foreground integration and the complete release gates remain outstanding.
+
 The prepared foreground path now has runtime-owned descriptors and a bounded HTTP adapter. [Current component evidence](bazel-test-harness.md#foreground-init-attachment-development) covers effective stream selection, stdin EOF policy, detach keys, quiet-client cancellation, stock-compatible post-start resize and identity-preserving cleanup barriers. Native source-aware attachment history, prepared Compose foreground integration and the live matrix still need completion; malformed runtime coverage counters remain a release-quality blocker.
 
 The output-cancellation follow-up removes duplicate direct-API reader ownership, joins cleanup even when its waiter is cancelled, and preserves the real terminal process exit status. Both profile-focused regressions pass; [exact evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) records fail-before proof and the remaining foreground/coverage gates.

@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 
-from oci_image_layout import validate_archive
+from oci_image_layout import INDEX_MEDIA_TYPES, MANIFEST_MEDIA_TYPES, validate_archive
 from prepare_releases import durable_file, retain_receipt, sync_directory
 from release_inputs import canonical, sha256
 
@@ -22,7 +22,8 @@ LIMIT = 256 * 1024**2
 
 
 def validate_image(image: dict) -> None:
-    if not isinstance(image, dict) or set(image) != {"name", "repository", "manifest", "config", "reference"}:
+    required = {"name", "repository", "manifest", "config", "reference"}
+    if not isinstance(image, dict) or set(image) not in (required, required | {"archiveSHA256"}):
         raise ValueError("Invalid guest image specification")
     patterns = {"name": r"[a-z][a-z0-9-]*", "repository": r"[a-z0-9.-]+/[a-z0-9/_.-]+",
                 "reference": r"[a-z0-9.-]+/[a-z0-9/_.-]+:[a-zA-Z0-9_.-]+",
@@ -31,6 +32,9 @@ def validate_image(image: dict) -> None:
         raise ValueError("Guest image requires explicit immutable digests and a safe reference")
     if image["reference"].rsplit(":", 1)[0] != image["repository"]:
         raise ValueError("Guest image reference belongs to another repository")
+    if "archiveSHA256" in image and (not isinstance(image["archiveSHA256"], str) or
+                                     re.fullmatch(r"[0-9a-f]{64}", image["archiveSHA256"]) is None):
+        raise ValueError("Retained source archive requires an exact SHA-256 pin")
 
 
 def private_file(path: Path) -> None:
@@ -40,11 +44,24 @@ def private_file(path: Path) -> None:
         raise ValueError("Guest image storage must be private, canonical and singly owned")
 
 
+def source_file(path: Path) -> None:
+    """Public release data may be read-only; never relax retained-store modes."""
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if (path.resolve() != path or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+            info.st_uid != os.getuid() or not mode & 0o400 or mode & 0o7133):
+        raise ValueError("Guest image source archive must be canonical, singly owned, readable and non-executable; "
+                         "group or world writes are forbidden")
+
+
 def verify_archive(path: Path, image: dict) -> dict:
     """Reuse Compose's closure validator, then bind the exact manifest/config."""
     validate_image(image)
     if path.stat().st_size > LIMIT:
         raise ValueError("Guest image archive exceeds bound")
+    archive_digest = sha256(path)
+    if "archiveSHA256" in image and archive_digest != image["archiveSHA256"]:
+        raise ValueError("Guest image archive differs from the published pin")
     # Bound the reused general-purpose validator before it reads JSON/blobs.
     with tarfile.open(path, "r:") as archive:
         count, size = 0, 0
@@ -61,15 +78,26 @@ def verify_archive(path: Path, image: dict) -> dict:
                 raise ValueError("Guest image metadata exceeds bound")
             return json.load(archive.extractfile(member))
         roots = document("index.json")["manifests"]
-        if len(roots) != 1 or roots[0]["digest"] != image["manifest"]:
+        # A published archive may name the same immutable image more than once.
+        # Do not admit another image merely because the requested alias exists.
+        if not roots or any(root["digest"] != image["manifest"] for root in roots):
             raise ValueError("Guest image manifest differs from the pin")
-        manifest = document("blobs/sha256/" + image["manifest"].split(":")[1])
+        selected = roots[0]
+        for _ in range(8):
+            manifest = document("blobs/sha256/" + selected["digest"].split(":")[1])
+            if selected["mediaType"] in MANIFEST_MEDIA_TYPES:
+                break
+            if selected["mediaType"] not in INDEX_MEDIA_TYPES or len(manifest.get("manifests", [])) != 1:
+                raise ValueError("Guest image index must identify one unambiguous image")
+            selected = manifest["manifests"][0]
+        else:
+            raise ValueError("Guest image index nesting exceeds bound")
         if manifest.get("config", {}).get("digest") != image["config"]:
             raise ValueError("Guest image config differs from the pin")
         config = document("blobs/sha256/" + image["config"].split(":")[1])
         if (config.get("os"), config.get("architecture")) != ("linux", "arm64"):
             raise ValueError("Guest image must be linux/arm64")
-    return {"image": image, "sha256": sha256(path), "size": path.stat().st_size}
+    return {"image": image, "sha256": archive_digest, "size": path.stat().st_size}
 
 
 def download(image: dict, directory: Path) -> Path:
@@ -94,9 +122,12 @@ def download(image: dict, directory: Path) -> Path:
     return target
 
 
-def prepare(image: dict, scratch: Path, retained: Path, *, offline=False, fetch=download) -> dict:
+def prepare(image: dict, scratch: Path, retained: Path, *, offline=False, fetch=download,
+            source_archive: Path | None = None) -> dict:
     """Caller holds the shared reference-store lease; a pending copy is not usable."""
     validate_image(image)
+    if source_archive is not None and "archiveSHA256" not in image:
+        raise ValueError("Source archive import requires a published archive pin")
     for root in (scratch, retained):
         if root.resolve() != root or not root.is_dir() or root.stat().st_uid != os.getuid():
             raise ValueError("Guest image roots must be canonical owned directories")
@@ -119,11 +150,22 @@ def prepare(image: dict, scratch: Path, retained: Path, *, offline=False, fetch=
         return dict(result, path=str(target))
     if offline:
         raise ValueError("Guest image is not sealed; offline admission cannot download or repair it")
+    if source_archive is None and "archiveSHA256" in image:
+        raise ValueError("Exact published guest archive is required; supply --source-archive NAME=ABSOLUTE_PATH")
     if target.exists() or target.is_symlink():
         private_file(target)
         private_file(pending)  # Never adopt an unregistered file.
     with tempfile.TemporaryDirectory(dir=scratch, prefix="guest-image-") as temporary:
-        source = fetch(image, Path(temporary))
+        if source_archive is None:
+            source = fetch(image, Path(temporary))
+        else:
+            source_file(source_archive)
+            if source_archive.stat().st_size > LIMIT:
+                raise ValueError("Guest image source archive exceeds bound")
+            # Snapshot on SSD before validating; never rename, repack or modify
+            # the published archive retained by the release authority.
+            source = Path(temporary) / "source.tar"
+            durable_file(source, source_archive)
         result = verify_archive(source, image)
         if pending.exists() or pending.is_symlink():
             private_file(pending)
@@ -162,6 +204,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lock", type=Path)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--source-archive", action="append", default=[], metavar="NAME=ABSOLUTE_PATH",
+                        help="Import exact published archive bytes for a lock entry with archiveSHA256")
     args = parser.parse_args()
     os.umask(0o077)
     lock = json.loads(args.lock.read_text())
@@ -172,12 +216,23 @@ def main():
         validate_image(image)
     if len({image["name"] for image in images}) != len(images):
         raise ValueError("Duplicate guest image name")
+    sources = {}
+    for argument in args.source_archive:
+        name, separator, path = argument.partition("=")
+        if not separator or name not in {image["name"] for image in images} or name in sources:
+            raise ValueError("Source archive requires one known, unique image name")
+        source = Path(path)
+        if not source.is_absolute():
+            raise ValueError("Source archive requires an absolute path")
+        sources[name] = source
     scratch = Path("/Volumes/SSD/cf/bazel/tmp")
     retained = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow/guest-images"
     retained.mkdir(mode=0o700, exist_ok=True)
     if retained.stat().st_dev != Path.home().stat().st_dev or retained.stat().st_dev == scratch.stat().st_dev:
         raise ValueError("Guest assets require internal storage and separate SSD scratch")
-    result = [prepare(image, scratch, retained, offline=args.offline) for image in images]
+    result = [prepare(image, scratch, retained, offline=args.offline,
+                      **({"source_archive": sources[image["name"]]} if image["name"] in sources else {}))
+              for image in images]
     print(json.dumps({"scope": "guest-images-only", "runtimeReady": False, "images": result}, sort_keys=True))
 
 
