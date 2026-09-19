@@ -107,12 +107,15 @@ actor ContainerHealthRegistry {
         if current.reservation != nil {
             return .cached(current.value)
         }
+        // Docker chooses the next interval when the previous probe completes.
+        // A delayed inspect must not postpone an already-due startup probe.
+        let cadenceTime = current.lastCheckedAt ?? now
         let inStartup = current.status == "starting" && (startedAt.map {
-            now.timeIntervalSince($0) * 1_000_000_000 < Double(healthcheck.startPeriodNanoseconds)
+            cadenceTime.timeIntervalSince($0) * 1_000_000_000 < Double(healthcheck.startPeriodNanoseconds)
         } ?? false)
-        // Docker uses its default five-second startup interval while warming
-        // up. Explicit start_interval is not accepted by native policy v1.
-        let interval = inStartup ? 5 : (healthcheck.intervalNanoseconds > 0
+        let configuredStartInterval = healthcheck.startIntervalNanoseconds ?? 0
+        let startupInterval = configuredStartInterval > 0 ? Double(configuredStartInterval) / 1_000_000_000 : 5
+        let interval = inStartup ? startupInterval : (healthcheck.intervalNanoseconds > 0
             ? Double(healthcheck.intervalNanoseconds) / 1_000_000_000 : 30)
         if let lastCheckedAt = current.lastCheckedAt,
            now.timeIntervalSince(lastCheckedAt) < interval

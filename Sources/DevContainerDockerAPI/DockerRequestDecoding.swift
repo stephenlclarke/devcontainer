@@ -35,6 +35,7 @@ indirect enum DockerRequestSchema: Sendable {
             "Interval": .value,
             "Retries": .value,
             "StartPeriod": .value,
+            "StartInterval": .value,
             "Test": .value,
             "Timeout": .value
         ]),

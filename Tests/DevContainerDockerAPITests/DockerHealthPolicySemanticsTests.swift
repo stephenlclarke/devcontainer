@@ -8,6 +8,35 @@ import Testing
 struct DockerHealthPolicySemanticsTests {
     private let start = Date(timeIntervalSince1970: 1000)
 
+    @Test(arguments: [Int64(0), 250_000_000])
+    func `explicit startup cadence ends after first success`(interval: Int64) async throws {
+        let registry = ContainerHealthRegistry()
+        let policy = ContainerHealthcheck(
+            test: ["CMD", "true"], intervalNanoseconds: 20_000_000_000,
+            startPeriodNanoseconds: 60_000_000_000, startIntervalNanoseconds: interval
+        )
+        let seconds = interval == 0 ? 5 : Double(interval) / 1_000_000_000
+        _ = try await record(registry, policy: policy, exit: 1, elapsed: 0)
+        #expect(await cached(registry, policy: policy, elapsed: seconds / 2, startedAt: start))
+        _ = try await record(registry, policy: policy, exit: 0, elapsed: seconds + 0.001)
+        #expect(await cached(registry, policy: policy, elapsed: seconds + 10, startedAt: start))
+        #expect(await !cached(registry, policy: policy, elapsed: seconds + 20.01, startedAt: start))
+    }
+
+    @Test func `startup cadence ends when grace expires without success`() async throws {
+        let registry = ContainerHealthRegistry()
+        let policy = ContainerHealthcheck(
+            test: ["CMD", "false"], intervalNanoseconds: 20_000_000_000,
+            startPeriodNanoseconds: 1_000_000_000, startIntervalNanoseconds: 250_000_000
+        )
+        _ = try await record(registry, policy: policy, exit: 1, elapsed: 0)
+        _ = try await record(registry, policy: policy, exit: 1, elapsed: 0.3)
+        // The probe scheduled during grace is still due after grace expires.
+        _ = try await record(registry, policy: policy, exit: 1, elapsed: 1.1)
+        #expect(await cached(registry, policy: policy, elapsed: 20, startedAt: start))
+        #expect(await !cached(registry, policy: policy, elapsed: 21.11, startedAt: start))
+    }
+
     private func record(
         _ registry: ContainerHealthRegistry,
         policy: ContainerHealthcheck,

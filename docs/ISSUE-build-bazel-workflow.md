@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Prepared Compose gateway requests carry `Healthcheck.StartInterval`, which the previous direct API request schema rejected. The candidate now validates, persists, inspects and applies the field in its existing on-demand evaluator, with completion-anchored cadence. Legacy label policy v1 and the unimplemented background monitor remain separate limits; [component evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) does not close live C02.
+
 Gateway environment-removal collapse is corrected in the native candidate with component-tested creation, metadata and inspection. This closes another semantic loss needed by Compose gateway routing, not the still-open live C02 contract.
 
 Native execution settings now have a component-tested projection for memory/shm bytes, read-only rootfs, sysctls and stop signal. This removes configuration loss at native creation, but not the open Compose routing boundary. VM allocation is not cgroup accounting parity; [the evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) deliberately leaves live enforcement unqualified.

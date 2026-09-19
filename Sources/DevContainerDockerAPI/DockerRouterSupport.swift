@@ -201,6 +201,12 @@ extension DockerRouter {
     func validateCreateContainerRequest(
         _ request: DockerCreateContainerRequest
     ) throws {
+        if let interval = request.healthcheck?.startInterval,
+           interval != 0 && interval < 1_000_000 {
+            throw DevContainerError(
+                .invalidRequest, message: "Healthcheck.StartInterval must be zero or at least one millisecond"
+            )
+        }
         if request.domainname?.isEmpty == false {
             try unsupportedCreateField("Domainname")
         }
@@ -686,7 +692,8 @@ extension DockerRouter {
                     intervalNanoseconds: $0.interval ?? 30_000_000_000,
                     timeoutNanoseconds: $0.timeout ?? 30_000_000_000,
                     retries: $0.retries ?? 3,
-                    startPeriodNanoseconds: $0.startPeriod ?? 0
+                    startPeriodNanoseconds: $0.startPeriod ?? 0,
+                    startIntervalNanoseconds: $0.startInterval
                 )
             },
             dns: dns,
@@ -932,7 +939,8 @@ extension DockerRouter {
                 interval: $0.intervalNanoseconds,
                 timeout: $0.timeoutNanoseconds,
                 retries: $0.retries,
-                startPeriod: $0.startPeriodNanoseconds
+                startPeriod: $0.startPeriodNanoseconds,
+                startInterval: $0.startIntervalNanoseconds
             )
         }
     }

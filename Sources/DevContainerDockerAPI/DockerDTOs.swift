@@ -189,11 +189,13 @@ struct DockerHealthcheck: Codable, Equatable, Sendable {
     var timeout: Int64?
     var retries: Int?
     var startPeriod: Int64?
+    var startInterval: Int64?
 
     enum CodingKeys: String, CodingKey {
         case interval = "Interval"
         case retries = "Retries"
         case startPeriod = "StartPeriod"
+        case startInterval = "StartInterval"
         case test = "Test"
         case timeout = "Timeout"
     }

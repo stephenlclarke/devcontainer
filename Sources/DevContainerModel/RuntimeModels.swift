@@ -271,19 +271,23 @@ public struct ContainerHealthcheck: Codable, Equatable, Sendable {
     public var timeoutNanoseconds: Int64
     public var retries: Int
     public var startPeriodNanoseconds: Int64
+    /// Nil and zero retain Docker's default startup probe interval.
+    public var startIntervalNanoseconds: Int64?
 
     public init(
         test: [String],
         intervalNanoseconds: Int64 = 30_000_000_000,
         timeoutNanoseconds: Int64 = 30_000_000_000,
         retries: Int = 3,
-        startPeriodNanoseconds: Int64 = 0
+        startPeriodNanoseconds: Int64 = 0,
+        startIntervalNanoseconds: Int64? = nil
     ) {
         self.test = test
         self.intervalNanoseconds = intervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
         self.retries = retries
         self.startPeriodNanoseconds = startPeriodNanoseconds
+        self.startIntervalNanoseconds = startIntervalNanoseconds
     }
 }
 
