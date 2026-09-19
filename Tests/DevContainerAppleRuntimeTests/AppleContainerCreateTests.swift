@@ -24,113 +24,6 @@ struct AppleContainerCreateTests {
         "sha256:" + String(repeating: "a", count: 64)
     }
 
-    private actor Creator: AppleContainerCreateClient, AppleContainerInventoryClient, AppleContainerBootstrapClient,
-        ClientProcess
-    {
-        nonisolated let id = "fixture"
-        var prepared: [ContainerConfiguration] = []
-        var created: [ContainerConfiguration] = []
-        let failCreate: Bool
-        let failAfterCreate: Bool
-        let replacement: Bool
-        var starts = 0
-        var bootstraps = 0
-        var startedAt: Date?
-        var running = false
-
-        init(
-            failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false
-        ) {
-            self.failCreate = failCreate
-            self.failAfterCreate = failAfterCreate
-            self.replacement = replacement
-        }
-
-        func prepare(
-            spec: ContainerSpec, image: ResolvedAppleImage, context: RuntimeRequestContext
-        ) throws -> ContainerConfiguration {
-            try context.checkActive()
-            let (description, platform) = try image.nativeIdentity()
-            let configuration = try AppleContainerCreateProjection.configuration(
-                spec: spec, identity: (description, platform), imageConfig: nil,
-                system: .init(), builtinNetwork: "default"
-            )
-            prepared.append(configuration)
-            return configuration
-        }
-
-        func create(
-            configuration: ContainerConfiguration, mountOptions _: [String], context: RuntimeRequestContext,
-            recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
-        ) async throws -> RuntimeContainerCreation {
-            try context.checkActive()
-            let creation = try await recordIntent(configuration)
-            guard !failCreate else {
-                throw ContainerizationError(.notFound, message: "Captured image content missing")
-            }
-            created.append(configuration)
-            if failAfterCreate {
-                throw DevContainerError(
-                    .providerProtocolMismatch,
-                    message: "Injected post-create verification failure"
-                )
-            }
-            return creation
-        }
-
-        func list() -> [ContainerResource.ContainerSnapshot] {
-            created.map {
-                .init(
-                    configuration: $0,
-                    status: running ? .running : .stopped,
-                    networks: [],
-                    startedDate: startedAt
-                )
-            }
-        }
-
-        func get(id _: String) throws -> ContainerResource.ContainerSnapshot {
-            guard var configuration = created.last else {
-                throw ContainerizationError(.notFound, message: "No fake native container")
-            }
-            if replacement {
-                configuration.creationDate = configuration.creationDate.addingTimeInterval(1)
-            }
-            return .init(
-                configuration: configuration, status: running ? .running : .stopped,
-                networks: [], startedDate: startedAt
-            )
-        }
-
-        func bootstrap(id _: String) -> any ClientProcess {
-            bootstraps += 1
-            return self
-        }
-
-        func start() throws {
-            starts += 1
-            startedAt = Date()
-            running = true
-        }
-
-        func recordPriorStart() {
-            startedAt = Date(timeIntervalSince1970: 100)
-        }
-
-        func wait() throws -> Int32 {
-            // No exit event is published by this lifecycle-ordering fixture.
-            throw CancellationError()
-        }
-
-        func resize(_: Terminal.Size) {
-            // Headless lifecycle tests never request terminal resizing.
-        }
-
-        func kill(_: Int32) {
-            // These tests assert CLI stop is not issued for a created VM.
-        }
-    }
-
     private struct Inventory: AppleContainerInventoryClient {
         let snapshot: ContainerResource.ContainerSnapshot?
         var unavailable = false
@@ -773,6 +666,68 @@ extension AppleContainerCreateTests {
         #expect(await creator.startedAt != nil)
         #expect(try !fixture.log().split(separator: "\n").contains { $0.hasPrefix("stop ") })
         await runtime.shutdown()
+    }
+
+    @Test func `managed hosts allocation is installed before the original process starts`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = Creator()
+        let attachment = try ContainerResource.Attachment(
+            network: "shared", hostname: "fixture", ipv4Address: .init("192.0.2.8/24"),
+            ipv4Gateway: .init("192.0.2.1"), ipv6Address: nil, macAddress: nil
+        )
+        let runtime = try fixture.runtime(
+            useDirectProcessAPI: true, creator: creator, bootstrap: creator,
+            networks: FakeNetworkClient(snapshot: .init(
+                id: "shared", spec: NetworkSpec(name: "shared"), createdAt: Date()
+            )), allocations: FakeManagedNetworkAllocations(attachment: attachment), files: FakeContainerFileClient()
+        )
+        var spec = nativeComposeSpec()
+        spec.networks = [.init(name: "shared")]
+        _ = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
+        try await addStartupPeers(creator)
+        try await runtime.startContainer(id: "fixture", context: RuntimeRequestContext())
+        let beforeBootstrap = try #require(await creator.hostsAtBootstrap)
+        let atProcessStart = try #require(await creator.hostsAtStart)
+        #expect(!beforeBootstrap.contains("192.0.2.8"))
+        #expect(atProcessStart.contains("192.0.2.8"))
+        for contents in [beforeBootstrap, atProcessStart] {
+            #expect(contents.split(separator: "\n").contains { line in
+                let fields = line.split(whereSeparator: \.isWhitespace)
+                return fields.first == "192.0.2.9" && fields.dropFirst().contains("database")
+                    && fields.dropFirst().contains("test-project-database-1")
+            })
+            #expect(!contents.contains("198.51.100.9"))
+            #expect(!contents.contains("isolated"))
+        }
+        #expect(atProcessStart.contains("app"))
+        #expect(atProcessStart.contains("localhost"))
+        #expect(await creator.bootstraps == 1)
+        #expect(await creator.starts == 1)
+        await runtime.shutdown()
+    }
+
+    private func addStartupPeers(_ creator: Creator) async throws {
+        var peer = try #require(await creator.created.first)
+        peer.id = "test-project-database-1"
+        peer.labels["com.apple.container.compose.service"] = "database"
+        for key in peer.labels.keys where key.hasPrefix("com.docker.compose.") {
+            peer.labels.removeValue(forKey: key)
+        }
+        peer.labels.removeValue(forKey: AppleContainerRuntime.managedNetworkHostsLabel)
+        peer.mounts = []
+        peer.networks = [.init(network: "shared", options: .init(hostname: peer.id, mtu: 1280))]
+        try await creator.addRunningPeer(configuration: peer, attachment: .init(
+            network: "shared", hostname: peer.id, ipv4Address: .init("192.0.2.9/24"),
+            ipv4Gateway: .init("192.0.2.1"), ipv6Address: nil, macAddress: nil
+        ))
+        peer.id = "test-project-isolated-1"
+        peer.labels["com.apple.container.compose.service"] = "isolated"
+        peer.networks = [.init(network: "private", options: .init(hostname: peer.id, mtu: 1280))]
+        try await creator.addRunningPeer(configuration: peer, attachment: .init(
+            network: "private", hostname: peer.id, ipv4Address: .init("198.51.100.9/24"),
+            ipv4Gateway: .init("198.51.100.1"), ipv6Address: nil, macAddress: nil
+        ))
     }
 
     @Test(arguments: ["missing", "wrong-network", "wrong-host", "allocated"])

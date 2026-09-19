@@ -838,6 +838,7 @@ struct FakeAppleCLI {
         bootstrap: (any AppleContainerBootstrapClient)? = nil,
         networks: any AppleNetworkClient = AppleNetworkClientAdapter(),
         allocations: any AppleNetworkAllocationClient = LiveAppleNetworkAllocationClient(),
+        files: any AppleContainerFileClient = LiveAppleContainerFileClient(client: ContainerClient()),
         inventory: (any AppleContainerInventoryClient)? = nil
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
@@ -854,7 +855,7 @@ struct FakeAppleCLI {
                 api: ContainerClient(),
                 inventory: inventory ?? (creator as? any AppleContainerInventoryClient)
                     ?? LiveAppleContainerInventoryClient(client: ContainerClient()),
-                files: LiveAppleContainerFileClient(client: ContainerClient()),
+                files: files,
                 networks: networks,
                 allocatedNetworks: allocations,
                 bootstrap: bootstrap,
