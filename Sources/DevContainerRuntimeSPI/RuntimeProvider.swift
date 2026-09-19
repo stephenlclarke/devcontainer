@@ -95,10 +95,22 @@ public struct RuntimeContainerCreation: Codable, Equatable, Sendable {
 /// transaction. Discard is an explicit reconciliation primitive, not permission
 /// to clear intent merely because name-based deletion or lookup succeeded.
 public protocol RuntimeCreationStore: RuntimeMetadataStore {
+    func hasPendingContainerCreations() async throws -> Bool
     func beginContainerCreation(_ creation: RuntimeContainerCreation) async throws
     func pendingContainerCreation(id: String) async throws -> RuntimeContainerCreation?
     func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) async throws
     func discardContainerCreation(id: String, operationID: UUID) async throws
+}
+
+public extension RuntimeCreationStore {
+    func hasPendingContainerCreations() async throws -> Bool {
+        throw DevContainerError(.unsupportedCapability, message: "Creation quiescence is unavailable")
+    }
+}
+
+/// Receiver-side check used only after the gateway has frozen new mutations.
+public protocol RuntimeRecoveryProbe: Sendable {
+    func requireRecoveryQuiescence(context: RuntimeRequestContext) async throws
 }
 
 public protocol ImageRuntime: Sendable {

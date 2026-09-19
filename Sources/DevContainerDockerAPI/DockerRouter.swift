@@ -29,6 +29,7 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
     public let runtime: any DevContainerRuntime
     private let execSessions: ExecSessionRegistry
     private let mutationReplays: DockerMutationReplayRegistry
+    let recoveryBarrier = DockerRecoveryBarrier()
     let healthChecks: ContainerHealthRegistry
     private let coordinator: ProjectCoordinator?
     private let provider: BackendProvider
@@ -54,6 +55,44 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
     }
 
     public func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        do {
+            let target = try ParsedTarget(request.target)
+            let path = stripAPIVersion(target.path)
+            if path == DockerRecoveryBarrier.route {
+                return try await recoveryResponse(request)
+            }
+            let token = try await recoveryBarrier.begin(request.method, path: path)
+            let response = await trackedResponse(to: request)
+            await recoveryBarrier.finish(token, method: request.method, path: path, response: response)
+            return response
+        } catch let error as DevContainerError {
+            return errorResponse(error)
+        } catch {
+            return errorResponse(.init(.invalidRequest, message: "Invalid recovery request"))
+        }
+    }
+
+    private func recoveryResponse(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {
+        guard let probe = runtime as? any RuntimeRecoveryProbe else {
+            throw DevContainerError(.unsupportedCapability, message: "Runtime cannot prove recovery quiescence")
+        }
+        if request.method == .get {
+            return try .json(["epoch": recoveryBarrier.epoch, "protocol": "1"])
+        }
+        guard request.method == .post else {
+            throw DevContainerError(.invalidRequest, message: "Recovery requires GET or POST")
+        }
+        let value = try JSONDecoder().decode([String: String].self, from: request.body)
+        guard Set(value.keys) == ["epoch", "owner"], let epoch = value["epoch"], let owner = value["owner"] else {
+            throw DevContainerError(.invalidRequest, message: "Recovery requires an epoch and owner")
+        }
+        try await recoveryBarrier.freeze(epoch: epoch, owner: owner)
+        try await probe.requireRecoveryQuiescence(context: requestContext(for: request))
+        try await recoveryBarrier.requireIdle()
+        return try .json(["epoch": epoch, "owner": owner, "protocol": "1", "state": "quiescent"])
+    }
+
+    private func trackedResponse(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
         if let key = idempotencyKey(for: request),
            isReplayableMutation(request)
         {
@@ -733,14 +772,19 @@ extension DockerRouter {
 
         if request.method == .post, path == "/containers/create" {
             let name = target.first("name") ?? ""
-            let decoded = try DockerJSON.decode(
-                DockerCreateContainerRequest.self,
-                from: request.body,
-                schema: .createContainer
-            )
-            try validateCreateContainerRequest(decoded)
-            try await validateRequestedImageReference(decoded, context: context)
-            var spec = try containerSpec(from: decoded, requestedName: name)
+            var spec: ContainerSpec
+            do {
+                let decoded = try DockerJSON.decode(
+                    DockerCreateContainerRequest.self, from: request.body, schema: .createContainer
+                )
+                try validateCreateContainerRequest(decoded)
+                try await validateRequestedImageReference(decoded, context: context)
+                spec = try containerSpec(from: decoded, requestedName: name)
+            } catch let error as DevContainerError {
+                var response = errorResponse(error)
+                response.headers[DockerRecoveryBarrier.preflightHeader] = "rejected"
+                return response
+            }
             spec.networks = try await resolveNetworkAttachments(spec.networks, context: context)
             try applyOwnershipLabels(to: &spec, context: context)
             if spec.labels[RuntimeLabels.dockerID] == nil {

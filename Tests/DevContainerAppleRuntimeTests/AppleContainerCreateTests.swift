@@ -46,6 +46,7 @@ struct AppleContainerCreateTests {
         let creator = Creator(failAfterCreate: true)
         let store = TestMetadataStore()
         let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        try await runtime.requireRecoveryQuiescence(context: .init())
         let spec = ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"])
         await #expect(throws: DevContainerError.self) {
             try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
@@ -56,6 +57,9 @@ struct AppleContainerCreateTests {
         let recorded = try JSONDecoder().decode(ContainerConfiguration.self, from: intent.nativeConfiguration)
         #expect(recorded.image.digest == created.image.digest)
         #expect(await store.containerMetadata(id: "fixture") == nil)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.requireRecoveryQuiescence(context: .init())
+        }
         let restartedBridge = try fixture.runtime(
             metadataStore: store, creator: Creator(),
             inventory: Inventory(snapshot: .init(configuration: created, status: .stopped, networks: []))
@@ -71,6 +75,15 @@ struct AppleContainerCreateTests {
         #expect(!log.contains("start fixture"))
         #expect(!log.contains("restart fixture"))
         #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    @Test func `legacy CLI cannot grant recovery quiescence`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime()
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.requireRecoveryQuiescence(context: .init())
+        }
     }
 
     @Test func `corrupt mount metadata does not poison a container creation retry`() async throws {

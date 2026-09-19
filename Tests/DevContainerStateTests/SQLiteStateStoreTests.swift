@@ -42,14 +42,21 @@ struct SQLiteStateStoreTests {
     @Test func `pending creation survives reopen and commits with metadata`() async throws {
         try await withStore { store in
             let intent = creation()
+            #expect(try await !store.hasPendingContainerCreations())
             try await store.beginContainerCreation(intent)
             let reopened = try await SQLiteStateStore(path: store.path)
+            #expect(try await reopened.hasPendingContainerCreations())
+            let recoveryStore: any RuntimeCreationStore = reopened
+            #expect(try await recoveryStore.hasPendingContainerCreations())
             #expect(try await reopened.pendingContainerCreation(id: "pending") == intent)
             #expect(try await reopened.containerMetadata(id: "pending") == nil)
             await #expect(throws: DevContainerError.self) { try await reopened.beginContainerCreation(intent) }
             try await reopened.finishContainerCreation(completed(intent), operationID: intent.operationID)
             #expect(try await store.pendingContainerCreation(id: "pending") == nil)
+            #expect(try await !store.hasPendingContainerCreations())
             #expect(try await store.containerMetadata(id: "pending") == completed(intent))
+            try await executeSQL(path: store.path, sql: "DROP TABLE runtime_container_creations")
+            await #expect(throws: DevContainerError.self) { try await recoveryStore.hasPendingContainerCreations() }
         }
     }
 

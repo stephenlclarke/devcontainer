@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The partial C02 cleanup gap now has a component-tested receiver/harness implementation: cleanup requires a frozen, unchanged engine epoch with no active/uncertain work or durable pending create, plus a failed CLI's verified stopped command groups and exact owned inventory. This addresses unsafe inference from client exit or empty inventory. Live fault qualification remains required; [current recovery evidence](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes the earlier implementation-not-started statements below without changing retained failed results.
+
 Latest C02 stock evidence now passes the original startup-DNS, running DNS, dependency health and selected-service assertions with verified cleanup: invocation `314e6af8-48cb-4f9a-b6bf-77715097361c`. [The evidence record](bazel-test-harness.md#c02-dependency-health-and-service-selection) supersedes earlier stock failures below. The issue remains open for enhanced and release proof, partial-create recovery, foreground I/O and the remaining workflow gates.
 
 The first live prepared-gateway C02 attempt started the two dependencies but rejected the app bind mount's source-creation policy (`HostConfig.Mounts.[0].BindOptions`). The candidate now preserves and implements this policy rather than dropping it. The failed run remains retained unchanged; its task-owned resources were identity-checked and removed, the engine stopped and displaced services restored. Automatic recovery of partial C02 creation still needs implementation; the manual recovery is not proof of that workflow gate.

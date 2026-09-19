@@ -93,7 +93,8 @@ actor ContainerHealthRegistry {
         id: String,
         startedAt: Date?,
         healthcheck: ContainerHealthcheck,
-        now: Date
+        now: Date,
+        allowProbe: Bool = true
     ) -> ContainerHealthDecision {
         var current = entries[id] ?? Entry(startedAt: startedAt, status: "starting", failures: 0, logs: [])
         if current.startedAt != startedAt {
@@ -104,7 +105,7 @@ actor ContainerHealthRegistry {
                 logs: []
             )
         }
-        if current.reservation != nil {
+        if !allowProbe || current.reservation != nil {
             return .cached(current.value)
         }
         // Docker chooses the next interval when the previous probe completes.

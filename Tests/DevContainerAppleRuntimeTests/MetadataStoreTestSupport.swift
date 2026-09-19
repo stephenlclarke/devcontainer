@@ -43,6 +43,8 @@ actor TestMetadataStore: RuntimeCreationStore {
         creations[id]
     }
 
+    func hasPendingContainerCreations() async -> Bool { !creations.isEmpty }
+
     func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
         guard !failCreationCompletion, let creation = creations[metadata.runtimeID.rawValue],
               creation.operationID == operationID, creation.imageID == metadata.imageID,

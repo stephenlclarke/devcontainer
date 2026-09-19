@@ -321,6 +321,7 @@ let package = Package(
                 "DevContainerCore",
                 "DevContainerDockerAPI",
                 "DevContainerModel",
+                "DevContainerRuntimeSPI",
                 "DevContainerState",
                 "DevContainerTestSupport"
             ]

@@ -174,7 +174,16 @@ class DockerVMTests(unittest.TestCase):
             expected = b"CLI failure" if name == "devcontainer-up" else b"CLI success"
             self.assertEqual(records[name + ".log"], expected)
             self.assertFalse(json.loads(records[name + "-log.json"])["truncated"])
+            self.assertEqual(json.loads(records[name + "-stopped.json"]), {"verifiedStopped": True})
         self.assertFalse(docker_vm.command_record("devcontainer-delete-intent.json", "-intent.json"))
+
+    def test_surviving_cli_group_does_not_receive_stopped_receipt(self):
+        self.vm.configure()
+        with patch.object(docker_vm.os, "killpg", return_value=None) as probe:
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                self.vm.command("devcontainer-up", ["/usr/bin/false"])
+        self.assertEqual(probe.call_args.args[1], 0)
+        self.assertNotIn("devcontainer-up-stopped.json", self.journal.records())
 
     def test_reference_stdout_never_contains_stderr_warning_and_both_are_retained(self):
         self.vm.configure()

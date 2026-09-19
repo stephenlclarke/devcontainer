@@ -569,6 +569,16 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
         }
     }
 
+    public func hasPendingContainerCreations() async throws -> Bool {
+        try withStatement("SELECT 1 FROM runtime_container_creations LIMIT 1") { statement in
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: return true
+            case SQLITE_DONE: return false
+            default: throw Self.sqliteError(database, prefix: "cannot check pending container creation")
+            }
+        }
+    }
+
     public func pendingContainerCreation(id: String) throws -> RuntimeContainerCreation? {
         try withStatement("SELECT intent_json FROM runtime_container_creations WHERE runtime_id = ?") { statement in
             try bind(id, at: 1, to: statement)

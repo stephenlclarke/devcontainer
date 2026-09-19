@@ -319,6 +319,8 @@ class CandidateCommandTests(unittest.TestCase):
     def test_nonzero_result_keeps_diagnostics_and_known_process_completion(self):
         with self.assertRaisesRegex(RuntimeError, "failed"):
             self.runner.command("devcontainer-up", ["/bin/sh", "-c", "printf failure >&2; exit 7"], timeout=2)
+        self.assertFalse(self.runner.attachments)
+        self.assertEqual(json.loads(self.journal.records()["devcontainer-up-stopped.json"]), {"verifiedStopped": True})
         self.runner.close()
         records = self.journal.records()
         self.assertEqual(json.loads(records["devcontainer-up-exit.json"])["code"], 7)

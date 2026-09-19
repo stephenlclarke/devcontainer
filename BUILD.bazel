@@ -349,7 +349,7 @@ swift_test(
     name = "DevContainerDockerAPITests",
     srcs = glob(["Tests/DevContainerDockerAPITests/*.swift"]),
     module_name = "DevContainerDockerAPITests",
-    deps = [":DevContainerCore", ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerState", ":DevContainerTestSupport"],
+    deps = [":DevContainerCore", ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState", ":DevContainerTestSupport"],
 )
 
 swift_test(

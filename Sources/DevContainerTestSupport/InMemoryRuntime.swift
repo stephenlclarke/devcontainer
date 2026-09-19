@@ -18,7 +18,11 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-public actor InMemoryRuntime: DevContainerRuntime {
+public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
+    public func requireRecoveryQuiescence(context: RuntimeRequestContext) throws {
+        // This fake's mutations are synchronous and have no native RPCs.
+        try context.checkActive()
+    }
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?

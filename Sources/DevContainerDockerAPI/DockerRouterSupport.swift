@@ -1050,7 +1050,8 @@ extension DockerRouter {
             id: identifier,
             startedAt: snapshot.startedAt,
             healthcheck: healthcheck,
-            now: started
+            now: started,
+            allowProbe: await recoveryBarrier.healthProbesAllowed
         )
         let reservation: UUID
         switch decision {
@@ -1066,6 +1067,7 @@ extension DockerRouter {
             timeoutNanoseconds: healthcheck.timeoutNanoseconds,
             context: context
         )
+        if exitCode < 0 { await recoveryBarrier.recordUncertainWork() }
         return await healthChecks.record(
             id: identifier,
             startedAt: snapshot.startedAt,

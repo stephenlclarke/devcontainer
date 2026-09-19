@@ -28,7 +28,15 @@ class Handler(helpers.Handler):
         path = split.path.removeprefix("/v1.53")
         server.routes.append((self.command, self.path))
         status, body = 404, {"message": "absent"}
-        if path == "/containers/json":
+        if path == "/_container-family/recovery":
+            status, body = 200, {"epoch": server.epoch, "protocol": "1"}
+            if self.command == "POST":
+                value = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                if server.pending_creation or value.get("epoch") != server.epoch:
+                    status, body = 409, {"message": "uncertain creation"}
+                else:
+                    body.update({"owner": value["owner"], "state": "quiescent"})
+        elif path == "/containers/json":
             filters = json.loads(parse_qs(split.query).get("filters", ["{}"])[0])
             labels = dict(value.split("=", 1) for value in filters.get("label", []))
             body = [{"Id": item["Id"]} for item in server.services.values()
@@ -62,7 +70,7 @@ class Handler(helpers.Handler):
         if payload:
             self.wfile.write(payload)
 
-    do_GET = do_DELETE = respond
+    do_GET = do_DELETE = do_POST = respond
 
 
 class DependenciesTests(unittest.TestCase):
@@ -73,6 +81,9 @@ class DependenciesTests(unittest.TestCase):
             helpers.ReferenceTests.setUp(self)
         self.server.services, self.server.network, self.server.keep_network = {}, None, False
         self.server.archive_status = 200
+        self.up_exit = 0
+        self.server.epoch = "11111111-1111-1111-1111-111111111111"
+        self.server.pending_creation = False
 
     def reopen(self):
         self.inputs["compose"] = {"executables": {"docker-compose": "/prepared/docker-compose"}}
@@ -159,7 +170,7 @@ class DependenciesTests(unittest.TestCase):
     def command(self, name, arguments, *, timeout, separate_output=False):
         self.commands.append((name, arguments, timeout))
         self.vm.journal.put(name + "-intent.json", canonical({"arguments": arguments, "timeout": timeout}))
-        self.vm.journal.put(name + "-exit.json", canonical({"code": 0}))
+        self.vm.journal.put(name + "-exit.json", canonical({"code": self.up_exit if name == "devcontainer-up" else 0}))
         self.vm.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
         if name == "devcontainer-up":
             self.server.services = {IDS[role]: self.service(role) for role in SERVICES}
@@ -252,6 +263,97 @@ class DependenciesTests(unittest.TestCase):
         del records["devcontainer-up-exit.json"]
         with patch.object(self.vm.journal, "records", return_value=records), self.assertRaisesRegex(ValueError, "completion"):
             self.fixture.cleanup()
+        self.assertEqual(self.deletes(), [])
+
+    def failed_creation(self, roles=("database", "helper"), *, network=True):
+        self.fixture.setup()
+        self.up_exit = 1
+        self.command("devcontainer-up", [], timeout=120)
+        self.server.services = {IDS[role]: self.service(role) for role in roles}
+        if network:
+            self.server.network["Containers"] = {identifier: {} for identifier in self.server.services}
+        else:
+            self.server.network = None
+
+    def test_failed_partial_creation_is_sealed_and_cleaned_without_success_receipt(self):
+        self.failed_creation()
+        self.reopen().cleanup()
+        records = self.vm.journal.records()
+        self.assertNotIn("c02-project-created.json", records)
+        self.assertEqual(set(json.loads(records["c02-project-partial.json"])["services"]), {"database", "helper"})
+        self.assertEqual(self.deletes(), ["/v1.53/containers/" + IDS[role] + "?force=true&v=true"
+                                        for role in ("helper", "database")] + ["/v1.53/networks/" + NETWORK])
+        self.reopen().cleanup()
+        self.assertFalse(self.server.services)
+        self.assertIsNone(self.server.network)
+
+    def test_empty_failed_creation_can_close_without_inventing_resources(self):
+        self.failed_creation((), network=False)
+        self.reopen().cleanup()
+        self.assertEqual(self.deletes(), [])
+        known = json.loads(self.vm.journal.records()["c02-project-partial.json"])
+        self.assertEqual(known, {"services": {}, "network": None})
+
+    def test_partial_receipt_survives_failed_delete_and_resumes(self):
+        self.failed_creation()
+        self.server.ignore_delete = True
+        with self.assertRaisesRegex(ValueError, "removal"):
+            self.fixture.cleanup()
+        self.assertIn("c02-project-partial.json", self.vm.journal.records())
+        self.server.ignore_delete = False
+        self.reopen().cleanup()
+        self.assertFalse(self.server.services)
+
+    def test_partial_recovery_requires_all_command_groups_stopped(self):
+        self.failed_creation()
+        records = self.vm.journal.records()
+        del records["devcontainer-up-stopped.json"]
+        with patch.object(self.vm.journal, "records", return_value=records), self.assertRaisesRegex(ValueError, "stopped"):
+            self.fixture.cleanup()
+        self.assertEqual(self.deletes(), [])
+
+    def test_invisible_pending_native_creation_never_grants_cleanup(self):
+        self.failed_creation((), network=False)
+        self.server.pending_creation = True
+        with self.assertRaisesRegex(ValueError, "pending"):
+            self.reopen().cleanup()
+        records = self.vm.journal.records()
+        self.assertNotIn("c02-project-partial.json", records)
+        self.assertNotIn("c02-project-removed.json", records)
+        self.assertEqual(self.deletes(), [])
+
+    def test_receiver_restart_invalidates_prior_quiescence(self):
+        self.failed_creation()
+        self.fixture.recovery_plan()
+        self.server.epoch = "22222222-2222-2222-2222-222222222222"
+        with self.assertRaisesRegex(ValueError, "pending"):
+            self.reopen().cleanup()
+        self.assertEqual(self.deletes(), [])
+
+    def test_partial_recovery_rejects_foreign_network_before_sealing(self):
+        self.failed_creation()
+        self.server.network["Containers"]["foreign"] = {}
+        with self.assertRaisesRegex(ValueError, "foreign"):
+            self.fixture.cleanup()
+        self.assertNotIn("c02-project-partial.json", self.vm.journal.records())
+        self.assertEqual(self.deletes(), [])
+
+    def test_partial_services_without_their_network_are_not_deleted(self):
+        self.failed_creation(network=False)
+        with self.assertRaisesRegex(ValueError, "network"):
+            self.fixture.cleanup()
+        self.assertEqual(self.deletes(), [])
+
+    def test_partial_receipt_rejects_late_service_and_changed_incarnation(self):
+        self.failed_creation()
+        self.fixture.recovery_plan()
+        self.server.services[IDS["app"]] = self.service("app")
+        with self.assertRaisesRegex(ValueError, "unrecorded"):
+            self.reopen().cleanup()
+        del self.server.services[IDS["app"]]
+        self.server.services[IDS["database"]]["Created"] = "new incarnation"
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            self.reopen().cleanup()
         self.assertEqual(self.deletes(), [])
 
     def test_failed_delete_retains_receipts_and_resumes_remaining_services(self):

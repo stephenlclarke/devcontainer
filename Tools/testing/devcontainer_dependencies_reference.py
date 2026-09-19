@@ -44,6 +44,16 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
             raise ValueError("C02 project already exists")
         DevcontainerReference.prepare(self)
         self.journal.put("c02-project-intent.json", canonical(self.plan))
+        status, payload = self.call("GET", "/_container-family/recovery")
+        if status == 200:
+            session = json.loads(payload)
+            if (not isinstance(session, dict) or set(session) != {"epoch", "protocol"} or session["protocol"] != "1" or
+                    not isinstance(session["epoch"], str) or
+                    re.fullmatch(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", session["epoch"]) is None):
+                raise ValueError("C02 recovery session is invalid")
+            self.journal.put("c02-receiver-session.json", canonical(session))
+        elif status not in (404, 501):
+            raise ValueError("C02 recovery session probe failed")
 
     def prepare_image(self):
         super().prepare_image()
@@ -142,20 +152,28 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
         for command in self.commands:
             if command + "-intent.json" in records and command + "-exit.json" not in records:
                 raise ValueError("C02 command completion is unknown")
+        if "c02-project-partial.json" in records:
+            self.require_receiver_quiescence(records)
         services = self.service_inventory()
         actual = self.network(self.network_name)
         networks = self.project_inventory("networks")
-        known = json.loads(records.get("c02-project-created.json", b"null"))
+        if "c02-project-created.json" in records and "c02-project-partial.json" in records:
+            raise ValueError("C02 project has conflicting creation receipts")
+        known = json.loads(records.get("c02-project-created.json", records.get("c02-project-partial.json", b"null")))
         if known is None:
             if services or actual is not None or networks or "devcontainer-up-intent.json" in records:
-                raise ValueError("C02 creation outcome is unobserved; preserve quarantine")
-            return None
+                self.capture_failed_creation(records)
+                return self.recovery_plan()
+            else:
+                return None
         if records.get("c02-project-intent.json") != canonical(self.plan):
             raise ValueError("C02 project intent changed")
         removed = records.get("c02-project-removed.json")
         if removed is not None and (removed != canonical({"project": self.project, "absent": True}) or services or actual or networks):
             raise ValueError("C02 closed project reappeared or closure changed")
-        for role in SERVICES:
+        if set(services) - set(known["services"]):
+            raise ValueError("C02 unrecorded service appeared after creation closure")
+        for role in known["services"]:
             expected = known["services"][role]
             closed = records.get("c02-" + role + "-removed.json")
             if closed is not None and closed != canonical({"id": expected["Id"], "absent": True}):
@@ -167,12 +185,50 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
                 raise ValueError("C02 known service survived with changed ownership")
         network = known["network"]
         if actual is not None:
-            if (self.network_identity(actual) != network or
+            if (network is None or self.network_identity(actual) != network or
                     set(actual["Containers"]) - {item["Id"] for item in services.values()} or
                     [item.get("Id") for item in networks] != [network["Id"]]):
                 raise ValueError("C02 network ownership or membership changed")
-        elif networks or self.network(network["Id"]) is not None:
+        elif networks or (network is not None and self.network(network["Id"]) is not None):
             raise ValueError("C02 network survived with changed ownership")
+        return known
+
+    def require_receiver_quiescence(self, records):
+        """Never infer server/native completion from an exited CLI or empty list."""
+        session = json.loads(records.get("c02-receiver-session.json", b"null"))
+        if not isinstance(session, dict) or session.get("protocol") != "1":
+            raise ValueError("C02 receiver cannot prove creation quiescence")
+        expected = {**session, "owner": self.owner, "state": "quiescent"}
+        status, payload = self.call("POST", "/_container-family/recovery",
+                                    {"epoch": session["epoch"], "owner": self.owner})
+        if status != 200 or json.loads(payload) != expected:
+            raise ValueError("C02 receiver still has pending or uncertain creation")
+        self.journal.put("c02-receiver-quiescent.json", canonical(expected))
+
+    def capture_failed_creation(self, records):
+        """Seal only a quiescent failed CLI's fully validated partial inventory."""
+        outcome = json.loads(records.get("devcontainer-up-exit.json", b"null"))
+        if (records.get("c02-project-intent.json") != canonical(self.plan) or not isinstance(outcome, dict) or
+                type(outcome.get("code")) is not int or outcome["code"] == 0):
+            raise ValueError("C02 creation outcome is unobserved; preserve quarantine")
+        for command in self.commands:
+            if command + "-intent.json" in records:
+                stopped = json.loads(records.get(command + "-stopped.json", b"null"))
+                if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
+                    raise ValueError("C02 failed creation command group is not verified stopped")
+        self.require_receiver_quiescence(records)
+        services, actual = self.service_inventory(), self.network(self.network_name)
+        networks = self.project_inventory("networks")
+        network = self.network_identity(actual) if actual is not None else None
+        if network is None:
+            if services or networks:
+                raise ValueError("C02 partial resources lack their owned network")
+        elif ([item.get("Id") for item in networks] != [network["Id"]] or
+              set(actual["Containers"]) - {item["Id"] for item in services.values()}):
+            raise ValueError("C02 partial network has foreign membership")
+        # This is a recovery receipt, not a successful create/probe receipt.
+        known = {"services": services, "network": network}
+        self.journal.put("c02-project-partial.json", canonical(known))
         return known
 
     def remove_owned(self):
@@ -181,6 +237,8 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
             return
         if known is not None:
             for role in SERVICES:
+                if role not in known["services"]:
+                    continue
                 self.recovery_plan()
                 expected = known["services"][role]
                 if self.inspect(expected["Id"]) is not None:
@@ -191,7 +249,7 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
                 self.journal.put("c02-" + role + "-removed.json", canonical({"id": expected["Id"], "absent": True}))
             self.recovery_plan()
             network = known["network"]
-            actual = self.network(network["Id"])
+            actual = self.network(network["Id"]) if network is not None else None
             if actual is not None:
                 if actual["Containers"]:
                     raise ValueError("C02 network remains attached")
@@ -199,7 +257,7 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
                 status, _ = self.call("DELETE", "/networks/" + network["Id"])
                 if status not in (204, 404):
                     raise ValueError("C02 network removal failed")
-            if self.network(network["Id"]) or self.network(self.network_name):
+            if (network is not None and self.network(network["Id"])) or self.network(self.network_name):
                 raise ValueError("C02 network remains after deletion")
         if self.project_inventory("containers") or self.project_inventory("networks"):
             raise ValueError("C02 project residue remains")

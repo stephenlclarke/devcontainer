@@ -70,7 +70,7 @@ class CandidateCommands:
                     self.journal.put(name + "-exit.json", canonical({"code": code,
                                      "durationNS": time.monotonic_ns() - started}))
                 finally:
-                    if name in UP_COMMANDS and name + "-exit.json" in self.journal.records():
+                    if name in UP_COMMANDS and name + "-exit.json" in self.journal.records() and code == 0:
                         # The upstream CLI intentionally leaves its foreground
                         # attachment behind. Do not signal a reaped leader's group;
                         # guest deletion closes the stream before final group proof.

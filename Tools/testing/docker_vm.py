@@ -310,6 +310,14 @@ class DockerVM:
                         child.wait(timeout=5)
                 raise
         self.journal.put(name + "-exit.json", canonical({"code": code, "durationNS": time.monotonic_ns() - started}))
+        if name in DEVCONTAINER_COMMANDS:
+            # A completed CLI can leave an attachment behind. Record quiescence
+            # only when the entire command group has disappeared; never signal
+            # a reaped leader's potentially reused process group.
+            try:
+                os.killpg(child.pid, 0)
+            except ProcessLookupError:
+                self.journal.put(name + "-stopped.json", canonical({"verifiedStopped": True}))
         self.uncertain = False
         payload, metadata = diagnostic_snapshot(path)
         stderr_truncated = (separate_output and
