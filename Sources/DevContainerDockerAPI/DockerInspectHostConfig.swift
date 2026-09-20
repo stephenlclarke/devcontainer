@@ -11,6 +11,7 @@ struct DockerInspectHostConfig: Encodable {
     var shmSize: UInt64 = 64 * 1024 * 1024
     var readOnlyRootFilesystem = false
     var sysctls: [String: String] = [:]
+    var logConfig: DockerInspectLogConfig?
 
     enum CodingKeys: String, CodingKey {
         case binds = "Binds"
@@ -23,5 +24,15 @@ struct DockerInspectHostConfig: Encodable {
         case shmSize = "ShmSize"
         case readOnlyRootFilesystem = "ReadonlyRootfs"
         case sysctls = "Sysctls"
+        case logConfig = "LogConfig"
+    }
+}
+
+struct DockerInspectLogConfig: Encodable {
+    let type = "json-file"
+    let config: [String: String] = [:]
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case config = "Config"
     }
 }

@@ -14,6 +14,7 @@ struct AppleContainerIOClosure: Sendable {
 extension AppleContainerRuntime {
     func launchContainerProcess(id: String, context: RuntimeRequestContext) async throws -> UUID? {
         try await requireCompletedCreation(id: id)
+        try await requireRetainedOutputLogPolicy(id: id)
         let hostsConfiguration = try await managedHostsConfiguration(id: id)
         guard useDirectProcessAPI else {
             guard hostsConfiguration == nil else {

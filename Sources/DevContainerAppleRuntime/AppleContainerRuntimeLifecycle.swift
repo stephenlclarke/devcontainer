@@ -403,6 +403,7 @@ public extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws {
         try await requireCompletedCreation(id: resolved)
+        try await requireRetainedOutputLogPolicy(id: resolved)
         if !useDirectProcessAPI, try await managedHostsConfiguration(id: resolved) != nil {
             throw DevContainerError(
                 .unsupportedCapability, message: "Managed hosts restart requires direct process APIs"

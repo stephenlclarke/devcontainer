@@ -55,11 +55,13 @@ final class AppleContainerIO: @unchecked Sendable {
         }
         outputMonitor = ProcessPipeMonitor(
             handle: output.fileHandleForReading, channel: .standardOutput,
+            onEOF: { state.endSource(.standardOutput) },
             onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
         )
         errorMonitor = error.map {
             ProcessPipeMonitor(
                 handle: $0.fileHandleForReading, channel: .standardError,
+                onEOF: { state.endSource(.standardError) },
                 onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
             )
         }

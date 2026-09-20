@@ -20,7 +20,7 @@ struct SQLiteOutputJournalTests {
             for frame in frames {
                 try journal.append(frame)
             }
-            try journal.finish(complete: true)
+            try finish(journal)
             let reopened = try await SQLiteStateStore(path: store.path)
             let history = try await reopened.containerOutputHistory(snapshot: snapshot, context: .init())
             #expect(try await collect(history) == frames)
@@ -33,11 +33,11 @@ struct SQLiteOutputJournalTests {
             try first.append(frame("first"))
             let prefix = try first.captureHistory(context: .init())
             try first.append(frame("second", channel: .standardError))
-            try first.finish(complete: true)
+            try finish(first)
             let next = try await store.beginContainerOutputCapture(snapshot: snapshot)
             try next.append(frame("third"))
             #expect(try await collect(prefix) == [frame("first")])
-            try next.finish(complete: true)
+            try finish(next)
             let history = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
             #expect(try await collect(history) == [
                 frame("first"),
@@ -74,7 +74,7 @@ struct SQLiteOutputJournalTests {
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
             try journal.append(frame("first"))
             try journal.append(frame("second"))
-            try journal.finish(complete: true)
+            try finish(journal)
             var cursor = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
                 .makeAsyncIterator()
             #expect(try await cursor.next() == frame("first"))
@@ -89,7 +89,7 @@ struct SQLiteOutputJournalTests {
         try await withStore { store, snapshot in
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
             try journal.append(frame("private old bytes"))
-            try journal.finish(complete: true)
+            try finish(journal)
             try await store.removeContainerMetadata(id: snapshot.dockerID.rawValue)
             var replacement = snapshot
             replacement.dockerID = DockerID(rawValue: String(repeating: "b", count: 64))
@@ -103,7 +103,7 @@ struct SQLiteOutputJournalTests {
             }
             let next = try await store.beginContainerOutputCapture(snapshot: replacement)
             try next.append(frame("new bytes"))
-            try next.finish(complete: true)
+            try finish(next)
             #expect(try await collect(store.containerOutputHistory(snapshot: replacement, context: .init())) ==
                 [frame("new bytes")])
         }
@@ -112,7 +112,7 @@ struct SQLiteOutputJournalTests {
     @Test func `forged creation or native identity is rejected`() async throws {
         try await withStore { store, snapshot in
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
-            try journal.finish(complete: true)
+            try finish(journal)
             var changed = snapshot
             changed.createdAt.addTimeInterval(0.001)
             await #expect(throws: DevContainerError.self) {
@@ -182,7 +182,7 @@ struct SQLiteOutputJournalTests {
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
             try journal.append(frame("first"))
             try journal.append(frame("second"))
-            try journal.finish(complete: true)
+            try finish(journal)
             try await execute(store.path, "DELETE FROM runtime_output_frames WHERE sequence = 1")
             let history = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
             await #expect(throws: DevContainerError.self) { try await collect(history) }
@@ -194,6 +194,8 @@ struct SQLiteOutputJournalTests {
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
             try journal.append(frame("prefix"))
             let beforeFailure = try journal.captureHistory(context: .init())
+            try journal.endSource(.standardOutput)
+            try journal.endSource(.standardError)
             try await execute(store.path, """
             CREATE TRIGGER reject_completion BEFORE UPDATE OF complete ON runtime_output_journals
             BEGIN SELECT RAISE(ABORT, 'injected completion failure'); END;
@@ -224,7 +226,7 @@ struct SQLiteOutputJournalTests {
             }
             try journal.append(frame("unaffected"))
             #expect(try await collect(journal.captureHistory(context: .init())) == [frame("unaffected")])
-            try journal.finish(complete: true)
+            try finish(journal)
             try journal.finish(complete: true)
             #expect(throws: DevContainerError.self) { try journal.append(frame("closed")) }
         }
@@ -241,19 +243,25 @@ struct SQLiteOutputJournalTests {
             await #expect(throws: DevContainerError.self) {
                 try await reopened.containerOutputHistory(snapshot: snapshot, context: .init())
             }
-            #expect(try await scalar(store.path, "SELECT version FROM schema_meta") == 5)
+            #expect(try await scalar(store.path, "SELECT version FROM schema_meta") == 6)
             let journal = try await reopened.beginContainerOutputCapture(snapshot: snapshot)
             try journal.append(RuntimeIOFrame(channel: .standardOutput, data: Data()))
-            try journal.finish(complete: true)
+            try finish(journal)
             #expect(try await collect(reopened.containerOutputHistory(snapshot: snapshot, context: .init())).isEmpty)
         }
     }
 
-    private func frame(_ text: String, channel: RuntimeIOChannel = .standardOutput) -> RuntimeIOFrame {
+    func finish(_ journal: any RuntimeContainerOutputJournal) throws {
+        try journal.endSource(.standardOutput)
+        try journal.endSource(.standardError)
+        try journal.finish(complete: true)
+    }
+
+    func frame(_ text: String, channel: RuntimeIOChannel = .standardOutput) -> RuntimeIOFrame {
         RuntimeIOFrame(channel: channel, data: Data(text.utf8))
     }
 
-    private func collect(_ frames: AsyncThrowingStream<RuntimeIOFrame, any Error>) async throws -> [RuntimeIOFrame] {
+    func collect(_ frames: AsyncThrowingStream<RuntimeIOFrame, any Error>) async throws -> [RuntimeIOFrame] {
         var result: [RuntimeIOFrame] = []
         for try await frame in frames {
             result.append(frame)
@@ -261,7 +269,7 @@ struct SQLiteOutputJournalTests {
         return result
     }
 
-    private func withStore(_ body: (SQLiteStateStore, ContainerSnapshot) async throws -> Void) async throws {
+    func withStore(_ body: (SQLiteStateStore, ContainerSnapshot) async throws -> Void) async throws {
         let environment = ProcessInfo.processInfo.environment
         let root = environment["TEST_TMPDIR"] ?? environment["TMPDIR"] ?? FileManager.default.temporaryDirectory.path
         if environment["BAZEL_TEST"] == "1" {
@@ -282,20 +290,20 @@ struct SQLiteOutputJournalTests {
         try await body(store, snapshot)
     }
 
-    private func record(_ snapshot: ContainerSnapshot, in store: SQLiteStateStore) async throws {
+    func record(_ snapshot: ContainerSnapshot, in store: SQLiteStateStore) async throws {
         try await store.recordContainerMetadata(RuntimeContainerMetadata(
             runtimeID: snapshot.runtimeID, dockerID: snapshot.dockerID, spec: snapshot.spec,
             createdAt: snapshot.createdAt
         ))
     }
 
-    private func execute(_ path: URL, _ sql: String) throws {
+    func execute(_ path: URL, _ sql: String) throws {
         let database = try open(path)
         defer { sqlite3_close(database) }
         try #require(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
     }
 
-    private func scalar(_ path: URL, _ sql: String) throws -> Int64 {
+    func scalar(_ path: URL, _ sql: String) throws -> Int64 {
         let database = try open(path)
         defer { sqlite3_close(database) }
         var statement: OpaquePointer?

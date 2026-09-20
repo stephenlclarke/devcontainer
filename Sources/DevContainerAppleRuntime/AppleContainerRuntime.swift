@@ -664,7 +664,7 @@ public extension AppleContainerRuntime {
         if digestAddressed, !useDirectContainerAPI {
             try Self.requireNamedImageMutation(spec.image)
         }
-        var spec = spec
+        var spec = try applyingOutputLogPolicy(to: spec)
         let mutation = beginContainerLifecycleMutation(id: spec.name)
         var mutationIdentifiers: Set<String> = [spec.name]
         defer {

@@ -9,6 +9,10 @@ import Foundation
 public protocol RuntimeContainerOutputJournal: Sendable {
     func append(_ frame: RuntimeIOFrame) throws
     func captureHistory(context: RuntimeRequestContext) throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
+    /// Natural EOF only, never cancellation/error or process-exit notification.
+    func endSource(_ channel: RuntimeIOChannel) throws
+    /// Versioned json-file record projection; incomplete active lines are absent.
+    func captureLogHistory(context: RuntimeRequestContext) throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
     func finish(complete: Bool) throws
 }
 
@@ -17,6 +21,9 @@ public protocol RuntimeContainerOutputJournal: Sendable {
 public protocol RuntimeContainerOutputStore: RuntimeMetadataStore {
     func beginContainerOutputCapture(snapshot: ContainerSnapshot) async throws -> any RuntimeContainerOutputJournal
     func containerOutputHistory(
+        snapshot: ContainerSnapshot, context: RuntimeRequestContext
+    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
+    func containerLogHistory(
         snapshot: ContainerSnapshot, context: RuntimeRequestContext
     ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
 }

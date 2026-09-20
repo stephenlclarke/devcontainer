@@ -29,7 +29,7 @@ public extension AppleContainerRuntime {
             throw DevContainerError(.unsupportedCapability, message: "Source-aware output history is unavailable")
         }
         return try await RuntimeContainerAttachment(
-            history: store.containerOutputHistory(snapshot: snapshot, context: context), session: nil
+            history: store.containerLogHistory(snapshot: snapshot, context: context), session: nil
         )
     }
 }

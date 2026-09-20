@@ -24,7 +24,7 @@ import Foundation
 // swiftlint:disable file_length
 
 public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
-    public static let schemaVersion = 5
+    public static let schemaVersion = 6
 
     private let handle: SQLiteHandle
     private var database: OpaquePointer {
@@ -821,6 +821,12 @@ extension SQLiteStateStore {
                     // schemaSQL adds journals only when source capture begins.
                     version = 5
                 }
+                if version == 5 {
+                    try migrateLogProjection(database)
+                    // Boundaryless legacy bytes cannot establish json-file records.
+                    // Their version stays zero; never infer EOF or upgrade history.
+                    version = 6
+                }
                 guard version == Int64(schemaVersion) else {
                     throw DevContainerError(
                         .stateCorruption,
@@ -837,6 +843,17 @@ extension SQLiteStateStore {
         } catch {
             try? execute(database, sql: "ROLLBACK")
             throw error
+        }
+    }
+
+    private static func migrateLogProjection(_ database: OpaquePointer) throws {
+        let columns = try tableColumns(database, table: "runtime_output_journals")
+        for name in ["log_version", "log_sequence", "log_bytes", "generation_count"] where !columns.contains(name) {
+            try execute(
+                database,
+                sql:
+                "ALTER TABLE runtime_output_journals ADD COLUMN \(name) INTEGER NOT NULL DEFAULT 0"
+            )
         }
     }
 
@@ -912,7 +929,11 @@ extension SQLiteStateStore {
         generation TEXT NOT NULL,
         complete INTEGER NOT NULL CHECK(complete IN (-1, 0, 1)),
         last_sequence INTEGER NOT NULL CHECK(last_sequence >= 0),
-        stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0)
+        stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0),
+        log_version INTEGER NOT NULL DEFAULT 0,
+        log_sequence INTEGER NOT NULL DEFAULT 0,
+        log_bytes INTEGER NOT NULL DEFAULT 0,
+        generation_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS runtime_output_frames (
         docker_id TEXT NOT NULL REFERENCES runtime_output_journals(docker_id) ON DELETE CASCADE,
@@ -920,6 +941,23 @@ extension SQLiteStateStore {
         channel INTEGER NOT NULL CHECK(channel IN (1, 2)),
         payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
         PRIMARY KEY(docker_id, sequence)
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_generations (
+        docker_id TEXT NOT NULL REFERENCES runtime_output_journals(docker_id) ON DELETE CASCADE,
+        generation TEXT NOT NULL,
+        sources INTEGER NOT NULL CHECK(sources IN (1, 3)),
+        ended INTEGER NOT NULL DEFAULT 0 CHECK(ended BETWEEN 0 AND 3),
+        PRIMARY KEY(docker_id, generation)
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_logs (
+        docker_id TEXT NOT NULL,
+        generation TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence > 0),
+        channel INTEGER NOT NULL CHECK(channel IN (1, 2)),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+        PRIMARY KEY(docker_id, sequence),
+        FOREIGN KEY(docker_id, generation)
+            REFERENCES runtime_output_generations(docker_id, generation) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS resources_project_idx
         ON resources(project_key);
@@ -956,9 +994,12 @@ extension SQLiteStateStore {
             ],
             "runtime_container_creations": ["runtime_id", "intent_json"],
             "runtime_output_journals": [
-                "docker_id", "created_at", "generation", "complete", "last_sequence", "stored_bytes"
+                "docker_id", "created_at", "generation", "complete", "last_sequence", "stored_bytes",
+                "log_version", "log_sequence", "log_bytes", "generation_count"
             ],
-            "runtime_output_frames": ["docker_id", "sequence", "channel", "payload"]
+            "runtime_output_frames": ["docker_id", "sequence", "channel", "payload"],
+            "runtime_output_generations": ["docker_id", "generation", "sources", "ended"],
+            "runtime_output_logs": ["docker_id", "generation", "sequence", "channel", "payload"]
         ]
         for (table, expected) in expectedColumns {
             let actual = try tableColumns(database, table: table)

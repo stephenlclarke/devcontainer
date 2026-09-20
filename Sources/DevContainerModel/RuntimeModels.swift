@@ -296,6 +296,10 @@ public struct ContainerHealthcheck: Codable, Equatable, Sendable {
     }
 }
 
+public enum ContainerOutputLogFormat: String, Codable, Sendable {
+    case jsonFileV1
+}
+
 public struct ContainerSpec: Codable, Equatable, Sendable {
     public var name: String
     public var image: String
@@ -330,6 +334,9 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var stopTimeoutSeconds: Int?
     /// Historical caller spelling for display; image remains the immutable launch identity.
     public var requestedImageReference: String?
+    /// Requested on create; retained as effective policy only by a supporting provider.
+    /// Nil in legacy/adopted metadata does not certify a logging implementation.
+    public var outputLogFormat: ContainerOutputLogFormat?
 
     public init(
         name: String,
@@ -359,7 +366,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         executionSettings: ContainerExecutionSettings? = nil,
         removedEnvironmentKeys: [String]? = nil,
         stopTimeoutSeconds: Int? = nil,
-        requestedImageReference: String? = nil
+        requestedImageReference: String? = nil,
+        outputLogFormat: ContainerOutputLogFormat? = nil
     ) {
         self.name = name
         self.image = image
@@ -389,6 +397,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.removedEnvironmentKeys = removedEnvironmentKeys
         self.stopTimeoutSeconds = stopTimeoutSeconds
         self.requestedImageReference = requestedImageReference
+        self.outputLogFormat = outputLogFormat
     }
 }
 

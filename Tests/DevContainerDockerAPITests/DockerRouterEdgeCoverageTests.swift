@@ -205,6 +205,30 @@ func `container creation rejects invalid bind port and mount forms`() async thro
     }
 }
 
+@Test(arguments: ["", "json-file"])
+func `inspection advertises only retained effective logging policy`(_ driver: String) async throws {
+    let fixture = try await makeEdgeFixture()
+    let body = try JSONSerialization.data(withJSONObject: [
+        "Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": driver, "Config": [:]]]
+    ])
+    let response = await fixture.router.respond(to: .init(method: .post, target: "/containers/create", body: body))
+    #expect(response.status == 201)
+    let created = try #require(JSONSerialization.jsonObject(with: responseBytes(response)) as? [String: Any])
+    let id = try #require(created["Id"] as? String)
+    let inspection = await fixture.router.respond(to: .init(method: .get, target: "/containers/\(id)/json"))
+    #expect(inspection.status == 200)
+    let data = try #require(JSONSerialization.jsonObject(with: responseBytes(inspection)) as? [String: Any])
+    let host = try #require(data["HostConfig"] as? [String: Any])
+    if driver.isEmpty {
+        // This fake has no provider default. Missing authority remains absent.
+        #expect(host["LogConfig"] == nil)
+        return
+    }
+    let log = try #require(host["LogConfig"] as? [String: Any])
+    #expect(log["Type"] as? String == "json-file")
+    #expect((log["Config"] as? [String: String]) == [:])
+}
+
 @Test
 // swiftlint:disable:next function_body_length
 func `container creation rejects every unsupported root and host field`() async throws {
@@ -224,7 +248,8 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["Devices": [["PathOnHost": "/dev/null"]]]],
         ["Image": "edge:latest", "HostConfig": ["BlkioWeight": 1]],
         ["Image": "edge:latest", "HostConfig": ["BlkioDeviceWriteIOps": [[:]]]],
-        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file"]]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "local"]]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file", "Config": ["max-size": "1m"]]]],
         ["Image": "edge:latest", "HostConfig": ["MemorySwappiness": 0]],
         ["Image": "edge:latest", "HostConfig": ["IOMaximumBandwidth": 1]],
         ["Image": "edge:latest", "HostConfig": ["IOMaximumIOps": 1]],

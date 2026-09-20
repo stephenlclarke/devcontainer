@@ -334,7 +334,7 @@ func `known unsupported create fields fail before runtime side effects`() async 
             "HostConfig.PublishAllPorts"
         ),
         (
-            #"{"Image":"alpine:test","HostConfig":{"LogConfig":{"Type":"json-file","Config":{}}}}"#,
+            #"{"Image":"alpine:test","HostConfig":{"LogConfig":{"Type":"local","Config":{}}}}"#,
             "HostConfig.LogConfig"
         ),
         (

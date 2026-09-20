@@ -595,12 +595,14 @@ extension AppleContainerCreateTests {
         let creator = Creator()
         let path = fixture.root.appendingPathComponent("state.sqlite")
         let store = try SQLiteStateStore(path: path)
-        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let runtime = try fixture.runtime(metadataStore: store, useDirectProcessAPI: true, creator: creator)
         let created = try await runtime.createContainer(spec: nativeComposeSpec(), context: RuntimeRequestContext())
+        #expect(created.spec.outputLogFormat == .jsonFileV1)
         #expect(try await store.pendingContainerCreation(id: "fixture") == nil)
         let reopened = try SQLiteStateStore(path: path)
         let metadata = try #require(try await reopened.containerMetadata(id: "fixture"))
         #expect(metadata.spec.labels[AppleContainerRuntime.managedNetworkHostsLabel] != nil)
+        #expect(metadata.spec.outputLogFormat == .jsonFileV1)
         let replacement = Creator()
         let bridge = try fixture.runtime(
             metadataStore: reopened,

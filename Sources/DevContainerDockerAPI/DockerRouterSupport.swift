@@ -318,7 +318,7 @@ extension DockerRouter {
         {
             try unsupportedCreateField("HostConfig.ConsoleSize")
         }
-        if host.logConfig?.type?.isEmpty == false
+        if (host.logConfig?.type?.isEmpty == false && host.logConfig?.type != "json-file")
             || host.logConfig?.config?.isEmpty == false
         {
             try unsupportedCreateField("HostConfig.LogConfig")
@@ -651,12 +651,6 @@ extension DockerRouter {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        let dns = request.hostConfig.map {
-            RuntimeDNSConfiguration(
-                nameservers: $0.dns ?? [], searchDomains: $0.dnsSearch ?? [], options: $0.dnsOptions ?? []
-            )
-        }
-        try dns?.validate()
         let environment = try ContainerEnvironmentOverrides(request.env ?? [])
         return try ContainerSpec(
             name: requestedName.isEmpty
@@ -678,7 +672,6 @@ extension DockerRouter {
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
             standardInputOnce: request.stdinOnce,
-
             privileged: request.hostConfig?.privileged ?? false,
             initProcess: request.hostConfig?.initProcess ?? false,
             autoRemove: request.hostConfig?.autoRemove ?? false,
@@ -695,13 +688,24 @@ extension DockerRouter {
                     startIntervalNanoseconds: $0.startInterval
                 )
             },
-            dns: dns,
+            dns: containerDNS(from: request),
             inheritImageEntrypoint: request.entrypoint == nil,
             executionSettings: executionSettings(request),
             removedEnvironmentKeys: environment.removedKeys,
             stopTimeoutSeconds: request.stopTimeout,
-            requestedImageReference: request.containerImageReference
+            requestedImageReference: request.containerImageReference,
+            outputLogFormat: request.hostConfig?.logConfig?.type == "json-file" ? .jsonFileV1 : nil
         )
+    }
+
+    private func containerDNS(from request: DockerCreateContainerRequest) throws -> RuntimeDNSConfiguration? {
+        let dns = request.hostConfig.map {
+            RuntimeDNSConfiguration(
+                nameservers: $0.dns ?? [], searchDomains: $0.dnsSearch ?? [], options: $0.dnsOptions ?? []
+            )
+        }
+        try dns?.validate()
+        return dns
     }
 
     func containerMounts(
@@ -931,7 +935,8 @@ extension DockerRouter {
             memory: spec.executionSettings?.memoryLimitInBytes ?? 0,
             shmSize: spec.executionSettings?.sharedMemorySizeInBytes ?? 64 * 1024 * 1024,
             readOnlyRootFilesystem: spec.executionSettings?.readOnlyRootFilesystem ?? false,
-            sysctls: spec.executionSettings?.sysctls ?? [:]
+            sysctls: spec.executionSettings?.sysctls ?? [:],
+            logConfig: spec.outputLogFormat == .jsonFileV1 ? .init() : nil
         )
     }
 

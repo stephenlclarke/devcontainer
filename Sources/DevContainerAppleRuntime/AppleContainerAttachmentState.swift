@@ -50,7 +50,7 @@ final class AppleContainerAttachmentState: @unchecked Sendable {
                         message: "Source-aware output capture is unavailable"
                     )
                 }
-                saved = try journal.captureHistory(context: context)
+                saved = try journal.captureLogHistory(context: context)
             } else {
                 saved = nil
             }
@@ -119,6 +119,24 @@ final class AppleContainerAttachmentState: @unchecked Sendable {
     func requireActive(_ id: UUID) throws {
         guard isActive(id) else {
             throw DevContainerError(.conflict, message: "Container attachment is closed")
+        }
+    }
+
+    func endSource(_ channel: RuntimeIOChannel) {
+        var failures: [(AppleContainerSubscription, any Error)] = []
+        lock.withLock {
+            guard result == nil else { return }
+            do {
+                try journal?.endSource(channel)
+            } catch {
+                result = .failure(error)
+                try? journal?.finish(complete: false)
+                failures = subscribers.values.map { ($0, error) }
+                subscribers.removeAll()
+            }
+        }
+        for (subscription, error) in failures {
+            subscription.finish(.failure(error))
         }
     }
 

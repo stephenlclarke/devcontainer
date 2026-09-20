@@ -170,6 +170,14 @@ private final class OutputHistoryProbe: RuntimeContainerOutputJournal, @unchecke
         }
     }
 
+    func captureLogHistory(context: RuntimeRequestContext) throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
+        try captureHistory(context: context)
+    }
+
+    func endSource(_: RuntimeIOChannel) {
+        // This ordering fake retains frames; SQLite tests prove the log encoding.
+    }
+
     func finish(complete: Bool) {
         onFinish?()
         lock.withLock { completion = complete }

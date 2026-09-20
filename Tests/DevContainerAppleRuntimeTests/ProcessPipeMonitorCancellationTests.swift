@@ -56,12 +56,15 @@ struct ProcessPipeMonitorCancellationTests {
     func `idle monitor cancellation finishes without closing a caller owned descriptor`() async throws {
         let pipe = Pipe()
         let (_, frames) = AsyncThrowingStream<RuntimeIOFrame, any Error>.makeStream()
+        let delivery = MonitorDelivery()
         let monitor = ProcessPipeMonitor(
             handle: pipe.fileHandleForReading, channel: .standardOutput,
-            frames: frames, closeHandleOnFinish: false
+            frames: frames, closeHandleOnFinish: false,
+            onEOF: { delivery.recordRead(-1) }
         )
         monitor.cancel()
         await monitor.waitForCompletion()
+        #expect(delivery.snapshot().isEmpty)
         #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
         try pipe.fileHandleForWriting.write(contentsOf: Data([42]))
         #expect(try pipe.fileHandleForReading.read(upToCount: 1) == Data([42]))
@@ -71,8 +74,10 @@ struct ProcessPipeMonitorCancellationTests {
     func `nonblocking monitor drains complete output before EOF`() async throws {
         let pipe = Pipe()
         let (stream, frames) = AsyncThrowingStream<RuntimeIOFrame, any Error>.makeStream()
+        let delivery = MonitorDelivery()
         let monitor = ProcessPipeMonitor(
-            handle: pipe.fileHandleForReading, channel: .standardError, frames: frames
+            handle: pipe.fileHandleForReading, channel: .standardError, frames: frames,
+            onFinish: { delivery.recordFinish() }, onEOF: { delivery.recordRead(-1) }
         )
         defer { monitor.cancel() }
         let payload = Data(repeating: 23, count: 1024 * 1024)
@@ -92,6 +97,18 @@ struct ProcessPipeMonitorCancellationTests {
         try await write.value
         await finish.value
         #expect(observed == payload)
+        #expect(delivery.snapshot() == [-1, 0])
+    }
+
+    @Test func `monitor read setup failure never reports natural EOF`() async {
+        let delivery = MonitorDelivery()
+        let monitor = ProcessPipeMonitor(
+            handle: FileHandle(fileDescriptor: Int32.max, closeOnDealloc: false), channel: .standardOutput,
+            closeHandleOnFinish: false, onFinish: { delivery.recordFinish() },
+            onEOF: { delivery.recordRead(-1) }, onError: { _ in delivery.recordRead(-2) }
+        )
+        await monitor.waitForCompletion()
+        #expect(delivery.snapshot() == [-2, 0])
     }
 }
 
