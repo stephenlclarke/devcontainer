@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from prepare_releases import RECEIPT, durable_file, inventory, sync_directory
 from case_evidence import canonical, digest
-from host_runtime import HostGuard, deadline, runtime_lease
+from host_runtime import HostGuard, cancellation, deadline, runtime_lease
 from runtime_services import process_inventory, require_idle
 from service_switch import Launchd, canonical_file
 
@@ -128,8 +128,10 @@ def require_inactive(slot: Path):
     launchd = Launchd()
     with deadline(15):
         for label in launchd.labels():
-            if Path(launchd.program(label)).resolve().is_relative_to(slot):
+            program = launchd.program(label)
+            if program is not None and Path(program).resolve().is_relative_to(slot):
                 raise ValueError("An activated runtime registration still owns this slot")
+        launchd.require_background_unchanged()
 
 
 def retire_previous(slot: Path, prior: dict | None):
@@ -227,7 +229,7 @@ def main():
     lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
     guard = HostGuard(RETAINED / "runtime-admission.json")
     os.umask(0o077)
-    with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard):
+    with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
         selected = lambda: admit(lock, args.lane, RETAINED)[1]
         result = activate(selected(), RETAINED, args.lane, selected)
     print(json.dumps({"lane": args.lane, "root": result["root"], "receiptSHA256": result["activation"]["receiptSHA256"],

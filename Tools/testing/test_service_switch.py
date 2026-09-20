@@ -53,7 +53,7 @@ class ServiceSwitchTests(unittest.TestCase):
         with patch.object(backend, "command") as command:
             command.return_value = SimpleNamespace(returncode=0, stdout=b"\tprogram = /owned/runtime\n")
             self.assertEqual(backend.program("custom.namespace.engine"), "/owned/runtime")
-            for response in (SimpleNamespace(returncode=113, stdout=b""),
+            for response in (SimpleNamespace(returncode=1, stdout=b""),
                              SimpleNamespace(returncode=0, stdout=b""),
                              SimpleNamespace(returncode=0, stdout=b"\tprogram = relative\n"),
                              SimpleNamespace(returncode=0, stdout=b"\tprogram = /one\n\tprogram = /two\n")):
@@ -75,9 +75,12 @@ class ServiceSwitchTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 backend.program("custom.engine")
             command.assert_called_once()
+        with patch.object(backend, "command", return_value=missing) as command:
+            self.assertIsNone(backend.program("finished.transient"))
+            self.assertEqual(command.call_count, 2)
         with patch.object(backend, "command", return_value=SimpleNamespace(
                 returncode=0, stdout=b"\tprogram identifier = helper (mode: 1)\n")) as command:
-            with self.assertRaisesRegex(ValueError, "custom.engine"):
+            with self.assertRaisesRegex(ValueError, "identity is incomplete"):
                 backend.program("custom.engine")
             command.assert_called_once()
 

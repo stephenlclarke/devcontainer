@@ -15,6 +15,8 @@ import re
 import stat
 import subprocess
 
+import background_items
+
 
 API = "com.apple.container.apiserver"
 BASE_SERVICES = {API, "com.apple.container.container-core-images", "com.apple.container.machine-apiserver"}
@@ -40,6 +42,7 @@ class Launchd:
 
     def __init__(self):
         self.domain = f"gui/{os.getuid()}"
+        self.background_items = None
 
     def command(self, *arguments):
         return subprocess.run(["/bin/launchctl", *arguments], capture_output=True,
@@ -75,21 +78,38 @@ class Launchd:
         if self.command("bootout", f"{self.domain}/{label}").returncode != 0:
             raise RuntimeError("Launchd job removal failed")
 
-    def program(self, label: str) -> str:
+    def program(self, label: str) -> str | None:
         """Inspect dormant jobs too, without assuming a provider label namespace."""
         if re.fullmatch(r"[A-Za-z0-9._-]+", label) is None:
             raise ValueError("Invalid launchd job label")
-        result = self.command("print", f"{self.domain}/{label}")
+        target = f"{self.domain}/{label}"
+        result = self.command("print", target)
         # The GUI and user domains share names, but keep discrete job sets.
         # Do not turn permission/transport failures into a lookup elsewhere.
         if result.returncode == 113:
-            result = self.command("print", f"user/{os.getuid()}/{label}")
+            target = f"user/{os.getuid()}/{label}"
+            result = self.command("print", target)
+            if result.returncode == 113:
+                return None  # A transient registration may disappear after list.
         if result.returncode != 0:
-            raise RuntimeError("Cannot inspect registered executable")
+            raise RuntimeError(f"Cannot inspect registered executable {label} (status {result.returncode})")
         values = re.findall(r"^\tprogram = ([^\n]+)$", result.stdout.decode(), re.MULTILINE)
+        if not values:
+            original = background_items.identity(result.stdout.decode())
+            if self.background_items is None:
+                self.background_items = background_items.host_records()
+            resolved = background_items.resolve(result.stdout.decode(), label, self.background_items)
+            current = self.command("print", target)
+            if current.returncode != 0 or background_items.identity(current.stdout.decode()) != original:
+                raise ValueError("Background registration changed during inspection")
+            return resolved
         if len(values) != 1 or not Path(values[0]).is_absolute():
             raise ValueError(f"Registered executable identity is unavailable for {label}; activation was not started")
         return values[0]
+
+    def require_background_unchanged(self):
+        if self.background_items is not None and background_items.host_records() != self.background_items:
+            raise ValueError("Background registration inventory changed during inspection")
 
     def process_id(self, label: str) -> int | None:
         if re.fullmatch(r"[A-Za-z0-9._-]+", label) is None:

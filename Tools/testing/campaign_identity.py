@@ -60,6 +60,7 @@ RUNTIME_HELPERS = (
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py", "compose_terminal_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",
     "runtime_services.py", "runtime_probe.py", "service_journal.py", "service_switch.py",
+    "native_activation.py", "background_items.py",
 )
 
 

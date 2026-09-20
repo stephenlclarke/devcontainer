@@ -193,6 +193,11 @@ class NativeActivationTests(unittest.TestCase):
             self.activate(self.release("two"))
         self.assertFalse((self.slot / "pending.json").exists())
 
+    def test_confirmed_absent_transient_registration_does_not_own_a_slot(self):
+        self.launchd.labels.return_value = {"finished.transient"}
+        self.launchd.program.return_value = None
+        self.assertEqual(self.activate()["root"], str(self.slot / "payload"))
+
     def test_source_layout_and_slot_aliases_are_rejected(self):
         for source in ({}, dict(self.source, files={"unexpected": "data"}),
                        dict(self.source, executables={**self.source["executables"], "escape": "/bin/sh"})):
@@ -210,11 +215,13 @@ class NativeActivationTests(unittest.TestCase):
         with patch("released_engine.RETAINED", self.retained), patch("pathlib.Path.home", return_value=self.root), \
                 patch("released_engine.admit", return_value=[{}, self.source]), \
                 patch("native_activation.runtime_lease", return_value=nullcontext()) as lease, \
+                patch("native_activation.cancellation", return_value=nullcontext()) as cancel, \
                 patch("sys.argv", ["activate-runtime", "--lane", self.lane]), \
                 patch("sys.stdout", new_callable=io.StringIO) as output:
             activation.main()
         self.assertEqual(lease.call_args.args[0], Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"))
         self.assertEqual(lease.call_args.args[1].path, self.retained / "runtime-admission.json")
+        cancel.assert_called_once()
         result = json.loads(output.getvalue())
         self.assertFalse(result["servicesStarted"])
         self.assertFalse(result["authorizationVerified"])

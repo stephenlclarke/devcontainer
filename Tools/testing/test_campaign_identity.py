@@ -10,6 +10,9 @@ from case_evidence import canonical, compare_cases, digest
 
 
 class CampaignIdentityTests(unittest.TestCase):
+    def test_activation_and_background_resolution_are_in_runtime_fingerprint(self):
+        self.assertTrue({"native_activation.py", "background_items.py"} <= set(RUNTIME_HELPERS))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(temporary.cleanup)
