@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The subsequent E08 stock run passes creation/start and raw terminal markers but the gateway returns `501` for resize: `ContainerResize` was missing from its provider route declaration even though the generation-bound native method exists. The route declaration and its regressions now match that implementation. [Evidence and remaining native qualification](bazel-test-harness.md#foreground-init-attachment-development) distinguish this adapter wiring defect from an Apple API limitation.
+
 The first live E08 Docker oracle passes, but stock inspection omits the accepted `HostConfig.AutoRemove` policy. This prevents clients from observing the effective configuration and correctly trips strict fixture ownership checks before startup. The adapter now projects the retained policy with true/false/default regression coverage; [exact failing runtime evidence and recovery](bazel-test-harness.md#foreground-init-attachment-development) remain recorded until a rebuilt candidate passes.
 
 The E08 fixture extends the active C02 foreground proof to init-terminal resize, detach/reconnect, acknowledged exit and automatic removal. Container identity alone cannot prove process continuity, so the probe compares a guest-held per-process challenge before and after detachment. Component proof does not establish live parity; [the foreground evidence](bazel-test-harness.md#foreground-init-attachment-development) records the exact remaining runtime and release gates.

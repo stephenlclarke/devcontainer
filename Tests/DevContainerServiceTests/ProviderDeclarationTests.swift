@@ -43,12 +43,12 @@ struct ProviderDeclarationTests {
         #expect(capabilities["engine.registryAuthentication"] == .unavailable)
         #expect(capabilities["engine.volumes"] == nil)
         #expect(capabilities["engine.route.ContainerAttachWebsocket"] == .emulated)
-        #expect(capabilities["engine.route.ContainerResize"] == nil)
+        #expect(capabilities["engine.route.ContainerResize"] == .native)
         let routes = Set(capabilities.keys.filter { $0.hasPrefix("engine.route.") })
         let expectedRoutes = """
         SystemPing SystemPingHead SystemVersion SystemInfo ContainerList ContainerCreate ContainerInspect ContainerStart
         ContainerStop ContainerRestart ContainerKill ContainerRename ContainerWait ContainerExec ContainerLogs
-        ContainerAttach
+        ContainerAttach ContainerResize
         ContainerAttachWebsocket ContainerArchive ContainerArchiveInfo PutContainerArchive ContainerDelete ExecInspect
         ExecStart ExecResize ImageList ImageInspect ImageCreate ImageLoad ImageBuild ImageTag ImageDelete NetworkList
         NetworkCreate NetworkInspect NetworkConnect NetworkDisconnect NetworkDelete VolumeList VolumeCreate

@@ -187,13 +187,13 @@ private func exerciseEngineProcess(
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
         let providerArtifacts = inspectProviderArtifacts(publicSocket: socket)
 
-        let unsupportedResize = try ServiceTestHTTP.request(
+        let unsupportedPause = try ServiceTestHTTP.request(
             socket: socket,
-            path: "/v1.53/containers/missing/resize?h=24&w=80",
+            path: "/v1.53/containers/missing/pause",
             method: "POST"
         )
-        #expect(unsupportedResize.status == 501)
-        #expect(unsupportedResize.body.contains("ContainerResize"))
+        #expect(unsupportedPause.status == 501)
+        #expect(unsupportedPause.body.contains("ContainerPause"))
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
         try await waitForExit(process, log: log)
@@ -286,9 +286,9 @@ private func exerciseProviderProcess(
                 == "engine.handoff.part.identity-lifecycle-events.v1"
                 && $0.status == .native
         })
-        #expect(!descriptor.fingerprint.declaration.capabilities.contains {
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.ContainerResize"
-                && $0.status != .unavailable
+                && $0.status == .native
         })
         let client = ContainerEngineProviderSessionClient(
             socketPath: socket,

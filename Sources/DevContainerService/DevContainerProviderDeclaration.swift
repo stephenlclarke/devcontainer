@@ -58,7 +58,7 @@ extension DevContainerServiceCommand {
         "ContainerList", "ContainerCreate", "ContainerInspect", "ContainerStart",
         "ContainerStop", "ContainerRestart", "ContainerKill", "ContainerRename",
         "ContainerWait", "ContainerExec", "ContainerLogs", "ContainerAttach",
-        "ContainerAttachWebsocket",
+        "ContainerAttachWebsocket", "ContainerResize",
         "ContainerArchive", "ContainerArchiveInfo", "PutContainerArchive",
         "ContainerDelete", "ExecInspect", "ExecStart", "ExecResize", "ImageList",
         "ImageInspect", "ImageCreate", "ImageLoad", "ImageBuild", "ImageTag",
