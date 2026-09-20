@@ -16,6 +16,8 @@ Routine build, test, benchmark and release runs must not wait for an interactive
 
 This is not yet a claim that the entire release workflow is prompt-free. Host permission/identity preflight, signing/notarization integration and unattended recovery still need end-to-end qualification. Missing authorization must stop before expensive work, preserve recoverable state and identify the setup action needed. Operating-system updates, replaced signing identities or revoked permissions can require new operator consent; never bypass that consent, disable platform security, or approve a dialog automatically.
 
+Local-network authorization must be checked for the responsible runtime, not inferred from a successful connection by the coordinator or another executable. The [enhanced port diagnostic](evidence/enhanced-workspaces-20260920.md#separate-port-diagnosis) proves why: direct host access succeeds while the selected native publisher receives `EHOSTUNREACH`. This is not yet a confirmed permission failure. Keep downloaded runtime identities stable, reserve consent for explicit setup, and retain a bounded runtime-context diagnostic when effective access cannot be established. Do not toggle ambiguous duplicate System Settings entries. The legacy `Tools/release/sign-and-notarize.sh` still invokes signing/notarization without the qualified noninteractive preflight; it is not the unattended Bazel release path.
+
 ### Commands
 
 Requirements: Apple silicon, full Xcode (validated with Xcode 27 / Swift 6.4), an external volume mounted at `/Volumes/SSD`, Python 3.9 or newer for helper tests, and network access for the first verified tool/dependency download.

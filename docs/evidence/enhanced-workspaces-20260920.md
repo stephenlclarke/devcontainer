@@ -27,7 +27,31 @@ Durations are seconds, rounded here to six decimal places. Exact nanoseconds rem
 | D06 ports | Timeout | 9.393788 | 17.272474 | 2.023547 | `53c84ea7-ed94-4503-b0d0-a019b9c80350` |
 | D07 reuse/rebuild/cleanup | Passed | 9.265927 | 12.522048 | 1.826425 | `37094505-c9e2-447b-aa2d-dbff91c82d8f` |
 
-D06's CLI startup and guest probe both exit zero; the guest probe reports `forward_metadata=true` and `inside_connectivity=true`. The subsequent host-loopback HTTP readiness check exceeds its existing deadline before the collision test begins. The complete fixture retains empty observations and `timeout`; partial command output is diagnostic only. The native-versus-adapter port-publication cause is not yet established. No deadline, fixture, provider or success requirement was changed.
+D06's CLI startup and guest probe both exit zero; the guest probe reports `forward_metadata=true` and `inside_connectivity=true`. The subsequent host-loopback HTTP readiness check exceeds its existing deadline before the collision test begins. The complete fixture retains empty observations and `timeout`; partial command output is diagnostic only. The native worker logs `No route to host` when connecting the published port to the guest. The separate diagnostic below narrows that failure but does not resolve it. No deadline, fixture, provider or success requirement was changed.
+
+## Separate port diagnosis
+
+A one-shot diagnostic at harness source `1a09f2aa5fb393f2e452fcb6c61421a708afdc0d` reuses the same product and downloaded runtime without rebuilding. It executes the original D06 startup and guest probe, then records native inspection, guest networking, host routing and bounded direct/published HTTP probes. Its helper received independent full-file review; interrupted recovery additionally requires each diagnostic child's exit, stop, retained logs and absent PID/process group before ordinary recovery. Missing evidence preserves quarantine. The diagnostic uses its own private result database, not the authoritative parity store, and deliberately fails because it does not execute the original collision contract.
+
+| Observation | Result |
+| --- | --- |
+| Native attachment, guest interface, projected Engine address | Agree on one guest address |
+| Host route and active bridge | Correct route to that address |
+| Host Python direct guest HTTP | Exact original response body and HTTP framing |
+| Apple curl direct guest HTTP | Exact original response body |
+| Host Python through published loopback port | Connection accepted, then reset; no response bytes |
+| Apple curl through published loopback port | Failed |
+| Native worker destination | Same guest address and port as successful direct probes |
+| Native worker backend connect | `EHOSTUNREACH` (`No route to host`) |
+| Automatic cleanup | Passed, zero owned resources, no new approval; recovery clear |
+
+Diagnostic campaign `diagnostic-enhanced-ports-20260920`, case `143f464e9d854bbedbdbdb928942e6e886e5ee50b776d6fe85e7b4d51c241d97`, result seal `10819322ea1bf718e194beb50c8c78350a426d2bf849d28a5df92c60c591315d`. Exact setup/operation/cleanup durations are `9.899601208`, `8.348129375`, and `5.244548250` seconds. These timings include diagnostic commands and must never be compared as D06 benchmark samples. No Bazel invocation or successful parity receipt is asserted for this separate diagnostic.
+
+The privately retained one-shot helper `diagnostics/enhanced-ports-20260920/native_ports.py` has SHA-256 `8e7ec8ac01b9baeebf5113d8a70516a286a349e37f975e32d09f7812fe4c295a`. This supplementary source digest was recorded after execution; it is not represented as part of the original sealed case identity.
+
+The result rules out an absent host route, a wrong observed guest address and an unreachable guest HTTP service during these probes. It does not distinguish a process-specific network authorization issue from a native forwarding defect. Read-only inspection confirms the downloaded worker has a Developer ID signature and its path-specific saved network rule appears to allow access; neither proves the running process's effective authorization. System Settings has numerous identically named runtime entries, so no permission was changed or inferred from an ambiguous row. Apple's [local-network privacy guidance](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy) explains that authorization is code-identity dependent and has no general status-query API. A future authorization diagnostic must run in the responsible runtime context; testing a different host process is not sufficient. No security bypass or unchanged retry is justified by this evidence.
+
+After this diagnostic completed, the operator reported pressing Allow on a dialog. That is a subsequent authorization-state change, not an assistant permission change or part of the diagnostic above. Its effect remains unverified at this checkpoint; a fresh execution of the original D06 contract with the same admitted binaries is pending. The original failed seals remain unchanged.
 
 ## Retained case identity
 
