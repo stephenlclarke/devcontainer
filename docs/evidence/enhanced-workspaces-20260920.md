@@ -1,6 +1,6 @@
 # Enhanced workspace qualification, 20 September 2026
 
-Six unchanged workspace fixtures pass against the enhanced runtime: image configuration, Dockerfile builds, users/environment, lifecycle hooks, Features, and reuse/rebuild/cleanup. D06 port publishing times out and remains a release blocker. Every case, including the timeout, completes automatic cleanup with zero owned resources and no new approval. Final recovery reports clear.
+All seven unchanged workspace fixtures now have passing enhanced-runtime results: image configuration, Dockerfile builds, users/environment, lifecycle hooks, Features, port publishing, and reuse/rebuild/cleanup. D06 initially timed out; after the operator reported approving a dialog, its complete original contract passed with the same binaries and deadlines. The initial failure and separate diagnostic remain preserved below. Every completed case has automatic cleanup with zero owned resources; the post-approval run needed no further intervention and final recovery reports clear.
 
 These are ordinary functional observations, not quiet benchmarks, measured speedups, three-lane parity, or stable-release qualification. No product was rebuilt for these runs. The separate enhanced E03 large-duplex timeout remains unresolved; see [its evidence](../bazel-test-harness.md#execution-boundaries).
 
@@ -26,8 +26,9 @@ Durations are seconds, rounded here to six decimal places. Exact nanoseconds rem
 | D05 Features | Passed | 18.097204 | 33.952054 | 6.591391 | `79de78cd-0855-416b-abd4-1e7e7bf89ca6` |
 | D06 ports | Timeout | 9.393788 | 17.272474 | 2.023547 | `53c84ea7-ed94-4503-b0d0-a019b9c80350` |
 | D07 reuse/rebuild/cleanup | Passed | 9.265927 | 12.522048 | 1.826425 | `37094505-c9e2-447b-aa2d-dbff91c82d8f` |
+| D06 ports, after approval | Passed | 10.525280 | 8.553880 | 2.360645 | `47e8f828-6575-4be5-9e9c-48398d78e06c` |
 
-D06's CLI startup and guest probe both exit zero; the guest probe reports `forward_metadata=true` and `inside_connectivity=true`. The subsequent host-loopback HTTP readiness check exceeds its existing deadline before the collision test begins. The complete fixture retains empty observations and `timeout`; partial command output is diagnostic only. The native worker logs `No route to host` when connecting the published port to the guest. The separate diagnostic below narrows that failure but does not resolve it. No deadline, fixture, provider or success requirement was changed.
+In the initial D06 attempt, CLI startup and the guest probe both exited zero; the guest probe reported `forward_metadata=true` and `inside_connectivity=true`. The subsequent host-loopback HTTP readiness check exceeded its existing deadline before the collision test began. That failed receipt retains empty observations and `timeout`; partial command output is diagnostic only. The native worker logged `No route to host` when connecting the published port to the guest. The separate diagnostic below narrowed that failure before the later successful post-approval run. No deadline, fixture, provider or success requirement was changed.
 
 ## Separate port diagnosis
 
@@ -51,7 +52,9 @@ The privately retained one-shot helper `diagnostics/enhanced-ports-20260920/nati
 
 The result rules out an absent host route, a wrong observed guest address and an unreachable guest HTTP service during these probes. It does not distinguish a process-specific network authorization issue from a native forwarding defect. Read-only inspection confirms the downloaded worker has a Developer ID signature and its path-specific saved network rule appears to allow access; neither proves the running process's effective authorization. System Settings has numerous identically named runtime entries, so no permission was changed or inferred from an ambiguous row. Apple's [local-network privacy guidance](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy) explains that authorization is code-identity dependent and has no general status-query API. A future authorization diagnostic must run in the responsible runtime context; testing a different host process is not sufficient. No security bypass or unchanged retry is justified by this evidence.
 
-After this diagnostic completed, the operator reported pressing Allow on a dialog. That is a subsequent authorization-state change, not an assistant permission change or part of the diagnostic above. Its effect remains unverified at this checkpoint; a fresh execution of the original D06 contract with the same admitted binaries is pending. The original failed seals remain unchanged.
+After this diagnostic completed, the operator reported pressing Allow on a dialog. That is a subsequent authorization-state change, not an assistant permission change or part of the diagnostic above. A fresh execution of the original D06 contract then passed all four assertions: guest HTTP, host-published HTTP, actual forward metadata and specifically rejected port collision. Automatic cleanup passed without further intervention and report-only recovery is clear. The original failed seals remain unchanged.
+
+The passing campaign is `enhanced-ports-approved-20260920`, at clean signed harness source `caca30683589c5e6b93527354b74c96f66a3fe97`, Bazel invocation `47e8f828-6575-4be5-9e9c-48398d78e06c`. It reuses the original product archive and runtime, and retains the same harness, contract, release-set and runtime fingerprints as the separate diagnostic. Exact setup/operation/cleanup durations are `10.525280417`, `8.553880125`, and `2.360645250` seconds. This closes the observed D06 functional failure on the approved host. It supports an authorization dependency but does not identify the exact dialog or prove the underlying OS policy cause. It is not a quiet benchmark, fresh-machine setup proof or complete unattended release qualification.
 
 ## Retained case identity
 
@@ -66,5 +69,6 @@ The local `runtime-cases.sqlite` store retains original request metadata, immuta
 | D05 | `b21092c782000dd07f6d37522bf9f72c228083cac23389d16c968fddb80ec056` | `a0f6f8d7166ddb35df9375ba2d841afeb4d4288bf46de41a673158659693e183` |
 | D06 | `92b6041f3b5e293cd78ebe1c6eff7fc0f2ed55fbd11d57646be76990cdd9c4d8` | `b7647384d5fdb2e134205b9e8b14a793108240566378232f456d1dbd627288ad` |
 | D07 | `619965e1a4ee5ddfd2a026d2a617452ecc947cf65b9a0772f7ab51cf5df21800` | `6c75edd4eccae8e7869a24c31f64c8fa9927a3c209f6ab5039d8e550ea5026cf` |
+| D06 after approval | `b16ba6bcd84dcac97d00d765edea72709ea2c8671880b0f9193b94608f2766a8` | `baa8fbeee6640754859d8f78170844bdc052ee0acc000621b3e8578069e05701` |
 
 Git/SSH prompting and isolated test-Keychain interaction are disabled. These successful and failed-case cleanup runs add evidence for that narrow unattended path. Complete host permission/identity preflight, signing/notarization, release publication and unattended fault recovery still require qualification; see [the workflow requirement](../bazel-workflow.md#unattended-authorization-requirement). This report does not claim that changed identities or operating-system permissions can never need new one-time consent.
