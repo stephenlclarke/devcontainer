@@ -2,7 +2,7 @@
 
 ## Problem description
 
-The foreground harness also needs to catch a CLI that incorrectly inherits a service's `tty: true` when run with redirected input/output. E11 supplies that configuration and omits terminal flags, requiring actual non-TTY inspection and separated guest bytes. Explicit flag combinations, real-terminal startup and signals remain separate uncompleted parts of the foreground contract.
+The foreground harness also needs to catch a CLI that incorrectly inherits a service's `tty: true` when run with redirected input/output. E11 supplies that configuration and omits terminal flags, requiring actual non-TTY inspection and separated guest bytes. Docker and corrected stock now pass all five observations with zero owned residue; [exact evidence and raw timings](bazel-test-harness.md#foreground-init-attachment-development) retain the unresolved 14.94x operation concern. Explicit flag combinations, real-terminal startup and signals remain separate uncompleted parts of the foreground contract.
 
 Compose quiet mode must suppress progress without disconnecting guest input/output. E10 adds this regression to the maintained Bazel harness using the same immutable CLI admission and resource recovery as E09. [Current evidence and pending qualification](bazel-test-harness.md#foreground-init-attachment-development) retain the distinction between guest-stream correctness, CLI diagnostics and quiet-machine performance.
 
