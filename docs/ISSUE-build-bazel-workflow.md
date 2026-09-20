@@ -2,6 +2,10 @@
 
 ## Problem description
 
+Service-process tests previously ignored failed deletion of their operator-Keychain identities. A cleanup assertion exposed OSStatus -25244, so future tests now use the runtime harness's existing disposable Keychain and isolated SSD HOME. The explicit failed-request regression verifies child exit and private-Keychain removal without changing production credentials; [current evidence](bazel-test-harness.md#bounded-service-http-probes) distinguishes this correction from unreconciled legacy test records.
+
+The receiver implemented recovery controls, but the shared gateway's Docker-only route ledger rejected them before provider dispatch. The unreleased service now consumes capability-gated native control routing and advertises its exact protocol version. [Stock/enhanced focused tests and real service-process proof](bazel-test-harness.md#bounded-service-http-probes) cover this missing boundary without bypassing provider identity or claiming universal recovery.
+
 The harness discarded the provider's definite pre-create rejection acknowledgement, leaving an unsupported request quarantined as if creation were still in flight. The correction retains completed acknowledgement evidence without accepting status codes alone or weakening uncertain-outcome recovery. Component/fault tests and live cleanup using the unchanged stock candidate pass. This removes a manual-recovery obstacle to unattended comparisons, not a native feature or measured performance gap.
 
 Explicit Engine create-time terminal size is not covered by E14's eventual CLI resize. E15 adds a distinct first-guest-observation fixture with no harness resize or input before measurement, preserving failure output, acknowledged exit and exact owned-resource cleanup. [The evidence contract](bazel-test-harness.md#foreground-init-attachment-development) records Docker's pass, the stock-backed candidate's pre-create rejection, its original quarantine/operator recovery and the subsequent automatic definite-rejection cleanup pass. Native support and uncertain-create recovery remain open; these diagnostic timings are not release comparisons.

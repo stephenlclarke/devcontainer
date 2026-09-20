@@ -96,7 +96,7 @@ let package = Package(
             name: "container-engine-api",
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "f32e1829d0f0293bd68a69a7a6f93f67953c31e9"
+            revision: "40436017e1e93012b8dab7cfc3c79783538065c3"
         ),
         runtimeDependency(
             name: "container",
@@ -378,6 +378,7 @@ let package = Package(
                 "DevContainerRuntimeSPI",
                 "DevContainerService",
                 "DevContainerTestSupport",
+                .product(name: "ContainerEngineGateway", package: "container-engine-api"),
                 .product(name: "ContainerEngineProviderSession", package: "container-engine-api"),
                 .product(name: "ContainerEngineRuntimeSPI", package: "container-engine-api"),
                 .product(name: "ContainerEngineWire", package: "container-engine-api"),

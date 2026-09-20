@@ -44,6 +44,9 @@ struct ProviderDeclarationTests {
         #expect(capabilities["engine.volumes"] == nil)
         #expect(capabilities["engine.route.ContainerAttachWebsocket"] == .emulated)
         #expect(capabilities["engine.route.ContainerResize"] == .native)
+        #expect(declaration.capabilities.contains {
+            $0.identifier == "engine.control.recovery" && $0.version == 1 && $0.status == .native
+        })
         let routes = Set(capabilities.keys.filter { $0.hasPrefix("engine.route.") })
         let expectedRoutes = """
         SystemPing SystemPingHead SystemVersion SystemInfo ContainerList ContainerCreate ContainerInspect ContainerStart

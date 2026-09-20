@@ -395,6 +395,7 @@ swift_test(
 
 swift_test(
     name = "DevContainerServiceTests",
+    env = {"DEVCONTAINER_TEST_STANDALONE": "1"},
     srcs = glob(["Tests/DevContainerServiceTests/*.swift"], exclude = [
         "Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
     ]),
@@ -402,6 +403,7 @@ swift_test(
     copts = RUNTIME_COPTS,
     deps = [
         ":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI", ":DevContainerService", ":DevContainerState", ":DevContainerTestSupport",
+        "@swiftpkg_container_engine_api//:ContainerEngineGateway",
         "@swiftpkg_container_engine_api//:ContainerEngineProviderSession",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
         "@swiftpkg_container_engine_api//:ContainerEngineWire",
@@ -415,16 +417,18 @@ swift_test(
         "Tests/DevContainerServiceTests/DevContainerServiceCommandIntegrationTests.swift",
         "Tests/DevContainerServiceTests/ServiceTestExecutable.swift",
         "Tests/DevContainerServiceTests/ServiceTestHTTP.swift",
+        "Tests/DevContainerServiceTests/ServiceTestKeychain.swift",
     ],
     module_name = "DevContainerServiceIntegrationTests",
     copts = RUNTIME_COPTS,
-    data = [":devcontainer-engine"],
+    data = [":devcontainer-engine", "//Tools/testing:private_keychain.py"],
     env = {
         "DEVCONTAINER_ENGINE_TEST_RUNFILE": "$(rootpath :devcontainer-engine)",
+        "DEVCONTAINER_KEYCHAIN_TEST_RUNFILE": "$(rootpath //Tools/testing:private_keychain.py)",
         "DEVCONTAINER_TEST_STANDALONE": "1",
     },
     env_inherit = ["DEVCONTAINER_HOST_INTEGRATION"],
-    # These process-level tests exercise the real macOS Keychain.
+    # These process-level tests use a real disposable macOS Keychain.
     tags = ["manual", "local", "no-cache", "external", "integration"],
     timeout = "short",
     deps = [

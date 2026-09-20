@@ -1,5 +1,6 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
+import ContainerEngineGateway
 import ContainerEngineRuntimeSPI
 import DevContainerModel
 import DevContainerState
@@ -29,6 +30,13 @@ extension DevContainerServiceCommand {
         let handoffCapabilities = try handoffIdentifiers.map {
             try ContainerEngineProviderCapability(identifier: $0, status: .native)
         }
+        // The service always constructs the direct Apple runtime, whose barrier
+        // and native quiescence probe own this control protocol in both profiles.
+        let recoveryCapability = try ContainerEngineProviderCapability(
+            identifier: ContainerEngineGatewayResponder.recoveryCapabilityIdentifier,
+            version: ContainerEngineGatewayResponder.recoveryCapabilityVersion,
+            status: .native
+        )
         return try ContainerEngineProviderDeclaration(
             profile: profile,
             kind: .devcontainerStock,
@@ -49,7 +57,7 @@ extension DevContainerServiceCommand {
                 return try ContainerEngineProviderCapability(
                     identifier: "engine.\(capability.rawValue)", status: sharedStatus
                 )
-            } + routeCapabilities + handoffCapabilities
+            } + routeCapabilities + handoffCapabilities + [recoveryCapability]
         )
     }
 
