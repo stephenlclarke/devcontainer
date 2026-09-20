@@ -246,6 +246,48 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
+    func `direct exec creation preserves large input and EOF using the client transport`() async throws {
+        let session = try await AppleDirectProcessSession.create(
+            containerID: "large-duplex",
+            spec: ExecSpec(
+                command: ["cat"],
+                attachStandardInput: true,
+                attachStandardOutput: true,
+                attachStandardError: false
+            ),
+            inheritedConfiguration: ProcessConfiguration(executable: "cat", arguments: [], environment: [])
+        ) { _, _, _, handles in
+            let input = try #require(handles[0])
+            let output = try #require(handles[1])
+            var status = stat()
+            #expect(fstat(input.fileDescriptor, &status) == 0)
+            #if DEVCONTAINER_ENHANCED_RUNTIME
+                // Match the released enhanced CLI's pipe-based stdio contract.
+                #expect(status.st_mode & S_IFMT == S_IFIFO)
+            #else
+                #expect(status.st_mode & S_IFMT == S_IFSOCK)
+            #endif
+            let process = EchoClientProcess(input: input, output: output)
+            #if !DEVCONTAINER_ENHANCED_RUNTIME
+                // The stock XPC sender consumes transferred descriptors.
+                try input.close()
+                try output.close()
+            #endif
+            return process
+        }
+        let payload = Data((0 ..< 4 * 1024 * 1024).lazy.map { UInt8($0 & 0xFF) })
+        try await session.write(payload)
+        try await session.closeStandardInput()
+        var echoed = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            echoed.append(frame.data)
+        }
+        #expect(try await session.wait() == 0)
+        #expect(echoed == payload)
+    }
+
+    @Test
     func `direct session supports detached channels and cancellation`() async throws {
         let process = MockClientProcess(exitCode: 0)
         let session = AppleDirectProcessSession(
@@ -426,13 +468,17 @@ private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
         output.fileDescriptor
     }
 
-    init(input: Pipe, output: Pipe) {
+    convenience init(input: Pipe, output: Pipe) {
+        self.init(input: input.fileHandleForReading, output: output.fileHandleForWriting)
+    }
+
+    init(input: FileHandle, output: FileHandle) {
         self.input = FileHandle(
-            fileDescriptor: Darwin.dup(input.fileHandleForReading.fileDescriptor),
+            fileDescriptor: Darwin.dup(input.fileDescriptor),
             closeOnDealloc: true
         )
         self.output = FileHandle(
-            fileDescriptor: Darwin.dup(output.fileHandleForWriting.fileDescriptor),
+            fileDescriptor: Darwin.dup(output.fileDescriptor),
             closeOnDealloc: true
         )
     }

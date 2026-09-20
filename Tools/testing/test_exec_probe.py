@@ -111,7 +111,10 @@ class ExecTests(unittest.TestCase):
             self.assertIn("exec-" + name + "-completed.json", self.journal.records())
         starts = [event for event in self.events if "/exec/" in event["route"] and event["route"].endswith("/start")]
         self.assertEqual(len(starts), 4)
-        self.assertTrue(all(set(event) == {"method", "route", "status", "durationNS"} for event in starts))
+        self.assertTrue(all(set(event) == {"method", "route", "status", "durationNS", "stream"} for event in starts))
+        self.assertEqual(starts[2]["stream"]["inputAcceptedBytes"], len(BINARY_INPUT))
+        self.assertGreater(starts[2]["stream"]["outputWireBytes"], len(BINARY_INPUT))
+        self.assertTrue(all(event["stream"]["inputHalfClosed"] and event["stream"]["outputEOF"] for event in starts))
 
     def test_wrong_output_and_exit_are_observed_not_normalized(self):
         self.server.stdout = b"wrong"
@@ -205,6 +208,23 @@ class ExecTests(unittest.TestCase):
         self.assertEqual(set(event), {"method", "route", "error", "durationNS"})
         self.assertNotIn("private", str(event))
 
+    def test_stream_timeout_retains_partial_counts_in_request_evidence(self):
+        progress = {"inputAcceptedBytes": 123, "outputWireBytes": 456,
+                    "inputHalfClosed": False, "outputEOF": False}
+
+        def stall(*args, **kwargs):
+            kwargs["progress"].update(progress)
+            raise TimeoutError("stalled")
+
+        with patch("exec_probe.upgrade", return_value=(101, b"")), patch("exec_probe.duplex", side_effect=stall):
+            with self.assertRaises(TimeoutError):
+                attached(self.fixture, "e" * 64, tty=False, incoming=b"private", timeout=1)
+        event = self.events[-1]
+        self.assertEqual(event["stream"], progress)
+        self.assertEqual(event["error"], "TimeoutError")
+        self.assertGreater(event["durationNS"], 0)
+        self.assertNotIn("private", str(event))
+
 
 class ExecTransportTests(unittest.TestCase):
     def test_stream_framing_preserves_interleaved_binary_channels(self):
@@ -255,6 +275,26 @@ class ExecTransportTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             duplex(left, b"", b"", deadline)
         self.assertEqual(right.recv(1), b"")
+
+    def test_timeout_retains_only_socket_counts_not_payload(self):
+        left, right = self.pair()
+        right.sendall(b"private-output")
+        progress = {}
+        with self.assertRaises(TimeoutError):
+            duplex(left, b"initial", b"private-input", time.monotonic() + 0.03, progress=progress)
+        self.assertEqual(progress, {"inputAcceptedBytes": 13, "outputWireBytes": 21,
+                                    "inputHalfClosed": True, "outputEOF": False})
+        self.assertEqual(right.recv(100), b"private-input")
+        self.assertEqual(right.recv(1), b"")
+
+    def test_early_eof_records_incomplete_input(self):
+        left, right = self.pair()
+        right.shutdown(socket.SHUT_WR)
+        progress = {}
+        with self.assertRaisesRegex(ValueError, "before input"):
+            duplex(left, b"", BINARY_INPUT, time.monotonic() + 1, progress=progress)
+        self.assertEqual(progress, {"inputAcceptedBytes": 0, "outputWireBytes": 0,
+                                    "inputHalfClosed": False, "outputEOF": True})
 
     def test_excess_output_and_early_eof_do_not_pass(self):
         left, right = self.pair()

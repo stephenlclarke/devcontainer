@@ -24,9 +24,7 @@ struct AppleXPCFileHandleTransferTests {
         let bytes = read(descriptor, &buffer, buffer.count)
         #expect(bytes == tail.count)
         #expect(Data(buffer.prefix(max(0, bytes))) == tail)
-        // This must be EOF, not EAGAIN from a leaked caller-side write handle.
-        // Nonblocking reads make the regression fail without hanging the suite.
-        #expect(read(descriptor, &buffer, buffer.count) == 0)
+        #expect(try reachesEOF(descriptor))
     }
 
     private func transfer(_ handle: FileHandle) throws -> FileHandle {
@@ -48,7 +46,33 @@ struct AppleXPCFileHandleTransferTests {
         let flags = fcntl(descriptor, F_GETFL)
         try #require(flags >= 0)
         try #require(fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0)
-        var byte: UInt8 = 0
-        #expect(read(descriptor, &byte, 1) == 0)
+        #expect(try reachesEOF(descriptor))
+    }
+
+    @Test
+    func `EOF observation rejects a retained writer`() throws {
+        let pipe = Pipe()
+        #expect(try !reachesEOF(pipe.fileHandleForReading.fileDescriptor, milliseconds: 10))
+        try pipe.fileHandleForWriting.close()
+        #expect(try reachesEOF(pipe.fileHandleForReading.fileDescriptor))
+    }
+
+    private func reachesEOF(_ descriptor: Int32, milliseconds: Int32 = 1000) throws -> Bool {
+        // Concurrent PTY tests use the pinned library's fork/exec launcher. A
+        // pre-exec child briefly inherits even close-on-exec descriptors. Wait
+        // for kernel EOF rather than mistaking that window for a permanent leak.
+        let deadline = ContinuousClock.now + .milliseconds(Int(milliseconds))
+        repeat {
+            var readiness = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&readiness, 1, 10)
+            if ready < 0, errno != EINTR {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if ready > 0 {
+                var byte: UInt8 = 0
+                return read(descriptor, &byte, 1) == 0
+            }
+        } while ContinuousClock.now < deadline
+        return false
     }
 }

@@ -31,6 +31,16 @@ struct AppleProcessInputChannel: @unchecked Sendable {
         requiresHalfClose = false
     }
 
+    static func directExec() throws -> AppleProcessInputChannel {
+        #if DEVCONTAINER_ENHANCED_RUNTIME
+            // Match the enhanced client's ProcessIO: borrowed transfer handles
+            // have explicit caller ownership, so pipe EOF follows writer close.
+            AppleProcessInputChannel(pipe: Pipe())
+        #else
+            try socketPair()
+        #endif
+    }
+
     static func socketPair() throws -> AppleProcessInputChannel {
         var descriptors: [Int32] = [-1, -1]
         guard Darwin.socketpair(

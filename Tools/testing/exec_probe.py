@@ -89,8 +89,13 @@ def close_write(connection):
             raise
 
 
-def duplex(connection, initial: bytes, incoming: bytes, end: float) -> bytes:
-    """Drain output while sending input, then half-close only the write side."""
+def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress: dict | None = None) -> bytes:
+    """Drain output while sending input, retaining payload-free socket progress."""
+    # These are host-socket observations, not proof that the guest consumed the
+    # input. Counts survive timeouts without retaining user payloads in reports.
+    if progress is None:
+        progress = {}
+    progress.update(inputAcceptedBytes=0, outputWireBytes=len(initial), inputHalfClosed=False, outputEOF=False)
     output = bytearray(initial)
     pending = memoryview(incoming)
     connection.setblocking(False)
@@ -98,16 +103,19 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float) -> bytes:
         selector.register(connection, selectors.EVENT_READ | (selectors.EVENT_WRITE if pending else 0))
         if not pending:
             close_write(connection)
+            progress["inputHalfClosed"] = True
         while True:
             events = selector.select(remaining(end))
             for _, mask in events:
                 if mask & selectors.EVENT_READ:
                     chunk = connection.recv(65536)
                     if not chunk:
+                        progress["outputEOF"] = True
                         if pending:
                             raise ValueError("Exec stream closed before input was delivered")
                         return bytes(output)
                     output.extend(chunk)
+                    progress["outputWireBytes"] += len(chunk)
                     if len(output) > MAX_OUTPUT:
                         raise ValueError("Exec output exceeds limit")
                 if mask & selectors.EVENT_WRITE:
@@ -115,8 +123,10 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float) -> bytes:
                     if not sent:
                         raise ValueError("Exec stream stopped accepting input")
                     pending = pending[sent:]
+                    progress["inputAcceptedBytes"] += sent
                     if not pending:
                         close_write(connection)
+                        progress["inputHalfClosed"] = True
                         selector.modify(connection, selectors.EVENT_READ)
 
 
@@ -131,7 +141,8 @@ def attached(guest, identifier: str, *, tty: bool, incoming: bytes, timeout: flo
             connection.connect(str(guest.socket))
             status, initial = upgrade(connection, route, canonical({"Detach": False, "Tty": tty}), end)
             event["status"] = status
-            output = duplex(connection, initial, incoming, end)
+            event["stream"] = {}
+            output = duplex(connection, initial, incoming, end, progress=event["stream"])
         return (output, b"") if tty else streams(output)
     except (Exception, KeyboardInterrupt) as error:
         event["error"] = type(error).__name__
