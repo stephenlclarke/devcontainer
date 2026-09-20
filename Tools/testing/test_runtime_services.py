@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from runtime_services import (ControlledRuntime, ProcessSurvivors, authorised_roots, capture_owned_processes, process_inventory,
                               process_programs, require_idle, selected_definition, wait_stopped)
 from runtime_services import require_owned_volume
+from service_journal import digest
 from service_switch import API, BASE_SERVICES
 from test_service_switch import FakeLaunchd
 
@@ -238,6 +239,50 @@ class RuntimeServicesTests(unittest.TestCase):
         path.unlink()
         path.symlink_to(self.executable)
         with self.assertRaisesRegex(ValueError, "log path changed"):
+            runtime.preserve_logs()
+
+    def test_private_worker_diagnostics_survive_restoration(self):
+        runtime = self.runtime()
+        runtime.start()
+        names = ("container-runtime-linux-cf-test-fixture.log",
+                 "container-runtime-linux-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE.log",
+                 "container-runtime-linux-shared-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.log")
+        for name in names:
+            (self.owned / "container-logs" / name).write_bytes(b"x" * (80 * 1024) + b"worker tail")
+        (self.owned / "container-logs/unrelated.log").write_bytes(b"not selected")
+        runtime.restore()
+        runtime.preserve_logs()
+        records = runtime.journal.records()
+        for name in names:
+            key = "worker-" + digest(name.encode())[:48]
+            self.assertEqual(records[key + ".name"], name.encode())
+            self.assertEqual(len(records[key + ".log"]), 64 * 1024)
+            self.assertTrue(records[key + ".log"].endswith(b"worker tail"))
+        self.assertNotIn("service-unrelated.log", records)
+        self.assertNotIn("worker tail", str(runtime.receipt()))
+
+    def test_private_worker_log_aliases_and_nonregular_files_are_rejected(self):
+        runtime = self.runtime()
+        runtime.start()
+        path = self.owned / "container-logs/container-runtime-linux-fixture.log"
+        path.symlink_to(self.executable)
+        with self.assertRaisesRegex(ValueError, "log path changed"):
+            runtime.preserve_logs()
+        path.unlink()
+        os.link(self.executable, path)
+        with self.assertRaisesRegex(ValueError, "log ownership changed"):
+            runtime.preserve_logs()
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaisesRegex(ValueError, "log ownership changed"):
+            runtime.preserve_logs()
+
+    def test_private_worker_log_count_is_bounded(self):
+        runtime = self.runtime()
+        runtime.start()
+        for index in range(65):
+            (self.owned / f"container-logs/container-runtime-linux-{index}.log").touch()
+        with self.assertRaisesRegex(ValueError, "Too many selected worker logs"):
             runtime.preserve_logs()
 
     def test_process_inventory_is_bounded_and_contains_no_arguments_or_environment(self):

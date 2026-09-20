@@ -364,9 +364,11 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
 
 /// Apple's stock ContainerAPIClient consumes a transferred descriptor with
 /// `Darwin.close` while the caller's `FileHandle` still believes it owns that
-/// descriptor. Pass non-owning duplicates across the XPC boundary so delayed
-/// Foundation deallocation cannot close an unrelated descriptor that reused
-/// the same integer value.
+/// descriptor. Stock builds therefore transfer non-owning duplicates. The
+/// enhanced library borrows descriptors instead: those duplicates must retain
+/// Foundation ownership so returning from bootstrap/exec releases them and
+/// allows output EOF. Select the contract from the pinned client build, not the
+/// runtime server; a stock client can connect to an enhanced server.
 enum AppleXPCFileHandleTransfer {
     static func copies(of handles: [FileHandle?]) throws -> [FileHandle?] {
         var copies: [FileHandle?] = []
@@ -381,17 +383,22 @@ enum AppleXPCFileHandleTransfer {
                 guard descriptor >= 0 else {
                     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                 }
+                #if DEVCONTAINER_ENHANCED_RUNTIME
+                    let closeOnDealloc = true
+                #else
+                    let closeOnDealloc = false
+                #endif
                 copies.append(
                     FileHandle(
                         fileDescriptor: descriptor,
-                        closeOnDealloc: false
+                        closeOnDealloc: closeOnDealloc
                     )
                 )
             }
             return copies
         } catch {
             for case let handle? in copies {
-                Darwin.close(handle.fileDescriptor)
+                try? handle.close()
             }
             throw error
         }

@@ -24,28 +24,30 @@ import Foundation
 import Testing
 
 struct AppleDirectProcessSessionTests {
-    @Test
-    func `XPC transfer copies cannot close reused descriptors`() throws {
-        let pipe = Pipe()
-        var copies: [FileHandle?]? = try AppleXPCFileHandleTransfer.copies(
-            of: [pipe.fileHandleForReading, nil]
-        )
-        let copiedDescriptor = try #require(copies?[0]?.fileDescriptor)
-        #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
-        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+    #if !DEVCONTAINER_ENHANCED_RUNTIME
+        @Test
+        func `XPC transfer copies cannot close reused descriptors`() throws {
+            let pipe = Pipe()
+            var copies: [FileHandle?]? = try AppleXPCFileHandleTransfer.copies(
+                of: [pipe.fileHandleForReading, nil]
+            )
+            let copiedDescriptor = try #require(copies?[0]?.fileDescriptor)
+            #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
+            #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
 
-        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
-        try #require(nullDescriptor >= 0)
-        // Atomically replace the still-owned descriptor: closing it first lets
-        // another concurrent test claim that number before dup2 overwrites it.
-        #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
-        Darwin.close(nullDescriptor)
+            let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
+            try #require(nullDescriptor >= 0)
+            // Atomically replace the still-owned descriptor: closing it first lets
+            // another concurrent test claim that number before dup2 overwrites it.
+            #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
+            Darwin.close(nullDescriptor)
 
-        copies = nil
-        #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
-        Darwin.close(copiedDescriptor)
-        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
-    }
+            copies = nil
+            #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
+            Darwin.close(copiedDescriptor)
+            #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+        }
+    #endif
 
     @Test
     func `XPC transfer closes earlier copies when a later descriptor is invalid`() throws {
@@ -100,7 +102,7 @@ struct AppleDirectProcessSessionTests {
                 standardIO: standardIO
             )
             for case let handle? in standardIO {
-                Darwin.close(handle.fileDescriptor)
+                try handle.close()
             }
             return process
         }

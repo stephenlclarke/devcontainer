@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import stat
 import subprocess
 import time
@@ -278,15 +279,36 @@ class ControlledRuntime:
         # Stock SystemStart leaves stdio to launchd and supplies LogRoot for
         # service-owned file logging. launchd cannot open SSD stdio here
         # (EX_CONFIG), even when the selected process itself can use the disk.
-        for name in ("container-apiserver.log", "container-core-images.log", "container-machine-apiserver.log"):
-            path = self.root / "container-logs" / name
+        directory = self.root / "container-logs"
+        if directory.resolve() != directory:
+            raise ValueError("Selected API log path changed")
+        names = ["container-apiserver.log", "container-core-images.log", "container-machine-apiserver.log"]
+        # Dedicated and shared-sandbox workers hold the exit/I/O diagnostics;
+        # retain only bounded logs under this transaction's disposable root.
+        if directory.exists():
+            workers = []
+            for path in directory.iterdir():
+                if re.fullmatch(r"container-runtime-linux-[A-Za-z0-9_-]{1,128}\.log", path.name):
+                    workers.append(path.name)
+                    if len(workers) > 64:
+                        raise ValueError("Too many selected worker logs")
+            names.extend(sorted(workers))
+        for name in names:
+            path = directory / name
             if path.is_symlink() or path.parent.resolve() != path.parent:
                 raise ValueError("Selected API log path changed")
             if not path.exists():
                 continue
-            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
                     raise ValueError("Selected API log ownership changed")
                 stream.seek(max(0, info.st_size - 64 * 1024))
-                self.journal.put("service-" + name, stream.read(64 * 1024))
+                key = "service-" + name
+                if name.startswith("container-runtime-linux-"):
+                    # UUID/shared names exceed the journal's 64-character key
+                    # limit; retain the original name privately, never truncate it.
+                    key = "worker-" + digest(name.encode())[:48]
+                    self.journal.put(key + ".name", name.encode())
+                    key += ".log"
+                self.journal.put(key, stream.read(64 * 1024))

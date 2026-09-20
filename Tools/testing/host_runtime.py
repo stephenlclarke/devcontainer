@@ -234,4 +234,9 @@ class OwnedProcess:
             os.killpg(self.process.pid, 0)
         except ProcessLookupError:
             return
+        except PermissionError:
+            # The macOS test sandbox can reject a probe of descendants after
+            # their leader exits. This is not absence: let bounded cleanup wait
+            # for ESRCH without signalling an already-reaped process group.
+            raise RuntimeError("Owned service process group disappearance is not yet verifiable") from None
         raise RuntimeError("Owned service process group still has descendants")

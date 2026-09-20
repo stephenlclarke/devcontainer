@@ -241,6 +241,17 @@ class HostRuntimeTests(unittest.TestCase):
             with patch("host_runtime.os.killpg"), self.assertRaisesRegex(RuntimeError, "descendants"):
                 process.stop()
 
+    def test_unverifiable_reaped_group_is_pending_until_absence_is_proved(self):
+        process = OwnedProcess()
+        process.process = Mock(pid=42)
+        process.process.poll.return_value = 0
+        with patch("host_runtime.os.killpg", side_effect=[PermissionError(), ProcessLookupError()]) as probe:
+            with self.assertRaisesRegex(RuntimeError, "disappearance is not yet verifiable"):
+                process.stop()
+            process.stop()
+        self.assertEqual(probe.call_args_list, [unittest.mock.call(42, 0), unittest.mock.call(42, 0)])
+        process.process.wait.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
