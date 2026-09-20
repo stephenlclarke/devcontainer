@@ -45,6 +45,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: clean
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
+.PHONY: bazel-coverage-counters
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-parity-report
 .PHONY: bazel-prepare-guest-images
@@ -115,7 +116,10 @@ bazel-recover-runtime-apply:
 bazel-build:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
 
-bazel-unit:
+bazel-coverage-counters:
+	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //Tools/bazel:coverage_counter_tests
+
+bazel-unit: bazel-coverage-counters
 	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //:unit
 
 bazel-coverage-report:
@@ -147,6 +151,7 @@ bazel-cleanup:
 # are distinct; each invocation shares its native product/test dependency graph.
 bazel-checkpoint:
 	Tools/bazel/run.sh test-tools
+	Tools/bazel/run.sh coverage --config=stock //Tools/bazel:coverage_counter_tests
 	Tools/bazel/run.sh coverage --config=stock //:unit //:product
 	Tools/bazel/run.sh test --config=stock --config=release //:candidate_archive //Tools/bazel:package_smoke
 	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product

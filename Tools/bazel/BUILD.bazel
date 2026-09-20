@@ -2,6 +2,7 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(":reference_runtime_test.bzl", "reference_runtime_test")
+load(":swift_rules.bzl", "swift_binary")
 
 reference_runtime_test(name = "reference_runtime_test")
 
@@ -34,6 +35,29 @@ exports_files([
 sh_binary(
     name = "ssd_test_runner",
     srcs = ["ssd-test-runner.sh"],
+    visibility = ["//visibility:public"],
+)
+
+# Keep compiler qualification separate from the production coverage denominator.
+swift_binary(
+    name = "coverage_counter_probe",
+    srcs = ["tests/CoverageCounterProbe.swift"],
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "coverage_counter_tests",
+    srcs = ["tests/coverage-counters.sh"],
+    args = ["$(location :coverage_counter_probe)", "$(location tests/coverage-counters.expected)"],
+    data = [":coverage_counter_probe", "tests/coverage-counters.expected"],
+    env = {
+        # The SSD runner already exports LLVM profiles, including this Swift
+        # binary. Do not run Bazel's unrelated, unconfigured C collector too.
+        "CC_CODE_COVERAGE_SCRIPT": "",
+        "TEST_BINARIES_FOR_LLVM_COV": "$(location :coverage_counter_probe)",
+    },
+    size = "small",
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 

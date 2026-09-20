@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+Coverage builds now use atomic counters and sandboxed Swift compilation to prevent the diagnosed parallel-counter loss and stale incremental-object reuse. `make bazel-coverage-counters` checks an exact parallel-counter inventory before the normal unit/checkpoint coverage path. Ordinary builds retain worker and action-cache reuse. [Focused proof and remaining aggregate quality gates](docs/bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) are separate from full release certification.
+
 The unreleased Bazel candidate preserves published ports when a delivered signal does not stop the container and joins restored-container observers during shutdown. [Signal implementation and evidence](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguish passing component tests from the unresolved Docker duplicate-signal oracle, native qualification and release gates.
 
 The Bazel E08 foreground fixture passes all seven observations on Docker and stock Apple: terminal resize, detach/reconnect of the same init process, acknowledged exit status and automatic removal. Stock proof includes the corrected `AutoRemove` inspection and resize-route declaration. E09 exercises the real Compose CLI's piped input, separate output streams, exit status and automatic removal; E10 applies those checks with `run --quiet`. Enhanced runtime, complete foreground parity, quiet-machine performance and stable release qualification remain open. See the [exact evidence and remaining requirements](docs/bazel-test-harness.md#foreground-init-attachment-development).
