@@ -149,6 +149,13 @@
       "assertions": ["pre-start init attachment", "4 MiB binary stdin and EOF", "separate stdout and stderr", "real exit status", "source-aware history across two init generations"]
     },
     {
+      "id": "E08-foreground-terminal",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["raw TTY stdout and stderr", "post-start terminal resize", "detach preserves init", "reconnected stdin", "acknowledged next-exit wait and auto-removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],

@@ -25,9 +25,10 @@ from build_fixture import BuildFixture
 from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 from attachment_probe import AttachmentFixture, FIXTURE as ATTACHMENT_FIXTURE
+from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
 
 
-FIXTURES = {ATTACHMENT_FIXTURE, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
+FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -235,6 +236,12 @@ class ReleasedGuest:
                                             self.image_id, GUEST_API_VERSION, self.runtime.journal,
                                             observe=self.observe)
             with deadline(150):
+                return self.guest.operation()
+        if self.fixture == FOREGROUND_FIXTURE:
+            self.guest = ForegroundFixture(self.socket, digest(canonical(self.owner["identity"])),
+                                            self.image_id, GUEST_API_VERSION, self.runtime.journal,
+                                            observe=self.observe)
+            with deadline(90):
                 return self.guest.operation()
         command = COMMAND if self.fixture == "E02-container-lifecycle" else ("sleep", "300")
         if self.fixture == "E03-exec-streams":

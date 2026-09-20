@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "tty_raw_output": true,
+    "running_resize": true,
+    "detach_preserves_init": true,
+    "reconnect_stdin": true,
+    "acknowledged_wait": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}
