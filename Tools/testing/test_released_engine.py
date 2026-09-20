@@ -194,7 +194,7 @@ class ReleasedEngineTests(unittest.TestCase):
         selected = released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, compose)
         self.assertEqual(selected["composeCandidate"], compose)
         self.assertIn("compose", selected["devcontainerFixture"])
-        for name in ("E09-compose-foreground", "E10-compose-quiet"):
+        for name in ("E09-compose-foreground", "E10-compose-quiet", "E11-compose-redirected"):
             with self.subTest(fixture=name):
                 self.assertEqual(released_engine.fixture_guest_inputs({}, name, candidate, repository, compose),
                                  {"composeCandidate": compose})

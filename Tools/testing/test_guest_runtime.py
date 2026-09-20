@@ -62,7 +62,8 @@ class GuestRuntimeTests(unittest.TestCase):
     def test_compose_foreground_selects_exact_bundle_provider_and_quiet_mode(self):
         self.inputs['composeCandidate'] = {'executables': {'compose': '/native/compose'}}
         self.inputs['compose'] = {'executables': {'docker-compose': '/reference/compose'}}
-        for name, quiet in (('E09-compose-foreground', False), ('E10-compose-quiet', True)):
+        for name, quiet, redirected in (('E09-compose-foreground', False, False),
+                                         ('E10-compose-quiet', True, False), ('E11-compose-redirected', False, True)):
             self.case.fixture = name
             for container, executable, install in (('/provider/bin/container', '/native/compose', Path('/provider')),
                                                    ('', '/reference/compose', None)):
@@ -73,6 +74,7 @@ class GuestRuntimeTests(unittest.TestCase):
                     self.assertEqual(fixture.call_args.kwargs['executable'], executable)
                     self.assertEqual(fixture.call_args.kwargs['provider_install'], install)
                     self.assertEqual(fixture.call_args.kwargs['quiet'], quiet)
+                    self.assertEqual(fixture.call_args.kwargs['redirected'], redirected)
                     self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
 
     def test_uncertain_image_cleanup_prevents_builder_shutdown(self):

@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical, contract_observations
-from compose_foreground_probe import COMMAND, FIXTURE, QUIET_FIXTURE, PROCESS, STDERR, STDOUT, ComposeForegroundFixture
+from compose_foreground_probe import (COMMAND, FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE,
+                                      PROCESS, STDERR, STDOUT, ComposeForegroundFixture)
 from foreground_probe import ForegroundFixture
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_commands_stopped
 from host_runtime import OwnedProcess
@@ -76,6 +77,19 @@ class ComposeForegroundTests(unittest.TestCase):
         contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / QUIET_FIXTURE / "contract.json").read_text())
         self.assertEqual(observed, contract_observations(contract["expected"]))
         self.assertEqual(self.cli_arguments[-2:], ["--quiet", "app"])
+        self.assertEqual(json.loads(self.journal.records()[PROCESS + "-intent.json"])["arguments"], self.cli_arguments)
+        self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
+
+    def test_redirected_cli_must_override_service_tty_without_explicit_flag(self):
+        self.fixture.redirected = True
+        observed = self.run_cli()
+        contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / REDIRECTED_FIXTURE / "contract.json").read_text())
+        self.assertEqual(observed, contract_observations(contract["expected"]))
+        config = json.loads((self.root / "compose-foreground.json").read_text())
+        self.assertIs(config["services"]["app"]["tty"], True)
+        self.assertNotIn("-T", self.cli_arguments)
+        self.assertNotIn("--no-tty", self.cli_arguments)
+        self.assertNotIn("--interactive", self.cli_arguments)
         self.assertEqual(json.loads(self.journal.records()[PROCESS + "-intent.json"])["arguments"], self.cli_arguments)
         self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
 

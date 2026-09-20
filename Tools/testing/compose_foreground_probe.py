@@ -1,4 +1,4 @@
-"""E09/E10 invoke the immutable Compose CLI with ordinary or quiet progress."""
+"""Actual Compose CLI foreground, quiet and redirected-terminal contracts."""
 
 import json
 from pathlib import Path
@@ -14,7 +14,8 @@ from host_runtime import OwnedProcess
 
 FIXTURE = "E09-compose-foreground"
 QUIET_FIXTURE = "E10-compose-quiet"
-FIXTURES = {FIXTURE, QUIET_FIXTURE}
+REDIRECTED_FIXTURE = "E11-compose-redirected"
+FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE}
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
@@ -30,11 +31,13 @@ class ComposeForegroundFixture(GuestFixture):
     unobserved create is quarantined, never guessed successful from absence.
     """
 
-    def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None, quiet=False, **kwargs):
+    def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None,
+                 quiet=False, redirected=False, **kwargs):
         super().__init__(*args, command=COMMAND, **kwargs)
         self.root, self.executable, self.runtime = root, executable, runtime
         self.provider_install = provider_install
         self.quiet = quiet
+        self.redirected = redirected
         self.child = OwnedProcess()
         self.command_attempted = False
         self.output = root / (PROCESS + ".log")
@@ -63,11 +66,16 @@ class ComposeForegroundFixture(GuestFixture):
         configuration = {"services": {"app": {"image": self.image, "network_mode": "none",
                          "command": [part.replace("$", "$$") for part in COMMAND],
                          "labels": self.intent["labels"]}}}
+        if self.redirected:
+            # `run` selects the terminal independently of the service default.
+            configuration["services"]["app"]["tty"] = True
         path = self.root / "compose-foreground.json"
         with path.open("xb") as output:
             output.write(canonical(configuration))
         arguments = [self.executable, "--project-name", self.project, "--file", str(path),
-                     "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "-T", "app"]
+                     "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "app"]
+        if not self.redirected:
+            arguments.insert(-1, "-T")
         if self.quiet:
             arguments.insert(-1, "--quiet")
         self.journal.put("container-intent.json", canonical(self.intent))

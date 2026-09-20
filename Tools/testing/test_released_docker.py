@@ -207,7 +207,7 @@ class DockerAdmissionTests(unittest.TestCase):
                 patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
                 patch.object(released_docker, "prepare_devcontainers") as devcontainers, \
                 patch.object(released_docker, "require_image", return_value={"verified": True}):
-            for name in ("E09-compose-foreground", "E10-compose-quiet"):
+            for name in ("E09-compose-foreground", "E10-compose-quiet", "E11-compose-redirected"):
                 with self.subTest(fixture=name):
                     prepared.reset_mock()
                     result = released_docker.admit_docker(lock, {}, pins, {"images": [{"name": "alpine-workload"}]},

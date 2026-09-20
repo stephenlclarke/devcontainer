@@ -170,6 +170,13 @@
       "assertions": ["immutable Compose CLI run with --quiet", "piped stdin roundtrip", "separate guest stdout and stderr", "real exit status", "automatic removal"]
     },
     {
+      "id": "E11-compose-redirected",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["redirected CLI overrides service tty without -T", "piped stdin roundtrip", "separate guest stdout and stderr", "real exit status", "automatic removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
