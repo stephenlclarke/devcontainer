@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -22,6 +25,16 @@ def invoke(function: str, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def ad_hoc_fixture(directory: str, source: str) -> Path:
+    """Give a disposable executable the same ad-hoc signing class as Bazel."""
+    executable = Path(directory) / Path(source).name
+    # Apple platform signatures cannot be launched from a copied path.
+    shutil.copy(source, executable)
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(executable)],
+                   capture_output=True, check=True)
+    return executable
 
 
 class LauncherTests(unittest.TestCase):
@@ -103,6 +116,71 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("DEVCONTAINER_HOST_INTEGRATION=1", result.stdout)
         self.assertNotIn("DEVCONTAINER_RUN_HOST_INTEGRATION", result.stdout)
+
+    def test_standalone_wrapper_preserves_arguments_status_and_removes_copy(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            executable = ad_hoc_fixture(directory, "/bin/bash")
+            before = hashlib.sha256(executable.read_bytes()).hexdigest()
+            for arguments, status, output in [(["-c", 'printf "%s\\n" "$BAZEL_TEST"'], 0, "1\n"),
+                                               (["-c", 'printf "%s\\n" "$1" "$2"', "fixture",
+                                                 "first arg", "second $arg"], 0, "first arg\nsecond $arg\n"),
+                                               (["-c", 'printf "%s\\n" "$0"'], 0, None),
+                                               (["-c", "exit 7"], 7, "")]:
+                result = subprocess.run(
+                    ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")), str(executable), *arguments],
+                    env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": directory, "DEVCONTAINER_TEST_STANDALONE": "1"},
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, status, result.stderr)
+                if output is None:
+                    copied_path = Path(result.stdout.strip())
+                    self.assertEqual(copied_path.parent, Path(directory))
+                    self.assertTrue(copied_path.name.startswith("provider-test."))
+                    self.assertFalse(copied_path.exists())
+                else:
+                    self.assertEqual(result.stdout, output)
+                self.assertEqual(list(Path(directory).iterdir()), [executable])
+            self.assertEqual(hashlib.sha256(executable.read_bytes()).hexdigest(), before)
+
+    def test_standalone_wrapper_removes_copy_after_group_cancellation(self) -> None:
+        for termination in [signal.SIGHUP, signal.SIGINT, signal.SIGTERM]:
+            with self.subTest(signal=termination), tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+                executable = ad_hoc_fixture(directory, "/bin/bash")
+                ready = Path(directory) / "ready"
+                child = subprocess.Popen(
+                    ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")), str(executable),
+                     "-c", 'printf ready > "$1"; exec /bin/sleep 30', "test", str(ready)],
+                    env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": directory, "DEVCONTAINER_TEST_STANDALONE": "1"},
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), "copied executable did not start")
+                    self.assertEqual(len(list(Path(directory).glob("provider-test.*"))), 1)
+                    os.killpg(child.pid, termination)
+                    output, errors = child.communicate(timeout=5)
+                    self.assertEqual(child.returncode, 128 + termination, errors)
+                    self.assertEqual(output, b"")
+                    self.assertEqual(sorted(Path(directory).iterdir()), sorted([executable, ready]))
+                finally:
+                    if child.poll() is None:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    child.communicate(timeout=5)
+
+    def test_standalone_wrapper_rejects_invalid_mode_and_unsigned_input(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            script = Path(directory) / "unsigned"
+            script.write_text("#!/bin/sh\nprintf 'must-not-run'\n")
+            script.chmod(0o700)
+            for mode, arguments in [("2", ["/usr/bin/true"]), ("1", []),
+                                    ("1", [str(script)]), ("1", [str(script) + ".absent"])]:
+                result = subprocess.run(
+                    ["/bin/bash", str(SCRIPT.with_name("ssd-test-runner.sh")), *arguments],
+                    env={"PATH": "/usr/bin:/bin", "TEST_TMPDIR": directory, "DEVCONTAINER_TEST_STANDALONE": mode},
+                    capture_output=True, text=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(list(Path(directory).iterdir()), [script])
 
     def test_real_argument_assembly_handles_empty_arrays_on_system_bash(self) -> None:
         for command, targets in [("query", ["//:product"]), ("info", []), ("coverage", ["//:unit", "--config=stock"])]:

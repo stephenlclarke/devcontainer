@@ -418,7 +418,10 @@ swift_test(
     module_name = "DevContainerServiceIntegrationTests",
     copts = RUNTIME_COPTS,
     data = [":devcontainer-engine"],
-    env = {"DEVCONTAINER_ENGINE_TEST_RUNFILE": "$(rootpath :devcontainer-engine)"},
+    env = {
+        "DEVCONTAINER_ENGINE_TEST_RUNFILE": "$(rootpath :devcontainer-engine)",
+        "DEVCONTAINER_TEST_STANDALONE": "1",
+    },
     env_inherit = ["DEVCONTAINER_HOST_INTEGRATION"],
     # These process-level tests exercise the real macOS Keychain.
     tags = ["manual", "local", "no-cache", "external", "integration"],

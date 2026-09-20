@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The opt-in service-process lane could not authenticate its own test executable because rules_swift's incomplete `.xctest` layout fails strict macOS code-identity validation (`-67056`). A byte-identical standalone copy passes the same check. The target now selects an isolated SSD copy without changing production peer authentication or signing cached build outputs. [Failure-before and both-profile focused results](bazel-test-harness.md#bounded-service-http-probes) keep real guest parity, release signing and performance qualification separate.
+
 The optional Bazel C collector can fail while the outer runner still reports test success. Coverage evidence must reject its errors and LLVM profile failures independently of test exit status. Targets already using the SSD LLVM exporter must not invoke that unconfigured collector again. Direct, fresh-log and retained-export regressions now cover this false-green path; [current source coverage and collector evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) retain the separate full-release acceptance requirements.
 
 Parallel LLVM instrumentation loses counter updates, and the rules_swift worker can preserve non-atomic incremental objects after atomic flags change. Thus successful tests and an apparent compiler-flag fix did not produce trustworthy coverage. The corrected coverage path disables that incremental reuse, uses atomic instrumentation and checks a separate exact-count parallel probe before aggregate measurement. [Retained reproduction and acceptance boundary](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) distinguish this focused correction from the still-required full clean-commit coverage/Sonar and release gates.
