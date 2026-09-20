@@ -10,6 +10,8 @@ The stock adapter launches an exact Apple `container` executable without a
 shell. The optional Compose adapter launches an exact `container-compose`
 executable and never links its implementation into this package.
 
+Enhanced CLI inventory preserves provider-only fields while a narrow native XPC identity read restores exact creation and process-start timestamps. Encoded dates must agree before reconciliation; terminal control still requires exact generation ownership, including same-second restarts. The decoder does not require enhanced network attachments to fit stock schemas. This internal correction is not a complete runtime-parity or stable-release claim.
+
 Project provider claims are durable and immutable while resources exist. This
 prevents stock and custom runtime operations from creating split-brain projects.
 The dispatcher classifies the complete supported Compose global-option surface

@@ -186,6 +186,8 @@ through the selected `container` executable.
 
 Archive uploads validate their tar input before host extraction and preserve member permission bits independently of the service's file-creation mask. Extraction uses a child of an untouched private `0700` temporary directory: an archive's `.` entry may change the child mode but cannot expose the enclosing host staging tree. Both direct-client and CLI copy paths upload only that extracted child. This does not claim UID/GID or extended-attribute parity beyond the separately qualified fixture scope.
 
+Enhanced CLI inventory retains provider-only fields but rounds timestamps. For managed or adopted resources, a narrow native XPC identity read validates labels, image and encoded creation/start dates, then restores both precise native timestamps. It avoids decoding enhanced attachment schemas through stock types. Attachment/terminal control continues to require exact process-generation identity; same-second restarts do not receive a tolerance waiver. The [enhanced terminal regression and live proof](docs/evidence/enhanced-engine-20260920.md) cover this boundary without declaring full attachment or release parity.
+
 ```mermaid
 flowchart LR
     Request["Runtime SPI request"] --> Choice{"Certified typed operation?"}
