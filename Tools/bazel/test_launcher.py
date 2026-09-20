@@ -218,13 +218,36 @@ class LauncherTests(unittest.TestCase):
 
     def test_build_environment_excludes_credentials_and_shell_hooks(self) -> None:
         result = subprocess.run(
-            ["/bin/bash", "-c", 'source "$1"; export UNRELATED_SECRET=fixture-secret BASH_ENV=/does/not/exist PYTHONPATH=/untrusted; clean_environment /usr/bin/env',
+            ["/bin/bash", "-c", 'source "$1"; export UNRELATED_SECRET=fixture-secret BASH_ENV=/does/not/exist PYTHONPATH=/untrusted GIT_TERMINAL_PROMPT=1 GIT_ASKPASS=/untrusted SSH_ASKPASS=/untrusted GCM_INTERACTIVE=always SSH_ASKPASS_REQUIRE=force GIT_SSH_COMMAND=/untrusted; clean_environment /usr/bin/env',
              "test", str(SCRIPT)], capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         values = dict(line.split("=", 1) for line in result.stdout.splitlines())
-        self.assertEqual(set(values), {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DEVELOPER_DIR", "PYTHONDONTWRITEBYTECODE", "DEVCONTAINER_HOST_INTEGRATION"})
+        noninteractive = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "GCM_INTERACTIVE": "never",
+                          "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "",
+                          "SSH_ASKPASS": "/usr/bin/false", "SSH_ASKPASS_REQUIRE": "never",
+                          "GIT_SSH_COMMAND": "/usr/bin/ssh -oBatchMode=yes"}
+        self.assertEqual(set(values), {"HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DEVELOPER_DIR", "PYTHONDONTWRITEBYTECODE", "DEVCONTAINER_HOST_INTEGRATION"} | noninteractive.keys())
+        for name, value in noninteractive.items():
+            self.assertEqual(values[name], value)
         self.assertEqual(values["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+
+    def test_configured_git_credential_helper_cannot_prompt_during_build(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            root = Path(directory)
+            marker = root / "credential-helper-called"
+            helper = root / "credential-helper"
+            helper.write_text(f'#!/bin/sh\n/usr/bin/touch "{marker}"\nprintf "username=fixture\\npassword=fixture\\n"\n')
+            helper.chmod(0o700)
+            subprocess.run(["/usr/bin/git", "config", "--file", str(root / ".gitconfig"),
+                            "credential.helper", str(helper)], check=True)
+            result = subprocess.run(
+                ["/bin/bash", "-c", 'source "$1"; clean_environment /usr/bin/git credential fill', "test", str(SCRIPT)],
+                env={"HOME": str(root), "PATH": "/usr/bin:/bin"},
+                input="protocol=https\nhost=fixture.invalid\n\n", capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+            self.assertFalse(marker.exists())
 
     def test_release_identity_comes_from_the_captured_source_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:

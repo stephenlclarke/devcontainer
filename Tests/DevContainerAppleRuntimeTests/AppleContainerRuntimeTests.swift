@@ -881,11 +881,16 @@ struct FakeAppleCLI {
         try JSONSerialization.data(withJSONObject: values).write(to: root.appendingPathComponent("images.json"))
     }
 
+    func setContainerInventory(_ values: [[String: Any]]) throws {
+        try JSONSerialization.data(withJSONObject: values).write(to: root.appendingPathComponent("containers.json"))
+    }
+
     private var script: String {
         let log = shellQuote(logURL.path)
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
         let images = shellQuote(root.appendingPathComponent("images.json").path)
+        let containers = shellQuote(root.appendingPathComponent("containers.json").path)
         let createHelp = enhancedCreateOptions
             ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
@@ -919,6 +924,10 @@ struct FakeAppleCLI {
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ -f \(containers) ]; then
+              cat \(containers)
+              exit 0
+            fi
             if [ "$mode" = slow-list ]; then
               sleep 0.3
             fi

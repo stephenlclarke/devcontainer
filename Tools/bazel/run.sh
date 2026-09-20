@@ -137,6 +137,9 @@ clean_environment() {
         PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
         TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" \
         DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+        GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false GCM_INTERACTIVE=never \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+        SSH_ASKPASS=/usr/bin/false SSH_ASKPASS_REQUIRE=never GIT_SSH_COMMAND='/usr/bin/ssh -oBatchMode=yes' \
         PYTHONDONTWRITEBYTECODE=1 DEVCONTAINER_HOST_INTEGRATION="$host_integration" "$@"
 }
 

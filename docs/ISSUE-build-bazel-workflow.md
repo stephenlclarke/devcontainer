@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The approved enhanced E02 run exposed loss of subsecond container identity when the enhanced CLI emits whole-second JSON. This discarded valid requested image/lifecycle metadata; exact-owner recovery restored services without changing the failed result. The correction validates precise native identity before reconciliation, preserves enhanced CLI fields, and avoids importing the enhanced network attachment schema into a stock build. Routine operation also must not invoke Git credential helpers or approval prompts: the launcher now explicitly disables prompting and resets configured helpers, with a failing-before helper-invocation regression. End-to-end host/signing authorization qualification remains open; see [current harness evidence](bazel-test-harness.md#execution-boundaries) and [the unattended requirement](bazel-workflow.md#unattended-authorization-requirement).
+
 C03's earlier stock run lost configured network aliases because the facade omitted the adapter capability overlay. The Dev-only handoff correction has failing-before component proof, and its exact packaged stock run now passes all four unchanged observations plus automatic cleanup (`db642356-d071-4d77-a543-7473d574256c`). The original failed results remain retained; enhanced execution, quiet release comparisons and publication remain open.
 
 Concurrent Bazel servers previously used the same test-scratch base, so identical package-test labels could delete each other's extracted files. The launcher now gives each workspace a short stable namespace; the focused regression fails before correction and passes afterward. The original failed Compose smoke remains retained, with corrected concurrent package proof required.

@@ -24,7 +24,7 @@ struct AppleContainerRecord {
     let dockerID: String
     let spec: ContainerSpec
     let state: String
-    let createdAt: Date
+    var createdAt: Date
     let startedAt: Date?
     let finishedAt: Date?
     let exitCode: Int32?

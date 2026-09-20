@@ -264,6 +264,7 @@ swift_library(
         "@swiftpkg_container//:ContainerNetworkClient",
         "@swiftpkg_container//:ContainerPersistence",
         "@swiftpkg_container//:ContainerResource", "@swiftpkg_container//:SocketForwarder",
+        "@swiftpkg_container//:ContainerXPC",
         "@swiftpkg_containerization//:Containerization",
         "@swiftpkg_containerization//:ContainerizationOCI",
         "@swiftpkg_containerization//:ContainerizationOS",

@@ -10,6 +10,14 @@ The product-owned `Tools/bazel/evidence-policy.json` uses the shared validator's
 
 ## Run locally
 
+### Unattended authorization requirement
+
+Routine build, test, benchmark and release runs must not wait for an interactive approval. Required macOS permissions, Developer ID access and notarization credentials belong in an explicit one-time setup phase, using stable signed executable identities. The launcher forces Git/SSH credential prompting off and excludes inherited credential helpers. Disposable test Keychains use Security.framework with user interaction disabled; the helper and selected API readiness probe have bounded deadlines and retain private diagnostics on failure.
+
+This is not yet a claim that the entire release workflow is prompt-free. Host permission/identity preflight, signing/notarization integration and unattended recovery still need end-to-end qualification. Missing authorization must stop before expensive work, preserve recoverable state and identify the setup action needed. Operating-system updates, replaced signing identities or revoked permissions can require new operator consent; never bypass that consent, disable platform security, or approve a dialog automatically.
+
+### Commands
+
 Requirements: Apple silicon, full Xcode (validated with Xcode 27 / Swift 6.4), an external volume mounted at `/Volumes/SSD`, Python 3.9 or newer for helper tests, and network access for the first verified tool/dependency download.
 
 ```console

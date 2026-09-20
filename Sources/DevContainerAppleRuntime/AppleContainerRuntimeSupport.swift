@@ -157,6 +157,63 @@ extension AppleContainerRuntime {
         )
     }
 
+    func preciseContainerRecord(
+        _ value: [String: Any], context: RuntimeRequestContext
+    ) async throws -> AppleContainerRecord {
+        var record = try containerRecord(value)
+        guard useDirectContainerAPI,
+              metadataStore != nil || requestedContainers[record.id] != nil
+              || requestedContainers[record.dockerID] != nil
+        else {
+            return record
+        }
+        try context.checkActive()
+        let native: AppleContainerIdentity
+        do {
+            native = try await inventoryClient.identity(id: record.id)
+        } catch {
+            throw directAPIError(error, operation: "precise container identity")
+        }
+        try context.checkActive()
+        let configuration = value["configuration"] as? [String: Any]
+        let image = configuration?["image"] as? [String: Any]
+        guard native.id == record.id,
+              native.labels == record.spec.labels,
+              image?["reference"] as? String == native.image.reference,
+              (image?["descriptor"] as? [String: Any])?["digest"] as? String == native.image.descriptor.digest,
+              let encodedDate = configuration?["creationDate"] as? String,
+              Self.matchesEncodedCreationDate(encodedDate, native: native.creationDate)
+        else {
+            throw DevContainerError(.conflict, message: "Container identity changed during CLI inventory")
+        }
+        // Never loosen incarnation matching to a one-second tolerance: two
+        // replacements can occupy the same encoded second. Preserve CLI-only
+        // enhanced fields and use the native timestamp solely for identity.
+        record.createdAt = native.creationDate
+        return record
+    }
+
+    private static func matchesEncodedCreationDate(_ value: String, native: Date) -> Bool {
+        if value.contains(".") {
+            guard let observed = date(value) else { return false }
+            return sameContainerIncarnation(metadataCreatedAt: native, observedCreatedAt: observed)
+        }
+        return ISO8601DateFormatter().string(from: native) == value
+    }
+
+    static func matchingContainerMetadata(
+        _ metadata: [String: RuntimeContainerMetadata], observed: [DevContainerModel.ContainerSnapshot]
+    ) -> [String: RuntimeContainerMetadata] {
+        observed.reduce(into: [:]) { result, snapshot in
+            let id = snapshot.runtimeID.rawValue
+            if let item = metadata[id], sameContainerIncarnation(
+                metadataCreatedAt: item.createdAt, observedCreatedAt: snapshot.createdAt
+            ) {
+                result[id] = item
+            }
+        }
+    }
+
     func requestedContainer(for record: AppleContainerRecord) -> RequestedContainer? {
         let id = record.id
         let dockerID = record.dockerID
@@ -249,7 +306,9 @@ extension AppleContainerRuntime {
         containerExitRegistrations.removeValue(forKey: id)
         containerExits.removeValue(forKey: id)
         let channel = containerIO.removeValue(forKey: id)
-        if let channel { scheduleContainerIOClosure(id: id, channel: channel) }
+        if let channel {
+            scheduleContainerIOClosure(id: id, channel: channel)
+        }
         return channel
     }
 

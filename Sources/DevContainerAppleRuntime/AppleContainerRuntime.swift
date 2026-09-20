@@ -367,23 +367,31 @@ public extension AppleContainerRuntime {
         let result = try await command(arguments)
         try requireSuccess(result, operation: "container list")
         let values = try parseJSONObjectArray(result.standardOutput)
-        let observed = try values.map(containerSnapshot).filter {
+        // Validate the entire CLI observation before reconciliation can discard
+        // requested state. Enhanced JSON retains fields absent from stock APIs,
+        // but its ISO-8601 encoder omits subsecond creation identity.
+        var records: [AppleContainerRecord] = []
+        for value in values {
+            try await records.append(preciseContainerRecord(value, context: context))
+        }
+        let observed = records.map(containerSnapshot).filter {
             !Self.isInternalBuilderResource($0)
         }
         var snapshots: [ContainerSnapshot] = []
         snapshots.reserveCapacity(observed.count)
         var observedRuntimeIDs = Set<String>()
         let metadata = try await containerMetadataByRuntimeID()
+        let currentMetadata = Self.matchingContainerMetadata(metadata, observed: observed)
         let requiresImageResolution = observed.contains {
             $0.imageID == nil
-                && metadata[$0.runtimeID.rawValue]?.imageID == nil
+                && currentMetadata[$0.runtimeID.rawValue]?.imageID == nil
         }
         let images = requiresImageResolution
             ? try await resolvedImages(context: context)
             : []
         for observed in observed {
             let imageID = observed.imageID
-                ?? metadata[observed.runtimeID.rawValue]?.imageID
+                ?? currentMetadata[observed.runtimeID.rawValue]?.imageID
                 ?? Self.imageID(for: observed.spec.image, in: images)
             let snapshot = try await containerSnapshotWithMetadata(
                 observed,
