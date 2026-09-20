@@ -8,9 +8,20 @@ import unittest
 from pathlib import Path
 
 from check_evidence import case_count, coverage_counts, expected_tests, load_policy, require_coverage_logs, require_source_hits, validate, validate_report
+from test_coverage_report import COVERAGE_FAILURE_LOGS
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_fresh_logs_reject_masked_collector_errors(self) -> None:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            log = Path(directory) / "test.log"
+            events = [{"testResult": {"testActionOutput": [{"name": "test.log", "uri": log.as_uri()}]}}]
+            for failure in COVERAGE_FAILURE_LOGS:
+                with self.subTest(failure=failure):
+                    log.write_bytes(b"All tests passed\n" + failure)
+                    with self.assertRaisesRegex(ValueError, "collector"):
+                        require_coverage_logs(events)
+
     def test_default_coverage_suites_reject_out_of_range_counters(self) -> None:
         required = ["Sources/DevContainerModel/BuildInfo.swift", "Sources/DevContainerState/SQLiteStateStore.swift",
                     "Tools/version-generator/main.swift", "Sources/DevContainerModel/AtomicFile.swift",

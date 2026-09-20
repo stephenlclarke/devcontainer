@@ -16,9 +16,20 @@ from retain_evidence import digest
 
 
 def require_clean_coverage_log(content: bytes) -> None:
-    """A merger warning can mean malformed counters were omitted from LCOV."""
+    """Reject known collector failures even when Bazel reports test success."""
     if b"WARNING: Tracefile" in content or b"ERROR: Tracefile" in content:
         raise ValueError("Coverage merger rejected tracefile data; report is not authoritative")
+    # Bazel 8's optional C collector does not propagate its failing status.
+    # Match coverage-specific diagnostics, not intentional CLI error fixtures.
+    failures = (
+        rb"^(?:[^\n]*/)?collect_cc_coverage\.sh: line [0-9]+:",
+        rb"^LLVM Profile Error:",
+        rb"^(?:llvm-cov: )?error: Failed to load (?:coverage|profile)",
+        rb"^(?:llvm-(?:cov|profdata): )?(?:error|warning): [^\n]*(?:malformed|invalid|unsupported) instrumentation profile",
+        rb"^(?:llvm-cov: )?warning: [0-9]+ functions? have mismatched data",
+    )
+    if any(re.search(pattern, content, re.MULTILINE) for pattern in failures):
+        raise ValueError("Coverage collector failed; report is not authoritative")
 
 
 def retained_log_names(events: list[dict], expected: set[str]) -> set[str]:

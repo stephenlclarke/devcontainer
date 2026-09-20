@@ -93,7 +93,10 @@ sh_test(
     srcs = ["tests/version-generator.sh"],
     args = ["$(location //:DevContainerVersionGenerator)"],
     data = ["//:DevContainerVersionGenerator"],
-    env = {"TEST_BINARIES_FOR_LLVM_COV": "$(location //:DevContainerVersionGenerator)"},
+    env = {
+        "CC_CODE_COVERAGE_SCRIPT": "",  # The SSD runner owns LLVM export.
+        "TEST_BINARIES_FOR_LLVM_COV": "$(location //:DevContainerVersionGenerator)",
+    },
     visibility = ["//visibility:public"],
 )
 

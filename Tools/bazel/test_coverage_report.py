@@ -14,6 +14,13 @@ from retain_evidence import digest
 
 
 LCOV = b"SF:Sources/Example.swift\nDA:1,2\nDA:3,0\nLF:2\nLH:1\nend_of_record\n"
+COVERAGE_FAILURE_LOGS = (
+    b"external/bazel_tools/tools/test/collect_cc_coverage.sh: line 194: GENERATE_LLVM_LCOV: unbound variable\n",
+    b"LLVM Profile Error: Failed to write file profile.profraw: Permission denied\n",
+    b"error: Failed to load coverage: No such file or directory\n",
+    b"warning: input.profraw: malformed instrumentation profile data\n",
+    b"warning: 1 functions have mismatched data\n",
+)
 
 
 class CoverageReportTests(unittest.TestCase):
@@ -72,6 +79,17 @@ class CoverageReportTests(unittest.TestCase):
         self.assertIn("coverage.xml", report_bytes(self.database, "fixture"))
         with self.assertRaisesRegex(ValueError, "LCOV line"):
             sonar_xml(LCOV.replace(b"DA:1,2", b"DA:1,18446744073709551615"))
+
+    def test_collector_failures_cannot_hide_behind_successful_test_status(self) -> None:
+        require_clean_coverage_log(b"error: intentional CLI test failure\nwarning: test fixture missing\n")
+        for failure in COVERAGE_FAILURE_LOGS:
+            with self.subTest(failure=failure):
+                with self.assertRaisesRegex(ValueError, "collector"):
+                    require_clean_coverage_log(failure)
+                self.contents[self.logs[0]] = b"All tests passed\n" + failure
+                self.store()
+                with self.assertRaisesRegex(ValueError, "collector"):
+                    report_bytes(self.database, "fixture")
 
     def test_missing_retained_diagnostics_never_qualify(self) -> None:
         for missing in ([self.logs[0]], self.logs):
