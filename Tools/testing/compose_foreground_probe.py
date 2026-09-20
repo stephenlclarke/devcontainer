@@ -84,6 +84,10 @@ class ComposeForegroundFixture(GuestFixture):
                 actual = self.inspect(self.name)
                 if actual is None or actual.get("State", {}).get("Status") != "running":
                     raise ValueError("Compose foreground output has no running guest")
+                self.journal.put("compose-foreground-inspection.json", canonical({
+                    "identity": {key: actual.get(key) for key in ("Id", "Name", "Image")},
+                    "config": {key: actual.get("Config", {}).get(key) for key in ("Tty", "OpenStdin")},
+                    "host": {key: actual.get("HostConfig", {}).get(key) for key in ("AutoRemove", "NetworkMode")}}))
                 self.identifier = self.owned(actual)
                 self.journal.put("container-created.json", canonical({"id": self.identifier}))
                 return

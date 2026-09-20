@@ -7,6 +7,63 @@ import Foundation
 import Testing
 
 struct DockerExecutionSettingsTests {
+    @Test(arguments: ["none", "bridge", "default", "project_private", "", nil] as [String?])
+    func `inspect preserves the accepted network mode`(_ requested: String?) async throws {
+        let runtime = InMemoryRuntime()
+        await runtime.seedImage(.init(id: "sha256:network-mode", references: ["mode:test"], createdAt: Date(), size: 1))
+        _ = try await runtime.createNetwork(spec: NetworkSpec(name: "project_private"), context: .init())
+        let router = DockerRouter(runtime: runtime)
+        var host: [String: Any] = [:]
+        if let requested {
+            host["NetworkMode"] = requested
+        }
+        let body = try JSONSerialization.data(withJSONObject: ["Image": "mode:test", "HostConfig": host])
+        let created = await router.respond(to: .init(method: .post, target: "/containers/create?name=mode", body: body))
+        #expect(created.status == 201)
+        let inspected = await router.respond(to: .init(method: .get, target: "/containers/mode/json"))
+        let object = try #require(JSONSerialization.jsonObject(with: bytes(inspected)) as? [String: Any])
+        let actual = try #require(object["HostConfig"] as? [String: Any])
+        let expected = [nil, "", "default"].contains(requested) ? "bridge" : requested
+        #expect(actual["NetworkMode"] as? String == expected)
+    }
+
+    @Test func `legacy isolated container inspection reports none`() async throws {
+        let runtime = InMemoryRuntime()
+        await runtime.seedImage(.init(id: "sha256:legacy", references: ["legacy:test"], createdAt: Date(), size: 1))
+        _ = try await runtime.createContainer(
+            spec: .init(name: "legacy", image: "legacy:test", networks: [.init(name: "none")]), context: .init()
+        )
+        let router = DockerRouter(runtime: runtime)
+        let inspected = await router.respond(to: .init(method: .get, target: "/containers/legacy/json"))
+        let object = try #require(JSONSerialization.jsonObject(with: bytes(inspected)) as? [String: Any])
+        #expect((object["HostConfig"] as? [String: Any])?["NetworkMode"] as? String == "none")
+    }
+
+    @Test(arguments: ["none", "project_primary", "bridge"])
+    func `explicit endpoints do not replace the retained selector`(_ mode: String) async throws {
+        // Pinned Docker 29.5.2 accepts and starts these combinations. HostConfig
+        // retains the selector while NetworkingConfig selects the attachments.
+        let runtime = InMemoryRuntime()
+        await runtime.seedImage(.init(id: "sha256:mode", references: ["mode:test"], createdAt: Date(), size: 1))
+        for name in ["project_primary", "project_endpoint"] {
+            _ = try await runtime.createNetwork(spec: NetworkSpec(name: name), context: .init())
+        }
+        let router = DockerRouter(runtime: runtime)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "Image": "mode:test", "HostConfig": ["NetworkMode": mode],
+            "NetworkingConfig": ["EndpointsConfig": ["project_endpoint": ["Aliases": ["service"]]]]
+        ])
+        let response = await router.respond(to: .init(
+            method: .post, target: "/containers/create?name=mode", body: body
+        ))
+        #expect(response.status == 201)
+        let native = try await runtime.inspectContainer(id: "mode", context: .init())
+        #expect(native.spec.networks == [.init(name: "project_endpoint", aliases: ["service"])])
+        let inspected = await router.respond(to: .init(method: .get, target: "/containers/mode/json"))
+        let object = try #require(JSONSerialization.jsonObject(with: bytes(inspected)) as? [String: Any])
+        #expect((object["HostConfig"] as? [String: Any])?["NetworkMode"] as? String == mode)
+    }
+
     @Test(arguments: [true, false, nil] as [Bool?])
     func `inspect reports the effective automatic removal policy`(_ requested: Bool?) async throws {
         let runtime = InMemoryRuntime()

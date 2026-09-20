@@ -78,13 +78,16 @@ struct AppleContainerExecutionSettingsTests {
         #expect(native.stopSignal == "SIGINT")
         #expect(native.resources.memoryInBytes == originalMemory)
         #expect(!native.readOnly)
-        let requested = ContainerSpec(name: "test", image: "image", executionSettings: .init())
+        let requested = ContainerSpec(
+            name: "test", image: "image", executionSettings: .init(), requestedNetworkMode: "none"
+        )
         let observed = ContainerSpec(name: "test", image: "image", executionSettings: .init(
             memoryLimitInBytes: originalMemory, stopSignal: "SIGINT"
         ))
         let effective = AppleContainerRuntime.effectiveContainerSpec(requested: requested, observed: observed)
         #expect(effective.executionSettings?.memoryLimitInBytes == nil)
         #expect(effective.executionSettings?.stopSignal == "SIGINT")
+        #expect(effective.requestedNetworkMode == "none")
         #expect(AppleContainerExecutionSettings.observed([:]) == .init())
     }
 

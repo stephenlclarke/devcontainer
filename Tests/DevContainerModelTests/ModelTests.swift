@@ -103,7 +103,8 @@ func `runtime models round trip through JSON`() throws {
             PortBinding(containerPort: 8080, hostPort: 18080)
         ],
         terminal: true,
-        openStandardInput: true
+        openStandardInput: true,
+        requestedNetworkMode: "none"
     )
     let snapshot = ContainerSnapshot(
         runtimeID: RuntimeID(rawValue: "runtime"),
@@ -116,6 +117,14 @@ func `runtime models round trip through JSON`() throws {
     )
     let data = try JSONEncoder().encode(snapshot)
     #expect(try JSONDecoder().decode(ContainerSnapshot.self, from: data) == snapshot)
+}
+
+@Test func `legacy container metadata has no fabricated network selector`() throws {
+    let spec = ContainerSpec(name: "legacy", image: "image")
+    let bytes = try JSONEncoder().encode(spec)
+    #expect(try JSONDecoder().decode(ContainerSpec.self, from: bytes).requestedNetworkMode == nil)
+    let object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    #expect(object["requestedNetworkMode"] == nil)
 }
 
 @Test

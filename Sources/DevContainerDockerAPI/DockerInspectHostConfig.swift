@@ -4,7 +4,7 @@ struct DockerInspectHostConfig: Encodable {
     let autoRemove: Bool
     let binds: [String]
     var portBindings: [String: [DockerNetworkPortBinding]] = [:]
-    let networkMode = "default"
+    var networkMode = "bridge"
     var dns: [String] = []
     var dnsSearch: [String] = []
     var dnsOptions: [String] = []

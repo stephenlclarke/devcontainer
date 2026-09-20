@@ -35,6 +35,11 @@ struct DockerNetworkProjectionTests {
             name: "project_default",
             aliases: endpoint ? ["service"] : []
         )])
+        if !endpoint {
+            let inspected = await router.respond(to: .init(method: .get, target: "/containers/app/json"))
+            let value = try #require(JSONSerialization.jsonObject(with: bytes(inspected)) as? [String: Any])
+            #expect((value["HostConfig"] as? [String: Any])?["NetworkMode"] as? String == id)
+        }
 
         // Removing and recreating the name cannot make the old wire ID valid.
         #expect(await router.respond(to: .init(method: .delete, target: "/networks/\(id)")).status == 204)

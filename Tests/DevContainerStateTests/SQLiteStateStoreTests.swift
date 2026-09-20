@@ -236,7 +236,8 @@ struct SQLiteStateStoreTests {
                     name: "workspace",
                     image: "alpine:latest",
                     user: "501:20",
-                    autoRemove: true
+                    autoRemove: true,
+                    requestedNetworkMode: "none"
                 ),
                 createdAt: createdAt
             )
@@ -250,6 +251,11 @@ struct SQLiteStateStoreTests {
                     == metadata
             )
             #expect(try await store.listContainerMetadata() == [metadata])
+            let reopened = try await SQLiteStateStore(path: store.path)
+            #expect(
+                try await reopened.containerMetadata(id: metadata.runtimeID.rawValue)?
+                    .spec.requestedNetworkMode == "none"
+            )
 
             let startedAt = Date(timeIntervalSinceReferenceDate: 2000)
             try await store.markContainerStarted(

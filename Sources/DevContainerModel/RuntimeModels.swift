@@ -334,6 +334,9 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var stopTimeoutSeconds: Int?
     /// Historical caller spelling for display; image remains the immutable launch identity.
     public var requestedImageReference: String?
+    /// Accepted Engine selector, independent of explicit endpoint attachments.
+    /// Nil preserves older/adopted metadata without inventing a caller request.
+    public var requestedNetworkMode: String?
     /// Requested on create; retained as effective policy only by a supporting provider.
     /// Nil in legacy/adopted metadata does not certify a logging implementation.
     public var outputLogFormat: ContainerOutputLogFormat?
@@ -367,6 +370,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         removedEnvironmentKeys: [String]? = nil,
         stopTimeoutSeconds: Int? = nil,
         requestedImageReference: String? = nil,
+        requestedNetworkMode: String? = nil,
         outputLogFormat: ContainerOutputLogFormat? = nil
     ) {
         self.name = name
@@ -397,6 +401,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.removedEnvironmentKeys = removedEnvironmentKeys
         self.stopTimeoutSeconds = stopTimeoutSeconds
         self.requestedImageReference = requestedImageReference
+        self.requestedNetworkMode = requestedNetworkMode
         self.outputLogFormat = outputLogFormat
     }
 }

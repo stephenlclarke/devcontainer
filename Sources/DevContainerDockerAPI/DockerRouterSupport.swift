@@ -652,6 +652,7 @@ extension DockerRouter {
         requestedName: String
     ) throws -> ContainerSpec {
         let environment = try ContainerEnvironmentOverrides(request.env ?? [])
+        let networkMode = request.hostConfig?.networkMode ?? ""
         return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
@@ -694,6 +695,7 @@ extension DockerRouter {
             removedEnvironmentKeys: environment.removedKeys,
             stopTimeoutSeconds: request.stopTimeout,
             requestedImageReference: request.containerImageReference,
+            requestedNetworkMode: ["", "default"].contains(networkMode) ? "bridge" : networkMode,
             outputLogFormat: request.hostConfig?.logConfig?.type == "json-file" ? .jsonFileV1 : nil
         )
     }
@@ -930,6 +932,7 @@ extension DockerRouter {
                 "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
             },
             portBindings: inspectPortBindings(spec.ports),
+            networkMode: spec.requestedNetworkMode ?? (spec.networks.map(\.name) == ["none"] ? "none" : "bridge"),
             dns: spec.dns?.nameservers ?? [],
             dnsSearch: spec.dns?.searchDomains ?? [],
             dnsOptions: spec.dns?.options ?? [],
