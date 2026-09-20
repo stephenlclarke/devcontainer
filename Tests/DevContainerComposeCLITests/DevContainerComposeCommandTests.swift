@@ -105,6 +105,7 @@ struct DevContainerComposeCommandTests {
         environment["CONTAINER_BIN"] = "/unrelated/container"
         environment["CONTAINER_COMPOSE_CONTAINER"] = "/another/container"
         environment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = "/unrelated/engine.sock"
+        environment["CONTAINER_COMPOSE_RUNTIME_CAPABILITIES"] = "unrelated-capability"
         environment["DEVCONTAINER_DOCKER_BIN"] = "/missing/docker"
         environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = "/missing/docker-compose"
         if useConfiguration {
@@ -124,7 +125,10 @@ struct DevContainerComposeCommandTests {
             arguments: useConfiguration ? ["up"] : ["--project-name", "native-selection", "up"],
             environment: environment
         ) == 0)
-        let expectedEnvironment = [socket, runtime, runtime]
+        let expectedEnvironment = [
+            socket, runtime, runtime,
+            "io.github.stephenlclarke.container.compose.network-aliases.v1"
+        ]
         #expect(try fixture.runtimeEnvironment() == (
             useConfiguration ? expectedEnvironment + expectedEnvironment : expectedEnvironment
         ))
@@ -535,7 +539,7 @@ private final class ComposeCommandFixture {
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
         printf '%s\n' "${CONTAINER_COMPOSE_ENGINE_SOCKET-}" "${CONTAINER_BIN-}" \\
-          "${CONTAINER_COMPOSE_CONTAINER-}" >> "$RUNTIME_ENVIRONMENT_LOG"
+          "${CONTAINER_COMPOSE_CONTAINER-}" "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" >> "$RUNTIME_ENVIRONMENT_LOG"
         case " $* " in
           *" version --short "*|*" version -s "*)
             printf '%s\n' "${VERSION_OUTPUT-0.15.1}"

@@ -1,5 +1,7 @@
 # Testing
 
+The corrected C03 stock run finishes and cleans up automatically but fails the alias observation. A native facade correction now passes the adapter's existing creation-time alias capability to Compose, preventing alias loss before container creation. Its four parameterized selection regressions fail before correction and the complete Compose CLI component passes afterward. New packaged live qualification remains required; this is not quiet benchmark evidence.
+
 C03's unchanged environment-file, named-volume, alias and peer probe passes the pinned Docker reference. The initial stock run timed out because the test had not provisioned the private builder needed by volume initialization. Setup now admits that builder before stack startup without prebuilding the helper outside operation timing. A separate product correction projects native Compose volume labels in API inspection and filters and rejects conflicting mirrors before creation; focused regressions fail before the fix and pass after it. Corrected stock/enhanced packages and quiet repeated release comparisons remain unqualified; the original failed run is preserved in `docs/bazel-test-harness.md`.
 
 Service-process integration now uses a real disposable Keychain in its owned SSD HOME, not the operator login Keychain. Both profile lanes verify normal startup/shutdown and a rejected recovery request, followed by private-Keychain deletion. A still-running child or failed cleanup fails the test and retains its state for diagnosis.

@@ -370,6 +370,10 @@ enum DevContainerComposeCommand {
             childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = socket
             childEnvironment["CONTAINER_BIN"] = paths.containerExecutable
             childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = paths.containerExecutable
+            // The selected devcontainer adapter implements creation-time aliases
+            // even when the underlying stock Apple CLI advertises none.
+            childEnvironment["CONTAINER_COMPOSE_RUNTIME_CAPABILITIES"] =
+                "io.github.stephenlclarke.container.compose.network-aliases.v1"
         }
         if childArguments.isEmpty {
             childArguments = ["help"]

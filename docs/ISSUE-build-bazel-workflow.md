@@ -2,6 +2,8 @@
 
 ## Problem description
 
+C03's completed stock run still loses configured network aliases: the facade omits the adapter capability overlay, causing Compose to drop them before creation. The Dev-only handoff correction has failing-before component proof; the original semantic failure remains recorded until a new exact package passes the unchanged probe.
+
 Concurrent Bazel servers previously used the same test-scratch base, so identical package-test labels could delete each other's extracted files. The launcher now gives each workspace a short stable namespace; the focused regression fails before correction and passes afterward. The original failed Compose smoke remains retained, with corrected concurrent package proof required.
 
 C03 live qualification exposed both a harness prerequisite and a product defect: the stock native path needs its admitted private builder for volume-helper creation, and native volume labels must be projected consistently for Docker-compatible clients. Component corrections are implemented with failing-before regressions; corrected packaged stock/enhanced proof and quiet release comparisons are still open. See [C03 evidence](bazel-test-harness.md#c03-compose-resources); the original timeout remains a failure.
