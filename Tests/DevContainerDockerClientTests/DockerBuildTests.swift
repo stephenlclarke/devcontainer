@@ -140,57 +140,6 @@ struct DockerBuildTests {
     }
 
     @Test
-    func `interrupting executable archiving joins its child and removes staged Dockerfile`() async throws {
-        let root = try scratch()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let files = FileManager.default
-        let fixture = try interruptFixture(root)
-        let temporary = fixture.temporary
-        let process = ProcessCommand(
-            FrontendExecutable.executable.path,
-            arguments: ["build", "-f", fixture.dockerfile.path, fixture.context.path],
-            environment: [
-                "PATH=/no-docker",
-                "TMPDIR=" + temporary.path,
-                "DEVCONTAINER_CONFIG=/no-config"
-            ],
-            directory: nil
-        )
-        process.attributes.setProcessGroup = true
-        try process.start()
-        let termination = OwnedProcessTermination()
-        termination.didLaunch(processGroup: process.pid)
-        let timeout = Task {
-            do { try await Task.sleep(for: .seconds(5)); termination.cancel() } catch {
-            /* Normal completion cancels watchdog. */ }
-        }
-        let end = ContinuousClock.now.advanced(by: .seconds(3))
-        var sawStage = false
-        while ContinuousClock.now < end {
-            if (try? files.contentsOfDirectory(atPath: temporary.path).isEmpty) == false {
-                sawStage = true
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(1))
-        }
-        #expect(kill(process.pid, SIGTERM) == 0)
-        // Keep the PID unreaped until the watchdog has relinquished ownership.
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().async {
-                _ = try? process.waitUntilExit()
-                continuation.resume()
-            }
-        }
-        timeout.cancel()
-        termination.didExit()
-        let status = try process.wait()
-        #expect(status == 1)
-        #expect(sawStage)
-        let residue = try files.contentsOfDirectory(atPath: temporary.path)
-        #expect(residue.isEmpty)
-    }
-
-    @Test
     func `build progress preserves content across every byte split`() throws {
         let input = Data(
             ("{\"stream\":\"Step 1\\n\"}\n"
@@ -256,28 +205,6 @@ struct DockerBuildTests {
             attributes: [.posixPermissions: 0o700]
         )
         return root
-    }
-
-    private struct InterruptFixture {
-        let temporary: URL
-        let context: URL
-        let dockerfile: URL
-    }
-
-    private func interruptFixture(_ root: URL) throws -> InterruptFixture {
-        let temporary = root.appendingPathComponent("temporary")
-        let context = root.appendingPathComponent("context")
-        for directory in [temporary, context] {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        }
-        let dockerfile = root.appendingPathComponent("external.Dockerfile")
-        try Data("FROM scratch\n".utf8).write(to: dockerfile)
-        let payload = context.appendingPathComponent("sparse-payload")
-        try Data().write(to: payload)
-        let handle = try FileHandle(forWritingTo: payload)
-        try handle.truncate(atOffset: 1024 * 1024 * 1024)
-        try handle.close()
-        return InterruptFixture(temporary: temporary, context: context, dockerfile: dockerfile)
     }
 
     private func tar(_ data: Data, _ arguments: [String]) async throws -> Data {

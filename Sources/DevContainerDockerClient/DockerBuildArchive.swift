@@ -8,6 +8,8 @@ public struct DockerBuildArchive: Sendable {
     public let data: Data
     public let dockerfile: String
 
+    typealias ArchiveRunner = @Sendable ([String], Int) async throws -> CapturedProcessResult
+
     /// Bounded in-memory request, matching the gateway's buffered build API.
     /// Generated Dockerfiles can be outside the context; stage only that file.
     public static func prepare(_ spec: DockerBuildCommand) async throws -> Self {
@@ -22,7 +24,11 @@ public struct DockerBuildArchive: Sendable {
         }
     }
 
-    static func create(_ spec: DockerBuildCommand, maximumArchiveBytes: Int = 64 * 1024 * 1024) async throws -> Self {
+    static func create(
+        _ spec: DockerBuildCommand,
+        maximumArchiveBytes: Int = 64 * 1024 * 1024,
+        run: ArchiveRunner = runTar
+    ) async throws -> Self {
         let files = FileManager.default
         let context = URL(fileURLWithPath: spec.context).standardizedFileURL.resolvingSymlinksInPath()
         var directory: ObjCBool = false
@@ -48,7 +54,8 @@ public struct DockerBuildArchive: Sendable {
                 context: context,
                 dockerfile: relative,
                 extraArguments: [],
-                maximumBytes: maximumArchiveBytes
+                maximumBytes: maximumArchiveBytes,
+                run: run
             )
         }
         let name = ".devcontainer-build-" + UUID().uuidString
@@ -76,7 +83,8 @@ public struct DockerBuildArchive: Sendable {
             context: context,
             dockerfile: name,
             extraArguments: ["-C", stage.path, name, ".dockerignore"],
-            maximumBytes: maximumArchiveBytes
+            maximumBytes: maximumArchiveBytes,
+            run: run
         )
     }
 
@@ -92,11 +100,11 @@ public struct DockerBuildArchive: Sendable {
         context: URL,
         dockerfile: String,
         extraArguments: [String],
-        maximumBytes: Int
+        maximumBytes: Int,
+        run: ArchiveRunner
     ) async throws -> Self {
-        let result = try await ProcessRunner.captured(
-            executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: [
+        let result = try await run(
+            [
                 "--format=pax",
                 "--no-xattrs",
                 "--no-mac-metadata",
@@ -106,13 +114,21 @@ public struct DockerBuildArchive: Sendable {
                 context.path,
                 "."
             ] + extraArguments,
-            environment: ["PATH": "/usr/bin:/bin", "COPYFILE_DISABLE": "1", "LC_ALL": "C"],
-            maximumOutputBytes: maximumBytes
+            maximumBytes
         )
         guard result.exitCode == 0, result.omittedStandardOutputBytes == 0,
               result.omittedStandardErrorBytes == 0, !result.standardOutput.isEmpty
         else { throw DockerFrontendError.usage("build context archiving failed or exceeded 64 MiB") }
         return Self(data: result.standardOutput, dockerfile: dockerfile)
+    }
+
+    private static func runTar(_ arguments: [String], maximumBytes: Int) async throws -> CapturedProcessResult {
+        try await ProcessRunner.captured(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: arguments,
+            environment: ["PATH": "/usr/bin:/bin", "COPYFILE_DISABLE": "1", "LC_ALL": "C"],
+            maximumOutputBytes: maximumBytes
+        )
     }
 
     private static func readDockerfile(_ file: URL) throws -> Data {

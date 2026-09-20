@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The executable archive-cancellation fixture used a sparse file that BSD tar could finish before observation and did not isolate its Engine socket. A larger fixture also admitted false success through ordinary size-limit failure. Separate real-child and actual-CLI handshakes now require cancellation-specific completion and cleanup, without default-Engine contact or a configurable production archiver. [Checkpoint and positive/negative regression evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) preserve rejected results and distinguish source tests from release benchmarks.
+
 Service-process tests previously ignored failed deletion of their operator-Keychain identities. A cleanup assertion exposed OSStatus -25244, so future tests now use the runtime harness's existing disposable Keychain and isolated SSD HOME. The explicit failed-request regression verifies child exit and private-Keychain removal without changing production credentials; [current evidence](bazel-test-harness.md#bounded-service-http-probes) distinguishes this correction from unreconciled legacy test records.
 
 The receiver implemented recovery controls, but the shared gateway's Docker-only route ledger rejected them before provider dispatch. The unreleased service now consumes capability-gated native control routing and advertises its exact protocol version. [Stock/enhanced focused tests and real service-process proof](bazel-test-harness.md#bounded-service-http-probes) cover this missing boundary without bypassing provider identity or claiming universal recovery.
