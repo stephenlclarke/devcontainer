@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "dependency_started": true,
+    "oneoff_absent": true,
+    "tty_error": true,
+    "exact_exit": true,
+    "image_not_prepared": true
+  }
+}

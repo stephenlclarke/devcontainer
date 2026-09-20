@@ -2,12 +2,14 @@
 
 import json
 from pathlib import Path
+import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical, contract_observations
 from compose_foreground_probe import (COMMAND, FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE,
-                                      PROCESS, STDERR, STDOUT, ComposeForegroundFixture)
+                                      TTY_INPUT_FIXTURE, PROCESS, STDERR, STDOUT,
+                                      ComposeForegroundFixture, ComposeTerminalInputFixture)
 from foreground_probe import ForegroundFixture
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_commands_stopped
 from host_runtime import OwnedProcess
@@ -179,6 +181,151 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(environment["CONTAINER_BIN"], str(self.root / "bin/container"))
         with self.assertRaisesRegex(ValueError, "canonical"):
             OwnedProcess().start(["/owned/compose"], self.root, Mock(), runtime_socket=Path("relative"))
+
+
+class ComposeTerminalInputTests(unittest.TestCase):
+    stop = helpers.GuestFixtureTests.stop
+
+    def reopen(self):
+        return ComposeTerminalInputFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                                           root=self.root, executable="/owned/compose", runtime=Mock())
+
+    def setUp(self):
+        helpers.GuestFixtureTests.setUp(self)
+        self.addCleanup(self.fixture.child.stop)
+        original = self.fixture.call
+
+        def call(method, route, *args, **kwargs):
+            if route == f"/images/{self.fixture.missing_image}/json":
+                return 404, canonical({"message": "missing image"})
+            return original(method, route, *args, **kwargs)
+
+        self.fixture.call = Mock(side_effect=call)
+
+    def guest(self):
+        return {"Id": "b" * 64, "Name": "/" + self.fixture.name, "Image": self.server.image,
+                "Config": {"Image": self.server.image, "Cmd": ["sleep", "300"], "Tty": False, "OpenStdin": False,
+                           "Labels": {**self.fixture.intent["labels"], "com.docker.compose.project": self.fixture.project,
+                                      "com.docker.compose.service": "dependency"}},
+                "HostConfig": {"AutoRemove": False, "NetworkMode": "none"}, "State": {"Status": "running"}}
+
+    def run_cli(self, script="printf 'the input device is not a TTY\\n' >&2; exit 1", *, dependency=True):
+        original = self.fixture.child.start
+
+        def start(arguments, root, output, **kwargs):
+            self.cli_arguments = arguments
+            records = self.journal.records()
+            self.assertIn("container-intent.json", records)
+            self.assertEqual(json.loads(records[PROCESS + "-intent.json"])["arguments"], arguments)
+            self.assertIs(kwargs["stdin"], subprocess.PIPE)
+            self.server.guest = self.guest() if dependency else None
+            # Hold the fake CLI until the fixture journals its process identity
+            # and closes stdin. No timing sleeps or mocked process identities.
+            original(["/bin/sh", "-c", "read -r ignored; " + script], root, output, **kwargs)
+
+        with patch.object(self.fixture.child, "start", side_effect=start):
+            return self.fixture.operation()
+
+    def test_dependency_precedes_exact_terminal_error_without_job_image_or_creation(self):
+        observed = self.run_cli()
+        contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / TTY_INPUT_FIXTURE / "contract.json").read_text())
+        self.assertEqual(observed, contract_observations(contract["expected"]))
+        self.assertEqual(self.cli_arguments[-2:], ["--tty", "app"])
+        self.assertNotIn("--no-deps", self.cli_arguments)
+        configuration = json.loads((self.root / "compose-terminal-input.json").read_text())
+        self.assertEqual(configuration["services"]["app"]["depends_on"], ["dependency"])
+        self.assertEqual(configuration["services"]["app"]["image"], self.fixture.missing_image)
+        self.assertEqual(configuration["services"]["dependency"]["command"], ["sleep", "300"])
+        self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
+        self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
+        self.assertEqual(self.reopen().cleanup()["status"], "passed")
+        self.assertEqual(require_guest_commands_stopped(self.journal.records()), [PROCESS])
+        self.assertEqual(self.journal.records()[PROCESS + "-stderr.log"], self.fixture.terminal_error)
+
+    def test_wrong_exit_retains_dependency_identity_before_failure_and_cleanup(self):
+        with self.assertRaisesRegex(ValueError, "exact exit"):
+            self.run_cli("exit 2")
+        self.assertIn("container-created.json", self.journal.records())
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_wrong_error_and_stdout_are_not_normalized(self):
+        with self.assertRaisesRegex(ValueError, "error or output stream"):
+            self.run_cli("printf 'the input device is not a TTY\\n'; exit 1")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_unobserved_dependency_creation_quarantines(self):
+        with self.assertRaisesRegex(ValueError, "before dependency startup"):
+            self.run_cli(dependency=False)
+        with self.assertRaisesRegex(ValueError, "Uncertain creation"):
+            self.fixture.cleanup()
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_prefixed_terminal_diagnostic_cannot_pass_as_an_exact_line(self):
+        with self.assertRaisesRegex(ValueError, "error or output stream"):
+            self.run_cli("printf 'unrelated failure: the input device is not a TTY\\n' >&2; exit 1")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_progress_lines_do_not_replace_the_exact_final_diagnostic(self):
+        self.run_cli("printf 'dependency Started\\nthe input device is not a TTY\\n' >&2; exit 1")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_duplicate_diagnostic_is_not_normalized(self):
+        with self.assertRaisesRegex(ValueError, "error or output stream"):
+            self.run_cli("printf 'the input device is not a TTY\\nthe input device is not a TTY\\n' >&2; exit 1")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_stopped_dependency_is_not_a_startup_pass(self):
+        original = self.guest
+        with patch.object(self, "guest", side_effect=lambda: {**original(), "State": {"Status": "exited"}}):
+            with self.assertRaisesRegex(ValueError, "not running"):
+                self.run_cli()
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_nonterminal_dependency_settings_and_foreign_service_are_rejected(self):
+        for section, key, value in (("Config", "Tty", True), ("Config", "OpenStdin", True),
+                                    ("HostConfig", "AutoRemove", True), ("HostConfig", "NetworkMode", "bridge")):
+            guest = self.guest()
+            guest[section][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "configuration"):
+                self.fixture.owned(guest)
+        guest = self.guest()
+        guest["Config"]["Labels"]["com.docker.compose.service"] = "app"
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            self.fixture.owned(guest)
+
+    def test_existing_job_and_prepared_job_image_fail_before_any_launch(self):
+        with patch.object(self.fixture, "inspect", return_value=self.guest()):
+            with self.assertRaisesRegex(ValueError, "unused names"):
+                self.fixture.operation()
+        with patch.object(self.fixture, "call", return_value=(200, canonical({"Id": self.server.image}))):
+            with self.assertRaisesRegex(ValueError, "image must remain absent"):
+                self.fixture.operation()
+        self.assertIsNone(self.fixture.child.process)
+        self.assertNotIn("container-intent.json", self.journal.records())
+
+    def test_extra_owned_resource_is_not_hidden(self):
+        original = self.fixture.call
+
+        def call(method, route, *args, **kwargs):
+            if route.startswith("/containers/json"):
+                return 200, canonical([{"Id": "b" * 64}, {"Id": "e" * 64}])
+            return original(method, route, *args, **kwargs)
+
+        with patch.object(self.fixture, "call", side_effect=call):
+            with self.assertRaisesRegex(ValueError, "unexpected owned resources"):
+                self.run_cli()
+            with self.assertRaisesRegex(ValueError, "residue"):
+                self.fixture.cleanup()
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_timeout_stops_only_owned_child_and_removes_dependency(self):
+        with patch("compose_foreground_probe.remaining", return_value=0.01):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.run_cli("exec /bin/sleep 30")
+        self.assertIsNone(self.fixture.child.process.poll())
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+        self.assertIsNotNone(self.fixture.child.process.poll())
+        self.assertIn(PROCESS + "-process.json", self.journal.records())
 
 
 if __name__ == "__main__":

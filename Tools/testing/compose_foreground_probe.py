@@ -4,18 +4,20 @@ import json
 from pathlib import Path
 import subprocess
 import time
+from urllib.parse import quote
 
 from case_evidence import canonical, digest
 from exec_probe import remaining
 from foreground_probe import ForegroundFixture
-from guest_fixture import GuestFixture
+from guest_fixture import GuestFixture, OWNER_LABEL
 from host_runtime import OwnedProcess
 
 
 FIXTURE = "E09-compose-foreground"
 QUIET_FIXTURE = "E10-compose-quiet"
 REDIRECTED_FIXTURE = "E11-compose-redirected"
-FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE}
+TTY_INPUT_FIXTURE = "E12-compose-tty-input"
+FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE}
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
@@ -157,3 +159,106 @@ class ComposeForegroundFixture(GuestFixture):
                     self.journal.put(PROCESS + suffix + ".log", payload)
                     self.journal.put(PROCESS + suffix + "-log.json", metadata)
         return super().cleanup()
+
+
+class ComposeTerminalInputFixture(ComposeForegroundFixture):
+    """Reject piped interactive TTY input after dependencies, before job image work.
+
+    The dependency is deliberately left running by Compose's failed command.
+    Retain its identity before checking the error, then remove only that owned
+    resource. An unexpected job or uncertain creation remains quarantined.
+    """
+
+    missing_image = "sha256:" + "f" * 64
+    terminal_error = b"the input device is not a TTY\n"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.app_name = self.name + "-job"
+        self.intent["command"] = ["sleep", "300"]
+        self.intent["composeTerminalInput"] = {"appName": self.app_name, "image": self.missing_image}
+
+    def owned(self, value):
+        identifier = GuestFixture.owned(self, value)
+        config, host = value["Config"], value.get("HostConfig", {})
+        labels = config["Labels"]
+        if (config.get("Tty") is not False or config.get("OpenStdin") is not False or
+                host.get("AutoRemove") is not False or host.get("NetworkMode") != "none" or
+                labels.get("com.docker.compose.project") != self.project or
+                labels.get("com.docker.compose.service") != "dependency"):
+            raise ValueError("Compose terminal dependency configuration changed")
+        return identifier
+
+    def require_missing_image(self):
+        status, payload = self.call("GET", f"/images/{self.missing_image}/json")
+        value = json.loads(payload)
+        if status != 404 or not isinstance(value, dict) or not isinstance(value.get("message"), str):
+            raise ValueError("Compose terminal job image must remain absent")
+
+    def prepare(self):
+        if "container-intent.json" in self.journal.records():
+            raise ValueError("Compose terminal input already attempted")
+        status, payload = self.call("GET", f"/images/{self.image}/json")
+        if status != 200 or json.loads(payload).get("Id") != self.image:
+            raise ValueError("Compose terminal input requires a prepared dependency image")
+        self.require_missing_image()
+        if self.inspect(self.name) is not None or self.inspect(self.app_name) is not None:
+            raise ValueError("Compose terminal input requires unused names")
+        self.root.mkdir(mode=0o700, exist_ok=True)
+        configuration = {"services": {
+            "dependency": {"image": self.image, "container_name": self.name, "network_mode": "none",
+                           "command": self.intent["command"], "labels": self.intent["labels"]},
+            "app": {"image": self.missing_image, "network_mode": "none", "command": ["true"],
+                    "depends_on": ["dependency"], "labels": self.intent["labels"]}}}
+        path = self.root / "compose-terminal-input.json"
+        with path.open("xb") as output:
+            output.write(canonical(configuration))
+        arguments = [self.executable, "--project-name", self.project, "--file", str(path),
+                     "run", "--rm", "--pull", "never", "--name", self.app_name, "--tty", "app"]
+        self.journal.put("container-intent.json", canonical(self.intent))
+        self.journal.put(PROCESS + "-intent.json", canonical({"arguments": arguments,
+                         "configurationSHA256": digest(canonical(configuration))}))
+        return arguments
+
+    def operation(self):
+        arguments = self.prepare()
+        started, end = time.monotonic_ns(), time.monotonic() + 45
+        self.runtime.verify()
+        with self.output.open("xb") as output, self.errors.open("xb") as errors:
+            self.command_attempted = True
+            self.child.start(arguments, self.root, output, errors=errors, stdin=subprocess.PIPE,
+                             runtime_socket=self.socket, provider_install=self.provider_install)
+            self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
+            self.child.process.stdin.close()
+            code = self.child.process.wait(timeout=remaining(end))
+        self.journal.put(PROCESS + "-exit.json", canonical({"code": code,
+                         "durationNS": time.monotonic_ns() - started}))
+        actual = self.inspect(self.name)
+        if actual is None:
+            raise ValueError("Compose terminal validation ran before dependency startup")
+        self.identifier = GuestFixture.owned(self, actual)
+        self.journal.put("container-created.json", canonical({"id": self.identifier}))
+        self.journal.put("compose-terminal-dependency.json", canonical(actual))
+        self.owned(actual)
+        if actual.get("State", {}).get("Status") != "running":
+            raise ValueError("Compose terminal dependency is not running")
+        actual_output, actual_errors = self.snapshot(self.output), self.snapshot(self.errors)
+        if code != 1:
+            raise ValueError("Compose terminal validation lost the exact exit status")
+        error_lines = actual_errors.splitlines(keepends=True)
+        if (actual_output or not error_lines or error_lines[-1] != self.terminal_error or
+                error_lines.count(self.terminal_error) != 1):
+            raise ValueError("Compose terminal validation changed the error or output stream")
+        if self.inspect(self.app_name) is not None:
+            raise ValueError("Compose terminal validation created a one-off job")
+        self.require_missing_image()
+        filters = quote(canonical({"label": [OWNER_LABEL + "=" + self.owner]}).decode(), safe="")
+        status, payload = self.call("GET", "/containers/json?all=true&filters=" + filters)
+        inventory = json.loads(payload)
+        if (status != 200 or not isinstance(inventory, list) or len(inventory) != 1 or
+                not isinstance(inventory[0], dict) or inventory[0].get("Id") != self.identifier):
+            raise ValueError("Compose terminal validation left unexpected owned resources")
+        self.journal.put("compose-terminal-inventory.json", canonical(inventory))
+        self.runtime.verify()
+        return {key: "true" for key in ("dependency_started", "oneoff_absent", "tty_error",
+                                        "exact_exit", "image_not_prepared")}

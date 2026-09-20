@@ -153,6 +153,7 @@ sh_test(
         "//:Tests/Parity/fixtures/E09-compose-foreground/contract.json",
         "//:Tests/Parity/fixtures/E10-compose-quiet/contract.json",
         "//:Tests/Parity/fixtures/E11-compose-redirected/contract.json",
+        "//:Tests/Parity/fixtures/E12-compose-tty-input/contract.json",
         "//:Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     ],
     size = "small",
@@ -258,6 +259,7 @@ filegroup(
         "//:Tests/Parity/fixtures/E09-compose-foreground/contract.json",
         "//:Tests/Parity/fixtures/E10-compose-quiet/contract.json",
         "//:Tests/Parity/fixtures/E11-compose-redirected/contract.json",
+        "//:Tests/Parity/fixtures/E12-compose-tty-input/contract.json",
         "//:Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     ],
 )
