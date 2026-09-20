@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "usr1_forwarded": true,
+    "guest_continues": true,
+    "term_forwarded": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}

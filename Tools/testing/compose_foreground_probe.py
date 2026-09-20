@@ -1,7 +1,9 @@
 """Actual Compose CLI foreground, quiet and redirected-terminal contracts."""
 
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 from urllib.parse import quote
@@ -17,7 +19,8 @@ FIXTURE = "E09-compose-foreground"
 QUIET_FIXTURE = "E10-compose-quiet"
 REDIRECTED_FIXTURE = "E11-compose-redirected"
 TTY_INPUT_FIXTURE = "E12-compose-tty-input"
-FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE}
+SIGNAL_FIXTURE = "E13-compose-signals"
+FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE}
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
@@ -66,7 +69,7 @@ class ComposeForegroundFixture(GuestFixture):
             raise ValueError("Compose foreground requires a prepared image and unused name")
         self.root.mkdir(mode=0o700, exist_ok=True)
         configuration = {"services": {"app": {"image": self.image, "network_mode": "none",
-                         "command": [part.replace("$", "$$") for part in COMMAND],
+                         "command": [part.replace("$", "$$") for part in self.intent["command"]],
                          "labels": self.intent["labels"]}}}
         if self.redirected:
             # `run` selects the terminal independently of the service default.
@@ -159,6 +162,74 @@ class ComposeForegroundFixture(GuestFixture):
                     self.journal.put(PROCESS + suffix + ".log", payload)
                     self.journal.put(PROCESS + suffix + "-log.json", metadata)
         return super().cleanup()
+
+
+class ComposeSignalFixture(ComposeForegroundFixture):
+    """Host signals target only the admitted CLI; the guest must observe both."""
+
+    command = ("sh", "-c", "trap 'printf \"signal:USR1\\n\"' USR1; "
+               "trap 'printf \"signal:TERM\\n\"; exit 23' TERM; "
+               "printf 'compose-stdout\\n'; printf 'compose-stderr\\n' >&2; "
+               "while :; do IFS= read -r ignored; done")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.intent["command"] = list(self.command)
+        self.intent["composeSignals"] = ["SIGUSR1", "SIGTERM"]
+
+    def send_signal(self, name, number):
+        expected = json.loads(self.journal.records()[PROCESS + "-process.json"])
+        if self.child.identity() != expected:
+            raise ValueError("Compose signal target incarnation changed")
+        self.runtime.verify()
+        self.journal.put(PROCESS + "-" + name.lower() + "-intent.json", canonical({"signal": name, "process": expected}))
+        # The unreaped direct child cannot have its PID recycled. Do not signal
+        # its group: the contract is CLI forwarding, not harness guest control.
+        os.kill(self.child.process.pid, number)
+
+    def require_signal_output(self, expected, end):
+        while True:
+            output = self.snapshot(self.output)
+            if output == expected:
+                return
+            if not expected.startswith(output) or self.child.process.poll() is not None:
+                raise ValueError("Compose CLI did not forward the signal to its guest")
+            time.sleep(min(remaining(end), 0.01))
+
+    def operation(self):
+        arguments = self.prepare()
+        started, end = time.monotonic_ns(), time.monotonic() + 45
+        self.runtime.verify()
+        with self.output.open("xb") as output, self.errors.open("xb") as errors:
+            self.command_attempted = True
+            self.child.start(arguments, self.root, output, errors=errors, stdin=subprocess.PIPE,
+                             runtime_socket=self.socket, provider_install=self.provider_install)
+            self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
+            try:
+                self.ready(end)
+                self.send_signal("SIGUSR1", signal.SIGUSR1)
+                self.require_signal_output(STDOUT + b"signal:USR1\n", end)
+                current = self.inspect(self.identifier)
+                if (current is None or self.owned(current) != self.identifier or
+                        current.get("State", {}).get("Status") != "running"):
+                    raise ValueError("Signal forwarding replaced or stopped the guest")
+                self.journal.put("compose-signal-continued.json", canonical({"id": self.identifier, "running": True}))
+                self.send_signal("SIGTERM", signal.SIGTERM)
+                code = self.child.process.wait(timeout=remaining(end))
+                self.journal.put(PROCESS + "-exit.json", canonical({"code": code,
+                                 "durationNS": time.monotonic_ns() - started}))
+                if code != 23:
+                    raise ValueError("Compose signal exit differs from the guest trap status")
+            finally:
+                self.child.process.stdin.close()
+        expected = STDOUT + b"signal:USR1\nsignal:TERM\n"
+        actual_output, actual_errors = self.snapshot(self.output), self.snapshot(self.errors)
+        if (actual_output != expected or actual_errors.count(STDERR) != 1 or
+                STDOUT in actual_errors or b"signal:" in actual_errors):
+            raise ValueError("Compose signal output differs from exact guest streams")
+        ForegroundFixture.require_auto_removed(self)
+        self.runtime.verify()
+        return {key: "true" for key in ("usr1_forwarded", "guest_continues", "term_forwarded", "exact_exit", "auto_remove")}
 
 
 class ComposeTerminalInputFixture(ComposeForegroundFixture):

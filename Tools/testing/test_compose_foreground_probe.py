@@ -2,14 +2,15 @@
 
 import json
 from pathlib import Path
+import signal
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical, contract_observations
 from compose_foreground_probe import (COMMAND, FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE,
-                                      TTY_INPUT_FIXTURE, PROCESS, STDERR, STDOUT,
-                                      ComposeForegroundFixture, ComposeTerminalInputFixture)
+                                      TTY_INPUT_FIXTURE, SIGNAL_FIXTURE, PROCESS, STDERR, STDOUT,
+                                      ComposeForegroundFixture, ComposeTerminalInputFixture, ComposeSignalFixture)
 from foreground_probe import ForegroundFixture
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_commands_stopped
 from host_runtime import OwnedProcess
@@ -181,6 +182,106 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(environment["CONTAINER_BIN"], str(self.root / "bin/container"))
         with self.assertRaisesRegex(ValueError, "canonical"):
             OwnedProcess().start(["/owned/compose"], self.root, Mock(), runtime_socket=Path("relative"))
+
+
+class ComposeSignalTests(unittest.TestCase):
+    stop = helpers.GuestFixtureTests.stop
+    setUp = ComposeForegroundTests.setUp
+
+    def reopen(self):
+        return ComposeSignalFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                                    root=self.root, executable="/owned/compose", runtime=Mock())
+
+    def guest(self):
+        value = ComposeForegroundTests.guest(self)
+        value["Config"]["Cmd"] = list(self.fixture.command)
+        return value
+
+    def run_cli(self, script=None):
+        original = self.fixture.child.start
+        original_auto_remove = ForegroundFixture.require_auto_removed
+
+        def start(arguments, root, output, **kwargs):
+            self.server.guest = self.guest()
+            original(["/bin/sh", "-c", self.fixture.command[2] if script is None else script], root, output, **kwargs)
+
+        def auto_remove(fixture):
+            self.assertEqual(fixture.child.process.returncode, 23)
+            self.server.guest = None
+            original_auto_remove(fixture)
+
+        with patch.object(self.fixture.child, "start", side_effect=start), \
+                patch.object(ForegroundFixture, "require_auto_removed", auto_remove):
+            return self.fixture.operation()
+
+    def test_real_signals_output_exit_and_owned_cleanup(self):
+        observed = self.run_cli()
+        contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / SIGNAL_FIXTURE / "contract.json").read_text())
+        self.assertEqual(observed, contract_observations(contract["expected"]))
+        self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
+        records = self.journal.records()
+        self.assertEqual(json.loads(records[PROCESS + "-exit.json"])["code"], 23)
+        for name in ("SIGUSR1", "SIGTERM"):
+            self.assertEqual(json.loads(records[PROCESS + "-" + name.lower() + "-intent.json"])["signal"], name)
+        self.assertEqual(require_guest_commands_stopped(records), [PROCESS])
+        self.assertEqual(records[PROCESS + ".log"], STDOUT + b"signal:USR1\nsignal:TERM\n")
+
+    def test_configuration_contains_exact_traps_not_original_stdin_fixture(self):
+        self.fixture.prepare()
+        configuration = json.loads((self.root / "compose-foreground.json").read_text())
+        self.assertEqual(configuration["services"]["app"]["command"], list(self.fixture.command))
+
+    def test_wrong_trap_exit_is_not_success(self):
+        with self.assertRaisesRegex(ValueError, "guest trap status"):
+            self.run_cli(self.fixture.command[2].replace("exit 23", "exit 0"))
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_wrong_usr1_bytes_fail_without_second_signal(self):
+        with self.assertRaisesRegex(ValueError, "did not forward"):
+            self.run_cli(self.fixture.command[2].replace("signal:USR1", "wrong:USR1"))
+        self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_wrong_term_bytes_fail_after_real_exit(self):
+        with self.assertRaisesRegex(ValueError, "exact guest streams"):
+            self.run_cli(self.fixture.command[2].replace("signal:TERM", "wrong:TERM"))
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_signal_target_is_revalidated_before_any_signal(self):
+        self.journal.put(PROCESS + "-process.json", canonical({"pid": 17}))
+        with patch.object(self.fixture.child, "identity", return_value={"pid": 18}), \
+                patch("compose_foreground_probe.os.kill") as kill:
+            with self.assertRaisesRegex(ValueError, "incarnation changed"):
+                self.fixture.send_signal("SIGTERM", signal.SIGTERM)
+        kill.assert_not_called()
+        self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
+
+    def test_changed_guest_cannot_receive_followup_signal(self):
+        original = self.fixture.require_signal_output
+
+        def change_guest(expected, end):
+            original(expected, end)
+            self.server.guest["State"]["Status"] = "exited"
+
+        with patch.object(self.fixture, "require_signal_output", side_effect=change_guest):
+            with self.assertRaisesRegex(ValueError, "replaced or stopped"):
+                self.run_cli()
+        self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_missing_signal_is_bounded_and_cleanup_remains_owned(self):
+        original = self.fixture.require_signal_output
+
+        def expire_signal_wait(expected, end):
+            with patch("compose_foreground_probe.remaining", side_effect=TimeoutError("signal deadline")):
+                original(expected, end)
+
+        with patch.object(self.fixture, "require_signal_output", side_effect=expire_signal_wait):
+            with self.assertRaisesRegex(TimeoutError, "signal deadline"):
+                self.run_cli(self.fixture.command[2].replace('printf "signal:USR1\\n"', ":"))
+        self.assertIn(PROCESS + "-sigusr1-intent.json", self.journal.records())
+        self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
 
 class ComposeTerminalInputTests(unittest.TestCase):
