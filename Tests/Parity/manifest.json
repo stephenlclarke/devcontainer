@@ -198,6 +198,13 @@
       "assertions": ["actual host PTY selects guest TTY", "first guest size query retained without a pre-entrypoint size guarantee", "bounded unassisted convergence to inherited host dimensions", "one host SIGWINCH propagates new PTY dimensions", "terminal stdin roundtrip", "exact merged guest streams", "real exit status", "automatic removal"]
     },
     {
+      "id": "E15-initial-terminal-size",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["explicit Engine ConsoleSize retained in inspection", "first guest command observes requested rows and columns before any input or resize", "acknowledged next-exit subscription", "real exit status", "automatic removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],

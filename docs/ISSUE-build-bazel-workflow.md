@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Explicit Engine create-time terminal size is not covered by E14's eventual CLI resize. E15 adds a distinct first-guest-observation fixture with no harness resize or input before measurement, preserving failure output, acknowledged exit and exact owned-resource cleanup. [The evidence contract](bazel-test-harness.md#foreground-init-attachment-development) keeps the stock pre-start runtime limitation, pending live oracle and release-comparison requirements visible; component success is not native support.
+
 The opt-in service-process lane could not authenticate its own test executable because rules_swift's incomplete `.xctest` layout fails strict macOS code-identity validation (`-67056`). A byte-identical standalone copy passes the same check. The target now selects an isolated SSD copy without changing production peer authentication or signing cached build outputs. [Failure-before and both-profile focused results](bazel-test-harness.md#bounded-service-http-probes) keep real guest parity, release signing and performance qualification separate.
 
 The optional Bazel C collector can fail while the outer runner still reports test success. Coverage evidence must reject its errors and LLVM profile failures independently of test exit status. Targets already using the SSD LLVM exporter must not invoke that unconfigured collector again. Direct, fresh-log and retained-export regressions now cover this false-green path; [current source coverage and collector evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) retain the separate full-release acceptance requirements.

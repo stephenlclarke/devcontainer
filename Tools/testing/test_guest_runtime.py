@@ -441,13 +441,16 @@ class GuestRuntimeTests(unittest.TestCase):
             self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
 
     def test_terminal_foreground_retains_guest_and_bounds_the_operation(self):
-        case = ReleasedGuest(self.inputs, "E08-foreground-terminal", self.root, self.owner, self.runtime,
-                             "/released/container", self.root / "socket")
-        with patch("guest_runtime.ForegroundFixture") as factory, patch("guest_runtime.deadline") as deadline:
-            self.assertEqual(case.operation(), factory.return_value.operation.return_value)
-            deadline.assert_called_once_with(90)
-            self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
-            self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
+        for name, implementation in [("E08-foreground-terminal", "ForegroundFixture"),
+                                     ("E15-initial-terminal-size", "InitialTerminalSizeFixture")]:
+            with self.subTest(fixture=name):
+                case = ReleasedGuest(self.inputs, name, self.root, self.owner, self.runtime,
+                                     "/released/container", self.root / "socket")
+                with patch("guest_runtime." + implementation) as factory, patch("guest_runtime.deadline") as deadline:
+                    self.assertEqual(case.operation(), factory.return_value.operation.return_value)
+                    deadline.assert_called_once_with(90)
+                    self.assertEqual(factory.call_args.args[2], self.inputs["workload"]["image"]["config"])
+                    self.assertEqual(case.cleanup(), factory.return_value.cleanup.return_value)
 
     def test_service_recovery_requires_verified_network_volume_cleanup(self):
         intent = canonical({"fixture": "E06"})

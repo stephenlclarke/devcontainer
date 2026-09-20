@@ -79,7 +79,7 @@ class Handler(helpers.Handler):
         if initial:
             if not server.started.wait(3):
                 raise TimeoutError("start never followed terminal subscription")
-            self.connection.sendall(MARKERS)
+            self.connection.sendall(getattr(server, "initial_output", MARKERS))
         pending = bytearray()
         while chunk := self.rfile.read1(4096):
             pending.extend(chunk)

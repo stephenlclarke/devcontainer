@@ -59,8 +59,8 @@ def receive_incarnation(connection, end: float) -> bytes:
 class ForegroundFixture(GuestFixture):
     """One owned terminal process; no shell proxy, exec substitution or daemon restart."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, command=COMMAND, **kwargs)
+    def __init__(self, *args, command=COMMAND, **kwargs):
+        super().__init__(*args, command=command, **kwargs)
         self.intent["foreground"] = {"config": dict(SETTINGS), "autoRemove": True}
 
     def creation_body(self, body):
