@@ -88,6 +88,23 @@ class ComposeTerminalSizeTests(unittest.TestCase):
         self.assertIn("compose-terminal-initial.json", self.journal.records())
         self.assertNotIn(PROCESS + "-sigwinch-intent.json", self.journal.records())
 
+    def test_unavailable_initial_size_with_zero_status_keeps_raw_evidence(self):
+        # The pinned Linux guest emits this diagnostic with status zero. Keep
+        # the actual PTY for later queries, so success still proves both sizes.
+        script = self.fixture.command[2].replace("stty size; status=$?;", "printf 'stty: standard input\\n'; status=0;", 1)
+        self.assertEqual(self.run_cli(script)["host_resize"], "true")
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+        initial = json.loads(self.journal.records()["compose-terminal-initial.json"])
+        self.assertEqual(bytes.fromhex(initial["rawOutputHex"]), b"stty: standard input\r\ninitial-status:0\n")
+
+    def test_unavailable_size_sample_preserves_zero_and_nonzero_status(self):
+        for status in (0, 1):
+            with self.subTest(status=status):
+                self.fixture.expected_output = b""
+                sample = f"size:{status}:stty: standard input\n".encode()
+                with patch.object(self.fixture, "send_input"), patch.object(self.fixture, "snapshot", return_value=sample):
+                    self.assertEqual(self.fixture.size_sample(float("inf")), sample)
+
     def test_missing_host_resize_is_not_hidden_by_guest_or_api_assistance(self):
         self.fixture.convergence_timeout = 0.1
         with patch.object(self.fixture, "resize_host"), self.assertRaises(TimeoutError):

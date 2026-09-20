@@ -74,7 +74,9 @@ class ComposeTerminalSizeFixture(ComposeForegroundFixture):
                 # dimensions and the pinned guest's unavailable-size diagnostic
                 # remain byte-exact first-query evidence, not a resized result.
                 first = output[:-(len(STDOUT) + len(STDERR))]
-                if re.fullmatch(rb"(?:[0-9]+ [0-9]+\r\ninitial-status:0\n|stty: standard input\r\ninitial-status:1\n)", first) is None:
+                # The pinned guest's unavailable-size diagnostic can carry a
+                # zero exit status; only a later numeric size proves readiness.
+                if re.fullmatch(rb"(?:[0-9]+ [0-9]+\r\ninitial-status:0\n|stty: standard input\r\ninitial-status:[01]\n)", first) is None:
                     raise ValueError("Unexpected initial terminal query output")
                 self.ready_output = output
                 super().ready(end)
@@ -99,7 +101,7 @@ class ComposeTerminalSizeFixture(ComposeForegroundFixture):
                 raise ValueError("Compose terminal changed prior guest bytes")
             tail = output[len(self.expected_output):]
             if b"\n" in tail:
-                if re.fullmatch(rb"size:(?:0:[0-9]+ [0-9]+|1:stty: standard input)\n", tail) is None:
+                if re.fullmatch(rb"size:(?:0:[0-9]+ [0-9]+|[01]:stty: standard input)\n", tail) is None:
                     raise ValueError("Compose terminal emitted unexpected size sample")
                 remaining(end)
                 self.expected_output = output
