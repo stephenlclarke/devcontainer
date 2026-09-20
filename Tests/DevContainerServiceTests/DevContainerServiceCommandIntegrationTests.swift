@@ -81,7 +81,7 @@ struct ServiceCommandIntegrationTests {
         try requireHostIntegrationOptIn()
         let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
-                "dcs-provider-\(UUID().uuidString.prefix(8))",
+                "dcp-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
             )
         try FileManager.default.createDirectory(

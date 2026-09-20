@@ -166,7 +166,12 @@ run_bazel() {
         *) : ;; # Query commands have no action cache.
     esac
     case "$command" in
-        test|coverage) bazel_args+=("--test_tmpdir=$SSD_ROOT/t") ;;
+        test|coverage)
+            # Bazel's target-only scratch hash collides across workspaces.
+            # Keep this namespace short enough for Darwin Unix socket paths.
+            local scratch_key
+            scratch_key="$(printf '%s' "$repo" | /usr/bin/shasum -a 256)" || return
+            bazel_args+=("--test_tmpdir=$SSD_ROOT/t/${scratch_key:0:12}") ;;
         *) : ;; # Only test executions need test scratch.
     esac
     local measurement=()

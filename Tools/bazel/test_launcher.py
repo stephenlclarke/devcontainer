@@ -198,6 +198,24 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(any(a.startswith("--disk_cache=") for a in args), command == "coverage")
                 self.assertEqual(any(a.startswith("--test_tmpdir=") for a in args), command == "coverage")
 
+    def test_test_scratch_is_stable_and_separate_for_different_workspaces(self) -> None:
+        paths = []
+        for repo, command in [("/repo-one", "test"), ("/repo-two", "test"), ("/repo-one", "coverage")]:
+            result = subprocess.run(
+                ["/bin/bash", "-c", 'source "$1"; shift; clean_environment() { printf "%s\\0" "$@"; }; run_bazel "$1" "$2" /invocation /pinned-bazel stock //Tools/bazel:package_smoke',
+                 "test", str(SCRIPT), repo, command], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            arguments = result.stdout.split("\0")[:-1]
+            scratch = [argument.removeprefix("--test_tmpdir=") for argument in arguments
+                       if argument.startswith("--test_tmpdir=")]
+            self.assertEqual(len(scratch), 1)
+            paths.append(scratch[0])
+        self.assertNotEqual(paths[0], paths[1])
+        self.assertEqual(paths[0], paths[2])
+        # Leave space for Bazel's target hash and the actual guest socket name.
+        for socket in ("/bc-12345678/engine.sock", "/dcp-12345678/provider.sock"):
+            self.assertLess(len(paths[0] + "/_tmp/" + "a" * 32 + socket), 104)
+
     def test_build_environment_excludes_credentials_and_shell_hooks(self) -> None:
         result = subprocess.run(
             ["/bin/bash", "-c", 'source "$1"; export UNRELATED_SECRET=fixture-secret BASH_ENV=/does/not/exist PYTHONPATH=/untrusted; clean_environment /usr/bin/env',

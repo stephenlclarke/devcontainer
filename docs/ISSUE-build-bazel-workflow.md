@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Concurrent Bazel servers previously used the same test-scratch base, so identical package-test labels could delete each other's extracted files. The launcher now gives each workspace a short stable namespace; the focused regression fails before correction and passes afterward. The original failed Compose smoke remains retained, with corrected concurrent package proof required.
+
 C03 live qualification exposed both a harness prerequisite and a product defect: the stock native path needs its admitted private builder for volume-helper creation, and native volume labels must be projected consistently for Docker-compatible clients. Component corrections are implemented with failing-before regressions; corrected packaged stock/enhanced proof and quiet release comparisons are still open. See [C03 evidence](bazel-test-harness.md#c03-compose-resources); the original timeout remains a failure.
 
 C03's existing resource fixture was absent from the new Bazel runtime harness. Its new adapter preserves environment-file, named-volume and network observations in both reference/native command paths, with generation-bound service/network cleanup and independently sealed volume ownership. This closes an executable-harness gap, not a parity or speed claim. [Focused tests, recovery limits and outstanding live qualification](bazel-test-harness.md#c03-compose-resources) remain part of the same release-comparison contract.
