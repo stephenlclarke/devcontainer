@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 
 from case_evidence import CaseStore, canonical, contract_observations, digest, run_case, validate_identity
 from campaign_identity import published_fingerprints
+from compose_foreground_probe import FIXTURES as COMPOSE_FOREGROUND_FIXTURES
 from docker_vm import DockerVM, private_root
 from devcontainer_reference import DevcontainerReference, FIXTURE as DEVCONTAINER_FIXTURE, fixture_inputs
 from devcontainer_build_reference import DevcontainerBuildReference, FIXTURE as BUILD_FIXTURE, fixture_inputs as build_fixture_inputs
@@ -60,7 +61,7 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
         if len(dependencies) != 1:
             raise ValueError("C02 dependency image is missing or ambiguous")
         result["dependencyWorkload"] = require_image(dependencies[0], retained / "guest-images")
-    if fixture in {COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE, "E09-compose-foreground"}:
+    if fixture in {COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES}:
         compose_lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
         compose_assets = [asset for asset in validate_lock(compose_lock) if asset["repository"] == "docker/compose"]
         if (len(compose_assets) != 1 or compose_assets[0]["tag"] != "v" + pins["composeVersion"] or

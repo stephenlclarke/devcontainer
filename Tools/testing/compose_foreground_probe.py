@@ -1,4 +1,4 @@
-"""E09 invokes the immutable Compose CLI, not an HTTP stand-in for its launch."""
+"""E09/E10 invoke the immutable Compose CLI with ordinary or quiet progress."""
 
 import json
 from pathlib import Path
@@ -13,6 +13,8 @@ from host_runtime import OwnedProcess
 
 
 FIXTURE = "E09-compose-foreground"
+QUIET_FIXTURE = "E10-compose-quiet"
+FIXTURES = {FIXTURE, QUIET_FIXTURE}
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
@@ -28,10 +30,11 @@ class ComposeForegroundFixture(GuestFixture):
     unobserved create is quarantined, never guessed successful from absence.
     """
 
-    def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None, **kwargs):
+    def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None, quiet=False, **kwargs):
         super().__init__(*args, command=COMMAND, **kwargs)
         self.root, self.executable, self.runtime = root, executable, runtime
         self.provider_install = provider_install
+        self.quiet = quiet
         self.child = OwnedProcess()
         self.command_attempted = False
         self.output = root / (PROCESS + ".log")
@@ -65,6 +68,8 @@ class ComposeForegroundFixture(GuestFixture):
             output.write(canonical(configuration))
         arguments = [self.executable, "--project-name", self.project, "--file", str(path),
                      "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "-T", "app"]
+        if self.quiet:
+            arguments.insert(-1, "--quiet")
         self.journal.put("container-intent.json", canonical(self.intent))
         self.journal.put(PROCESS + "-intent.json", canonical({"arguments": arguments,
                          "configurationSHA256": digest(canonical(configuration))}))

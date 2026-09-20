@@ -198,6 +198,29 @@ class DockerCaseTests(unittest.TestCase):
 
 
 class DockerAdmissionTests(unittest.TestCase):
+    def test_foreground_cases_admit_pinned_compose_without_devcontainer_cli(self):
+        repository = Path(__file__).parents[2]
+        lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())
+        pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+        with patch.object(released_docker, "require_retained", side_effect=lambda asset, *args: {
+                "executables": {}, "repository": asset["repository"]}) as prepared, \
+                patch.object(released_docker, "prepare_cli", return_value={"executables": {"docker": "/docker"}}), \
+                patch.object(released_docker, "prepare_devcontainers") as devcontainers, \
+                patch.object(released_docker, "require_image", return_value={"verified": True}):
+            for name in ("E09-compose-foreground", "E10-compose-quiet"):
+                with self.subTest(fixture=name):
+                    prepared.reset_mock()
+                    result = released_docker.admit_docker(lock, {}, pins, {"images": [{"name": "alpine-workload"}]},
+                        Path("/scratch"), Path("/retained"), fixture=name, repository=repository)
+                    self.assertEqual(result["compose"]["repository"], "docker/compose")
+                    self.assertEqual(prepared.call_count, 4)
+                    self.assertNotIn("devcontainerFixture", result)
+                    devcontainers.assert_not_called()
+                    with self.assertRaisesRegex(ValueError, "pinned published"):
+                        released_docker.admit_docker(lock, {}, {**pins, "composeVersion": "other"},
+                            {"images": [{"name": "alpine-workload"}]}, Path("/scratch"), Path("/retained"),
+                            fixture=name, repository=repository)
+
     def test_c02_admits_both_exact_workload_images_and_published_compose(self):
         repository = Path(__file__).parents[2]
         lock = json.loads((repository / "Tools/bazel/docker-oracle.lock.json").read_text())

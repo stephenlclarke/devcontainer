@@ -33,6 +33,7 @@ exports_files([
     "Tests/Parity/fixtures/E07-init-attachment/contract.json",
     "Tests/Parity/fixtures/E08-foreground-terminal/contract.json",
     "Tests/Parity/fixtures/E09-compose-foreground/contract.json",
+    "Tests/Parity/fixtures/E10-compose-quiet/contract.json",
     "Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     "Tests/Parity/fixtures/D01-image-config/contract.json",
     "Tests/Parity/fixtures/D01-image-config/.devcontainer/devcontainer.json",

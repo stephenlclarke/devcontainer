@@ -2,6 +2,8 @@
 
 ## Problem description
 
+Compose quiet mode must suppress progress without disconnecting guest input/output. E10 adds this regression to the maintained Bazel harness using the same immutable CLI admission and resource recovery as E09. [Current evidence and pending qualification](bazel-test-harness.md#foreground-init-attachment-development) retain the distinction between guest-stream correctness, CLI diagnostics and quiet-machine performance.
+
 The two E08 stock defects below are now live-qualified as fixed: all seven foreground observations pass on Docker and stock. Complete C02 and release qualification remain open. The new E09 harness closes the next evidence gap by exercising the real Compose CLI, including process ownership and both-stream recovery; component success alone does not establish its live parity. [Current evidence](bazel-test-harness.md#foreground-init-attachment-development) also records the non-quiet timing regression for subsequent paired investigation.
 
 The subsequent E08 stock run passes creation/start and raw terminal markers but the gateway returns `501` for resize: `ContainerResize` was missing from its provider route declaration even though the generation-bound native method exists. The route declaration and its regressions now match that implementation. [Evidence and remaining native qualification](bazel-test-harness.md#foreground-init-attachment-development) distinguish this adapter wiring defect from an Apple API limitation.

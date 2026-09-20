@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "compose_cli": true,
+    "stdin_roundtrip": true,
+    "separate_streams": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}

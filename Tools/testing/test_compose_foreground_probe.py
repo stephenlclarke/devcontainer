@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from case_evidence import canonical, contract_observations
-from compose_foreground_probe import COMMAND, FIXTURE, PROCESS, STDERR, STDOUT, ComposeForegroundFixture
+from compose_foreground_probe import COMMAND, FIXTURE, QUIET_FIXTURE, PROCESS, STDERR, STDOUT, ComposeForegroundFixture
 from foreground_probe import ForegroundFixture
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_commands_stopped
 from host_runtime import OwnedProcess
@@ -55,6 +55,7 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(observed, contract_observations(contract["expected"]))
         self.assertEqual(self.cli_arguments[0], "/owned/compose")
         self.assertIn("--rm", self.cli_arguments)
+        self.assertNotIn("--quiet", self.cli_arguments)
         self.assertEqual(self.cli_arguments[-1], "app")
         self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
         self.assertEqual(require_guest_commands_stopped(self.journal.records()), [PROCESS])
@@ -68,6 +69,15 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertIn('"$line"', self.fixture.intent["command"][2])
         with self.assertRaisesRegex(ValueError, "already attempted"):
             self.fixture.prepare()
+
+    def test_quiet_argument_is_executed_and_journalled_without_losing_guest_io(self):
+        self.fixture.quiet = True
+        observed = self.run_cli()
+        contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / QUIET_FIXTURE / "contract.json").read_text())
+        self.assertEqual(observed, contract_observations(contract["expected"]))
+        self.assertEqual(self.cli_arguments[-2:], ["--quiet", "app"])
+        self.assertEqual(json.loads(self.journal.records()[PROCESS + "-intent.json"])["arguments"], self.cli_arguments)
+        self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
 
     def test_wrong_exit_is_not_replaced_with_success(self):
         with self.assertRaisesRegex(ValueError, "lost the guest exit"):
