@@ -25,7 +25,7 @@ struct AppleContainerRecord {
     let spec: ContainerSpec
     let state: String
     var createdAt: Date
-    let startedAt: Date?
+    var startedAt: Date?
     let finishedAt: Date?
     let exitCode: Int32?
     let networkAddresses: [String: String]

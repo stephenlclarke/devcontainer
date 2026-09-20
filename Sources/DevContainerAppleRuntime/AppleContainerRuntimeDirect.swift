@@ -29,7 +29,8 @@ protocol AppleContainerInventoryClient: Sendable {
 
 extension AppleContainerInventoryClient {
     func identity(id: String) async throws -> AppleContainerIdentity {
-        try await AppleContainerIdentity(get(id: id).configuration)
+        let snapshot = try await get(id: id)
+        return AppleContainerIdentity(snapshot.configuration, startedDate: snapshot.startedDate)
     }
 }
 

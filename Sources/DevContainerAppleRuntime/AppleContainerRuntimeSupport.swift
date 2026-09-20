@@ -177,23 +177,35 @@ extension AppleContainerRuntime {
         try context.checkActive()
         let configuration = value["configuration"] as? [String: Any]
         let image = configuration?["image"] as? [String: Any]
+        let status = value["status"] as? [String: Any]
         guard native.id == record.id,
               native.labels == record.spec.labels,
               image?["reference"] as? String == native.image.reference,
               (image?["descriptor"] as? [String: Any])?["digest"] as? String == native.image.descriptor.digest,
               let encodedDate = configuration?["creationDate"] as? String,
-              Self.matchesEncodedCreationDate(encodedDate, native: native.creationDate)
+              Self.matchesEncodedDate(encodedDate, native: native.creationDate),
+              Self.matchesEncodedStartDate(status?["startedDate"], native: native.startedDate)
         else {
             throw DevContainerError(.conflict, message: "Container identity changed during CLI inventory")
         }
         // Never loosen incarnation matching to a one-second tolerance: two
-        // replacements can occupy the same encoded second. Preserve CLI-only
-        // enhanced fields and use the native timestamp solely for identity.
+        // replacements or process generations can occupy the same encoded
+        // second. Preserve CLI-only enhanced fields while restoring both
+        // precise native timestamps used by attachment ownership checks.
         record.createdAt = native.creationDate
+        record.startedAt = native.startedDate
         return record
     }
 
-    private static func matchesEncodedCreationDate(_ value: String, native: Date) -> Bool {
+    private static func matchesEncodedStartDate(_ value: Any?, native: Date?) -> Bool {
+        guard let native else {
+            return value == nil || value is NSNull
+        }
+        guard let value = value as? String else { return false }
+        return matchesEncodedDate(value, native: native)
+    }
+
+    private static func matchesEncodedDate(_ value: String, native: Date) -> Bool {
         if value.contains(".") {
             guard let observed = date(value) else { return false }
             return sameContainerIncarnation(metadataCreatedAt: native, observedCreatedAt: observed)

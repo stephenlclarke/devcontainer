@@ -69,7 +69,8 @@ struct AppleContainerInventoryIdentityTests {
             "image": ["reference": "fixture:latest", "descriptor": ["digest": "sha256:immutable"]]
         ]
         let payload = try JSONSerialization.data(withJSONObject: [[
-            "configuration": configuration, "status": "running", "networks": [attachment]
+            "configuration": configuration, "status": "running", "networks": [attachment],
+            "startedDate": createdAt.addingTimeInterval(10.125).timeIntervalSinceReferenceDate
         ]])
         let value = try AppleContainerIdentity.decode(payload, id: "fixture")
         #expect(value.creationDate == createdAt)
@@ -77,6 +78,7 @@ struct AppleContainerInventoryIdentityTests {
         #expect(value.labels == labels)
         #expect(value.image.reference == "fixture:latest")
         #expect(value.image.descriptor.digest == "sha256:immutable")
+        #expect(value.startedDate == createdAt.addingTimeInterval(10.125))
         #expect(throws: (any Error).self) { try AppleContainerIdentity.decode(payload, id: "other") }
         #expect(throws: (any Error).self) { try AppleContainerIdentity.decode(Data("[]".utf8), id: "fixture") }
         #expect(throws: (any Error).self) { try AppleContainerIdentity.decode(Data("{}".utf8), id: "fixture") }
@@ -134,6 +136,66 @@ struct AppleContainerInventoryIdentityTests {
         #expect(snapshot.imageID != old.imageID)
         #expect(snapshot.state == .stopped)
         #expect(await store.containerMetadata(id: "fixture") == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `enhanced running inventory retains exact process generation across same second restarts`(
+        fractional: Bool
+    ) async throws {
+        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let configuration = observed(at: createdAt).configuration
+        let inventory = FakeContainerInventory(snapshots: [])
+        let store = TestMetadataStore()
+        await store.recordContainerMetadata(metadata())
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, metadataStore: store)
+        let formatter = ISO8601DateFormatter()
+        if fractional {
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        }
+        for offset in [0.125, 0.375] {
+            let startedAt = createdAt.addingTimeInterval(10 + offset)
+            let native = ContainerResource.ContainerSnapshot(
+                configuration: configuration, status: .running, networks: [], startedDate: startedAt
+            )
+            await inventory.replaceSnapshots([native])
+            var value = cliRecord(native, fractional: fractional)
+            value["status"] = ["state": "running", "startedDate": formatter.string(from: startedAt)]
+            try fixture.setContainerInventory([value])
+            let snapshot = try await runtime.inspectContainer(id: "fixture", context: .init())
+            #expect(snapshot.state == .running)
+            #expect(snapshot.startedAt == startedAt)
+        }
+        #expect(await inventory.getCallCount() == 2)
+        await runtime.shutdown()
+    }
+
+    @Test(arguments: ["different", "missing", "malformed"])
+    func `inconsistent native process generation rejects CLI observation`(variation: String) async throws {
+        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let startedAt = createdAt.addingTimeInterval(10.125)
+        let native = ContainerResource.ContainerSnapshot(
+            configuration: observed(at: createdAt).configuration, status: .running, networks: [], startedDate: startedAt
+        )
+        var value = cliRecord(native)
+        var status = ["state": "running"]
+        if variation != "missing" {
+            status["startedDate"] = variation == "malformed"
+                ? "invalid" : ISO8601DateFormatter().string(from: startedAt.addingTimeInterval(2))
+        }
+        value["status"] = status
+        try fixture.setContainerInventory([value])
+        let inventory = FakeContainerInventory(snapshots: [native])
+        let store = TestMetadataStore()
+        let expected = metadata()
+        await store.recordContainerMetadata(expected)
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, metadataStore: store)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.inspectContainer(id: "fixture", context: .init())
+        }
+        #expect(await store.containerMetadata(id: "fixture") == expected)
+        await runtime.shutdown()
     }
 
     @Test

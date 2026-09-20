@@ -10,6 +10,7 @@ struct AppleContainerIdentity: Decodable, Sendable {
     let creationDate: Date
     let labels: [String: String]
     let image: ImageIdentity
+    var startedDate: Date?
 
     struct ImageIdentity: Decodable, Sendable {
         let reference: String
@@ -22,9 +23,10 @@ struct AppleContainerIdentity: Decodable, Sendable {
 
     private struct Record: Decodable {
         let configuration: AppleContainerIdentity
+        let startedDate: Date?
     }
 
-    init(_ configuration: ContainerConfiguration) {
+    init(_ configuration: ContainerConfiguration, startedDate: Date? = nil) {
         id = configuration.id
         creationDate = configuration.creationDate
         labels = configuration.labels
@@ -32,6 +34,7 @@ struct AppleContainerIdentity: Decodable, Sendable {
             reference: configuration.image.reference,
             descriptor: Descriptor(digest: configuration.image.descriptor.digest)
         )
+        self.startedDate = startedDate
     }
 
     static func decode(_ data: Data, id: String) throws -> Self {
@@ -42,6 +45,8 @@ struct AppleContainerIdentity: Decodable, Sendable {
         guard records.count == 1, let record = records.first, record.configuration.id == id else {
             throw ContainerizationError(.invalidState, message: "Ambiguous container identity response")
         }
-        return record.configuration
+        var identity = record.configuration
+        identity.startedDate = record.startedDate
+        return identity
     }
 }
