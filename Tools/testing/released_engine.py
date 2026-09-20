@@ -136,6 +136,12 @@ class ReleasedCase:
         self.admission = admission
         self.keychain_intent = False
 
+    def prepare_home(self, journal):
+        """Provision the private default keychain before either API or Engine startup."""
+        self.store.attach(self.identity, "keychain-intent.json", canonical({"home": str(self.root)}))
+        self.keychain_intent = True
+        self.store.attach(self.identity, "keychain-ready.json", canonical(run_keychain(self.root, "create", journal)))
+
     def setup(self):
         self.root = Path(tempfile.mkdtemp(dir=self.parent, prefix="case-"))
         self.socket = self.root / "engine.sock"
@@ -149,8 +155,10 @@ class ReleasedCase:
         self.guard.begin(self.owner)
         if self.runtime_factory is not None:
             self.runtime = self.runtime_factory(self.root, self.owner)
-            self.runtime.start()
+            self.runtime.start(prepare_home=self.prepare_home)
             self.store.attach(self.identity, "api-service.json", canonical(self.runtime.service))
+        else:
+            self.prepare_home(None)
         if self.guest_inputs is not None:
             if self.runtime is None:
                 raise ValueError("Guest setup requires the controlled private runtime")
@@ -161,10 +169,6 @@ class ReleasedCase:
             if self.revalidate() != self.releases:
                 raise ValueError("Released runtime inputs changed during provisioning")
         self.output = (self.root / "engine.log").open("xb")
-        self.store.attach(self.identity, "keychain-intent.json", canonical({"home": str(self.root)}))
-        self.keychain_intent = True
-        self.store.attach(self.identity, "keychain-ready.json", canonical(run_keychain(
-            self.root, "create", self.runtime.journal if self.runtime else None)))
         engine = self.releases[0]["executables"]["devcontainer-engine"]
         container = self.releases[1]["executables"]["container"]
         self.store.attach(self.identity, "process-intent.json", canonical({"root": str(self.root), "program": engine}))
@@ -212,18 +216,22 @@ class ReleasedCase:
             # Detect executable replacement before claiming successful cleanup.
             if self.revalidate() != self.releases:
                 raise ValueError("Released runtime inputs changed during execution")
-            if self.keychain_intent:
-                self.store.attach(self.identity, "keychain-cleanup.json", canonical(run_keychain(
-                    self.root, "delete", self.runtime.journal if self.runtime else None)))
         finally:
             # A diagnostics/retention failure must not prevent restoring the
             # operator's services after the child has verifiably stopped.
-            if stopped and self.runtime is not None:
+            if stopped:
                 try:
-                    self.runtime.restore()
+                    if self.runtime is not None:
+                        self.runtime.restore()
+                    if self.keychain_intent:
+                        # Both API and Engine consume this keychain. Preserve
+                        # it if either shutdown is uncertain, as recovery does.
+                        self.store.attach(self.identity, "keychain-cleanup.json", canonical(run_keychain(
+                            self.root, "delete", self.runtime.journal if self.runtime else None)))
                 finally:
-                    self.runtime.preserve_logs()
-                    self.store.attach(self.identity, "service-journal.json", canonical(self.runtime.receipt()))
+                    if self.runtime is not None:
+                        self.runtime.preserve_logs()
+                        self.store.attach(self.identity, "service-journal.json", canonical(self.runtime.receipt()))
         if self.root is not None:
             owner = json.loads((self.root / "owner.json").read_text())
             if self.root.is_symlink() or owner != {"identity": self.identity, "root": str(self.root)}:

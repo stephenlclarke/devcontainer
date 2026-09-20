@@ -15,6 +15,7 @@ import subprocess
 import time
 
 from host_runtime import deadline, require_api_service
+from private_keychain import require_keychain_stopped
 from runtime_probe import probe_api, probe_diagnostics, require_probe_stopped
 from service_journal import ServiceJournal, digest
 from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, snapshot
@@ -171,7 +172,7 @@ class ControlledRuntime:
         self.service = None
         self.original_processes = []
 
-    def start(self):
+    def start(self, *, prepare_home=None):
         prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
         self.original_processes = capture_owned_processes(self.launchd, prior)
         self.require_idle_before_selection(prior)
@@ -186,6 +187,11 @@ class ControlledRuntime:
         self.switch.prepare()
         # A listener/helper that survived removal may not overlap this lane.
         wait_stopped(self.require_workers_stopped)
+        # The enhanced provider stores its handoff key during API startup.
+        # Prepare the isolated HOME only after durable recovery and quiescence,
+        # but before launchd can start any selected runtime consumer.
+        if prepare_home is not None:
+            prepare_home(self.journal)
         self.switch.install(definition)
         with deadline(25):
             while True:
@@ -248,6 +254,7 @@ class ControlledRuntime:
         if self.switch is None:
             return
         require_probe_stopped(self.journal.records())
+        require_keychain_stopped(self.journal.records())
         self.switch.restore(before_originals=lambda: wait_stopped(self.require_selected_stopped))
 
     def require_selected_stopped(self):

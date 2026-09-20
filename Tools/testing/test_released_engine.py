@@ -375,6 +375,11 @@ class ReleasedEngineTests(unittest.TestCase):
         case.runtime_factory = Mock(return_value=runtime)
         case.guest_inputs = {"fixture": "admitted data"}
         ordering = []
+        def start_runtime(*, prepare_home):
+            prepare_home(runtime.journal)
+            ordering.append("api-start")
+        runtime.start.side_effect = start_runtime
+        self.keychains.side_effect = lambda _root, action, _journal: ordering.append("keychain-" + action)
         with patch("released_engine.ReleasedGuest") as factory, \
                 patch.object(case.child, "start", side_effect=lambda *_, **__: ordering.append("engine-start")), \
                 patch.object(case.child, "stop", side_effect=lambda: ordering.append("engine-stop")), \
@@ -387,7 +392,48 @@ class ReleasedEngineTests(unittest.TestCase):
             case.setup()
             self.assertEqual(case.operation(), guest.operation.return_value)
             self.assertEqual(case.cleanup()["status"], "passed")
-        self.assertEqual(ordering, ["provision", "engine-start", "guest-cleanup", "engine-stop", "restore"])
+        self.assertEqual(ordering, ["keychain-create", "api-start", "provision", "engine-start",
+                                   "guest-cleanup", "engine-stop", "restore", "keychain-delete"])
+
+    def test_provider_restore_failure_keeps_private_keychain_and_root(self):
+        case = self.case()
+        runtime = Mock(service={"pid": 42})
+        runtime.start.side_effect = lambda *, prepare_home: prepare_home(runtime.journal)
+        runtime.restore.side_effect = RuntimeError("provider still running")
+        runtime.receipt.return_value = {"status": "incomplete"}
+        case.runtime_factory = Mock(return_value=runtime)
+        with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), \
+                patch.object(case.child, "process") as process:
+            process.pid = 43
+            case.setup()
+        with self.assertRaisesRegex(RuntimeError, "provider still running"):
+            case.cleanup()
+        self.assertEqual([call.args[1] for call in self.keychains.call_args_list], ["create"])
+        self.assertTrue(case.root.exists())
+        self.assertTrue(case.guard.path.exists())
+
+    def test_final_service_receipt_includes_private_keychain_deletion(self):
+        case = self.case()
+        runtime = Mock(service={"pid": 42})
+        def start_runtime(*, prepare_home):
+            runtime.journal = ServiceJournal(self.root / "receipt.sqlite", case.owner, create=True)
+            runtime.receipt.side_effect = runtime.journal.receipt
+            prepare_home(runtime.journal)
+        runtime.start.side_effect = start_runtime
+        def keychain(_root, action, journal):
+            journal.put("fixture-keychain-" + action + ".json", b'{}')
+            return {"status": action}
+        self.keychains.side_effect = keychain
+        case.runtime_factory = Mock(return_value=runtime)
+        with patch.object(case.child, "start"), patch.object(case.child, "wait_ready"), \
+                patch.object(case.child, "process") as process:
+            process.pid = 43
+            case.setup()
+        self.assertEqual(case.cleanup()["status"], "passed")
+        self.assertIn("fixture-keychain-delete.json", runtime.journal.records())
+        with self.store.connect() as database:
+            receipt = database.execute("SELECT bytes FROM artifacts WHERE name='service-journal.json'").fetchone()[0]
+        self.assertEqual(json.loads(receipt), runtime.journal.receipt())
 
     def test_uncertain_guest_cleanup_keeps_engine_provider_root_and_guard(self):
         case = self.case()
@@ -418,7 +464,7 @@ class ReleasedEngineTests(unittest.TestCase):
                 case.runtime_factory = Mock(return_value=runtime)
                 case.guest_inputs = {"workload": {"image": {"config": "sha256:" + "a" * 64}}}
                 unavailable = [not oversized]
-                def start_runtime():
+                def start_runtime(*, prepare_home):
                     runtime.journal = ServiceJournal(self.root / ("logs-" + str(oversized) + ".sqlite"),
                                                      case.owner, create=True)
                     put = runtime.journal.put
@@ -427,6 +473,7 @@ class ReleasedEngineTests(unittest.TestCase):
                             raise OSError("log retention unavailable")
                         put(name, data)
                     runtime.journal.put = retain
+                    prepare_home(runtime.journal)
                 runtime.start.side_effect = start_runtime
                 child = Mock()
                 child.process.pid, child.process.wait.return_value = 44, 0

@@ -157,6 +157,42 @@ class RuntimeServicesTests(unittest.TestCase):
         runtime.restore()
         self.assertEqual(self.launchd.jobs, self.original_jobs)
 
+    def test_private_home_is_prepared_before_selected_api_can_start(self):
+        runtime = self.runtime()
+        def prepare(journal):
+            self.assertIs(journal, runtime.journal)
+            self.assertIn("service-originals.plist", journal.records())
+            self.assertNotIn("service-selected.plist", journal.records())
+            self.assertEqual(self.launchd.jobs, {})
+            self.probe.assert_not_called()
+        prepare_home = Mock(side_effect=prepare)
+        runtime.start(prepare_home=prepare_home)
+        prepare_home.assert_called_once_with(runtime.journal)
+        self.probe.assert_called_once()
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_private_home_failure_restores_originals_without_starting_api(self):
+        runtime = self.runtime()
+        with self.assertRaisesRegex(RuntimeError, "private home failure"):
+            runtime.start(prepare_home=Mock(side_effect=RuntimeError("private home failure")))
+        self.assertNotIn("service-selected.plist", runtime.journal.records())
+        self.probe.assert_not_called()
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_uncertain_private_keychain_helper_prevents_runtime_restore(self):
+        runtime = self.runtime()
+        def interrupted(journal):
+            journal.put("keychain-0001-intent.json", b'{"arguments":["fixture-helper"]}')
+            raise RuntimeError("lost helper lifetime")
+        with self.assertRaisesRegex(RuntimeError, "lost helper lifetime"):
+            runtime.start(prepare_home=interrupted)
+        with self.assertRaisesRegex(ValueError, "keychain helper needs explicit"):
+            runtime.restore()
+        self.assertEqual(self.launchd.jobs, {})
+        self.assertNotIn("service-selected.plist", runtime.journal.records())
+
     def test_readiness_receipt_follows_rpc_and_uses_selected_executable(self):
         runtime = self.runtime()
         def observe(root, executable, journal, verify):
