@@ -170,7 +170,7 @@ class ComposeTerminalInputFixture(ComposeForegroundFixture):
     """
 
     missing_image = "sha256:" + "f" * 64
-    terminal_error = b"the input device is not a TTY\n"
+    terminal_error = b"cannot attach stdin to a TTY-enabled container because stdin is not a terminal\n"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

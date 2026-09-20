@@ -185,6 +185,7 @@ class ComposeForegroundTests(unittest.TestCase):
 
 class ComposeTerminalInputTests(unittest.TestCase):
     stop = helpers.GuestFixtureTests.stop
+    diagnostic = "cannot attach stdin to a TTY-enabled container because stdin is not a terminal"
 
     def reopen(self):
         return ComposeTerminalInputFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
@@ -209,7 +210,9 @@ class ComposeTerminalInputTests(unittest.TestCase):
                                       "com.docker.compose.service": "dependency"}},
                 "HostConfig": {"AutoRemove": False, "NetworkMode": "none"}, "State": {"Status": "running"}}
 
-    def run_cli(self, script="printf 'the input device is not a TTY\\n' >&2; exit 1", *, dependency=True):
+    def run_cli(self, script=None, *, dependency=True):
+        if script is None:
+            script = f"printf '{self.diagnostic}\\n' >&2; exit 1"
         original = self.fixture.child.start
 
         def start(arguments, root, output, **kwargs):
@@ -250,7 +253,7 @@ class ComposeTerminalInputTests(unittest.TestCase):
 
     def test_wrong_error_and_stdout_are_not_normalized(self):
         with self.assertRaisesRegex(ValueError, "error or output stream"):
-            self.run_cli("printf 'the input device is not a TTY\\n'; exit 1")
+            self.run_cli(f"printf '{self.diagnostic}\\n'; exit 1")
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_unobserved_dependency_creation_quarantines(self):
@@ -262,16 +265,16 @@ class ComposeTerminalInputTests(unittest.TestCase):
 
     def test_prefixed_terminal_diagnostic_cannot_pass_as_an_exact_line(self):
         with self.assertRaisesRegex(ValueError, "error or output stream"):
-            self.run_cli("printf 'unrelated failure: the input device is not a TTY\\n' >&2; exit 1")
+            self.run_cli(f"printf 'unrelated failure: {self.diagnostic}\\n' >&2; exit 1")
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_progress_lines_do_not_replace_the_exact_final_diagnostic(self):
-        self.run_cli("printf 'dependency Started\\nthe input device is not a TTY\\n' >&2; exit 1")
+        self.run_cli(f"printf 'dependency Started\\n{self.diagnostic}\\n' >&2; exit 1")
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_duplicate_diagnostic_is_not_normalized(self):
         with self.assertRaisesRegex(ValueError, "error or output stream"):
-            self.run_cli("printf 'the input device is not a TTY\\nthe input device is not a TTY\\n' >&2; exit 1")
+            self.run_cli(f"printf '{self.diagnostic}\\n{self.diagnostic}\\n' >&2; exit 1")
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_stopped_dependency_is_not_a_startup_pass(self):
