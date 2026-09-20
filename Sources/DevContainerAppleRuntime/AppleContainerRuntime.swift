@@ -101,7 +101,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
         ) {
             self.api = api
-            self.bootstrap = bootstrap ?? LiveAppleContainerBootstrapClient(client: api)
+            self.bootstrap = bootstrap ?? LiveAppleContainerBootstrapClient()
             self.inventory = inventory
             self.files = files
             self.networks = networks
