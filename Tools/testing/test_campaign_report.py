@@ -94,6 +94,10 @@ class CampaignReportTests(unittest.TestCase):
         self.assertFalse(case["observationsMatch"])
         self.assertEqual(case["remainingOwnedResourceCount"], 1)
         self.assertEqual(case["errorCount"], 1)
+        self.assertEqual(case["durationsNS"]["operation"], 500)
+        self.assertIsNone(data["fixtures"][0]["comparison"]["operationRatios"]["apple-stock"])
+        stock_row = next(line for line in campaign_report.markdown(data).splitlines() if "| apple-stock |" in line)
+        self.assertIn("not compared", stock_row)
         for rendered in (json.dumps(data), campaign_report.markdown(data), campaign_report.junit(data)):
             self.assertNotIn("SECRET", rendered)
         self.assertEqual(ET.fromstring(campaign_report.junit(data)).attrib["failures"], "1")

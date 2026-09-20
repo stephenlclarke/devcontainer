@@ -195,7 +195,12 @@ def compare_cases(records: list[dict], expected: dict[str, str]) -> dict:
         if result["observations"] != expected:
             differences.append(lane + ": observations differ from the exact contract")
     oracle_ns = lanes["docker"]["durationsNS"]["operation"]
-    ratios = {lane: result["durationsNS"]["operation"] / oracle_ns if oracle_ns else None
+    # A quick failure is not a fast completed workload. Keep its raw duration,
+    # but never use a failed/different/zero-duration case on either side of a ratio.
+    eligible = {lane: result["status"] == "passed" and result["observations"] == expected and
+                result["durationsNS"]["operation"] > 0 for lane, result in lanes.items()}
+    ratios = {lane: result["durationsNS"]["operation"] / oracle_ns
+              if eligible["docker"] and eligible[lane] else None
               for lane, result in lanes.items()}
     return {"functionalParity": not differences, "differences": differences, "operationRatios": ratios,
             "timingQualified": False,

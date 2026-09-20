@@ -163,7 +163,27 @@ class CaseEvidenceTests(unittest.TestCase):
                        {"observations": {"ping": "true", "unexpected": "value"}}]:
             records = self.records()
             records[1]["result"].update(change)
-            self.assertFalse(compare_cases(records, {"ping": "true"})["functionalParity"])
+            compared = compare_cases(records, {"ping": "true"})
+            self.assertFalse(compared["functionalParity"])
+            self.assertIsNone(compared["operationRatios"]["apple-stock"])
+
+    def test_failed_oracle_and_zero_duration_never_form_speed_ratios(self):
+        for lane in ("docker", "apple-stock"):
+            for change in ({"status": "failed"}, {"status": "timeout"}, {"status": "interrupted"},
+                           {"status": "failed", "observations": {}}, {"observations": {"ping": "false"}},
+                           {"durationsNS": {"setup": 1, "operation": 0, "cleanup": 1}}):
+                with self.subTest(lane=lane, change=change):
+                    records = self.records()
+                    record = next(item for item in records if item["identity"]["lane"] == lane)
+                    record["result"].update(change)
+                    unchanged = copy.deepcopy(records)
+                    compared = compare_cases(records, {"ping": "true"})
+                    self.assertIsNone(compared["operationRatios"][lane])
+                    if lane == "docker":
+                        self.assertTrue(all(ratio is None for ratio in compared["operationRatios"].values()))
+                    else:
+                        self.assertEqual(compared["operationRatios"]["container-compose"], 1)
+                    self.assertEqual(records, unchanged)
 
     def test_incomplete_duplicate_and_mixed_campaigns_are_rejected(self):
         for records in [self.records()[:2], self.records() + [self.records()[0]]]:

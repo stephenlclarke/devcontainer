@@ -150,7 +150,7 @@ advanced mount options.
 
 ## Development
 
-Release-comparison work now includes a [published devcontainer 1.0.1 baseline adapter](docs/bazel-test-harness.md#published-devcontainer-baseline). It uses downloaded binaries and the older release's documented client dependencies, distinct from the new Docker-free candidate. Quiet previous/new release benchmarks and a measured improvement claim remain outstanding; component-test timings are not product speedups.
+Release-comparison work now includes a [published devcontainer 1.0.1 baseline adapter and live results](docs/bazel-test-harness.md#published-devcontainer-baseline). The current stock candidate passes image-configuration and lifecycle checks that 1.0.1 fails on image identity/lookup. This demonstrates correctness improvements, not speedups: failed cases are excluded from timing ratios. Quiet previous/new stable-release benchmarks remain outstanding.
 
 Coverage builds now use atomic counters and sandboxed Swift compilation to prevent the diagnosed parallel-counter loss and stale incremental-object reuse. `make bazel-coverage-counters` checks an exact parallel-counter inventory before the normal unit/checkpoint coverage path. Ordinary builds retain worker and action-cache reuse. Complete unit inventories pass the 90% gate: stock `7f4fe20` has 675 reported cases and **91.8845%** measured line coverage; enhanced `a3ae038` has 677 cases and **91.7956%**. [Exact evidence and remaining quality gates](docs/bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) distinguish these measurements from integration, SonarQube and release certification.
 
