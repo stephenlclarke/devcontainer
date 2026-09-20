@@ -236,7 +236,7 @@ The generated shared route ledger contains all 107 method/path operations in the
 | Area | Required endpoints or behavior |
 | --- | --- |
 | Negotiation | `/_ping`, `/version`, `/info`, version-prefixed routes |
-| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; the unreleased init-I/O implementation also declares running-terminal resize using its retained native process handle, with complete native E08 qualification pending |
+| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; unreleased running-terminal resize uses its retained native process handle and passes stock E08; enhanced and full release qualification remain pending |
 | Exec | create, start, resize, inspect, stdin/stdout/stderr multiplexing |
 | Files | archive upload/download and path stat headers |
 | Images | list, inspect, create/pull, build, tag, remove |

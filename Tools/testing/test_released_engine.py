@@ -194,6 +194,11 @@ class ReleasedEngineTests(unittest.TestCase):
         selected = released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, compose)
         self.assertEqual(selected["composeCandidate"], compose)
         self.assertIn("compose", selected["devcontainerFixture"])
+        self.assertEqual(released_engine.fixture_guest_inputs({}, "E09-compose-foreground", candidate, repository, compose),
+                         {"composeCandidate": compose})
+        for invalid in (None, {**compose, "runtimeProfile": "enhanced"}, {**compose, "executables": {}}):
+            with self.assertRaisesRegex(ValueError, "matching native Compose"):
+                released_engine.fixture_guest_inputs({}, "E09-compose-foreground", candidate, repository, invalid)
         dependencies = released_engine.fixture_guest_inputs(
             {"dependencyWorkload": "admitted"}, "C02-compose-dependencies", candidate, repository, compose)
         self.assertEqual(dependencies["composeCandidate"], compose)

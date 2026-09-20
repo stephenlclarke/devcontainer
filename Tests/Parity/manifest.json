@@ -156,6 +156,13 @@
       "assertions": ["raw TTY stdout and stderr", "post-start terminal resize", "detach preserves init", "reconnected stdin", "acknowledged next-exit wait and auto-removal"]
     },
     {
+      "id": "E09-compose-foreground",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["immutable Compose CLI run", "piped stdin roundtrip", "separate stdout and stderr", "real exit status", "automatic removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],

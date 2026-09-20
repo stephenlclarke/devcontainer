@@ -59,6 +59,19 @@ class GuestRuntimeTests(unittest.TestCase):
                     self.assertEqual(fixture.call_args.kwargs['before_submit'], case.builder.verify_for_build)
                     case.builder.cleanup.assert_called_once()
 
+    def test_e09_selects_exact_compose_bundle_and_provider_for_each_lane(self):
+        self.case.fixture = 'E09-compose-foreground'
+        self.inputs['composeCandidate'] = {'executables': {'compose': '/native/compose'}}
+        self.inputs['compose'] = {'executables': {'docker-compose': '/reference/compose'}}
+        for container, executable, install in (('/provider/bin/container', '/native/compose', Path('/provider')),
+                                               ('', '/reference/compose', None)):
+            self.case.container = container
+            with patch('guest_runtime.ComposeForegroundFixture') as fixture:
+                self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+                self.assertEqual(fixture.call_args.kwargs['executable'], executable)
+                self.assertEqual(fixture.call_args.kwargs['provider_install'], install)
+                self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+
     def test_uncertain_image_cleanup_prevents_builder_shutdown(self):
         self.case.guest, self.case.builder = Mock(), Mock()
         self.case.guest.cleanup.side_effect = ValueError('uncertain build')

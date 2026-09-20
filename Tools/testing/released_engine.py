@@ -58,6 +58,14 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
 
 def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path, compose=None) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
+    if fixture == "E09-compose-foreground":
+        if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
+                compose.get("productFamily") != "container-compose" or
+                compose.get("runtimeProfile") not in {"stock", "enhanced"} or
+                compose.get("runtimeProfile") != candidate.get("runtimeProfile") or
+                set(compose.get("executables", {})) != COMPOSE_PRODUCTS):
+            raise ValueError("Compose fixture requires an admitted matching native Compose candidate")
+        return {**inputs, "composeCandidate": compose}
     if fixture not in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
         return inputs
     if fixture in {"C01-compose-service", "C02-compose-dependencies"}:
@@ -248,18 +256,18 @@ def main():
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
     parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
-    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01")
+    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/E09")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Engine cases require Apple silicon macOS")
-    if args.compose_candidate_invocation and (args.fixture not in {"C01-compose-service", "C02-compose-dependencies"} or args.lane == "docker"):
-        raise ValueError("Native Compose candidate is only valid for native C01/C02")
+    if args.compose_candidate_invocation and (args.fixture not in {"C01-compose-service", "C02-compose-dependencies", "E09-compose-foreground"} or args.lane == "docker"):
+        raise ValueError("Native Compose candidate is only valid for native C01/C02/E09")
     if args.lane == "docker":
         from released_docker import run_docker
         run_docker(args)
         return
-    if args.fixture in {"C01-compose-service", "C02-compose-dependencies"} and not args.compose_candidate_invocation:
+    if args.fixture in {"C01-compose-service", "C02-compose-dependencies", "E09-compose-foreground"} and not args.compose_candidate_invocation:
         raise ValueError("Compose fixture requires a prepared native Compose candidate; no runtime changes made")
     if args.fixture in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")

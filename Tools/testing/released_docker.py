@@ -60,7 +60,7 @@ def admit_docker(oracle_lock: dict, cli_lock: dict, pins: dict, images: dict, sc
         if len(dependencies) != 1:
             raise ValueError("C02 dependency image is missing or ambiguous")
         result["dependencyWorkload"] = require_image(dependencies[0], retained / "guest-images")
-    if fixture in {COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE}:
+    if fixture in {COMPOSE_FIXTURE, DEPENDENCIES_FIXTURE, "E09-compose-foreground"}:
         compose_lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
         compose_assets = [asset for asset in validate_lock(compose_lock) if asset["repository"] == "docker/compose"]
         if (len(compose_assets) != 1 or compose_assets[0]["tag"] != "v" + pins["composeVersion"] or

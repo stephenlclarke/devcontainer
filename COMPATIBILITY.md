@@ -192,7 +192,7 @@ The shared gateway owns the public version and route envelope. In normal mode, `
 The bounded endpoint surface is:
 
 - ping, version, information, and API negotiation;
-- container list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; the unreleased candidate also declares running-terminal resize for init processes whose native handle it retained during bootstrap. Externally started/reopened processes are not silently adopted. Native E08 and full release qualification remain pending; this does not extend stable-release support;
+- container list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; the unreleased candidate also declares running-terminal resize for init processes whose native handle it retained during bootstrap. Externally started/reopened processes are not silently adopted. Stock E08 passes; enhanced and full release qualification remain pending, so this does not extend stable-release support;
 - exec create, start, resize, inspect, cancellation, and TTY/non-TTY streams;
 - archive upload/download and path metadata;
 - image list, inspect, pull, build, tag, and remove;

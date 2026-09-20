@@ -26,9 +26,10 @@ from build_runtime import ReleasedBuilder, admit_builder
 from fault_probe import FaultFixture
 from attachment_probe import AttachmentFixture, FIXTURE as ATTACHMENT_FIXTURE
 from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
+from compose_foreground_probe import ComposeForegroundFixture, FIXTURE as COMPOSE_FOREGROUND_FIXTURE
 
 
-FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
+FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, COMPOSE_FOREGROUND_FIXTURE, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -243,6 +244,16 @@ class ReleasedGuest:
                                             observe=self.observe)
             with deadline(90):
                 return self.guest.operation()
+        if self.fixture == COMPOSE_FOREGROUND_FIXTURE:
+            bundle = self.inputs["composeCandidate" if self.container else "compose"]
+            executable = bundle["executables"]["compose" if self.container else "docker-compose"]
+            self.guest = ComposeForegroundFixture(
+                self.socket, digest(canonical(self.owner["identity"])), self.image_id, GUEST_API_VERSION,
+                self.runtime.journal, root=self.root, executable=executable, runtime=self.runtime,
+                provider_install=Path(self.container).parent.parent if self.container else None,
+                observe=self.observe)
+            with deadline(90):
+                return self.guest.operation()
         command = COMMAND if self.fixture == "E02-container-lifecycle" else ("sleep", "300")
         if self.fixture == "E03-exec-streams":
             command = ("sleep", "600")
@@ -326,7 +337,7 @@ def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]
     from devcontainer_reuse_reference import COMMANDS as REUSE_COMMANDS
     d01_steps = ("devcontainer-image-pull", "devcontainer-dependency-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
-    for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps):
+    for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps, "guest-compose-foreground"):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
@@ -347,7 +358,7 @@ def require_diagnostic(records: dict[str, bytes], name: str):
 def require_guest_cleanup(records: dict[str, bytes]) -> None:
     for name in require_guest_resources_stopped(records):
         require_diagnostic(records, name)
-        if name.startswith("devcontainer-"):
+        if name.startswith("devcontainer-") or name == "guest-compose-foreground":
             require_diagnostic(records, name + "-stderr")
 
 
@@ -359,7 +370,8 @@ def guest_diagnostic_plan(root: Path, records: dict[str, bytes]) -> dict[str, by
     """
     plan = {}
     for name in require_guest_resources_stopped(records):
-        for stem in ([name, name + "-stderr"] if name.startswith("devcontainer-") else [name]):
+        separate = name.startswith("devcontainer-") or name == "guest-compose-foreground"
+        for stem in ([name, name + "-stderr"] if separate else [name]):
             names = (stem + ".log", stem + "-log.json")
             if all(key in records for key in names):
                 require_diagnostic(records, stem)

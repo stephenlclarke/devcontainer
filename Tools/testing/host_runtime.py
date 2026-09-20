@@ -153,7 +153,7 @@ class OwnedProcess:
         self.spawn_pending = False
 
     def start(self, arguments: list[str], root: Path, output, *, provider_install: Path | None = None,
-              errors=None) -> None:
+              errors=None, stdin=subprocess.DEVNULL, runtime_socket: Path | None = None) -> None:
         if self.process is not None or self.spawn_pending:
             raise ValueError("Case already owns a process")
         environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(root),
@@ -164,11 +164,19 @@ class OwnedProcess:
             environment.update(CONTAINER_APP_ROOT=str(root / "container"),
                                CONTAINER_INSTALL_ROOT=str(provider_install),
                                CONTAINER_LOG_ROOT=str(root / "container-logs"))
+        if runtime_socket is not None:
+            if not runtime_socket.is_absolute() or runtime_socket.resolve() != runtime_socket:
+                raise ValueError("Runtime socket must be canonical")
+            environment.update(DOCKER_HOST="unix://" + str(runtime_socket),
+                               CONTAINER_COMPOSE_ENGINE_SOCKET=str(runtime_socket))
+            if provider_install is not None:
+                container = str(provider_install / "bin/container")
+                environment.update(CONTAINER_COMPOSE_CONTAINER=container, CONTAINER_BIN=container)
         # Popen can be interrupted after fork but before returning the handle.
         # An uncertain launch is quarantined, never interpreted as no child.
         self.spawn_pending = True
         self.process = subprocess.Popen(
-            arguments, cwd=root, stdin=subprocess.DEVNULL, stdout=output,
+            arguments, cwd=root, stdin=stdin, stdout=output,
             stderr=subprocess.STDOUT if errors is None else errors,
             start_new_session=True, close_fds=True,
             env=environment)
