@@ -261,7 +261,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
         }
         configuration.terminal = spec.terminal
 
-        let standardInput = try spec.attachStandardInput ? AppleProcessInputChannel.directExec() : nil
+        let standardInput =
+            try spec.attachStandardInput ? AppleProcessInputChannel.socketPair() : nil
         let attachTerminalOutput =
             spec.terminal && (spec.attachStandardOutput || spec.attachStandardError)
         let standardOutput =

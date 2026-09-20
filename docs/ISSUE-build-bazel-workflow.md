@@ -2,7 +2,7 @@
 
 ## Problem description
 
-Enhanced E03 stalls on large duplex input although a separately isolated native-CLI control completes the same 4 MiB transfer. The direct adapter uses a different input transport; align enhanced exec with the native pipe path while preserving stock half-close behavior, and retain payload-free socket-progress counters for any subsequent failure. Component tests do not establish resolution: the original packaged E03 assertions and deadlines remain mandatory. See [diagnostic evidence and remaining proof](bazel-test-harness.md#execution-boundaries).
+Enhanced E03 stalls on large duplex input although a separately isolated native-CLI control completes the same 4 MiB transfer. Matching the native pipe transport did not resolve the packaged timeout; that experiment is removed and both profiles retain socket half-close. Payload-free counters record all input accepted by the host socket but incomplete output. Automatic failed-case cleanup is verified without approval; the transfer defect remains unresolved. See [diagnostic evidence and remaining proof](bazel-test-harness.md#execution-boundaries).
 
 The subsequent enhanced restart timeout exposed a second client-compatibility defect: transfer handles used stock ownership rules against the enhanced library, leaking write descriptors and preventing EOF after exit. A real pinned-XPC regression reproduces the leak; profile-correct ownership passes both component suites without discarding tail output or extending timeouts. Scoped worker-log retention also closes the diagnostic gap in the original recovery. [Evidence and remaining packaged qualification](bazel-test-harness.md#execution-boundaries) remain explicit; no stable release or quiet speedup is claimed.
 

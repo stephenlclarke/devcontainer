@@ -261,12 +261,7 @@ struct AppleDirectProcessSessionTests {
             let output = try #require(handles[1])
             var status = stat()
             #expect(fstat(input.fileDescriptor, &status) == 0)
-            #if DEVCONTAINER_ENHANCED_RUNTIME
-                // Match the released enhanced CLI's pipe-based stdio contract.
-                #expect(status.st_mode & S_IFMT == S_IFIFO)
-            #else
-                #expect(status.st_mode & S_IFMT == S_IFSOCK)
-            #endif
+            #expect(status.st_mode & S_IFMT == S_IFSOCK)
             let process = EchoClientProcess(input: input, output: output)
             #if !DEVCONTAINER_ENHANCED_RUNTIME
                 // The stock XPC sender consumes transferred descriptors.
