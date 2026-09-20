@@ -23,8 +23,11 @@ SETTINGS = {"OpenStdin": True, "StdinOnce": True, "Tty": False,
             "AttachStdin": True, "AttachStdout": True, "AttachStderr": True}
 
 
-def started_output(connection, initial: bytes, end: float) -> bytes:
+def started_output(connection, initial: bytes, end: float, *, progress: dict | None = None) -> bytes:
     """Observe both complete log records before subscribing to history plus live."""
+    if progress is None:
+        progress = {}
+    progress.update(outputWireBytes=len(initial), outputEOF=False)
     payload, offset = bytearray(initial), 0
     outputs = (bytearray(), bytearray())
     expected = (OUTPUT_PREFIX, ERROR_OUTPUT)
@@ -49,12 +52,21 @@ def started_output(connection, initial: bytes, end: float) -> bytes:
         connection.settimeout(remaining(end))
         chunk = connection.recv(4096)
         if not chunk:
+            progress["outputEOF"] = True
             raise ValueError("Init closed before both startup markers")
         payload.extend(chunk)
+        progress["outputWireBytes"] += len(chunk)
 
 
-def observed_duplex(primary, initial: bytes, observer, history: bytes, incoming: bytes, end: float):
+def observed_duplex(primary, initial: bytes, observer, history: bytes, incoming: bytes, end: float,
+                    *, progress: dict | None = None):
     """Drain both attachments concurrently; the output-only peer cannot own stdin."""
+    if progress is None:
+        progress = {}
+    # Socket acceptance is not evidence of guest consumption. Only counts and
+    # completion flags are retained, including when the original deadline fires.
+    progress.update(inputAcceptedBytes=0, inputHalfClosed=False, observerInputHalfClosed=False,
+                    primaryWireBytes=len(initial), observerWireBytes=len(history), primaryEOF=False, observerEOF=False)
     output = {primary: bytearray(initial), observer: bytearray(history)}
     pending = memoryview(incoming)
     with selectors.DefaultSelector() as selector:
@@ -63,19 +75,24 @@ def observed_duplex(primary, initial: bytes, observer, history: bytes, incoming:
             selector.register(connection, selectors.EVENT_READ |
                               (selectors.EVENT_WRITE if connection is primary and pending else 0))
         close_write(observer)
+        progress["observerInputHalfClosed"] = True
         if not pending:
             close_write(primary)
+            progress["inputHalfClosed"] = True
         while selector.get_map():
             for key, mask in selector.select(remaining(end)):
                 connection = key.fileobj
+                peer = "primary" if connection is primary else "observer"
                 if mask & selectors.EVENT_READ:
                     chunk = connection.recv(65536)
                     if not chunk:
+                        progress[peer + "EOF"] = True
                         if connection is primary and pending:
                             raise ValueError("Init closed before input was delivered")
                         selector.unregister(connection)
                         continue
                     output[connection].extend(chunk)
+                    progress[peer + "WireBytes"] += len(chunk)
                     if len(output[connection]) > MAX_OUTPUT:
                         raise ValueError("Init attachment output exceeds limit")
                 if mask & selectors.EVENT_WRITE:
@@ -83,8 +100,10 @@ def observed_duplex(primary, initial: bytes, observer, history: bytes, incoming:
                     if not sent:
                         raise ValueError("Init stopped accepting input")
                     pending = pending[sent:]
+                    progress["inputAcceptedBytes"] += sent
                     if not pending:
                         close_write(primary)
+                        progress["inputHalfClosed"] = True
                         selector.modify(primary, selectors.EVENT_READ)
     return tuple(streams(bytes(output[connection])) for connection in (primary, observer))
 
@@ -114,16 +133,18 @@ class AttachmentFixture(GuestFixture):
             raise ValueError("Init attachment requires an unstarted generation")
         route = (f"/v{self.version}/containers/{self.identifier}/attach?logs={int(history)}"
                  f"&stream={int(live)}&stdin={int(live)}&stdout=1&stderr=1")
-        event = {"method": "POST", "route": route}
+        event = {"method": "POST", "route": route, "stage": "connect", "stream": {}}
         started = time.monotonic_ns()
         end = time.monotonic() + 30
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
                 connection.settimeout(remaining(end))
                 connection.connect(str(self.socket))
+                event["stage"] = "upgrade"
                 status, initial = upgrade(connection, route, b"", end)
                 event["status"] = status
                 if live:
+                    event["stage"] = "start"
                     # Small startup markers cannot fill the output pipe; all
                     # large output follows stdin, which is drained concurrently.
                     status, _ = self.call("POST", f"/containers/{self.identifier}/start",
@@ -131,9 +152,15 @@ class AttachmentFixture(GuestFixture):
                     if status != 204:
                         raise ValueError("Attached init start failed")
                 if observer:
-                    initial = started_output(connection, initial, end)
-                    return self.observe_running(connection, initial, incoming, end)
-                return streams(duplex(connection, initial, incoming, end))
+                    event["stage"] = "primary-startup"
+                    initial = started_output(connection, initial, end, progress=event["stream"])
+                    event["stage"] = "combined-observer"
+                    result = self.observe_running(connection, initial, incoming, end)
+                else:
+                    event["stage"] = "duplex"
+                    result = streams(duplex(connection, initial, incoming, end, progress=event["stream"]))
+                event["stage"] = "complete"
+                return result
         except (Exception, KeyboardInterrupt) as error:
             event["error"] = type(error).__name__
             raise
@@ -148,18 +175,23 @@ class AttachmentFixture(GuestFixture):
         if actual is None or self.owned(actual) != self.identifier or actual.get("State", {}).get("Status") != "running":
             raise ValueError("Combined attachment target is not the owned running init")
         route = f"/v{self.version}/containers/{self.identifier}/attach?logs=1&stream=1&stdin=0&stdout=1&stderr=1"
-        event = {"method": "POST", "route": route}
+        event = {"method": "POST", "route": route, "stage": "connect", "stream": {}}
         started = time.monotonic_ns()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as observer:
                 observer.settimeout(remaining(end))
                 observer.connect(str(self.socket))
+                event["stage"] = "upgrade"
                 status, history = upgrade(observer, route, b"", end)
                 event["status"] = status
                 # Upgrade precedes the server's history snapshot on some engines.
                 # Do not let new binary output enter that saved-log prefix.
-                history = started_output(observer, history, end)
-                original, observed = observed_duplex(primary, initial, observer, history, incoming, end)
+                event["stage"] = "observer-startup-history"
+                history = started_output(observer, history, end, progress=event["stream"])
+                event["stage"], event["stream"] = "combined-duplex", {}
+                original, observed = observed_duplex(primary, initial, observer, history, incoming, end,
+                                                      progress=event["stream"])
+            event["stage"] = "validate-output"
             # The independent observer sees only complete ASCII startup records
             # in its saved prefix, then the same unmodified binary live bytes.
             if observed != original:
@@ -167,6 +199,7 @@ class AttachmentFixture(GuestFixture):
             self.journal.put("init-combined-attachment.json", canonical({
                 name: {"bytes": len(data), "sha256": digest(data)}
                 for name, data in zip(("stdout", "stderr"), observed)}))
+            event["stage"] = "complete"
             return original
         except (Exception, KeyboardInterrupt) as error:
             event["error"] = type(error).__name__

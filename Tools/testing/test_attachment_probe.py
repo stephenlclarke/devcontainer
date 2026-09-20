@@ -147,6 +147,13 @@ class AttachmentTests(unittest.TestCase):
         attachments = [event for event in self.events if "/attach?" in event["route"]]
         self.assertEqual(len(attachments), 5)
         self.assertTrue(all(event["durationNS"] > 0 and event["status"] == 101 for event in attachments))
+        self.assertTrue(all(event["stage"] == "complete" for event in attachments))
+        combined = next(event["stream"] for event in attachments if "stdin=0" in event["route"])
+        self.assertEqual(combined["inputAcceptedBytes"], len(BINARY_INPUT))
+        self.assertTrue(all(combined[key] for key in ("inputHalfClosed", "observerInputHalfClosed",
+                                                      "primaryEOF", "observerEOF")))
+        self.assertGreater(combined["primaryWireBytes"], len(BINARY_INPUT))
+        self.assertGreater(combined["observerWireBytes"], len(BINARY_INPUT))
         self.assertEqual(sum(path.endswith("/start") for _, path in self.server.routes), 2)
         self.assertIn("attachment", json.loads(self.journal.records()["container-intent.json"]))
         self.assertIn("init-combined-attachment.json", self.journal.records())
@@ -229,7 +236,7 @@ class AttachmentIOTests(unittest.TestCase):
         markers = frame(OUTPUT_PREFIX) + frame(ERROR_OUTPUT, 2)
         observer.recv.side_effect = [markers[:5], markers[5:]]
 
-        def transfer(_primary, _initial, _observer, history, _incoming, _end):
+        def transfer(_primary, _initial, _observer, history, _incoming, _end, **kwargs):
             self.assertEqual(history, markers, "input began before saved startup records arrived")
             self.assertEqual(observer.recv.call_count, 2)
             return ((OUTPUT_PREFIX, ERROR_OUTPUT),) * 2
@@ -255,6 +262,53 @@ class AttachmentIOTests(unittest.TestCase):
         self.assertEqual(observed_duplex(primary, b"", observer, b"", b"", time.monotonic() + 3),
                          ((b"out", b"err"), (b"out", b"err")))
         self.assertEqual((writer.recv(1), replay.recv(1)), (b"", b""))
+
+    def test_startup_timeout_retains_only_wire_progress(self):
+        connection, progress = Mock(), {}
+        connection.recv.side_effect = [frame(OUTPUT_PREFIX), TimeoutError("no stderr")]
+        with self.assertRaises(TimeoutError):
+            started_output(connection, b"", time.monotonic() + 3, progress=progress)
+        self.assertEqual(progress, {"outputWireBytes": len(frame(OUTPUT_PREFIX)), "outputEOF": False})
+
+    def test_duplex_timeout_distinguishes_input_and_each_output(self):
+        primary, writer = self.pair()
+        observer, replay = self.pair()
+        markers = frame(OUTPUT_PREFIX) + frame(ERROR_OUTPUT, 2)
+        progress = {}
+        selector = MagicMock()
+        selector.__enter__.return_value = selector
+        selector.get_map.return_value = {1: object()}
+        selector.select.return_value = [(Mock(fileobj=primary), selectors.EVENT_WRITE)]
+        writer.settimeout(1)
+        # Expire after exactly one write instead of depending on host scheduling.
+        with patch("attachment_probe.selectors.DefaultSelector", return_value=selector), \
+                patch("attachment_probe.remaining", side_effect=[3, TimeoutError("deadline")]), \
+                self.assertRaises(TimeoutError):
+            observed_duplex(primary, markers, observer, markers, b"payload", time.monotonic() + 3,
+                            progress=progress)
+        self.assertEqual(writer.recv(8), b"payload")
+        self.assertEqual(progress, {"inputAcceptedBytes": 7, "inputHalfClosed": True,
+                                   "observerInputHalfClosed": True, "primaryWireBytes": len(markers),
+                                   "observerWireBytes": len(markers), "primaryEOF": False, "observerEOF": False})
+
+    def test_observer_history_failure_retains_stage_without_starting_input(self):
+        fixture = object.__new__(AttachmentFixture)
+        fixture.identifier, fixture.version, fixture.socket = "b" * 64, "1.54", Path("unused")
+        fixture.inspect = Mock(return_value={"State": {"Status": "running"}})
+        fixture.owned = Mock(return_value=fixture.identifier)
+        events = []
+        fixture.journal, fixture.observe = Mock(), events.append
+        observer = MagicMock()
+        observer.__enter__.return_value = observer
+        observer.recv.side_effect = TimeoutError("no history")
+        with patch("attachment_probe.socket.socket", return_value=observer), \
+                patch("attachment_probe.upgrade", return_value=(101, b"")), \
+                patch("attachment_probe.observed_duplex") as transfer, self.assertRaises(TimeoutError):
+            fixture.observe_running(Mock(), b"", b"payload", time.monotonic() + 3)
+        transfer.assert_not_called()
+        self.assertEqual(events[0]["stage"], "observer-startup-history")
+        self.assertEqual(events[0]["stream"], {"outputWireBytes": 0, "outputEOF": False})
+        self.assertEqual(events[0]["error"], "TimeoutError")
 
     def test_incomplete_input_output_limit_and_deadline_are_failures(self):
         for kind, message in (("input", "before input"), ("limit", "output exceeds"),
