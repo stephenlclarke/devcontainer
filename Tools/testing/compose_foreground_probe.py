@@ -20,7 +20,8 @@ QUIET_FIXTURE = "E10-compose-quiet"
 REDIRECTED_FIXTURE = "E11-compose-redirected"
 TTY_INPUT_FIXTURE = "E12-compose-tty-input"
 SIGNAL_FIXTURE = "E13-compose-signals"
-FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE}
+TERMINAL_SIZE_FIXTURE = "E14-compose-terminal-size"
+FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE, TERMINAL_SIZE_FIXTURE}
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
@@ -35,6 +36,9 @@ class ComposeForegroundFixture(GuestFixture):
     failure the owned CLI is stopped before resource reconciliation. An
     unobserved create is quarantined, never guessed successful from absence.
     """
+
+    expected_tty = False
+    ready_output = STDOUT
 
     def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None,
                  quiet=False, redirected=False, **kwargs):
@@ -54,7 +58,7 @@ class ComposeForegroundFixture(GuestFixture):
         identifier = super().owned(value)
         config, host = value["Config"], value.get("HostConfig", {})
         labels = config["Labels"]
-        if (config.get("Tty") is not False or config.get("OpenStdin") is not True or
+        if (config.get("Tty") is not self.expected_tty or config.get("OpenStdin") is not True or
                 host.get("AutoRemove") is not True or host.get("NetworkMode") != "none" or
                 labels.get("com.docker.compose.project") != self.project or
                 labels.get("com.docker.compose.service") != "app"):
@@ -79,7 +83,7 @@ class ComposeForegroundFixture(GuestFixture):
             output.write(canonical(configuration))
         arguments = [self.executable, "--project-name", self.project, "--file", str(path),
                      "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "app"]
-        if not self.redirected:
+        if not self.redirected and not self.expected_tty:
             arguments.insert(-1, "-T")
         if self.quiet:
             arguments.insert(-1, "--quiet")
@@ -98,7 +102,7 @@ class ComposeForegroundFixture(GuestFixture):
     def ready(self, end):
         while True:
             output = self.snapshot(self.output)
-            if output == STDOUT:
+            if output == self.ready_output:
                 actual = self.inspect(self.name)
                 if actual is None or actual.get("State", {}).get("Status") != "running":
                     raise ValueError("Compose foreground output has no running guest")
@@ -109,7 +113,7 @@ class ComposeForegroundFixture(GuestFixture):
                 self.identifier = self.owned(actual)
                 self.journal.put("container-created.json", canonical({"id": self.identifier}))
                 return
-            if not STDOUT.startswith(output) or self.child.process.poll() is not None:
+            if not self.ready_output.startswith(output) or self.child.process.poll() is not None:
                 raise ValueError("Compose CLI exited or emitted unexpected foreground stdout")
             time.sleep(min(remaining(end), 0.01))
 

@@ -257,14 +257,14 @@ def main():
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
     parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
-    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/E09/E10/E11/E12/E13")
+    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/E09/E10/E11/E12/E13/E14")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Engine cases require Apple silicon macOS")
     compose_fixtures = {"C01-compose-service", "C02-compose-dependencies", *COMPOSE_FOREGROUND_FIXTURES}
     if args.compose_candidate_invocation and (args.fixture not in compose_fixtures or args.lane == "docker"):
-        raise ValueError("Native Compose candidate is only valid for native C01/C02/E09/E10/E11/E12/E13")
+        raise ValueError("Native Compose candidate is only valid for native C01/C02/E09/E10/E11/E12/E13/E14")
     if args.lane == "docker":
         from released_docker import run_docker
         run_docker(args)

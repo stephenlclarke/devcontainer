@@ -28,7 +28,9 @@ from attachment_probe import AttachmentFixture, FIXTURE as ATTACHMENT_FIXTURE
 from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
 from compose_foreground_probe import (ComposeForegroundFixture, ComposeTerminalInputFixture, ComposeSignalFixture,
                                       FIXTURES as COMPOSE_FOREGROUND_FIXTURES,
-                                      QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE)
+                                      QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE,
+                                      TERMINAL_SIZE_FIXTURE)
+from compose_terminal_probe import ComposeTerminalSizeFixture
 
 
 FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
@@ -250,7 +252,8 @@ class ReleasedGuest:
             bundle = self.inputs["composeCandidate" if self.container else "compose"]
             executable = bundle["executables"]["compose" if self.container else "docker-compose"]
             fixture_type = {TTY_INPUT_FIXTURE: ComposeTerminalInputFixture,
-                            SIGNAL_FIXTURE: ComposeSignalFixture}.get(self.fixture, ComposeForegroundFixture)
+                            SIGNAL_FIXTURE: ComposeSignalFixture,
+                            TERMINAL_SIZE_FIXTURE: ComposeTerminalSizeFixture}.get(self.fixture, ComposeForegroundFixture)
             self.guest = fixture_type(
                 self.socket, digest(canonical(self.owner["identity"])), self.image_id, GUEST_API_VERSION,
                 self.runtime.journal, root=self.root, executable=executable, runtime=self.runtime,

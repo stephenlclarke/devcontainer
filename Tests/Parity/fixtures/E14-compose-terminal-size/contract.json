@@ -1,0 +1,10 @@
+{
+  "expected": {
+    "initial_size": true,
+    "tty_selected": true,
+    "stdin_roundtrip": true,
+    "merged_streams": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}

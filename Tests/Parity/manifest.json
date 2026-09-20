@@ -191,6 +191,13 @@
       "assertions": ["host SIGUSR1 reaches guest through admitted Compose CLI", "same guest continues after nonterminal signal", "host SIGTERM reaches guest", "guest trap exit status and exact output", "automatic removal"]
     },
     {
+      "id": "E14-compose-terminal-size",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["actual host PTY selects guest TTY", "initial guest stty size equals host dimensions before input", "terminal stdin roundtrip", "exact merged guest streams", "real exit status", "automatic removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],

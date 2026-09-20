@@ -84,6 +84,18 @@ class GuestRuntimeTests(unittest.TestCase):
             self.case.cleanup()
         self.case.builder.cleanup.assert_not_called()
 
+    def test_compose_terminal_adapter_uses_admitted_bundle_and_bounded_operation(self):
+        self.inputs['composeCandidate'] = {'executables': {'compose': '/native/compose'}}
+        self.inputs['compose'] = {'executables': {'docker-compose': '/reference/compose'}}
+        self.case.fixture = 'E14-compose-terminal-size'
+        for container, executable in (('/provider/bin/container', '/native/compose'), ('', '/reference/compose')):
+            self.case.container = container
+            with patch('guest_runtime.ComposeTerminalSizeFixture') as fixture, patch('guest_runtime.deadline') as deadline:
+                self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+                self.assertEqual(fixture.call_args.kwargs['executable'], executable)
+                deadline.assert_called_once_with(90)
+                self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+
     def test_fault_adapter_reuses_owned_guest_with_whole_operation_deadline(self):
         self.case.fixture = 'F01-fault-recovery'
         with patch('guest_runtime.FaultFixture') as fixture, \
