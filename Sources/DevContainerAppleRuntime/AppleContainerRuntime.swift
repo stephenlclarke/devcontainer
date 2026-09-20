@@ -137,6 +137,9 @@ public actor AppleContainerRuntime: DevContainerRuntime {
     let managedNetworkHosts: ManagedNetworkHostsStore
     let transferRoot: URL
     let portForwarding = PortForwarding()
+    var portForwardingObservers: [String: ApplePortForwardingObservation] = [:]
+    var portForwardingObservationTasks: [UUID: Task<Void, Never>] = [:]
+    var portForwardingShuttingDown = false
     var execs: [ExecID: ExecSnapshot] = [:]
     var requestedContainers: [String: RequestedContainer] = [:]
     var startedContainers: Set<String> = []
@@ -301,7 +304,16 @@ public extension AppleContainerRuntime {
 
     /// Releases all host-side compatibility resources owned by this adapter.
     func shutdown() async {
+        portForwardingShuttingDown = true
         await eventPollerState?.shutdown()
+        let forwardingObservers = Array(portForwardingObservationTasks.values)
+        portForwardingObservers.removeAll()
+        for observer in forwardingObservers {
+            observer.cancel()
+        }
+        for observer in forwardingObservers {
+            await observer.value
+        }
         await portForwarding.stopAll()
         for task in containerExitTasks.values {
             task.cancel()

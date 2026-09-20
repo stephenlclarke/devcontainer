@@ -25,6 +25,31 @@ import Testing
 
 struct AppleContainerNetworkHostsTests {
     #if !DEVCONTAINER_ENHANCED_RUNTIME
+        @Test(arguments: ["SIGUSR1", "SIGUSR2", "SIGTERM"])
+        func `signal delivery preserves forwarding until actual process exit`(_ signal: String) async throws {
+            let fixture = try FakeAppleCLI()
+            let snapshot = try nativeNetworkSnapshot(id: "app", service: nil, address: "192.0.2.2")
+            let inventory = FakeContainerInventory(snapshots: [snapshot])
+            let runtime = try directRuntime(fixture: fixture, inventory: inventory)
+            var observed = try await runtime.inspectContainer(id: "app", context: RuntimeRequestContext())
+            observed.spec.ports = [PortBinding(
+                containerPort: 80, hostPort: 0, hostAddress: "127.0.0.1", published: true, hostForwarded: true
+            )]
+            try await runtime.startPortForwarding(snapshot: observed, startedAt: #require(observed.startedAt))
+            try await runtime.killContainer(id: "app", signal: signal, context: RuntimeRequestContext())
+            #expect(await runtime.portForwarding.hasListeners(containerID: "app"))
+            #expect(try fixture.log().contains("kill --signal \(signal) app"))
+            await inventory.replaceSnapshots([ContainerResource.ContainerSnapshot(
+                configuration: snapshot.configuration, status: .stopped, networks: [], startedDate: snapshot.startedDate
+            )])
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while await runtime.portForwarding.hasListeners(containerID: "app"), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(await !runtime.portForwarding.hasListeners(containerID: "app"))
+            await runtime.shutdown()
+        }
+
         @Test
         func `process exit during hosts transfer cannot open a late forwarding listener`() async throws {
             let fixture = try FakeAppleCLI()

@@ -20,6 +20,7 @@ import ContainerResource
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
@@ -29,6 +30,9 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
     private var listFails = false
     private var getFailure: DirectInventoryFailure?
     private var listCalls = 0
+    private var getCalls = 0
+    private var holdNextGet = false
+    private var heldGet: CheckedContinuation<Void, Never>?
 
     init(
         snapshots: [ContainerResource.ContainerSnapshot],
@@ -46,7 +50,12 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
         return snapshots
     }
 
-    func get(id: String) throws -> ContainerResource.ContainerSnapshot {
+    func get(id: String) async throws -> ContainerResource.ContainerSnapshot {
+        getCalls += 1
+        if holdNextGet {
+            holdNextGet = false
+            await withCheckedContinuation { heldGet = $0 }
+        }
         if let getFailure {
             switch getFailure {
             case .failed:
@@ -78,6 +87,14 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
 
     func listCallCount() -> Int {
         listCalls
+    }
+
+    func getCallCount() -> Int { getCalls }
+    func holdOneGet() { holdNextGet = true }
+    func isGetHeld() -> Bool { heldGet != nil }
+    func releaseGet() {
+        heldGet?.resume()
+        heldGet = nil
     }
 }
 
@@ -310,14 +327,15 @@ func directRuntime(
     fixture: FakeAppleCLI,
     inventory: any AppleContainerInventoryClient,
     files: any AppleContainerFileClient = FakeContainerFileClient(),
-    networks: any AppleNetworkClient = FakeNetworkClient()
+    networks: any AppleNetworkClient = FakeNetworkClient(),
+    metadataStore: (any RuntimeMetadataStore)? = nil
 ) throws -> AppleContainerRuntime {
     try AppleContainerRuntime(
         executable: fixture.executable,
         environment: [:],
         useDirectProcessAPI: false,
         useDirectContainerAPI: true,
-        metadataStore: nil,
+        metadataStore: metadataStore,
         storageRoots: AppleContainerRuntime.StorageRoots(
             volumes: fixture.root.appendingPathComponent("volumes"),
             transfers: fixture.root.appendingPathComponent("transfers")

@@ -212,13 +212,16 @@ public extension AppleContainerRuntime {
         }
     }
 
-    private func startPortForwarding(
+    internal func startPortForwarding(
         snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date,
         processGeneration: UUID? = nil,
         stopContainerOnFailure: Bool = true
     ) async throws {
+        guard !portForwardingShuttingDown else { throw CancellationError() }
         let resolved = snapshot.runtimeID.rawValue
+        let forwardingGeneration = processGeneration ?? UUID()
+        portForwardingObservers.removeValue(forKey: resolved)?.task.cancel()
         do {
             let optionSupport = try await supportedCreateOptions()
             let emulated = snapshot.spec.ports.filter {
@@ -231,7 +234,7 @@ public extension AppleContainerRuntime {
                 containerID: resolved,
                 bindings: emulated,
                 networkAddresses: snapshot.networkAddresses,
-                generation: processGeneration
+                generation: forwardingGeneration
             ).makeIterator()
             let ports = snapshot.spec.ports.map { binding in
                 guard Self.requiresHostForwarding(
@@ -242,18 +245,21 @@ public extension AppleContainerRuntime {
                 }
                 return replacements.next() ?? binding
             }
-            guard ports != snapshot.spec.ports else {
-                return
+            if ports != snapshot.spec.ports {
+                try await recordResolvedPortBindings(
+                    ports,
+                    snapshot: snapshot,
+                    startedAt: startedAt
+                )
             }
-            try await recordResolvedPortBindings(
-                ports,
-                snapshot: snapshot,
-                startedAt: startedAt
-            )
+            guard !portForwardingShuttingDown else { throw CancellationError() }
+            if processGeneration == nil, !emulated.isEmpty {
+                observePortForwardingExit(snapshot: snapshot, generation: forwardingGeneration)
+            }
         } catch {
             await portForwarding.stop(
                 containerID: resolved,
-                generation: processGeneration
+                generation: forwardingGeneration
             )
             if stopContainerOnFailure {
                 _ = try? await command(["stop", "--time", "0", resolved])
@@ -467,7 +473,9 @@ public extension AppleContainerRuntime {
             operation: "container kill"
         )
         await signalEventPollers()
-        await portForwarding.stop(containerID: resolved)
+        // Successful delivery is not process exit: user signals and trapped
+        // termination signals can leave the same guest running. The registered
+        // exit observer owns listener teardown for that process generation.
         try await synchronizeNetworkHosts(context: context)
         await signalEventPollers()
     }
