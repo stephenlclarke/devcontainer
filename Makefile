@@ -48,6 +48,8 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-coverage-counters
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-parity-report
+.PHONY: bazel-release-comparison
+export BASELINE_CAMPAIGN TARGET_CAMPAIGN CASE_LANE
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-import-guest-image
 export GUEST_ARCHIVE_NAME GUEST_ARCHIVE_PATH
@@ -78,6 +80,9 @@ bazel-harness:
 bazel-parity-report:
 	@test -n "$(CAMPAIGN)" || { printf 'Set CAMPAIGN explicitly.\n' >&2; exit 2; }
 	@Tools/bazel/run.sh parity-report "$(CAMPAIGN)" $(if $(CASE_FIXTURE),--fixture="$(CASE_FIXTURE)") --format="$${REPORT_FORMAT:-json}"
+
+bazel-release-comparison:
+	@Tools/bazel/run.sh release-comparison --baseline "$${BASELINE_CAMPAIGN:?Set BASELINE_CAMPAIGN}" --target "$${TARGET_CAMPAIGN:?Set TARGET_CAMPAIGN}" --fixture "$${CASE_FIXTURE:?Set CASE_FIXTURE}" --lane "$${CASE_LANE:?Set CASE_LANE}" --format="$${REPORT_FORMAT:-json}"
 
 bazel-prepare-guest-images:
 	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)

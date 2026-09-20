@@ -35,7 +35,7 @@ def contracts(repository: Path, selected: list[str]) -> tuple[dict, list[str]]:
     return expected, names
 
 
-def read_records(database: Path, campaign: str, fixtures: set[str]) -> list[dict]:
+def read_records(database: Path, campaign: str, fixtures: set[str], *, include_admission=False, lane=None) -> list[dict]:
     """Take a read-only consistent snapshot, authenticating results and private artifacts."""
     if not IDENTIFIER.fullmatch(campaign):
         raise ValueError("Invalid campaign")
@@ -51,10 +51,21 @@ def read_records(database: Path, campaign: str, fixtures: set[str]) -> list[dict
             identity = json.loads(identity_bytes)
             if identity.get("campaign") != campaign or identity.get("fixture") not in fixtures:
                 continue
+            if lane is not None and identity.get("lane") != lane:
+                continue
             if validate_identity(identity) != key:
                 raise ValueError("Stored case key differs from identity")
             result = CaseStore.read_row(identity, (identity_bytes, result_bytes, checksum), db)
-            records.append({"identity": identity, "result": result, "sealSHA256": checksum})
+            record = {"identity": identity, "result": result, "sealSHA256": checksum}
+            if include_admission:
+                row = db.execute("SELECT bytes FROM artifacts WHERE case_id=? AND name='admission.json'", (key,)).fetchone()
+                if row is None:
+                    raise ValueError("Comparison requires retained runtime admission")
+                admission = json.loads(row[0])
+                if not isinstance(admission, dict) or digest(canonical(admission.get("runtime"))) != identity["runtimeSHA256"]:
+                    raise ValueError("Admission differs from the case runtime fingerprint")
+                record["admission"] = admission
+            records.append(record)
     return records
 
 

@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The existing three-lane reporter did not expose previous/current products or repeated release-role samples. The additive [previous/current observation report](bazel-test-harness.md#previouscurrent-observation-reports) now authenticates and renders that retained evidence with explicit published/candidate identity and no quiet-timing claim. Published Compose remains a separate adapter gap: its `0.15.1` runtime selection is compiled into the binary, so changing only the compatibility-profile environment variable would misrepresent the stock baseline.
+
 The first published baseline runs fail immutable-image inspection/lookup, whereas the current stock candidate passes those unchanged cases. Their short failed durations revealed that the report still calculated ratios for invalid workloads. Ratio eligibility now requires a successful exact-contract result and a positive operation duration on both sides; raw failure durations remain visible. [Live evidence and recovery](bazel-test-harness.md#published-devcontainer-baseline) are retained without weakening parity or claiming an unmeasured speedup.
 
 The native D01-D07 runner required a local candidate, preventing comparison with downloaded stable devcontainer `1.0.1`. That release has a different supported frontend: official CLI plus a Docker client pointed at the Apple compatibility socket. The additive [published-baseline adapter](bazel-test-harness.md#published-devcontainer-baseline) admits that exact dependency closure offline while retaining unchanged workload/cleanup assertions and separate candidate provenance. Component tests pass; live baseline qualification and quiet repeated release comparisons are still required before claiming an improvement.
