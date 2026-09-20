@@ -2,7 +2,7 @@
 
 ## Problem description
 
-C03's completed stock run still loses configured network aliases: the facade omits the adapter capability overlay, causing Compose to drop them before creation. The Dev-only handoff correction has failing-before component proof; the original semantic failure remains recorded until a new exact package passes the unchanged probe.
+C03's earlier stock run lost configured network aliases because the facade omitted the adapter capability overlay. The Dev-only handoff correction has failing-before component proof, and its exact packaged stock run now passes all four unchanged observations plus automatic cleanup (`db642356-d071-4d77-a543-7473d574256c`). The original failed results remain retained; enhanced execution, quiet release comparisons and publication remain open.
 
 Concurrent Bazel servers previously used the same test-scratch base, so identical package-test labels could delete each other's extracted files. The launcher now gives each workspace a short stable namespace; the focused regression fails before correction and passes afterward. The original failed Compose smoke remains retained, with corrected concurrent package proof required.
 
