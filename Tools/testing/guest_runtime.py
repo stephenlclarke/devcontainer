@@ -178,7 +178,7 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
-        if self.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+        if self.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
             self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
             with deadline(300):
                 self.builder.provision()
@@ -188,7 +188,7 @@ class ReleasedGuest:
         """Image acquisition stays in setup, matching the Docker timing phases."""
         if self.fixture not in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
-        if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
+        if self.fixture in {"C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
                                            DevcontainerBuildCandidate, DevcontainerUsersCandidate,
@@ -196,14 +196,15 @@ class ReleasedGuest:
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
-        if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"}:
-            adapter = {"D02-dockerfile-config": DevcontainerBuildCandidate,
+        if self.fixture in {"C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+            adapter = {"C03-compose-resources": DevcontainerResourcesCandidate,
+                       "D02-dockerfile-config": DevcontainerBuildCandidate,
                        "D03-users-environment": DevcontainerUsersCandidate,
                        "D05-features": DevcontainerFeaturesCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner,
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
-            adapter = {"C03-compose-resources": DevcontainerResourcesCandidate, "C02-compose-dependencies": DevcontainerDependenciesCandidate, "C01-compose-service": DevcontainerComposeCandidate, "D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
+            adapter = {"C02-compose-dependencies": DevcontainerDependenciesCandidate, "C01-compose-service": DevcontainerComposeCandidate, "D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
                        "D06-ports": DevcontainerPortsCandidate, "D07-reuse-cleanup": DevcontainerReuseCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()

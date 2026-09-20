@@ -151,13 +151,34 @@ class GuestRuntimeTests(unittest.TestCase):
 
     def test_c03_uses_resource_adapter_and_owned_cleanup(self):
         self.case.fixture = 'C03-compose-resources'
+        with self.assertRaisesRegex(ValueError, 'private builder'):
+            self.case.setup_devcontainer()
+        self.case.builder = Mock()
+        events = []
+        self.case.builder.cleanup.side_effect = lambda: events.append('builder')
         with patch('devcontainer_candidate.DevcontainerResourcesCandidate') as fixture:
             self.case.setup_devcontainer()
             fixture.return_value.setup.assert_called_once()
+            self.assertEqual(fixture.call_args.kwargs['before_build'], self.case.builder.verify_for_build)
             self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
-            self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
-            self.assertIsNone(self.case.builder)
+            fixture.return_value.cleanup.side_effect = lambda: events.append('guest')
+            self.case.cleanup()
             fixture.return_value.cleanup.assert_called_once()
+        self.assertEqual(events, ['guest', 'builder'])
+
+    def test_c03_provisions_private_builder_without_prebuilding_volume_helper(self):
+        self.case.fixture = 'C03-compose-resources'
+        self.inputs['builder'] = {'admitted': 'fixture'}
+        installed = self.root / 'container/kernels/vmlinux'
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(Path(self.inputs['kernel']['files']['kernel']).read_bytes())
+        (installed.parent / 'default.kernel-arm64').symlink_to(installed)
+        with patch.object(self.case, 'command') as command, patch('guest_runtime.ReleasedBuilder') as builder:
+            self.case.provision()
+            builder.assert_called_once_with(self.inputs['builder'], self.root, self.journal, command)
+            builder.return_value.provision.assert_called_once()
+        self.assertEqual([call.args[0] for call in command.call_args_list],
+                         ['guest-kernel', 'guest-initialization', 'guest-workload'])
 
     def test_d02_requires_owned_builder_and_removes_guest_before_builder(self):
         self.case.fixture = 'D02-dockerfile-config'

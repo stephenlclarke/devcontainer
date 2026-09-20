@@ -2,6 +2,8 @@
 
 ## Problem description
 
+C03 live qualification exposed both a harness prerequisite and a product defect: the stock native path needs its admitted private builder for volume-helper creation, and native volume labels must be projected consistently for Docker-compatible clients. Component corrections are implemented with failing-before regressions; corrected packaged stock/enhanced proof and quiet release comparisons are still open. See [C03 evidence](bazel-test-harness.md#c03-compose-resources); the original timeout remains a failure.
+
 C03's existing resource fixture was absent from the new Bazel runtime harness. Its new adapter preserves environment-file, named-volume and network observations in both reference/native command paths, with generation-bound service/network cleanup and independently sealed volume ownership. This closes an executable-harness gap, not a parity or speed claim. [Focused tests, recovery limits and outstanding live qualification](bazel-test-harness.md#c03-compose-resources) remain part of the same release-comparison contract.
 
 The existing three-lane reporter did not expose previous/current products or repeated release-role samples. The additive [previous/current observation report](bazel-test-harness.md#previouscurrent-observation-reports) now authenticates and renders that retained evidence with explicit published/candidate identity and no quiet-timing claim. Published Compose remains a separate adapter gap: its `0.15.1` runtime selection is compiled into the binary, so changing only the compatibility-profile environment variable would misrepresent the stock baseline.

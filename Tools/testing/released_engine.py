@@ -312,7 +312,7 @@ def main():
     if args.fixture in FIXTURES:
         guest_locks = [json.loads((repository / "Tools/bazel" / name).read_text())
                        for name in ("guest-kernel.lock.json", "guest-images.lock.json")]
-        if args.fixture in {"E04-image-build", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+        if args.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
             builder_lock = json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
     expected = contract_observations(json.loads(
         (repository / f"Tests/Parity/fixtures/{args.fixture}/contract.json").read_text())["expected"])

@@ -1247,11 +1247,11 @@ extension DockerRouter {
         )
     }
 
-    func volumeInspect(_ volume: VolumeSnapshot) -> DockerVolumeInspect {
-        DockerVolumeInspect(
+    func volumeInspect(_ volume: VolumeSnapshot) throws -> DockerVolumeInspect {
+        try DockerVolumeInspect(
             createdAt: ISO8601DateFormatter().string(from: volume.createdAt),
             driver: volume.spec.driver,
-            labels: volume.spec.labels,
+            labels: RuntimeLabels.projectComposeLabels(volume.spec.labels),
             mountpoint: volume.mountpoint,
             name: volume.name
         )

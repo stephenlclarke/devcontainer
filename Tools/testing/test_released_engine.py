@@ -196,6 +196,16 @@ class ReleasedEngineTests(unittest.TestCase):
                 released_engine.main()
 
     def test_c01_entrypoint_binds_compose_inputs_and_refuses_artifact_drift(self):
+        self.compose_entrypoint('C01-compose-service', {
+            'compose_env': 'compose-service', 'post_create': 'compose-post-create',
+            'workspace': '/workspaces/devcontainer-parity'})
+
+    def test_c03_entrypoint_admits_locked_builder_before_runtime_mutation(self):
+        self.compose_entrypoint('C03-compose-resources', {
+            'env_file': 'compose-env-file', 'named_volume': 'volume-data',
+            'network_alias': 'true', 'network_peer': 'true'})
+
+    def compose_entrypoint(self, fixture, expected):
         candidate = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock", "executables": {
             name: "/candidate/" + name for name in
             ("devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker", "reference-node")}}
@@ -203,25 +213,29 @@ class ReleasedEngineTests(unittest.TestCase):
                    "executables": {name: "/compose/" + name for name in released_engine.COMPOSE_PRODUCTS}, "assetSHA256": "a" * 64}
         releases = [candidate, {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}]
         guard = HostGuard(self.root / "admission.json")
-        argv = ["case", "--campaign=c01-entrypoint", "--lane=apple-stock", "--fixture=C01-compose-service",
+        argv = ["case", "--campaign=compose-entrypoint", "--lane=apple-stock", "--fixture=" + fixture,
                 "--candidate-invocation=dev", "--compose-candidate-invocation=compose"]
         with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
                 patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
                 patch("released_engine.admit", return_value=releases), \
                 patch("released_engine.admit_candidate", return_value=compose) as selected, \
-                patch("released_engine.admit_guest", return_value={"workload": "fixture"}), \
+                patch("released_engine.admit_guest", return_value={"workload": "fixture"}) as admitted_guest, \
                 patch("released_engine.version", return_value="fixture"), \
                 patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
                 patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
                 patch("released_engine.ReleasedCase") as factory, patch("sys.stdout", new_callable=io.StringIO), \
                 patch("sys.argv", argv):
             case = factory.return_value
-            case.operation.return_value = {"compose_env": "compose-service", "post_create": "compose-post-create",
-                                           "workspace": "/workspaces/devcontainer-parity"}
+            case.operation.return_value = expected
             case.cleanup.return_value = {"status": "passed", "remainingOwnedResources": []}
             with self.assertRaises(SystemExit) as status:
                 released_engine.main()
             self.assertEqual(status.exception.code, 0)
+            builder_lock = admitted_guest.call_args.kwargs['builder_lock']
+            if fixture == 'C03-compose-resources':
+                self.assertEqual(builder_lock, json.loads((Path(__file__).parents[1] / 'bazel/builder-images.lock.json').read_text()))
+            else:
+                self.assertIsNone(builder_lock)
             selected.assert_called_once_with(Path.home(), "compose", "stock", "container-compose")
             self.assertEqual(factory.call_args.kwargs["guest_inputs"]["composeCandidate"], compose)
             runtime = factory.call_args.kwargs["admission"]["runtime"]

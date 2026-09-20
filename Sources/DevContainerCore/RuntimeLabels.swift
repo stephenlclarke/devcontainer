@@ -32,6 +32,7 @@ public enum RuntimeLabels {
         "com.apple.container.compose.project": "com.docker.compose.project",
         "com.apple.container.compose.service": "com.docker.compose.service",
         "com.apple.container.compose.network": "com.docker.compose.network",
+        "com.apple.container.compose.volume": "com.docker.compose.volume",
         "com.apple.container.compose.oneoff": "com.docker.compose.oneoff",
         "com.apple.container.compose.config-hash": "com.docker.compose.config-hash",
         "com.apple.container.compose.project.working-directory":

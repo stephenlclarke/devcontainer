@@ -1475,7 +1475,7 @@ extension DockerRouter {
             let filters = try parseFilters(target.first("filters"))
             let labels = try labelFilters(filters["label"] ?? [])
             let volumes = try await runtime.listVolumes(context: context).filter { volume in
-                labelsMatch(volume.spec.labels, expected: labels)
+                try labelsMatch(RuntimeLabels.projectComposeLabels(volume.spec.labels), expected: labels)
                     && (filters["name"]?.contains(where: {
                         volume.name.contains($0)
                     }) ?? true)
@@ -1508,6 +1508,8 @@ extension DockerRouter {
                 to: decoded.labels ?? [:],
                 context: context
             )
+            // Reject contradictory ownership before creating a native resource.
+            _ = try RuntimeLabels.projectComposeLabels(labels)
             let volume = try await runtime.createVolume(
                 spec: VolumeSpec(
                     name: name,

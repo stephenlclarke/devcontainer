@@ -4,7 +4,7 @@ import copy
 import json
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
 from case_evidence import canonical, contract_observations
@@ -254,7 +254,7 @@ class ResourcesTests(unittest.TestCase):
         self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/candidate/devcontainer"}}
         self.inputs["composeCandidate"] = {"executables": {"compose": "/candidate/compose"}, "runtimeProfile": "stock"}
         self.vm.container = "/stock/bin/container"
-        fixture = DevcontainerResourcesCandidate(self.vm, self.inputs, self.owner)
+        fixture = DevcontainerResourcesCandidate(self.vm, self.inputs, self.owner, before_build=Mock())
         arguments = fixture.arguments("up")
         self.assertIn("/candidate/devcontainer", arguments)
         self.assertIn("DEVCONTAINER_COMPOSE_BIN=/candidate/compose", arguments)
@@ -263,6 +263,21 @@ class ResourcesTests(unittest.TestCase):
         fixture.prepare_image()
         self.assertEqual(self.commands[0][1], ["/stock/bin/container", "image", "pull", "--arch", "arm64", IMAGE])
         self.assertEqual(fixture.services, ("app", "peer"))
+
+    def test_native_builder_revalidated_before_up_and_failure_prevents_mutation(self):
+        self.inputs["devcontainerCandidate"] = {"executables": {"devcontainer": "/candidate/devcontainer"}}
+        self.inputs["composeCandidate"] = {"executables": {"compose": "/candidate/compose"}, "runtimeProfile": "stock"}
+        before_build = Mock()
+        fixture = DevcontainerResourcesCandidate(self.vm, self.inputs, self.owner, before_build=before_build)
+        with patch('devcontainer_candidate.DevcontainerCandidate.execute') as execute:
+            execute.side_effect = lambda: self.assertEqual(before_build.call_count, 1)
+            fixture.execute()
+            execute.assert_called_once()
+            execute.reset_mock()
+            before_build.side_effect = ValueError('builder replaced')
+            with self.assertRaisesRegex(ValueError, 'builder replaced'):
+                fixture.execute()
+            execute.assert_not_called()
 
     def test_fixture_change_is_rejected(self):
         original = Path.read_text

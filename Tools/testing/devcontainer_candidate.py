@@ -237,6 +237,17 @@ class DevcontainerComposeCandidate(DevcontainerCandidate, DevcontainerComposeRef
 class DevcontainerResourcesCandidate(DevcontainerComposeCandidate, DevcontainerResourcesReference):
     """C03 keeps exact resource receipts and native Docker-free command paths."""
 
+    def __init__(self, commands, inputs, owner, *, before_build, observe=None):
+        super().__init__(commands, inputs, owner, observe=observe)
+        self.before_build = before_build
+
+    def execute(self):
+        # Named-volume copy-up builds its helper during up. Admit the private
+        # builder before any project service starts; do not hide the cold build
+        # in setup or weaken the builder's exclusive inventory check.
+        self.before_build()
+        return super().execute()
+
 
 class DevcontainerDependenciesCandidate(DevcontainerComposeCandidate, DevcontainerDependenciesReference):
     """C02 uses the same three-service contract with native command ownership."""
