@@ -73,15 +73,42 @@ class ComposeTerminalSizeTests(unittest.TestCase):
         self.assertIsNone(self.fixture.master)
         records = self.journal.records()
         self.assertTrue(records[PROCESS + ".log"].startswith(b"37 113\r\n"))
-        self.assertEqual(json.loads(records["compose-terminal-initial.json"])["columns"], 113)
+        self.assertTrue(bytes.fromhex(json.loads(records["compose-terminal-initial.json"])["rawOutputHex"]).startswith(b"37 113\r\n"))
+        for phase, dimensions in (("inherited", b"37 113"), ("resized", b"53 121")):
+            samples = json.loads(records["compose-terminal-" + phase + "-samples.json"])["samples"]
+            self.assertEqual(bytes.fromhex(samples[-1]["rawOutputHex"]), b"size:0:" + dimensions + b"\n")
         self.assertEqual(json.loads(records[PROCESS + "-exit.json"])["code"], 17)
 
-    def test_wrong_initial_size_is_not_repaired_or_normalized(self):
-        with self.assertRaisesRegex(ValueError, "unexpected foreground"):
+    def test_missing_inherited_size_convergence_is_not_repaired_or_normalized(self):
+        self.fixture.convergence_timeout = 0.1
+        with self.assertRaises(TimeoutError):
             self.run_cli("stty rows 24 cols 80; " + self.fixture.command[2])
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
         self.assertTrue(self.journal.records()[PROCESS + ".log"].startswith(b"24 80\r\n"))
-        self.assertNotIn("compose-terminal-initial.json", self.journal.records())
+        self.assertIn("compose-terminal-initial.json", self.journal.records())
+        self.assertNotIn(PROCESS + "-sigwinch-intent.json", self.journal.records())
+
+    def test_missing_host_resize_is_not_hidden_by_guest_or_api_assistance(self):
+        self.fixture.convergence_timeout = 0.1
+        with patch.object(self.fixture, "resize_host"), self.assertRaises(TimeoutError):
+            self.run_cli()
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+        samples = json.loads(self.journal.records()["compose-terminal-resized-samples.json"])["samples"]
+        self.assertTrue(samples)
+        self.assertTrue(all(bytes.fromhex(sample["rawOutputHex"]) == b"size:0:37 113\n" for sample in samples))
+
+    def test_correct_size_arriving_after_deadline_is_rejected(self):
+        clock = [9.0]
+
+        def delayed_snapshot(_path):
+            clock[0] = 11.0
+            return b"size:0:37 113\n"
+
+        with patch.object(self.fixture, "send_input"), \
+                patch.object(self.fixture, "snapshot", side_effect=delayed_snapshot), \
+                patch("exec_probe.time.monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(TimeoutError):
+                self.fixture.size_sample(10.0)
 
     def test_nonterminal_guest_configuration_is_rejected(self):
         original = self.guest

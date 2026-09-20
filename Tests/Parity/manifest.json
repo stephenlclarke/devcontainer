@@ -195,7 +195,7 @@
       "status": "implemented",
       "runner": "engine",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["actual host PTY selects guest TTY", "initial guest stty size equals host dimensions before input", "terminal stdin roundtrip", "exact merged guest streams", "real exit status", "automatic removal"]
+      "assertions": ["actual host PTY selects guest TTY", "first guest size query retained without a pre-entrypoint size guarantee", "bounded unassisted convergence to inherited host dimensions", "one host SIGWINCH propagates new PTY dimensions", "terminal stdin roundtrip", "exact merged guest streams", "real exit status", "automatic removal"]
     },
     {
       "id": "D01-image-config",

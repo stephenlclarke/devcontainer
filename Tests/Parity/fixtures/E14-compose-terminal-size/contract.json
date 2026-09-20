@@ -1,6 +1,7 @@
 {
   "expected": {
-    "initial_size": true,
+    "inherited_size": true,
+    "host_resize": true,
     "tty_selected": true,
     "stdin_roundtrip": true,
     "merged_streams": true,
