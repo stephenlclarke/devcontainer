@@ -1,4 +1,4 @@
-"""D01 through the admitted private bundle and an exclusively owned Apple engine."""
+"""Unchanged Dev Containers fixtures through an exclusively owned Apple engine."""
 
 from __future__ import annotations
 
@@ -131,7 +131,8 @@ class DevcontainerCandidate(DevcontainerReference):
     id_pattern = r"(?:[0-9a-f]{64}|[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12})"
 
     def __init__(self, commands: CandidateCommands, inputs: dict, owner: dict, *, observe=None):
-        super().__init__(commands, {**inputs, "devcontainers": inputs["devcontainerCandidate"]}, owner, observe=observe)
+        bundle = inputs["legacyFrontend"] if "legacyFrontend" in inputs else inputs["devcontainerCandidate"]
+        super().__init__(commands, {**inputs, "devcontainers": bundle}, owner, observe=observe)
 
     def prepare(self):
         (self.vm.root / "workspace").mkdir(mode=0o700, exist_ok=True)
@@ -143,8 +144,13 @@ class DevcontainerCandidate(DevcontainerReference):
         self.vm.command("devcontainer-image-pull", [self.vm.container, "image", "pull", "--arch", "arm64", self.reference_image], timeout=120)
 
     def arguments(self, command: str) -> list[str]:
-        cli = self.inputs["devcontainerCandidate"]["executables"]["devcontainer"]
-        arguments = ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.socket), cli, command,
+        if "legacyFrontend" in self.inputs:
+            legacy = self.inputs["legacyFrontend"]
+            frontend = [legacy["reference"]["node"], legacy["reference"]["cli"], command,
+                        "--docker-path", legacy["docker"]["executables"]["docker"]]
+        else:
+            frontend = [self.inputs["devcontainerCandidate"]["executables"]["devcontainer"], command]
+        arguments = ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.socket), *frontend,
                      "--workspace-folder", str(self.workspace), "--id-label", OWNER_LABEL + "=" + self.owner]
         return arguments + (["--log-format", "json"] if command == "up" else [])
 
@@ -165,6 +171,8 @@ class DevcontainerBuildCandidate(DevcontainerCandidate, DevcontainerBuildReferen
 
     def arguments(self, command):
         arguments = super().arguments(command)
+        if "legacyFrontend" in self.inputs:
+            arguments.insert(2, "DOCKER_BUILDKIT=0")
         return arguments + (["--buildkit", "never"] if command == "up" else [])
 
     def execute(self):

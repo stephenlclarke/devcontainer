@@ -2,6 +2,8 @@
 
 ## Problem description
 
+The native D01-D07 runner required a local candidate, preventing comparison with downloaded stable devcontainer `1.0.1`. That release has a different supported frontend: official CLI plus a Docker client pointed at the Apple compatibility socket. The additive [published-baseline adapter](bazel-test-harness.md#published-devcontainer-baseline) admits that exact dependency closure offline while retaining unchanged workload/cleanup assertions and separate candidate provenance. Component tests pass; live baseline qualification and quiet repeated release comparisons are still required before claiming an improvement.
+
 The executable archive-cancellation fixture used a sparse file that BSD tar could finish before observation and did not isolate its Engine socket. A larger fixture also admitted false success through ordinary size-limit failure. Separate real-child and actual-CLI handshakes now require cancellation-specific completion and cleanup, without default-Engine contact or a configurable production archiver. [Checkpoint and positive/negative regression evidence](bazel-test-harness.md#process-io-cancellation-and-coverage-integrity) preserve rejected results and distinguish source tests from release benchmarks.
 
 Service-process tests previously ignored failed deletion of their operator-Keychain identities. A cleanup assertion exposed OSStatus -25244, so future tests now use the runtime harness's existing disposable Keychain and isolated SSD HOME. The explicit failed-request regression verifies child exit and private-Keychain removal without changing production credentials; [current evidence](bazel-test-harness.md#bounded-service-http-probes) distinguishes this correction from unreconciled legacy test records.

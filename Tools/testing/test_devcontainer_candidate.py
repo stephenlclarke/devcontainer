@@ -15,7 +15,8 @@ from unittest.mock import Mock, patch
 from case_evidence import canonical
 from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate, DevcontainerBuildCandidate, DevcontainerComposeCandidate,
                                    DevcontainerUsersCandidate, DevcontainerLifecycleCandidate)
-from devcontainer_candidate import DevcontainerDependenciesCandidate
+from devcontainer_candidate import (DevcontainerDependenciesCandidate, DevcontainerFeaturesCandidate,
+                                   DevcontainerPortsCandidate, DevcontainerReuseCandidate)
 from devcontainer_dependencies_reference import DevcontainerDependenciesReference
 from devcontainer_reference import IMAGE, WORKSPACE, created_id
 from guest_fixture import OWNER_LABEL
@@ -189,6 +190,50 @@ class CandidateTests(reference_tests.ReferenceTests):
         self.assertIsNone(self.server.guest)
         self.assertFalse(runner.uncertain)
         self.assertFalse(runner.pending_logs)
+
+
+class PublishedLegacyTests(CandidateTests):
+    def reopen(self):
+        self.vm.container = "/prepared/container"
+        self.vm.close, self.vm.prepare_cleanup = Mock(), Mock()
+        self.inputs["legacyFrontend"] = {
+            "release": {"executables": {"devcontainer": "/released/old-admin-only-cli"}},
+            "reference": {"node": "/released/node", "cli": "/released/official-cli.js"},
+            "docker": {"executables": {"docker": "/released/docker"}}}
+        return DevcontainerCandidate(self.vm, self.inputs, self.owner)
+
+    def test_full_contract_uses_exact_pins_isolated_paths_and_verified_cleanup(self):
+        self.assertEqual(self.start(), {"environment": "image-config", "workspace": WORKSPACE,
+                                       "post_create": "post-create", "uid": "0"})
+        self.assertEqual(self.commands[0][1], ["/prepared/container", "image", "pull", "--arch", "arm64", IMAGE])
+        for _, args, _ in self.commands[1:]:
+            self.assertEqual(args[:4], ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.vm.socket),
+                                       "/released/node", "/released/official-cli.js"])
+            self.assertEqual(args[args.index("--docker-path") + 1], "/released/docker")
+            self.assertNotIn("/released/old-admin-only-cli", args)
+            self.assertIn(OWNER_LABEL + "=" + self.fixture.owner, args)
+        self.fixture.cleanup()
+        self.vm.close.assert_called_once()
+        self.assertIsNone(self.server.guest)
+
+    def test_all_legacy_adapters_keep_fixture_flags_and_no_candidate_frontend(self):
+        builders = {DevcontainerBuildCandidate, DevcontainerUsersCandidate, DevcontainerFeaturesCandidate}
+        for adapter in (DevcontainerCandidate, *builders, DevcontainerLifecycleCandidate,
+                        DevcontainerPortsCandidate, DevcontainerReuseCandidate):
+            fixture = adapter(self.vm, self.inputs, self.owner,
+                              **({"before_build": Mock()} if adapter in builders else {}))
+            for command in ("up", "exec"):
+                with self.subTest(adapter=adapter.__name__, command=command):
+                    args = fixture.arguments(command)
+                    self.assertEqual(args[0:2], ["/usr/bin/env", "DOCKER_HOST=unix://" + str(self.vm.socket)])
+                    self.assertIn("/released/official-cli.js", args)
+                    self.assertIn("/released/docker", args)
+                    self.assertNotIn("/released/old-admin-only-cli", args)
+                    self.assertEqual("DOCKER_BUILDKIT=0" in args, adapter in builders)
+                    self.assertEqual("--buildkit" in args, adapter in builders and command == "up")
+                    self.assertEqual("--frozen-lockfile" in args, adapter == DevcontainerFeaturesCandidate and command == "up")
+                    self.assertEqual("--include-configuration" in args, adapter == DevcontainerPortsCandidate and command == "up")
+                    self.assertEqual("--log-format" in args, command == "up")
 
 
 class BuildCandidateTests(build_reference_tests.BuildReferenceTests):

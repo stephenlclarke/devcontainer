@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, str(Path(__file__).parents[1] / "bazel"))
 from prepare_releases import require_retained
 from prepare_candidate import COMPOSE_PRODUCTS, admit_candidate, SCOPE as CANDIDATE_SCOPE
+from prepare_devcontainers_cli import prepare_cli as prepare_devcontainers
+from prepare_docker_cli import prepare_cli as prepare_docker_client
 from private_keychain import run_keychain
 from release_inputs import validate_lock
 from case_evidence import CaseStore, canonical, contract_observations, digest, run_case, validate_identity
@@ -31,6 +33,9 @@ SSD = Path("/Volumes/SSD/cf/bazel")
 SSD_VOLUME = Path("/Volumes/SSD")
 RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/workflow"
 FIXTURE = "E01-engine-negotiation"
+DEVCONTAINER_FIXTURES = {"D01-image-config", "D02-dockerfile-config", "D03-users-environment",
+                       "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
+LEGACY_FRONTEND_SCOPE = "published-devcontainer-1.0.1-frontend"
 
 
 def release_selection(lock: dict, lane: str) -> list[dict]:
@@ -57,7 +62,27 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
                     for asset in (assets[1:] if candidate else assets)]
 
 
-def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path, compose=None) -> dict:
+def legacy_frontend(lock: dict, lane: str, product: dict, repository: Path, scratch: Path, retained: Path) -> dict:
+    """Admit 1.0.1's documented external clients offline, not a newer product facade.
+
+    The enclosing admission has already authenticated the released product.
+    These clients talk only to the case-owned Apple socket; no Docker daemon is
+    used. Their exact bytes remain visible in the runtime fingerprint.
+    """
+    asset = release_selection(lock, lane)[0]
+    if (product.get("scope") is not None or product.get("assetSHA256") != asset["sha256"] or
+            asset["commit"] != "37ae0a873d4112576dac98fea3d969acb962a18b" or
+            set(product.get("executables", {})) != {"devcontainer", "devcontainer-engine", "devcontainer-compose"}):
+        raise ValueError("Legacy frontend requires the admitted published devcontainer 1.0.1")
+    pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]
+    reference_lock = json.loads((repository / "Tools/bazel/devcontainers-cli.lock.json").read_text())
+    docker_lock = json.loads((repository / "Tools/bazel/docker-cli.lock.json").read_text())
+    return {"scope": LEGACY_FRONTEND_SCOPE, "release": product, "asset": asset,
+            "reference": prepare_devcontainers(reference_lock, pins["devcontainersCli"], scratch, retained, offline=True),
+            "docker": prepare_docker_client(docker_lock, pins["docker"], scratch, retained, offline=True)}
+
+
+def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path, compose=None, legacy=None) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
     if fixture in COMPOSE_FOREGROUND_FIXTURES:
         if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
@@ -95,6 +120,11 @@ def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository
     else:
         from devcontainer_reference import fixture_inputs
     required = {"devcontainer", "devcontainer-docker", "devcontainer-compose", "devcontainer-engine", "reference-node"}
+    if legacy is not None:
+        if (fixture not in DEVCONTAINER_FIXTURES or candidate.get("scope") is not None or
+                legacy.get("scope") != LEGACY_FRONTEND_SCOPE or legacy.get("release") != candidate):
+            raise ValueError("Legacy frontend differs from the admitted published product")
+        return {**inputs, "legacyFrontend": legacy, "devcontainerFixture": fixture_inputs(repository)}
     if candidate.get("scope") != CANDIDATE_SCOPE or set(candidate.get("executables", {})) != required:
         raise ValueError("Devcontainer fixture requires an admitted private-runtime candidate archive")
     return {**inputs, "devcontainerCandidate": candidate, "devcontainerFixture": fixture_inputs(repository)}
@@ -271,7 +301,7 @@ def main():
         return
     if args.fixture in compose_fixtures and not args.compose_candidate_invocation:
         raise ValueError("Compose fixture requires a prepared native Compose candidate; no runtime changes made")
-    if args.fixture in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} and not args.candidate_invocation:
+    if args.fixture in {"C02-compose-dependencies", "C01-compose-service"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
@@ -306,10 +336,16 @@ def main():
             return admit_candidate(RETAINED, args.compose_candidate_invocation,
                                    "stock" if args.lane == "apple-stock" else "enhanced", "container-compose")
         compose = selected_compose()
+        def selected_frontend():
+            if args.candidate_invocation or args.fixture not in DEVCONTAINER_FIXTURES:
+                return None
+            return legacy_frontend(lock, args.lane, releases[0], repository, SSD, RETAINED)
+
         guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock,
                                    fixture=args.fixture) if guest_locks is not None else None
         if guest_inputs is not None:
-            guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository, compose)
+            guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository, compose,
+                                               selected_frontend())
         api_server = Path(releases[1]["executables"]["container-apiserver"])
         runtime = {"releases": releases, "machine": platform.machine(), "os": platform.mac_ver()[0],
                    "scratchVolume": volume,
@@ -332,7 +368,8 @@ def main():
                 raise ValueError("SSD ownership or volume identity changed during execution")
             if guest_locks is not None:
                 current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock, fixture=args.fixture)
-                if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose()) != guest_inputs:
+                if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose(),
+                                        selected_frontend()) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")
             return admit(lock, args.lane, RETAINED, args.candidate_invocation)
 
@@ -342,6 +379,8 @@ def main():
             return ControlledRuntime(root, owner, api_server, journal_parent)
 
         scope = CANDIDATE_SCOPE if args.candidate_invocation else "released-engine-case-only"
+        if not args.candidate_invocation and args.fixture in DEVCONTAINER_FIXTURES:
+            scope = "released-devcontainer-case-only"
         admission = {"scope": scope, "releaseLock": lock, "guestLocks": guest_locks,
                      "builderLock": builder_lock, "runtime": runtime}
         case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory,

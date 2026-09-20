@@ -43,35 +43,81 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(properties["operation"], str(failed["durationsNS"]["operation"]))
         self.assertEqual(properties["runtimeSHA256"], self.identity["runtimeSHA256"])
 
-    def test_d02_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
-        with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D02-dockerfile-config"]), \
-                patch("released_engine.platform.system", return_value="Darwin"), \
-                patch("released_engine.platform.machine", return_value="arm64"), \
-                patch("released_engine.admit") as admit, \
-                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
-            released_engine.main()
-        admit.assert_not_called()
-        self.keychains.assert_not_called()
+    def legacy_product(self):
+        lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
+        return lock, {"assetSHA256": lock["assets"][0]["sha256"], "executables": {
+            name: "/released/" + name for name in ("devcontainer", "devcontainer-engine", "devcontainer-compose")}}
 
-    def test_d03_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
-        with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D03-users-environment"]), \
-                patch("released_engine.platform.system", return_value="Darwin"), \
-                patch("released_engine.platform.machine", return_value="arm64"), \
-                patch("released_engine.admit") as admit, \
-                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
-            released_engine.main()
-        admit.assert_not_called()
-        self.keychains.assert_not_called()
+    def test_published_frontend_admits_only_offline_pinned_clients(self):
+        lock, product = self.legacy_product()
+        repository = Path(__file__).parents[2]
+        pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]
+        with patch("released_engine.prepare_devcontainers", return_value={"node": "pinned-node"}) as reference, \
+                patch("released_engine.prepare_docker_client", return_value={"docker": "pinned-docker"}) as docker:
+            for lane in ("apple-stock", "container-compose"):
+                legacy = released_engine.legacy_frontend(lock, lane, product, repository, self.root, self.root)
+                self.assertEqual(legacy["release"], product)
+                self.assertEqual(legacy["asset"], lock["assets"][0])
+                self.assertEqual(legacy["reference"], reference.return_value)
+                self.assertEqual(legacy["docker"], docker.return_value)
+                for helper, pin in ((reference, pins["devcontainersCli"]), (docker, pins["docker"])):
+                    self.assertEqual(helper.call_args.args[1:], (pin, self.root, self.root))
+                    self.assertEqual(helper.call_args.kwargs, {"offline": True})
+                for fixture in released_engine.DEVCONTAINER_FIXTURES:
+                    selected = released_engine.fixture_guest_inputs({}, fixture, product, repository, legacy=legacy)
+                    self.assertEqual(selected["legacyFrontend"], legacy)
+                    self.assertNotIn("devcontainerCandidate", selected)
+                    self.assertIn("configuration", selected["devcontainerFixture"])
+            for changed in ({}, {**product, "scope": released_engine.CANDIDATE_SCOPE},
+                            {**product, "assetSHA256": "a" * 64}, {**product, "executables": {}}):
+                reference.reset_mock()
+                with self.assertRaisesRegex(ValueError, "published devcontainer"):
+                    released_engine.legacy_frontend(lock, "apple-stock", changed, repository, self.root, self.root)
+                reference.assert_not_called()
+            lock["assets"][0]["commit"] = "a" * 40
+            with self.assertRaisesRegex(ValueError, "published devcontainer"):
+                released_engine.legacy_frontend(lock, "apple-stock", product, repository, self.root, self.root)
+            for changed in ({}, {**legacy, "scope": "release"}, {**legacy, "release": {}}):
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    released_engine.fixture_guest_inputs({}, "D01-image-config", product, repository, legacy=changed)
 
-    def test_d04_without_private_candidate_refuses_before_runtime_or_asset_mutation(self):
-        with patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D04-lifecycle-hooks"]), \
-                patch("released_engine.platform.system", return_value="Darwin"), \
-                patch("released_engine.platform.machine", return_value="arm64"), \
-                patch("released_engine.admit") as admit, \
-                self.assertRaisesRegex(ValueError, "private-runtime candidate"):
-            released_engine.main()
-        admit.assert_not_called()
-        self.keychains.assert_not_called()
+    def test_published_frontend_entrypoint_rechecks_tools_and_fails_before_runtime(self):
+        _lock, product = self.legacy_product()
+        releases = [product, {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}]
+        legacy = {"scope": released_engine.LEGACY_FRONTEND_SCOPE, "release": product, "reference": "exact-tools"}
+        guard = HostGuard(self.root / "admission.json")
+        argv = ["case", "--campaign=d01-published", "--lane=apple-stock", "--fixture=D01-image-config"]
+        with patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
+                patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
+                patch("released_engine.admit", return_value=releases), \
+                patch("released_engine.legacy_frontend", return_value=legacy) as frontend, \
+                patch("released_engine.admit_guest", return_value={"workload": "fixture"}), \
+                patch("released_engine.version", return_value="fixture"), \
+                patch("released_engine.CaseStore", return_value=self.store), patch("released_engine.HostGuard", return_value=guard), \
+                patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
+                patch("released_engine.ReleasedCase") as factory, patch("sys.stdout", new_callable=io.StringIO), \
+                patch("sys.argv", argv):
+            case = factory.return_value
+            case.operation.return_value = {"environment": "image-config", "workspace": "/workspaces/devcontainer-parity",
+                                           "post_create": "post-create", "uid": "0"}
+            case.cleanup.return_value = {"status": "passed", "remainingOwnedResources": []}
+            with self.assertRaises(SystemExit) as status:
+                released_engine.main()
+            self.assertEqual(status.exception.code, 0)
+            admission = factory.call_args.kwargs["admission"]
+            self.assertEqual(admission["scope"], "released-devcontainer-case-only")
+            self.assertEqual(admission["runtime"]["guestInputs"]["legacyFrontend"], legacy)
+            revalidate = factory.call_args.args[4]
+            self.assertEqual(revalidate(), releases)
+            frontend.return_value = {**legacy, "reference": "changed"}
+            with self.assertRaisesRegex(ValueError, "guest inputs changed"):
+                revalidate()
+            factory.reset_mock()
+            frontend.side_effect = ValueError("missing offline reference")
+            with self.assertRaisesRegex(ValueError, "missing offline"):
+                released_engine.main()
+            factory.assert_not_called()
+            self.keychains.assert_not_called()
 
     def test_required_release_and_supported_adapter_are_explicit(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
