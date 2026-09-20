@@ -1,6 +1,7 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 struct DockerInspectHostConfig: Encodable {
+    let autoRemove: Bool
     let binds: [String]
     var portBindings: [String: [DockerNetworkPortBinding]] = [:]
     let networkMode = "default"
@@ -14,6 +15,7 @@ struct DockerInspectHostConfig: Encodable {
     var logConfig: DockerInspectLogConfig?
 
     enum CodingKeys: String, CodingKey {
+        case autoRemove = "AutoRemove"
         case binds = "Binds"
         case networkMode = "NetworkMode"
         case portBindings = "PortBindings"

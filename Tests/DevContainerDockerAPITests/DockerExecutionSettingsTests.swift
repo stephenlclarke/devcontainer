@@ -7,6 +7,29 @@ import Foundation
 import Testing
 
 struct DockerExecutionSettingsTests {
+    @Test(arguments: [true, false, nil] as [Bool?])
+    func `inspect reports the effective automatic removal policy`(_ requested: Bool?) async throws {
+        let runtime = InMemoryRuntime()
+        await runtime.seedImage(.init(
+            id: "sha256:auto-remove", references: ["auto-remove:test"], createdAt: Date(), size: 1
+        ))
+        let router = DockerRouter(runtime: runtime)
+        var host: [String: Any] = [:]
+        if let requested {
+            host["AutoRemove"] = requested
+        }
+        let body = try JSONSerialization.data(withJSONObject: ["Image": "auto-remove:test", "HostConfig": host])
+        let created = await router.respond(to: .init(
+            method: .post, target: "/containers/create?name=auto-remove", body: body
+        ))
+        #expect(created.status == 201)
+        let inspected = await router.respond(to: .init(method: .get, target: "/containers/auto-remove/json"))
+        #expect(inspected.status == 200)
+        let object = try #require(JSONSerialization.jsonObject(with: bytes(inspected)) as? [String: Any])
+        let actual = try #require(object["HostConfig"] as? [String: Any])
+        #expect(actual["AutoRemove"] as? Bool == (requested ?? false))
+    }
+
     @Test func `create and inspect execution settings`() async throws {
         let runtime = InMemoryRuntime()
         await runtime.seedImage(.init(id: "sha256:settings", references: ["settings:test"], createdAt: Date(), size: 1))

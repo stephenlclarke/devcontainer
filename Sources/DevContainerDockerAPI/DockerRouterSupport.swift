@@ -925,6 +925,7 @@ extension DockerRouter {
 
     private func inspectHostConfig(_ spec: ContainerSpec) -> DockerInspectHostConfig {
         DockerInspectHostConfig(
+            autoRemove: spec.autoRemove,
             binds: spec.mounts.filter { $0.type == .bind }.map {
                 "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
             },

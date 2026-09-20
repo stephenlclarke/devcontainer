@@ -83,7 +83,7 @@ func `docker container and exec response defaults encode`() throws {
     #expect(!state.oomKilled)
     #expect(!state.dead)
     #expect(state.error.isEmpty)
-    let hostConfig = DockerInspectHostConfig(binds: [])
+    let hostConfig = DockerInspectHostConfig(autoRemove: false, binds: [])
     #expect(hostConfig.networkMode == "default")
     let processConfig = DockerExecProcessConfig(
         tty: false,
