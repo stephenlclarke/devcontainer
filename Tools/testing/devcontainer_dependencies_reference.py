@@ -30,6 +30,7 @@ def fixture_inputs(repository: Path) -> dict:
 
 class DevcontainerDependenciesReference(DevcontainerComposeReference):
     fixture = FIXTURE
+    services = SERVICES
     keys = {"startup_dependency_dns", "dependency_dns", "dependency_health", "run_service"}
     commands = (*DevcontainerReference.commands, "devcontainer-dependency-pull")
 
@@ -68,7 +69,7 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
         image = DATABASE_IMAGE if role == "database" else IMAGE
         admitted = self.inputs["dependencyWorkload" if role == "database" else "workload"]["image"]
         allowed = {admitted["manifest"], admitted["config"], image.split("@", 1)[1]}
-        if (role not in SERVICES or not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
+        if (role not in self.services or not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
                 not isinstance(labels, dict) or labels.get(PROJECT_LABEL) != self.project or labels.get(SERVICE_LABEL) != role or
                 labels.get("com.docker.compose.project.working_dir") != str(self.workspace) or
                 config.get("Image") != image or value.get("Image") not in allowed or
@@ -88,7 +89,7 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
                 raise ValueError("C02 inventory lacks a complete ID")
             value = self.inspect(identifier)
             role = value.get("Config", {}).get("Labels", {}).get(SERVICE_LABEL) if isinstance(value, dict) else None
-            if role not in SERVICES or role in result or value.get("Id") != identifier:
+            if role not in self.services or role in result or value.get("Id") != identifier:
                 raise ValueError("C02 project inventory contains unknown or duplicate services")
             result[role] = self.service_identity(value, role)
         if len({item["Id"] for item in result.values()}) != len(result):
@@ -98,8 +99,8 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
     def up_identity(self, output):
         identifier = created_id(output, self.id_pattern)
         services = self.service_inventory()
-        if set(services) != set(SERVICES) or services["app"]["Id"] != identifier:
-            raise ValueError("C02 requires exactly the selected app and two dependencies")
+        if set(services) != set(self.services) or services["app"]["Id"] != identifier:
+            raise ValueError("Compose project must contain exactly the selected services")
         network = self.network(self.network_name)
         if network is None:
             raise ValueError("C02 network disappeared")
@@ -236,7 +237,7 @@ class DevcontainerDependenciesReference(DevcontainerComposeReference):
         if "devcontainer-plan.json" not in self.journal.records():
             return
         if known is not None:
-            for role in SERVICES:
+            for role in self.services:
                 if role not in known["services"]:
                     continue
                 self.recovery_plan()

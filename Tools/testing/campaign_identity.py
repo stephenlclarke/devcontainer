@@ -37,6 +37,10 @@ RELEASE_INPUTS = (
     "Tests/Parity/fixtures/C02-compose-dependencies/compose.yaml",
     "Tests/Parity/fixtures/C02-compose-dependencies/probe.sh",
     "Tests/Parity/fixtures/C01-compose-service/probe.sh",
+    "Tests/Parity/fixtures/C03-compose-resources/.devcontainer/devcontainer.json",
+    "Tests/Parity/fixtures/C03-compose-resources/compose.yaml",
+    "Tests/Parity/fixtures/C03-compose-resources/probe.sh",
+    "Tests/Parity/fixtures/C03-compose-resources/fixture.env",
 )
 PREPARATION_HELPERS = (
     "prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
@@ -51,6 +55,7 @@ RUNTIME_HELPERS = (
     "devcontainer_reuse_reference.py",
     "devcontainer_compose_reference.py",
     "devcontainer_dependencies_reference.py",
+    "devcontainer_resources_reference.py",
     "engine_probe.py", "exec_probe.py", "attachment_probe.py", "foreground_probe.py", "initial_terminal_probe.py", "compose_foreground_probe.py", "json_file_oracle.py", "fault_probe.py", "guest_fixture.py", "guest_runtime.py",
     "host_runtime.py", "lifecycle_probe.py", "network_volume_probe.py", "compose_terminal_probe.py",
     "private_keychain.py", "released_docker.py", "released_engine.py",

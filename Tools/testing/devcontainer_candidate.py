@@ -17,6 +17,7 @@ from devcontainer_ports_reference import DevcontainerPortsReference
 from devcontainer_reuse_reference import DevcontainerReuseReference, COMMANDS as REUSE_COMMANDS, UP_COMMANDS
 from devcontainer_compose_reference import DevcontainerComposeReference
 from devcontainer_dependencies_reference import DevcontainerDependenciesReference, DATABASE_IMAGE
+from devcontainer_resources_reference import DevcontainerResourcesReference
 from guest_fixture import OWNER_LABEL
 from guest_runtime import diagnostic_snapshot
 from host_runtime import OwnedProcess
@@ -231,6 +232,10 @@ class DevcontainerComposeCandidate(DevcontainerCandidate, DevcontainerComposeRef
                   "DEVCONTAINER_STATE": str(self.vm.root / "state.sqlite")}
         arguments[2:2] = [key + "=" + value for key, value in values.items()]
         return arguments
+
+
+class DevcontainerResourcesCandidate(DevcontainerComposeCandidate, DevcontainerResourcesReference):
+    """C03 keeps exact resource receipts and native Docker-free command paths."""
 
 
 class DevcontainerDependenciesCandidate(DevcontainerComposeCandidate, DevcontainerDependenciesReference):

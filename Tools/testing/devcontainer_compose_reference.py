@@ -29,6 +29,7 @@ def fixture_inputs(repository: Path) -> dict:
 class DevcontainerComposeReference(DevcontainerReference):
     fixture = FIXTURE
     keys = {"compose_env", "post_create", "workspace"}
+    network_key = "default"
 
     def __init__(self, vm, inputs, owner, *, observe=None):
         super().__init__(vm, inputs, owner, observe=observe)
@@ -66,7 +67,7 @@ class DevcontainerComposeReference(DevcontainerReference):
         identifier = value.get("Id")
         if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
                 value.get("Name") != self.network_name or not isinstance(labels, dict) or
-                labels.get(PROJECT_LABEL) != self.project or labels.get(NETWORK_LABEL) != "default" or
+                labels.get(PROJECT_LABEL) != self.project or labels.get(NETWORK_LABEL) != self.network_key or
                 not isinstance(value.get("Created"), str) or not value["Created"] or
                 not isinstance(value.get("Containers"), dict)):
             raise ValueError("C01 network ownership changed")

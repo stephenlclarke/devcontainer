@@ -166,6 +166,17 @@ class DockerCaseTests(unittest.TestCase):
         self.guest.cleanup.assert_called_once_with()
         self.assertFalse(self.case.root.exists())
 
+    def test_c03_uses_resources_adapter_and_keeps_normal_owned_cleanup(self):
+        self.identity["fixture"] = "C03-compose-resources"
+        with patch.object(released_docker, "DevcontainerResourcesReference", return_value=self.guest) as adapter:
+            self.setup_case()
+        self.assertEqual(adapter.call_args.args, (self.vm, self.inputs, self.case.owner))
+        self.guest.setup.assert_called_once_with()
+        self.vm.command.assert_not_called()
+        self.case.cleanup()
+        self.guest.cleanup.assert_called_once_with()
+        self.assertFalse(self.case.root.exists())
+
     def test_d07_uses_reuse_adapter_and_keeps_normal_owned_cleanup(self):
         self.identity["fixture"] = "D07-reuse-cleanup"
         with patch.object(released_docker, "DevcontainerReuseReference", return_value=self.guest) as adapter:
@@ -255,6 +266,10 @@ class DockerAdmissionTests(unittest.TestCase):
             self.assertEqual(result["compose"]["repository"], "docker/compose")
             self.assertEqual(prepared.call_count, 4)
             self.assertIn("COMPOSE_VALUE: compose-service", result["devcontainerFixture"]["compose"])
+            resources = released_docker.admit_docker(lock, {}, pins, {"images": [{"name": "alpine-workload"}]},
+                Path("/scratch"), Path("/retained"), fixture="C03-compose-resources", repository=repository)
+            self.assertEqual(resources["compose"]["repository"], "docker/compose")
+            self.assertEqual(resources["devcontainerFixture"]["environment"], "PARITY_ENV_FILE=compose-env-file\n")
             with self.assertRaisesRegex(ValueError, "pinned published"):
                 released_docker.admit_docker(lock, {}, {**pins, "composeVersion": "other"},
                     {"images": [{"name": "alpine-workload"}]}, Path("/scratch"), Path("/retained"),

@@ -92,12 +92,14 @@ def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository
                 set(compose.get("executables", {})) != COMPOSE_PRODUCTS):
             raise ValueError("Compose fixture requires an admitted matching native Compose candidate")
         return {**inputs, "composeCandidate": compose}
-    if fixture not in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
+    if fixture not in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
         return inputs
-    if fixture in {"C01-compose-service", "C02-compose-dependencies"}:
+    if fixture in {"C01-compose-service", "C02-compose-dependencies", "C03-compose-resources"}:
         from devcontainer_compose_reference import fixture_inputs
         if fixture == "C02-compose-dependencies":
             from devcontainer_dependencies_reference import fixture_inputs
+        elif fixture == "C03-compose-resources":
+            from devcontainer_resources_reference import fixture_inputs
         if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
                 compose.get("productFamily") != "container-compose" or
                 compose.get("runtimeProfile") not in {"stock", "enhanced"} or
@@ -217,7 +219,7 @@ class ReleasedCase:
         self.store.attach(self.identity, "process.json", canonical({"pid": self.child.process.pid, "root": str(self.root)}))
         self.store.attach(self.identity, "process-incarnation.json", canonical(self.child.identity()))
         self.child.wait_ready(lambda: request(self.socket, "GET", "/_ping", timeout=1) == (200, b"OK"))
-        if self.guest is not None and self.identity["fixture"] in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
+        if self.guest is not None and self.identity["fixture"] in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
             self.guest.setup_devcontainer()
 
     def operation(self):
@@ -287,21 +289,21 @@ def main():
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
     parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
-    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/E09/E10/E11/E12/E13/E14")
+    parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/C03/E09/E10/E11/E12/E13/E14")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Engine cases require Apple silicon macOS")
-    compose_fixtures = {"C01-compose-service", "C02-compose-dependencies", *COMPOSE_FOREGROUND_FIXTURES}
+    compose_fixtures = {"C01-compose-service", "C02-compose-dependencies", "C03-compose-resources", *COMPOSE_FOREGROUND_FIXTURES}
     if args.compose_candidate_invocation and (args.fixture not in compose_fixtures or args.lane == "docker"):
-        raise ValueError("Native Compose candidate is only valid for native C01/C02/E09/E10/E11/E12/E13/E14")
+        raise ValueError("Native Compose candidate is only valid for native C01/C02/C03/E09/E10/E11/E12/E13/E14")
     if args.lane == "docker":
         from released_docker import run_docker
         run_docker(args)
         return
     if args.fixture in compose_fixtures and not args.compose_candidate_invocation:
         raise ValueError("Compose fixture requires a prepared native Compose candidate; no runtime changes made")
-    if args.fixture in {"C02-compose-dependencies", "C01-compose-service"} and not args.candidate_invocation:
+    if args.fixture in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service"} and not args.candidate_invocation:
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
     repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())

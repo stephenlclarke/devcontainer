@@ -149,6 +149,16 @@ class GuestRuntimeTests(unittest.TestCase):
             self.assertIsNone(self.case.builder)
             fixture.return_value.cleanup.assert_called_once()
 
+    def test_c03_uses_resource_adapter_and_owned_cleanup(self):
+        self.case.fixture = 'C03-compose-resources'
+        with patch('devcontainer_candidate.DevcontainerResourcesCandidate') as fixture:
+            self.case.setup_devcontainer()
+            fixture.return_value.setup.assert_called_once()
+            self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
+            self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
+            self.assertIsNone(self.case.builder)
+            fixture.return_value.cleanup.assert_called_once()
+
     def test_d02_requires_owned_builder_and_removes_guest_before_builder(self):
         self.case.fixture = 'D02-dockerfile-config'
         with self.assertRaisesRegex(ValueError, 'private builder'):

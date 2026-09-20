@@ -309,6 +309,15 @@ class DevcontainerDependenciesRecoveryTests(DevcontainerRecoveryTests):
         return stack
 
 
+class DevcontainerResourcesRecoveryTests(DevcontainerRecoveryTests):
+    fixture_name = "C03-compose-resources"
+
+    def patches(self):
+        stack = super().patches()
+        stack.enter_context(patch("devcontainer_resources_reference.DevcontainerResourcesReference", return_value=self.fixture))
+        return stack
+
+
 class DevcontainerPortsRecoveryTests(DevcontainerRecoveryTests):
     fixture_name = "D06-ports"
 

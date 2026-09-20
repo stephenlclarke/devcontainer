@@ -2,6 +2,8 @@
 
 ## Problem description
 
+C03's existing resource fixture was absent from the new Bazel runtime harness. Its new adapter preserves environment-file, named-volume and network observations in both reference/native command paths, with generation-bound service/network cleanup and independently sealed volume ownership. This closes an executable-harness gap, not a parity or speed claim. [Focused tests, recovery limits and outstanding live qualification](bazel-test-harness.md#c03-compose-resources) remain part of the same release-comparison contract.
+
 The existing three-lane reporter did not expose previous/current products or repeated release-role samples. The additive [previous/current observation report](bazel-test-harness.md#previouscurrent-observation-reports) now authenticates and renders that retained evidence with explicit published/candidate identity and no quiet-timing claim. Published Compose remains a separate adapter gap: its `0.15.1` runtime selection is compiled into the binary, so changing only the compatibility-profile environment variable would misrepresent the stock baseline.
 
 The first published baseline runs fail immutable-image inspection/lookup, whereas the current stock candidate passes those unchanged cases. Their short failed durations revealed that the report still calculated ratios for invalid workloads. Ratio eligibility now requires a successful exact-contract result and a positive operation duration on both sides; raw failure durations remain visible. [Live evidence and recovery](bazel-test-harness.md#published-devcontainer-baseline) are retained without weakening parity or claiming an unmeasured speedup.

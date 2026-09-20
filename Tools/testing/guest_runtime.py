@@ -34,7 +34,7 @@ from compose_foreground_probe import (ComposeForegroundFixture, ComposeTerminalI
 from compose_terminal_probe import ComposeTerminalSizeFixture
 
 
-FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES, "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
+FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES, "C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
 
@@ -186,13 +186,13 @@ class ReleasedGuest:
 
     def setup_devcontainer(self):
         """Image acquisition stays in setup, matching the Docker timing phases."""
-        if self.fixture not in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} or self.guest is not None:
+        if self.fixture not in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"} or self.guest is not None:
             raise ValueError("Devcontainer setup requires a fresh candidate fixture")
         if self.fixture in {"D02-dockerfile-config", "D03-users-environment", "D05-features"} and self.builder is None:
             raise ValueError("Build-based devcontainer requires an admitted private builder")
         from devcontainer_candidate import (CandidateCommands, DevcontainerCandidate,
                                            DevcontainerBuildCandidate, DevcontainerUsersCandidate,
-                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate, DevcontainerPortsCandidate, DevcontainerReuseCandidate, DevcontainerComposeCandidate, DevcontainerDependenciesCandidate)
+                                           DevcontainerLifecycleCandidate, DevcontainerFeaturesCandidate, DevcontainerPortsCandidate, DevcontainerReuseCandidate, DevcontainerComposeCandidate, DevcontainerDependenciesCandidate, DevcontainerResourcesCandidate)
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
         commands = CandidateCommands(self.root, self.socket, self.runtime, self.container)
@@ -203,7 +203,7 @@ class ReleasedGuest:
             self.guest = adapter(commands, self.inputs, self.owner,
                                  before_build=self.builder.verify_for_build, observe=self.observe)
         else:
-            adapter = {"C02-compose-dependencies": DevcontainerDependenciesCandidate, "C01-compose-service": DevcontainerComposeCandidate, "D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
+            adapter = {"C03-compose-resources": DevcontainerResourcesCandidate, "C02-compose-dependencies": DevcontainerDependenciesCandidate, "C01-compose-service": DevcontainerComposeCandidate, "D01-image-config": DevcontainerCandidate, "D04-lifecycle-hooks": DevcontainerLifecycleCandidate,
                        "D06-ports": DevcontainerPortsCandidate, "D07-reuse-cleanup": DevcontainerReuseCandidate}[self.fixture]
             self.guest = adapter(commands, self.inputs, self.owner, observe=self.observe)
         self.guest.setup()
@@ -211,7 +211,7 @@ class ReleasedGuest:
     def operation(self):
         self.runtime.verify()
         self.runtime.journal.put("guest-api.json", canonical(require_guest_api(self.socket)))
-        if self.fixture in {"C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
+        if self.fixture in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}:
             if self.guest is None:
                 raise ValueError("Devcontainer setup did not complete")
             return self.guest.operation()
@@ -299,6 +299,10 @@ class ReleasedGuest:
 
 def require_guest_resources_stopped(records: dict[str, bytes]) -> list[str]:
     """Legacy recovery cannot silently discard a guest it never reconciled."""
+    if "c03-volume-intent.json" in records:
+        intent = json.loads(records["c03-volume-intent.json"])
+        if json.loads(records.get("c03-volume-removed.json", b"null")) != {"name": intent["volume"], "absent": True}:
+            raise ValueError("C03 volume needs explicit reconciliation")
     if "c02-project-intent.json" in records:
         intent = json.loads(records["c02-project-intent.json"])
         if json.loads(records.get("c02-project-removed.json", b"null")) != {"project": intent["project"], "absent": True}:
