@@ -27,6 +27,7 @@ from engine_probe import engine_negotiation, request
 from host_runtime import HostGuard, OwnedProcess, cancellation, deadline, runtime_lease
 from runtime_services import ControlledRuntime, require_owned_volume
 from guest_runtime import FIXTURES, GUEST_API_VERSION, ReleasedGuest, admit_guest, diagnostic_snapshot
+from native_activation import require_active
 
 
 SSD = Path("/Volumes/SSD/cf/bazel")
@@ -60,6 +61,11 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
     return local + [require_retained(asset, retained / "release-objects" / asset["sha256"],
                              retained / "prepared-releases", retained / "prepared-receipts")
                     for asset in (assets[1:] if candidate else assets)]
+
+
+def admit_runtime(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
+    selected = admit(lock, lane, retained, candidate)
+    return [selected[0], require_active(selected[1], retained, lane)]
 
 
 def legacy_frontend(lock: dict, lane: str, product: dict, repository: Path, scratch: Path, retained: Path) -> dict:
@@ -331,7 +337,7 @@ def main():
     # payload/temp directory. Keeping the same inode serializes both workflows.
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
-        releases = admit(lock, args.lane, RETAINED, args.candidate_invocation)
+        releases = admit_runtime(lock, args.lane, RETAINED, args.candidate_invocation)
         def selected_compose():
             if not args.compose_candidate_invocation:
                 return None
@@ -373,7 +379,7 @@ def main():
                 if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose(),
                                         selected_frontend()) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")
-            return admit(lock, args.lane, RETAINED, args.candidate_invocation)
+            return admit_runtime(lock, args.lane, RETAINED, args.candidate_invocation)
 
         def runtime_factory(root, owner):
             journal_parent = RETAINED / "private-runtime"

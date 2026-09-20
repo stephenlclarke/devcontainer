@@ -348,7 +348,7 @@ def sync_directory(path: Path) -> None:
 
 def durable_file(path: Path, source: Path | None, data: bytes | None = None, mode: int = 0o600) -> None:
     """Write only registered pending asset files, never linked or foreign files."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     with os.fdopen(descriptor, "wb") as output:
         info = os.fstat(output.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:

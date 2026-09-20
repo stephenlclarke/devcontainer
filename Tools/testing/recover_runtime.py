@@ -31,6 +31,29 @@ def private_json(path: Path) -> dict:
     return data
 
 
+def require_recovery_executable(executable: Path, retained: Path, ssd: Path, owner: dict):
+    allowed = (ssd / "prepared-releases", retained / "prepared-releases")
+    if executable.is_relative_to(retained / "active-runtimes"):
+        # A fixed pathname is not provenance: reopen the sealed case's exact
+        # source and activation before permitting any service/root cleanup.
+        from released_engine import admit_runtime
+        admission = verify_case_evidence(retained, owner).get("admission.json", {})
+        admitted = admission.get("runtime", {})
+        if digest(canonical(admitted)) != owner["identity"]["runtimeSHA256"]:
+            raise ValueError("Stable runtime recovery fingerprint differs")
+        releases = admitted.get("releases", [])
+        if len(releases) != 2:
+            raise ValueError("Stable runtime recovery inputs are incomplete")
+        selected = admit_runtime(admission["releaseLock"], owner["identity"]["lane"], retained,
+                                 releases[0].get("candidateInvocation"))
+        if selected != releases or selected[1]["executables"]["container-apiserver"] != str(executable):
+            raise ValueError("Stable runtime recovery inputs changed")
+        allowed += (Path(selected[1]["root"]),)
+    if (executable.name != "container-apiserver" or not any(executable.is_relative_to(path) for path in allowed) or
+            executable.resolve() != executable or not executable.is_file()):
+        raise ValueError("Recorded API executable is outside prepared releases or unavailable")
+
+
 def verify_case_evidence(retained: Path, owner: dict) -> dict:
     """Read existing evidence without creating, updating or completing a case."""
     path = retained / "runtime-cases.sqlite"
@@ -206,10 +229,7 @@ def recover(retained: Path, ssd: Path, *, apply: bool, expected_case: str | None
     if not isinstance(context, dict) or set(context) != {"apiExecutable"} or not isinstance(context["apiExecutable"], str):
         raise ValueError("No recorded runtime context; manual journal reconciliation required")
     executable = Path(context["apiExecutable"])
-    allowed = (ssd / "prepared-releases", retained / "prepared-releases")
-    if (executable.name != "container-apiserver" or not any(executable.is_relative_to(path) for path in allowed) or
-            executable.resolve() != executable or not executable.is_file()):
-        raise ValueError("Recorded API executable is outside prepared releases or unavailable")
+    require_recovery_executable(executable, retained, ssd, owner)
     backend = launchd or Launchd()
     switch = journal.recover_switch(backend, root)
     original_processes = plistlib.loads(records["original-processes.plist"])

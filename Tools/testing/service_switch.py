@@ -24,7 +24,7 @@ def canonical_file(path: Path) -> bytes:
     """Read a non-aliased, user-owned launch definition without printing it."""
     if not path.is_absolute() or path.resolve() != path:
         raise ValueError("Service definition path is not canonical")
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
         info = os.fstat(stream.fileno())
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
                 info.st_nlink != 1 or info.st_mode & 0o022 or info.st_size > 1024 * 1024):
@@ -74,6 +74,22 @@ class Launchd:
     def bootout(self, label: str):
         if self.command("bootout", f"{self.domain}/{label}").returncode != 0:
             raise RuntimeError("Launchd job removal failed")
+
+    def program(self, label: str) -> str:
+        """Inspect dormant jobs too, without assuming a provider label namespace."""
+        if re.fullmatch(r"[A-Za-z0-9._-]+", label) is None:
+            raise ValueError("Invalid launchd job label")
+        result = self.command("print", f"{self.domain}/{label}")
+        # The GUI and user domains share names, but keep discrete job sets.
+        # Do not turn permission/transport failures into a lookup elsewhere.
+        if result.returncode == 113:
+            result = self.command("print", f"user/{os.getuid()}/{label}")
+        if result.returncode != 0:
+            raise RuntimeError("Cannot inspect registered executable")
+        values = re.findall(r"^\tprogram = ([^\n]+)$", result.stdout.decode(), re.MULTILINE)
+        if len(values) != 1 or not Path(values[0]).is_absolute():
+            raise ValueError(f"Registered executable identity is unavailable for {label}; activation was not started")
+        return values[0]
 
     def process_id(self, label: str) -> int | None:
         if re.fullmatch(r"[A-Za-z0-9._-]+", label) is None:

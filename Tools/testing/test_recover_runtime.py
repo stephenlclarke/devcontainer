@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from case_evidence import CaseStore, canonical, digest, validate_identity
 from host_runtime import HostGuard
-from recover_runtime import cleanup_receipt, main, recover, recovery_idle
+from recover_runtime import cleanup_receipt, main, recover, recovery_idle, require_recovery_executable
 from runtime_services import ControlledRuntime
 from service_journal import ServiceJournal
 from service_switch import API, ServiceSwitch, snapshot
@@ -86,6 +86,34 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(self.guard.path.exists())
         self.assertTrue(self.root.exists())
         self.assertEqual(self.store.begin(self.identity), self.result)
+
+    def test_stable_executable_recovery_requires_exact_case_and_source(self):
+        payload = self.retained / "active-runtimes/apple-stock/payload"
+        executable = payload / "bin/container-apiserver"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("fixture only")
+        releases = [{"candidateInvocation": "fixture"}, {"root": str(payload),
+                    "executables": {"container-apiserver": str(executable)}}]
+        runtime = {"releases": releases}
+        owner = {"identity": {"runtimeSHA256": digest(canonical(runtime)), "lane": "apple-stock"}}
+        admission = {"admission.json": {"runtime": runtime, "releaseLock": "fixture-lock"}}
+        with patch("recover_runtime.verify_case_evidence", return_value=admission) as verify, \
+                patch("released_engine.admit_runtime", return_value=releases) as admit:
+            require_recovery_executable(executable, self.retained, self.ssd, owner)
+            verify.assert_called_once_with(self.retained, owner)
+            admit.assert_called_once_with("fixture-lock", "apple-stock", self.retained, "fixture")
+            admit.return_value = [{}, {}]
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                require_recovery_executable(executable, self.retained, self.ssd, owner)
+            admit.reset_mock()
+            runtime["changed"] = True
+            with self.assertRaisesRegex(ValueError, "fingerprint differs"):
+                require_recovery_executable(executable, self.retained, self.ssd, owner)
+            admit.assert_not_called()
+            runtime.clear()
+            owner["identity"]["runtimeSHA256"] = digest(canonical(runtime))
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                require_recovery_executable(executable, self.retained, self.ssd, owner)
 
     def test_report_does_not_mutate_then_apply_restores_and_preserves_failed_case(self):
         before = list(self.launchd.mutations)

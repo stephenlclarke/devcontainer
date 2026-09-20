@@ -47,6 +47,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
 .PHONY: bazel-coverage-counters
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
+.PHONY: bazel-activate-runtime
 .PHONY: bazel-parity-report
 .PHONY: bazel-release-comparison
 export BASELINE_CAMPAIGN TARGET_CAMPAIGN CASE_LANE
@@ -114,6 +115,9 @@ bazel-prepare-candidate:
 
 bazel-recover-runtime:
 	Tools/bazel/run.sh recover-runtime
+
+bazel-activate-runtime:
+	Tools/bazel/run.sh activate-runtime --lane "$${LANE:?Set LANE=apple-stock or container-compose}"
 
 bazel-recover-runtime-apply:
 	Tools/bazel/run.sh recover-runtime --apply --case "$${CASE_ID}"

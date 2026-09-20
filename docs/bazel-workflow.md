@@ -18,6 +18,16 @@ This is not yet a claim that the entire release workflow is prompt-free. Host pe
 
 Local-network authorization must be checked for the responsible runtime, not inferred from a successful connection by the coordinator or another executable. The [enhanced port diagnostic](evidence/enhanced-workspaces-20260920.md#separate-port-diagnosis) proves why: direct host access succeeded while the selected native publisher received `EHOSTUNREACH`. After the operator reported pressing Allow, the unchanged complete port fixture passed with the same binaries; the exact dialog/policy cause was not independently identified. Keep downloaded runtime identities stable, reserve consent for explicit setup, and retain a bounded runtime-context diagnostic when effective access cannot be established. Do not toggle ambiguous duplicate System Settings entries. The legacy `Tools/release/sign-and-notarize.sh` still invokes signing/notarization without the qualified noninteractive preflight; it is not the unattended Bazel release path.
 
+### Fixed native runtime locations (qualification pending)
+
+`make bazel-activate-runtime LANE=apple-stock` (or `LANE=container-compose`) explicitly copies the authenticated native installation into `~/Library/Application Support/ContainerFamily/retained/workflow/active-runtimes/<lane>/payload`. The equivalent command is `Tools/bazel/run.sh activate-runtime --lane <lane>`. Prepared release archives/trees remain immutable. This is file-only activation under the shared runtime lease: it never starts services, signs code, modifies macOS privacy settings or grants permission. Temporary work remains on SSD; the stable executable copy and recovery records are durable internal assets.
+
+Admission now requires the selected release's complete active inventory and provenance, without a fallback to a new extraction path. An interrupted activation remains blocked until the same input resumes. Updates retain the verified previous tree until the new payload and receipt are durable, then remove only that authenticated recovery copy. Recovery of older cases still uses their original prepared paths; newer cases revalidate the exact active source and sealed fingerprint before using a stable executable.
+
+**This path is not host-qualified yet.** Read-only checks on 20 September found registered background items with a bundle identifier but no resolved executable path. GUI-to-user-domain lookup handles ordinary user jobs, but cannot establish these bundle-resolved jobs' ownership. Activation therefore refuses before copying; it does not ignore unrelated-looking names, remove those registrations or resolve them by launching applications. A separate read-only `sfltool dumpbtm` diagnostic timed out after ten seconds and was not retried or accepted as evidence of absence. Unit tests cover activation/update/resume, receipt FIFOs, source drift, dormant aliases and legacy/new recovery; they are not proof of real macOS authorization. Native runtime launches remain paused while this boundary is unresolved.
+
+Stable paths avoid changing extraction locations; they do not promise permanent authorization. Required access still needs explicit operator setup for the actual responsible executable. An operating-system or identity change may require fresh consent. No global automatic "Always Allow" policy is installed by this workflow.
+
 ### Commands
 
 Requirements: Apple silicon, full Xcode (validated with Xcode 27 / Swift 6.4), an external volume mounted at `/Volumes/SSD`, Python 3.9 or newer for helper tests, and network access for the first verified tool/dependency download.
@@ -104,6 +114,7 @@ The acquisition set pins devcontainer 1.0.1, Apple's signed Container 1.4.1 inst
 | SSD enrollment | `~/Library/Application Support/ContainerFamily/retained/workflow/ssd-volume.uuid` |
 | Tool downloads, repository cache, action cache, Bazel outputs | `/Volumes/SSD/cf/bazel/` |
 | Verified reusable release executable trees | `~/Library/Application Support/ContainerFamily/retained/workflow/prepared-releases/` |
+| Stable native runtime execution slots (not yet host-qualified) | Internal `retained/workflow/active-runtimes/<lane>/payload`, with resumable activation receipts |
 | Test scratch | Bazel-assigned `TEST_TMPDIR` under the enrolled SSD root |
 | Per-invocation build events | Printed `invocations/run.*/events.json` on SSD |
 | Long-term build/test evidence | `~/Library/Application Support/ContainerFamily/retained/workflow/bazel-evidence.sqlite`, deduplicated by SHA-256 in transactional records |

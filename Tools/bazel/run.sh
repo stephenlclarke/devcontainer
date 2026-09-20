@@ -2,6 +2,7 @@
 # Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 # USAGE: run.sh [--workspace ABSOLUTE_REPOSITORY] configure|test-tools|recover-runtime [--apply --case ID]|cleanup [--days N] [--apply]|restore-candidate ID|prepare-candidate ID [--family=container-compose]|coverage-report ID|build-timings ID [--baseline ID]|acquire-releases LOCK [--offline]|prepare-releases LOCK [--offline]|prepare-guest-images LOCK [--offline] [--source-archive NAME=ABSOLUTE_PATH]|prepare-docker-cli LOCK [--offline]|prepare-devcontainers-cli LOCK [--offline] | build|test|coverage|query|cquery|aquery|info|shutdown [ARGS...]
 # Enrol /Volumes/SSD once with configure, then use the pinned native Bazel targets.
+# File-only setup: activate-runtime --lane apple-stock|container-compose (no service launch or consent grant).
 # Read-only reports: parity-report CAMPAIGN, or release-comparison --baseline CAMPAIGN --target CAMPAIGN --fixture ID --lane LANE.
 # Every tool download, cache, JVM temporary file and test output stays on that disk.
 # CONTAINER_FAMILY_SSD_UUID may supply an explicit expected UUID instead of enrolment.
@@ -29,6 +30,7 @@ usage() {
     printf '       %s cleanup [--days N] [--apply] (default: report only, 14 days)\n' "$SCRIPT_NAME"
     printf '       %s build-timings ID [--baseline ID] (retained measured durations)\n' "$SCRIPT_NAME"
     printf '       %s prepare-releases LOCK [--offline] (extract on SSD; retain executables internally; never install/build)\n' "$SCRIPT_NAME"
+    printf '       %s activate-runtime --lane apple-stock|container-compose (stable paths; no service launch or permission grant)\n' "$SCRIPT_NAME"
     printf '       %s prepare-candidate ID [--family=container-compose] (retained clean build; integration only)\n' "$SCRIPT_NAME"
     printf '       %s prepare-guest-images LOCK [--offline] [--source-archive NAME=ABSOLUTE_PATH] (pinned OCI data; no Docker, VM or build)\n' "$SCRIPT_NAME"
     printf '       %s prepare-docker-cli LOCK [--offline] (pinned public GitHub bottle; no install, VM or build)\n' "$SCRIPT_NAME"
@@ -284,7 +286,7 @@ main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     case "$command" in
         -h|--help) usage; return 0 ;;
-        configure|test-tools|recover-runtime|parity-report|release-comparison|cleanup|restore-candidate|prepare-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|prepare-guest-images|prepare-docker-cli|prepare-devcontainers-cli|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
+        configure|test-tools|activate-runtime|recover-runtime|parity-report|release-comparison|cleanup|restore-candidate|prepare-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|prepare-guest-images|prepare-docker-cli|prepare-devcontainers-cli|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
@@ -328,6 +330,10 @@ main() {
     done
     export TMPDIR="$SSD_ROOT/tmp" TMP="$SSD_ROOT/tmp" TEMP="$SSD_ROOT/tmp" PYTHONDONTWRITEBYTECODE=1
     ensure_directory "$config_root" || return
+    if [[ "$command" == activate-runtime ]]; then
+        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/native_activation.py" "$@"
+        return
+    fi
     if [[ "$command" == recover-runtime ]]; then
         clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/recover_runtime.py" "$@"
         return

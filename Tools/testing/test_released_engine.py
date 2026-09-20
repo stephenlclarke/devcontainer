@@ -31,6 +31,9 @@ class ReleasedEngineTests(unittest.TestCase):
         incarnation = patch("released_engine.OwnedProcess.identity", return_value={"captured": "fixture"})
         incarnation.start()
         self.addCleanup(incarnation.stop)
+        activation = patch("released_engine.require_active", side_effect=lambda source, *_: source)
+        activation.start()
+        self.addCleanup(activation.stop)
 
     def test_junit_preserves_phase_timings_and_failures(self):
         output = self.root / "result.xml"
@@ -139,6 +142,17 @@ class ReleasedEngineTests(unittest.TestCase):
             self.assertEqual(released_engine.admit(lock, "apple-stock", self.root), [{"verified": True}] * 2)
         self.assertEqual(prepared.call_count, 2)
         self.assertTrue(all(call.args[2] == self.root / "prepared-releases" for call in prepared.call_args_list))
+
+    def test_runtime_admission_requires_selected_stable_payload_without_fallback(self):
+        source = {"native": "original"}
+        with patch("released_engine.admit", return_value=[{"client": "unchanged"}, source]), \
+                patch("released_engine.require_active", return_value={"native": "stable"}) as active:
+            self.assertEqual(released_engine.admit_runtime({}, "apple-stock", self.root),
+                             [{"client": "unchanged"}, {"native": "stable"}])
+            active.assert_called_once_with(source, self.root, "apple-stock")
+            active.side_effect = ValueError("activation incomplete")
+            with self.assertRaisesRegex(ValueError, "activation incomplete"):
+                released_engine.admit_runtime({}, "apple-stock", self.root)
 
     def test_d01_requires_a_complete_admitted_private_bundle(self):
         repository = Path(__file__).parents[2]

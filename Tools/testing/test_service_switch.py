@@ -5,6 +5,7 @@ from pathlib import Path
 import plistlib
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, canonical_file, snapshot
@@ -47,6 +48,39 @@ class FakeLaunchd:
 
 
 class ServiceSwitchTests(unittest.TestCase):
+    def test_registered_program_is_read_independently_of_namespace_or_plist(self):
+        backend = Launchd()
+        with patch.object(backend, "command") as command:
+            command.return_value = SimpleNamespace(returncode=0, stdout=b"\tprogram = /owned/runtime\n")
+            self.assertEqual(backend.program("custom.namespace.engine"), "/owned/runtime")
+            for response in (SimpleNamespace(returncode=113, stdout=b""),
+                             SimpleNamespace(returncode=0, stdout=b""),
+                             SimpleNamespace(returncode=0, stdout=b"\tprogram = relative\n"),
+                             SimpleNamespace(returncode=0, stdout=b"\tprogram = /one\n\tprogram = /two\n")):
+                command.return_value = response
+                with self.assertRaises((ValueError, RuntimeError)):
+                    backend.program("custom.namespace.engine")
+            with self.assertRaisesRegex(ValueError, "label"):
+                backend.program("bad/label")
+
+    def test_registered_program_uses_user_domain_only_when_gui_job_is_absent(self):
+        backend = Launchd()
+        missing = SimpleNamespace(returncode=113, stdout=b"")
+        found = SimpleNamespace(returncode=0, stdout=b"\tprogram = /user/runtime\n")
+        with patch.object(backend, "command", side_effect=[missing, found]) as command:
+            self.assertEqual(backend.program("custom.engine"), "/user/runtime")
+            self.assertEqual(command.call_args_list[0].args, ("print", f"{backend.domain}/custom.engine"))
+            self.assertEqual(command.call_args_list[1].args, ("print", f"user/{os.getuid()}/custom.engine"))
+        with patch.object(backend, "command", return_value=SimpleNamespace(returncode=1, stdout=b"")) as command:
+            with self.assertRaises(RuntimeError):
+                backend.program("custom.engine")
+            command.assert_called_once()
+        with patch.object(backend, "command", return_value=SimpleNamespace(
+                returncode=0, stdout=b"\tprogram identifier = helper (mode: 1)\n")) as command:
+            with self.assertRaisesRegex(ValueError, "custom.engine"):
+                backend.program("custom.engine")
+            command.assert_called_once()
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.scratch.cleanup)

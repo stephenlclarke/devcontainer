@@ -114,6 +114,22 @@ class AppleBuildRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint"):
             admit_original(Path("/retained"), owner, {})
 
+    def test_stable_build_recovery_uses_activation_not_historical_path(self):
+        releases = [{"candidateInvocation": "original"}, {"activation": {"receiptSHA256": "exact"}}]
+        inputs = {"builder": "original"}
+        runtime = {"releases": releases, "guestInputs": inputs}
+        owner = {"identity": {"runtimeSHA256": digest(canonical(runtime)), "lane": "apple-stock"}}
+        admission = {"runtime": runtime, "releaseLock": {}, "guestLocks": [{}, {}], "builderLock": {}}
+        with patch("recover_apple_build.admit") as legacy, \
+                patch("recover_apple_build.admit_runtime", return_value=releases) as active, \
+                patch("recover_apple_build.admit_guest", return_value=inputs):
+            self.assertEqual(admit_original(Path("/retained"), owner, {"admission.json": admission}), (releases, inputs))
+            active.assert_called_once_with({}, "apple-stock", Path("/retained"), "original")
+            legacy.assert_not_called()
+            active.return_value = [releases[0], {"activation": {"receiptSHA256": "changed"}}]
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                admit_original(Path("/retained"), owner, {"admission.json": admission})
+
 
 class AppleBuildResourceTransactionTests(unittest.TestCase):
     def setUp(self):
