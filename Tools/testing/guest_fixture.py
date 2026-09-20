@@ -14,7 +14,7 @@ import time
 from urllib.parse import quote
 
 from archive_probe import archive_copy
-from case_evidence import canonical
+from case_evidence import canonical, digest
 from engine_probe import request
 
 
@@ -52,11 +52,13 @@ class GuestFixture:
             self.intent["networkMounts"] = self.configuration
         self.identifier = None
 
-    def call(self, method: str, route: str, body=None, *, timeout=5, total_timeout=None):
+    def call(self, method: str, route: str, body=None, *, timeout=5, total_timeout=None, response_headers=None):
         event = {"method": method, "route": f"/v{self.version}{route}"}
         started = time.monotonic_ns()
         try:
             options = {"total_timeout": total_timeout} if total_timeout is not None else {}
+            if response_headers is not None:
+                options["response_headers"] = response_headers
             status, payload = request(self.socket, method, event["route"],
                                       canonical(body) if body is not None else None, timeout=timeout, **options)
             event["status"] = status
@@ -110,8 +112,20 @@ class GuestFixture:
         if self.configuration["aliases"]:
             body["NetworkingConfig"] = {"EndpointsConfig": {
                 self.configuration["network"]: {"Aliases": self.configuration["aliases"]}}}
-        status, payload = self.call("POST", f"/containers/create?name={self.name}", self.creation_body(body))
+        headers = []
+        status, payload = self.call("POST", f"/containers/create?name={self.name}", self.creation_body(body),
+                                    response_headers=headers)
         value = json.loads(payload)
+        preflight = [value for name, value in headers if name.lower() == "x-container-create-preflight"]
+        if (400 <= status < 600 and preflight == ["rejected"] and isinstance(value, dict) and
+                isinstance(value.get("message"), str) and "Id" not in value):
+            # This acknowledged provider preflight returned before invoking any
+            # creation. Ordinary error codes and lost responses prove no such thing.
+            self.journal.put("container-create-rejected.json", canonical({
+                "intentSHA256": digest(canonical(self.intent)), "status": status,
+                "responseSHA256": digest(payload), "preflight": "rejected",
+            }))
+            raise ValueError("Guest creation rejected before runtime mutation")
         identifier = value.get("Id") if isinstance(value, dict) else None
         if status != 201 or not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None:
             raise ValueError("Guest creation failed or returned an invalid ID")
@@ -174,7 +188,18 @@ class GuestFixture:
         if created is not None and deleting is not None and created != deleting:
             raise ValueError("Guest creation and deletion identities disagree")
         known = created or deleting
+        rejected = json.loads(records["container-create-rejected.json"]) if "container-create-rejected.json" in records else None
+        if "container-create-rejected.json" in records:
+            if (not isinstance(rejected, dict) or set(rejected) != {"intentSHA256", "status", "responseSHA256", "preflight"} or
+                    rejected["intentSHA256"] != digest(intent) or rejected["preflight"] != "rejected" or
+                    type(rejected["status"]) is not int or not 400 <= rejected["status"] < 600 or
+                    not isinstance(rejected["responseSHA256"], str) or
+                    re.fullmatch(r"[0-9a-f]{64}", rejected["responseSHA256"]) is None or
+                    "container-created.json" in records or "container-delete-intent.json" in records):
+                raise ValueError("Invalid or contradictory rejected creation receipt")
         actual = self.inspect(self.name)
+        if rejected is not None and actual is not None:
+            raise ValueError("Rejected creation has an unexpected resource; refusing mutation")
         if actual is not None:
             identifier = self.owned(actual)
             if known is not None and known != {"id": identifier}:
@@ -194,7 +219,7 @@ class GuestFixture:
                 raise ValueError("Guest journal has invalid created identity")
             if self.inspect(identifier) is not None:
                 raise ValueError("Guest was renamed; refusing unverified cleanup")
-        else:
+        elif rejected is None:
             # A request may still be executing server-side after a client
             # timeout. A momentary 404 is not proof that it created nothing.
             raise ValueError("Uncertain creation has no observed identity; runtime reconciliation required")

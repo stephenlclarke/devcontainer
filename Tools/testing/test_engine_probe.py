@@ -30,6 +30,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/truncated-build":
             self.send_response(200)
             self.send_header("Content-Length", "100")
+            self.send_header("X-Container-Create-Preflight", "rejected")
             self.end_headers()
             # A complete JSON record is still an incomplete HTTP response.
             self.wfile.write(b'{"stream":"Step 1 complete"}\n')
@@ -66,6 +67,8 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self, code, body):
         self.send_response(code)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in getattr(self.server, "extra_headers", []):
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -144,6 +147,23 @@ class EngineProbeTests(unittest.TestCase):
     def test_truncated_content_length_is_not_a_completed_build_response(self):
         with self.assertRaises(http.client.IncompleteRead):
             request(self.socket, "GET", "/truncated-build")
+
+    def test_completed_response_exposes_headers_without_collapsing_duplicates(self):
+        self.server.extra_headers = [("X-Container-Create-Preflight", "rejected"),
+                                     ("x-container-create-preflight", "other")]
+        headers = []
+        self.assertEqual(request(self.socket, "POST", "/containers/create", b"{}", response_headers=headers),
+                         (400, self.server.error_body))
+        self.assertEqual([(key, value) for key, value in headers if key.lower() == "x-container-create-preflight"],
+                         self.server.extra_headers)
+
+    def test_incomplete_or_oversized_response_never_exposes_completion_headers(self):
+        for route, error in (("/truncated-build", http.client.IncompleteRead), ("/oversized", ValueError)):
+            with self.subTest(route=route):
+                headers = []
+                with self.assertRaises(error):
+                    request(self.socket, "GET", route, response_headers=headers)
+                self.assertEqual(headers, [])
 
     def test_exact_response_bound_accepts_complete_body(self):
         self.assertEqual(request(self.socket, "GET", "/_ping", max_bytes=2), (200, b"OK"))

@@ -34,7 +34,8 @@ class UnixHTTPConnection(http.client.HTTPConnection):
 
 def request(path: Path, method: str, route: str, body: bytes | None = None, timeout: float = 5,
             *, content_type: str = "application/json", max_bytes: int = 65536,
-            total_timeout: float | None = None) -> tuple[int, bytes]:
+            total_timeout: float | None = None,
+            response_headers: list[tuple[str, str]] | None = None) -> tuple[int, bytes]:
     """Require complete bounded HTTP framing; the Bazel case owns the total deadline."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= 16 * 1024**2:
         raise ValueError("Invalid Engine response limit")
@@ -74,6 +75,11 @@ def request(path: Path, method: str, route: str, body: bytes | None = None, time
         # before that EOF must not become proof that a mutating request finished.
         if response.length not in (None, 0):
             raise http.client.IncompleteRead(data, response.length)
+        if response_headers is not None:
+            # Completion evidence is never exposed for a partial/oversized body.
+            # Preserve duplicate fields so callers cannot mistake ambiguity for
+            # an authenticated single acknowledgement.
+            response_headers.extend(response.getheaders())
         return response.status, data
     except socket.timeout as error:
         raise TimeoutError("Engine negotiation request timed out") from error

@@ -29,6 +29,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/containers/json":
             return 200, ([{"Id": server.guest["Id"]}] if server.guest else [])
         if self.command == "POST" and path == "/containers/create":
+            if getattr(server, "reject_create", False):
+                return getattr(server, "reject_status", 501), getattr(
+                    server, "reject_body", {"message": "unsupported before creation"})
             config = json.loads(body)
             server.guest = {"Id": "b" * 64, "Name": "/" + server.name, "Config": config,
                             "Image": server.image, "State": {"Status": "created"}}
@@ -57,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
         body = value if isinstance(value, bytes) else canonical(value)
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
+        if urlsplit(self.path).path.endswith("/containers/create"):
+            for name, value in getattr(self.server, "create_headers", []):
+                self.send_header(name, value)
         self.end_headers()
         # 204 clients can close as soon as headers arrive. Even sendall(b'')
         # may raise EPIPE then; there is no response body to send.
@@ -93,6 +99,7 @@ class GuestFixtureTests(unittest.TestCase):
 
     def test_empty_response_does_not_write_to_an_already_closed_client(self):
         handler = Mock()
+        handler.path = "/v1.54/containers/example"
         handler.dispatch.return_value = (204, b'')
         handler.wfile.write.side_effect = BrokenPipeError('client closed after headers')
         Handler.respond(handler)
@@ -175,8 +182,8 @@ class GuestFixtureTests(unittest.TestCase):
 
     def test_lost_create_response_reconciles_observed_exact_owned_container(self):
         original = self.fixture.call
-        def lose_response(method, route, body=None):
-            result = original(method, route, body)
+        def lose_response(method, route, body=None, **options):
+            result = original(method, route, body, **options)
             if route.startswith("/containers/create"):
                 raise TimeoutError()
             return result
@@ -191,6 +198,109 @@ class GuestFixtureTests(unittest.TestCase):
 
     def test_unobserved_pending_create_is_not_mistaken_for_successful_cleanup(self):
         self.journal.put("container-intent.json", canonical(self.fixture.intent))
+        with self.assertRaisesRegex(ValueError, "Uncertain creation"):
+            self.fixture.cleanup()
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_preflight_rejection_recovers_without_inventing_a_created_identity(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("X-Container-Create-Preflight", "rejected")]
+        with self.assertRaisesRegex(ValueError, "rejected before"):
+            self.fixture.create()
+        self.assertIn("container-create-rejected.json", self.journal.records())
+        self.assertNotIn("container-created.json", self.journal.records())
+        self.assertEqual(self.fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
+        self.assertEqual(self.reopen().cleanup()["status"], "passed")
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        with self.assertRaisesRegex(ValueError, "reconcile"):
+            self.reopen().create()
+
+    def test_rejection_without_one_exact_preflight_marker_stays_uncertain(self):
+        self.server.reject_create = True
+        header = "X-Container-Create-Preflight"
+        for index, headers in enumerate(([], [(header, "unknown")], [(header, "REJECTED")],
+                                         [(header, "rejected"), (header.lower(), "rejected")])):
+            with self.subTest(headers=headers):
+                self.server.create_headers = headers
+                journal = ServiceJournal(self.root / f"rejected-{index}.sqlite", {"case": self.owner}, create=True)
+                fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", journal)
+                with self.assertRaises(ValueError):
+                    fixture.create()
+                self.assertNotIn("container-create-rejected.json", journal.records())
+                with self.assertRaisesRegex(ValueError, "Uncertain creation"):
+                    fixture.cleanup()
+
+    def test_preflight_rejection_cannot_authorize_deleting_an_unexpected_resource(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("x-container-create-preflight", "rejected")]
+        with self.assertRaises(ValueError):
+            self.fixture.create()
+        self.server.guest = {"Id": "b" * 64, "Name": "/" + self.fixture.name}
+        with self.assertRaisesRegex(ValueError, "Rejected creation.*resource"):
+            self.fixture.cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+
+    def test_invalid_or_contradictory_rejection_receipt_cannot_authorize_cleanup(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("X-Container-Create-Preflight", "rejected")]
+        with self.assertRaises(ValueError):
+            self.fixture.create()
+        records = self.journal.records()
+        receipt = json.loads(records["container-create-rejected.json"])
+        invalid = [None, [], dict(receipt, intentSHA256="a" * 64), dict(receipt, status=True),
+                   dict(receipt, status=201), dict(receipt, responseSHA256="invalid"),
+                   dict(receipt, preflight="unknown"), dict(receipt, extra=True)]
+        for value in invalid:
+            changed = dict(records, **{"container-create-rejected.json": canonical(value)})
+            with self.subTest(receipt=value), patch.object(self.journal, "records", return_value=changed):
+                with self.assertRaisesRegex(ValueError, "Invalid or contradictory"):
+                    self.reopen().cleanup()
+        for name in ("container-created.json", "container-delete-intent.json"):
+            for value in (None, {"id": "b" * 64}):
+                changed = dict(records, **{name: canonical(value)})
+                with self.subTest(record=name, value=value), patch.object(self.journal, "records", return_value=changed):
+                    with self.assertRaisesRegex(ValueError, "Invalid or contradictory"):
+                        self.reopen().cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_preflight_marker_requires_error_status_and_unambiguous_error_body(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("X-Container-Create-Preflight", "rejected")]
+        cases = ((201, {"message": "error"}), (501, {}), (501, {"message": None}),
+                 (501, {"message": "error", "Id": "b" * 64}), (501, b"incomplete JSON"))
+        for index, (status, body) in enumerate(cases):
+            self.server.reject_status, self.server.reject_body = status, body
+            journal = ServiceJournal(self.root / f"invalid-{index}.sqlite", {"case": self.owner}, create=True)
+            fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", journal)
+            with self.subTest(status=status, body=body):
+                with self.assertRaises(ValueError):
+                    fixture.create()
+                self.assertNotIn("container-create-rejected.json", journal.records())
+                with self.assertRaisesRegex(ValueError, "Uncertain creation"):
+                    fixture.cleanup()
+
+    def test_preflight_rejection_still_checks_renamed_owned_residue(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("X-Container-Create-Preflight", "rejected")]
+        with self.assertRaises(ValueError):
+            self.fixture.create()
+        self.server.guest = {"Id": "b" * 64, "Name": "/renamed"}
+        with self.assertRaisesRegex(ValueError, "Owned guest residue"):
+            self.fixture.cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_rejection_receipt_storage_failure_leaves_outcome_uncertain(self):
+        self.server.reject_create = True
+        self.server.create_headers = [("X-Container-Create-Preflight", "rejected")]
+        original = self.journal.put
+        def fail_receipt(name, value):
+            if name == "container-create-rejected.json":
+                raise OSError("disk full")
+            return original(name, value)
+        with patch.object(self.journal, "put", side_effect=fail_receipt), self.assertRaises(OSError):
+            self.fixture.create()
         with self.assertRaisesRegex(ValueError, "Uncertain creation"):
             self.fixture.cleanup()
         self.assertNotIn("container-removed.json", self.journal.records())
