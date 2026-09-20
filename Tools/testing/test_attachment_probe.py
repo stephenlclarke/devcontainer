@@ -2,14 +2,18 @@
 
 import json
 from pathlib import Path
+import queue
+import selectors
+import socket
 from socketserver import ThreadingMixIn, UnixStreamServer
 import sys
 import threading
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
-from attachment_probe import AttachmentFixture, BINARY_INPUT, ERROR_OUTPUT, OUTPUT_PREFIX, OUTPUT_SUFFIX
+from attachment_probe import AttachmentFixture, BINARY_INPUT, ERROR_OUTPUT, OUTPUT_PREFIX, OUTPUT_SUFFIX, observed_duplex, started_output
 from case_evidence import contract_observations
 from test_exec_probe import frame
 import test_guest_fixture as helpers
@@ -47,14 +51,29 @@ class Handler(helpers.Handler):
             return super().respond()
         server = self.server
         server.routes.append((self.command, self.path))
-        live = parse_qs(parsed.query)["stream"] == ["1"]
+        options = parse_qs(parsed.query)
+        live = options["stream"] == ["1"]
+        observer = live and options["logs"] == ["1"]
         self.close_connection = True
         self.connection.settimeout(3)
-        if live:
+        if live and not observer:
             server.started.clear()
             server.attached.set()
         head = (b"HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n"
                 b"Content-Type: application/vnd.docker.raw-stream\r\n\r\n")
+        if observer:
+            chunks = queue.Queue()
+            # Transport readiness must not imply that saved-log replay is ready.
+            self.connection.sendall(head)
+            with server.output_lock:
+                history = bytes(server.history) + bytes(server.running_history)
+                server.observers.append(chunks)
+            self.connection.sendall(history)
+            while (chunk := chunks.get(timeout=3)) is not None:
+                self.connection.sendall(chunk)
+            if server.duplicate_combined:
+                self.connection.sendall(frame(OUTPUT_PREFIX))
+            return
         self.connection.sendall(head)
         if not live:
             history = server.history
@@ -67,6 +86,8 @@ class Handler(helpers.Handler):
         if server.fail_start:
             return
         payload = bytearray(frame(OUTPUT_PREFIX) + frame(ERROR_OUTPUT, 2))
+        with server.output_lock:
+            server.running_history = bytes(payload)
         self.connection.sendall(payload)
         while chunk := self.rfile.read1(65536):
             value = frame(chunk)
@@ -75,10 +96,20 @@ class Handler(helpers.Handler):
             logged = b"".join(bytes((byte,)) if byte < 128 else b"\xef\xbf\xbd" for byte in chunk)
             payload.extend(frame(logged))
             self.connection.sendall(value)
+            with server.output_lock:
+                server.running_history = bytes(payload)
+                for observer in server.observers:
+                    observer.put(value)
         last = frame(OUTPUT_SUFFIX)
         payload.extend(last)
         self.connection.sendall(last)
-        server.history += payload
+        with server.output_lock:
+            for observer in server.observers:
+                observer.put(last)
+                observer.put(None)
+            server.observers.clear()
+            server.running_history = b""
+            server.history += payload
         if not server.first_history:
             server.first_history = bytes(payload)
         server.guest["State"] = {"Status": "exited", "ExitCode": server.exit_code}
@@ -101,6 +132,9 @@ class AttachmentTests(unittest.TestCase):
         self.server.handle_error = lambda *_: self.errors.append(sys.exc_info()[1])
         self.server.started, self.server.attached = threading.Event(), threading.Event()
         self.server.history, self.server.exit_code, self.server.truncate_history = b"", 17, False
+        self.server.output_lock = threading.Lock()
+        self.server.observers, self.server.running_history = [], b""
+        self.server.duplicate_combined = False
         self.server.log_driver = {"Type": "json-file", "Config": {}}
         self.server.first_history, self.server.duplicate_first = b"", False
         self.events = []
@@ -111,10 +145,11 @@ class AttachmentTests(unittest.TestCase):
         expected = contract_observations(json.loads(contract.read_text())["expected"])
         self.assertEqual(self.fixture.operation(), expected)
         attachments = [event for event in self.events if "/attach?" in event["route"]]
-        self.assertEqual(len(attachments), 4)
+        self.assertEqual(len(attachments), 5)
         self.assertTrue(all(event["durationNS"] > 0 and event["status"] == 101 for event in attachments))
         self.assertEqual(sum(path.endswith("/start") for _, path in self.server.routes), 2)
         self.assertIn("attachment", json.loads(self.journal.records()["container-intent.json"]))
+        self.assertIn("init-combined-attachment.json", self.journal.records())
         self.assertEqual(self.fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
         self.assertEqual(self.reopen().cleanup()["status"], "passed")
 
@@ -123,6 +158,27 @@ class AttachmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Truncated exec stream"):
             self.fixture.operation()
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_duplicated_saved_prefix_cannot_satisfy_combined_attachment(self):
+        self.server.duplicate_combined = True
+        with self.assertRaisesRegex(ValueError, "Combined history/live output"):
+            self.fixture.operation()
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_startup_markers_accept_split_headers_and_reject_missing_or_changed_bytes(self):
+        payload = frame(OUTPUT_PREFIX) + frame(ERROR_OUTPUT, 2)
+        connection = Mock()
+        connection.recv.side_effect = [bytes((byte,)) for byte in payload]
+        self.assertEqual(started_output(connection, b"", time.monotonic() + 3), payload)
+        for initial, chunks, message in (
+                (b"", [b""], "before both startup"),
+                (frame(b"wrong"), [], "markers differ"),
+                (b"\x03\0\0\0\0\0\0\0", [], "Malformed"),
+                (b"\x01\0\0\0\0\x01\0\0", [], "frame exceeds"),
+                (b"x" * 4097, [], "output exceeds")):
+            connection.recv.side_effect = chunks
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                started_output(connection, initial, time.monotonic() + 3)
 
     def test_replayed_first_generation_cannot_replace_second_history(self):
         self.server.duplicate_first = True
@@ -159,3 +215,69 @@ class AttachmentTests(unittest.TestCase):
             self.fixture.operation()
         self.assertFalse(any(path.endswith("/start") for _, path in self.server.routes))
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+
+class AttachmentIOTests(unittest.TestCase):
+    def test_observer_waits_for_saved_markers_after_headers(self):
+        fixture = object.__new__(AttachmentFixture)
+        fixture.identifier, fixture.version, fixture.socket = "b" * 64, "1.54", Path("unused")
+        fixture.inspect = Mock(return_value={"State": {"Status": "running"}})
+        fixture.owned = Mock(return_value=fixture.identifier)
+        fixture.journal, fixture.observe = Mock(), None
+        observer, primary = MagicMock(), Mock()
+        observer.__enter__.return_value = observer
+        markers = frame(OUTPUT_PREFIX) + frame(ERROR_OUTPUT, 2)
+        observer.recv.side_effect = [markers[:5], markers[5:]]
+
+        def transfer(_primary, _initial, _observer, history, _incoming, _end):
+            self.assertEqual(history, markers, "input began before saved startup records arrived")
+            self.assertEqual(observer.recv.call_count, 2)
+            return ((OUTPUT_PREFIX, ERROR_OUTPUT),) * 2
+
+        with patch("attachment_probe.socket.socket", return_value=observer), \
+                patch("attachment_probe.upgrade", return_value=(101, b"")), \
+                patch("attachment_probe.observed_duplex", side_effect=transfer):
+            self.assertEqual(fixture.observe_running(primary, markers, b"binary", time.monotonic() + 3),
+                             (OUTPUT_PREFIX, ERROR_OUTPUT))
+
+    def pair(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        return left, right
+
+    def test_output_only_peers_half_close_and_drain_both_sources(self):
+        primary, writer = self.pair()
+        observer, replay = self.pair()
+        for connection in (writer, replay):
+            connection.sendall(frame(b"out") + frame(b"err", 2))
+            connection.shutdown(socket.SHUT_WR)
+        self.assertEqual(observed_duplex(primary, b"", observer, b"", b"", time.monotonic() + 3),
+                         ((b"out", b"err"), (b"out", b"err")))
+        self.assertEqual((writer.recv(1), replay.recv(1)), (b"", b""))
+
+    def test_incomplete_input_output_limit_and_deadline_are_failures(self):
+        for kind, message in (("input", "before input"), ("limit", "output exceeds"),
+                              ("deadline", "whole-connection deadline")):
+            with self.subTest(kind=kind):
+                primary, writer = self.pair()
+                observer, replay = self.pair()
+                if kind == "limit":
+                    writer.sendall(frame(b"too much"))
+                writer.shutdown(socket.SHUT_WR)
+                replay.shutdown(socket.SHUT_WR)
+                with patch("attachment_probe.MAX_OUTPUT", 1), \
+                        self.assertRaisesRegex((ValueError, TimeoutError), message):
+                    observed_duplex(primary, b"", observer, b"", b"pending" if kind == "input" else b"",
+                                    time.monotonic() + (3 if kind != "deadline" else -1))
+
+    def test_zero_length_write_fails_instead_of_spinning(self):
+        primary, observer = Mock(), Mock()
+        primary.send.return_value = 0
+        selector = MagicMock()
+        selector.__enter__.return_value = selector
+        selector.get_map.return_value = {1: object()}
+        selector.select.return_value = [(Mock(fileobj=primary), selectors.EVENT_WRITE)]
+        with patch("attachment_probe.selectors.DefaultSelector", return_value=selector), \
+                self.assertRaisesRegex(ValueError, "stopped accepting input"):
+            observed_duplex(primary, b"", observer, b"", b"pending", time.monotonic() + 3)
