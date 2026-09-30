@@ -21,6 +21,7 @@ import time
 from check_evidence import load_policy, validate
 from input_identity import source_identity, tooling_identity
 from package_checks.cli_process import session_members, terminate_session
+from retained_test_xml import DATABASE as RETAINED_DATABASE, read as read_retained_test_xml
 
 ROOT = Path(__file__).resolve().parents[2]
 LAYERS = (
@@ -185,7 +186,8 @@ def admit_command(events: list[dict], stage: dict) -> None:
         raise ValueError("layer command is filtered, retried, overridden or not source-debug")
 
 
-def admit(directory: Path, stage: dict, source: dict) -> dict:
+def admit(directory: Path, stage: dict, source: dict,
+          database: Path = RETAINED_DATABASE) -> dict:
     """Bind successful native tests to the requested profile and unchanged source."""
     before = json.loads((directory / "inputs-before.json").read_text())
     after = json.loads((directory / "inputs-after.json").read_text())
@@ -201,8 +203,10 @@ def admit(directory: Path, stage: dict, source: dict) -> dict:
     if (len(finished) != 1 or finished[0].get("overallSuccess") is not True
             or len(summaries) != len(stage["tests"])):
         raise ValueError("layer command, source mode or complete single-attempt result changed")
-    counts = validate(events, warm=False, expected=stage["tests"])
+    immutable = read_retained_test_xml(directory, events, database)
+    counts = validate(events, warm=False, expected=stage["tests"], retained_xml=immutable)
     return {"invocation": str(directory), **counts,
+            "retainedXMLSHA256": {key: hashlib.sha256(value).hexdigest() for key, value in immutable.items()},
             "evidenceSHA256": {name: digest(directory / name) for name in
                                ("inputs-before.json", "inputs-after.json", "events.json", "outcome.json")}}
 

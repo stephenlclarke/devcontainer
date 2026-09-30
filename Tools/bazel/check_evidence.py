@@ -141,7 +141,8 @@ def require_source_hits(text: str, required: set[str]) -> None:
         raise ValueError("Coverage is missing migrated production sources")
 
 
-def validate(events: list[dict], warm: bool, expected: dict[str, int] | None = None) -> dict:
+def validate(events: list[dict], warm: bool, expected: dict[str, int] | None = None,
+             retained_xml: dict[str, bytes] | None = None) -> dict:
     """Check exact target results, completion, optional cache reuse, and XML."""
     expected = EXPECTED if expected is None else expected
     finished = [event["finished"] for event in events if "finished" in event]
@@ -156,18 +157,40 @@ def validate(events: list[dict], warm: bool, expected: dict[str, int] | None = N
         if warm and summary.get("totalNumCached") != 1:
             raise ValueError("Warm qualification unexpectedly executed a test")
     counts = {}
+    used_xml = set()
     for event in events:
         if "testResult" not in event:
             continue
-        label = event["id"]["testResult"]["label"]
+        identity = event["id"]["testResult"]
+        label = identity["label"]
         for output in event["testResult"].get("testActionOutput", []):
             if output["name"] != "test.xml":
                 continue
             uri = urlparse(output["uri"])
-            path = Path(unquote(uri.path)).resolve()
-            if uri.scheme != "file" or uri.netloc or not path.is_relative_to("/Volumes/SSD/cf/bazel"):
+            spelling = unquote(uri.path)
+            if uri.scheme != "file" or uri.netloc:
                 raise ValueError("Test evidence must be a local SSD file")
-            counts[label] = case_count(path.read_text(), expected[label])
+            if retained_xml is None:
+                resolved = Path(spelling).resolve()
+                if not resolved.is_relative_to("/Volumes/SSD/cf/bazel"):
+                    raise ValueError("Test evidence must be a local SSD file")
+                contents = resolved.read_text()
+            else:
+                path = Path(spelling)
+                if (not path.is_absolute() or
+                        any(part in {".", ".."} for part in spelling.split("/")) or
+                        not path.is_relative_to("/Volumes/SSD/cf/bazel")):
+                    raise ValueError("Test evidence must be a local SSD file")
+                key = json.dumps(identity, sort_keys=True)
+                if key in used_xml or key not in retained_xml:
+                    raise ValueError("Missing or duplicate immutable test XML")
+                used_xml.add(key)
+                contents = retained_xml[key].decode("utf-8")
+            if label in counts:
+                raise ValueError("Duplicate test XML label")
+            counts[label] = case_count(contents, expected[label])
+    if retained_xml is not None and used_xml != set(retained_xml):
+        raise ValueError("Unexpected immutable test XML")
     if set(counts) != set(expected):
         raise ValueError("Missing test XML evidence")
     return {"test_cases": counts, "all_tests_cached": all(s.get("totalNumCached") == 1 for s in summaries.values())}

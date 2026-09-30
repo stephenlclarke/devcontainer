@@ -23,6 +23,13 @@ class LayeredBuildTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.source = {"commit": "a" * 40, "dirty": False, "files": {}, "tooling": {}}
         self.stage = layers.plan(layers.ROOT, ("stock",))[0]
+        def retained(directory, events, _database):
+            return {json.dumps(event["id"]["testResult"], sort_keys=True):
+                    (directory / (event["id"]["testResult"]["label"].removeprefix("//:") + ".xml")).read_bytes()
+                    for event in events if "testResult" in event}
+        reader = patch.object(layers, "read_retained_test_xml", side_effect=retained)
+        reader.start()
+        self.addCleanup(reader.stop)
 
     def evidence(self, stage=None, directory=None) -> tuple[Path, list[dict]]:
         stage = stage or self.stage
@@ -79,7 +86,10 @@ class LayeredBuildTests(unittest.TestCase):
         with patch.object(layers, "validate", return_value={"test_cases": {"model": 11}}) as validate:
             result = layers.admit(directory, self.stage, self.source)
             self.assertEqual(result["test_cases"], {"model": 11})
-            validate.assert_called_once_with(original, warm=False, expected=self.stage["tests"])
+            validate.assert_called_once()
+            self.assertEqual(validate.call_args.args, (original,))
+            self.assertEqual(validate.call_args.kwargs["expected"], self.stage["tests"])
+            self.assertEqual(len(validate.call_args.kwargs["retained_xml"]), len(self.stage["tests"]))
         for extra in ("--config=enhanced", "--config=prebuilt-argument-parser"):
             events = copy.deepcopy(original)
             events[0]["unstructuredCommandLine"]["args"].append(extra)

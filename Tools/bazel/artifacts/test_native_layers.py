@@ -327,8 +327,10 @@ class NativeLayersTests(unittest.TestCase):
         events(flags, labels)
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import check_evidence
+        import retained_test_xml
         with mock.patch.object(check_evidence, "validate",
-                               return_value={"test_cases": {label: 64 for label in labels}}) as validator:
+                               return_value={"test_cases": {label: 64 for label in labels}}) as validator, \
+                mock.patch.object(retained_test_xml, "read", return_value={}):
             admitted = layer_release.admitted_tests(invocation, source, "engine-api", "enhanced")
         self.assertEqual(admitted["passedLabels"], labels)
         self.assertEqual(set(validator.call_args.kwargs["expected"]), set(labels))
@@ -354,6 +356,7 @@ class NativeLayersTests(unittest.TestCase):
 
     def test_source_mode_admission_reads_real_xml_case_inventory(self) -> None:
         import check_evidence
+        import retained_test_xml
         invocation = self.root / "xml-run"
         invocation.mkdir()
         source = {"commit": "a" * 40, "dirty": False}
@@ -376,14 +379,14 @@ class NativeLayersTests(unittest.TestCase):
             rows += [{"id": {"testSummary": {"label": label}},
                       "testSummary": {"overallStatus": "PASSED", "totalRunCount": 1}},
                      {"id": {"testResult": {"label": label}},
-                      "testResult": {"testActionOutput": [{"name": "test.xml", "uri": xml.as_uri()}]}}]
+                      "testResult": {"testActionOutput": [{"name": "test.xml", "uri":
+                                                         f"file:///Volumes/SSD/cf/bazel/fixtures/cases-{index}.xml"}]}}]
         (invocation / "events.json").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-        original = Path.is_relative_to
-        def isolated_ssd(path: Path, other: str | Path) -> bool:
-            if str(other) == "/Volumes/SSD/cf/bazel":
-                return original(path, invocation.resolve())
-            return original(path, other)
-        with mock.patch.object(Path, "is_relative_to", isolated_ssd):
+        def fixture_xml(_invocation: Path, rows: list[dict], _database: Path) -> dict[str, bytes]:
+            return {json.dumps(row["id"]["testResult"], sort_keys=True):
+                    (invocation / f"cases-{labels.index(row['id']['testResult']['label'])}.xml").read_bytes()
+                    for row in rows if "testResult" in row}
+        with mock.patch.object(retained_test_xml, "read", side_effect=fixture_xml):
             accepted = layer_release.admitted_tests(invocation, source, "engine-api", "enhanced")
             self.assertEqual(accepted["caseCounts"], {label: policy["tests"][label] for label in labels})
             rows.pop()
@@ -391,7 +394,8 @@ class NativeLayersTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing test XML"):
                 layer_release.admitted_tests(invocation, source, "engine-api", "enhanced")
             rows.append({"id": {"testResult": {"label": labels[-1]}},
-                         "testResult": {"testActionOutput": [{"name": "test.xml", "uri": xml.as_uri()}]}})
+                         "testResult": {"testActionOutput": [{"name": "test.xml", "uri":
+                                                             "file:///Volumes/SSD/cf/bazel/fixtures/cases-1.xml"}]}})
             rows[1]["optionsParsed"]["cmdLine"][-1] = "--flaky_test_attempts=2"
             (invocation / "events.json").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             with self.assertRaisesRegex(ValueError, "cannot narrow"):

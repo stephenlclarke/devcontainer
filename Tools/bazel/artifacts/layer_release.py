@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -100,7 +101,8 @@ def verify_producer(receipt: dict, manifest: dict) -> dict:
     return inputs
 
 
-def admitted_tests(invocation: Path, source_inputs: dict, group: str, profile: str) -> dict:
+def admitted_tests(invocation: Path, source_inputs: dict, group: str, profile: str,
+                   database: Path | None = None) -> dict:
     before = json.loads((invocation / "inputs-before.json").read_text())
     after = json.loads((invocation / "inputs-after.json").read_text())
     outcome = json.loads((invocation / "outcome.json").read_text())
@@ -134,13 +136,16 @@ def admitted_tests(invocation: Path, source_inputs: dict, group: str, profile: s
         raise ValueError("layer source tests cannot narrow or retry the selected cases")
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from check_evidence import load_policy, validate
+    from retained_test_xml import DATABASE, read as read_retained_test_xml
     policy = load_policy(Path(__file__).resolve().parents[3] / "Tools/bazel/evidence-policy.json", profile)
     expected = {label: policy["tests"][label] for label in TEST_LABELS[group]}
-    checked = validate(events, warm=False, expected=expected)
+    immutable = read_retained_test_xml(invocation, events, DATABASE if database is None else database)
+    checked = validate(events, warm=False, expected=expected, retained_xml=immutable)
     return {"invocation": str(invocation), "outcomeSHA256": file_digest(invocation / "outcome.json"),
             "eventsSHA256": file_digest(invocation / "events.json"),
             "inputsSHA256": file_digest(invocation / "inputs-before.json"),
             "passedLabels": sorted(labels), "caseCounts": checked["test_cases"],
+            "retainedXMLSHA256": {key: hashlib.sha256(value).hexdigest() for key, value in immutable.items()},
             "evidencePolicySHA256": policy["sha256"]}
 
 
