@@ -17,6 +17,8 @@ build --macos_minimum_os=15.0
 build --action_env=TMPDIR
 test --test_env=TMPDIR
 test --test_env=HOME
+# Optimized XCTest targets use @testable imports; expose test interfaces only to test actions.
+test --features=swift.enable_testing
 build --symlink_prefix=/
 test --test_output=errors
 test --flaky_test_attempts=1
