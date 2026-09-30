@@ -435,7 +435,7 @@ private final class ProcessInputCancellation: @unchecked Sendable {
 
     func install(_ continuation: CheckedContinuation<Void, any Error>) {
         let result: Result<Void, any Error>? = lock.withLock {
-            if let result {
+            if let result = self.result {
                 return result
             }
             self.continuation = continuation
