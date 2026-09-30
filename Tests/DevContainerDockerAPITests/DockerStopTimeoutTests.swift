@@ -8,7 +8,7 @@ import Testing
 
 struct DockerStopTimeoutTests {
     @Test(arguments: [0, 7, Int(Int32.max)])
-    func createInspectionPreservesTimeout(_ seconds: Int) async throws {
+    func `create inspection preserves timeout`(_ seconds: Int) async throws {
         let (router, _) = try await prepared(seconds: seconds)
         let response = await router.respond(to: .init(method: .get, target: "/containers/grace/json"))
         let object = try #require(JSONSerialization.jsonObject(with: bytes(response)) as? [String: Any])
@@ -17,7 +17,7 @@ struct DockerStopTimeoutTests {
     }
 
     @Test(arguments: ["stop", "restart"], [nil, 0, 7] as [Int?])
-    func omittedOverrideUsesContainerPolicy(_ action: String, _ configured: Int?) async throws {
+    func `omitted override uses container policy`(_ action: String, _ configured: Int?) async throws {
         let (router, runtime) = try await prepared(seconds: configured)
         let response = await router.respond(to: .init(method: .post, target: "/containers/grace/\(action)"))
         #expect(response.status == 204)
@@ -25,7 +25,7 @@ struct DockerStopTimeoutTests {
     }
 
     @Test(arguments: ["stop", "restart"], [0, 3])
-    func explicitOverrideWins(_ action: String, _ seconds: Int) async throws {
+    func `explicit override wins`(_ action: String, _ seconds: Int) async throws {
         let (router, runtime) = try await prepared(seconds: 7)
         let response = await router.respond(to: .init(
             method: .post, target: "/containers/grace/\(action)?t=\(seconds)"
@@ -35,7 +35,7 @@ struct DockerStopTimeoutTests {
     }
 
     @Test(arguments: ["stop", "restart"], ["abc", "", "9223372036854775808", "-1", "2147483648"])
-    func invalidOverrideDoesNotSignal(_ action: String, _ value: String) async throws {
+    func `invalid override does not signal`(_ action: String, _ value: String) async throws {
         let (router, runtime) = try await prepared(seconds: 7)
         let response = await router.respond(to: .init(
             method: .post, target: "/containers/grace/\(action)?t=\(value)"
@@ -49,15 +49,15 @@ struct DockerStopTimeoutTests {
     }
 
     @Test(arguments: [-1, Int(Int32.max) + 1])
-    func unsupportedPolicyFailsBeforeAllocation(_ seconds: Int) async throws {
-        let response = await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
+    func `unsupported policy fails before allocation`(_ seconds: Int) async throws {
+        let response = try await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
             method: .post, target: "/containers/create",
-            body: try JSONSerialization.data(withJSONObject: ["Image": "missing", "StopTimeout": seconds])
+            body: JSONSerialization.data(withJSONObject: ["Image": "missing", "StopTimeout": seconds])
         ))
         #expect(response.status == 501)
     }
 
-    @Test func persistedPolicyAndLegacyMetadataDecode() throws {
+    @Test func `persisted policy and legacy metadata decode`() throws {
         var spec = ContainerSpec(name: "grace", image: "test")
         let legacy = try JSONEncoder().encode(spec)
         #expect(try JSONDecoder().decode(ContainerSpec.self, from: legacy).stopTimeoutSeconds == nil)
@@ -70,10 +70,12 @@ struct DockerStopTimeoutTests {
         await runtime.seedImage(.init(id: "sha256:grace", references: ["grace:test"], createdAt: Date(), size: 1))
         let router = DockerRouter(runtime: runtime)
         var fields: [String: Any] = ["Image": "grace:test"]
-        if let seconds { fields["StopTimeout"] = seconds }
-        let response = await router.respond(to: .init(
+        if let seconds {
+            fields["StopTimeout"] = seconds
+        }
+        let response = try await router.respond(to: .init(
             method: .post, target: "/containers/create?name=grace",
-            body: try JSONSerialization.data(withJSONObject: fields)
+            body: JSONSerialization.data(withJSONObject: fields)
         ))
         #expect(response.status == 201)
         let started = await router.respond(to: .init(method: .post, target: "/containers/grace/start"))

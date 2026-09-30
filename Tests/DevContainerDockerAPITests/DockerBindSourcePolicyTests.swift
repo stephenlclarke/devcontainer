@@ -8,14 +8,14 @@ import Testing
 
 struct DockerBindSourcePolicyTests {
     @Test(arguments: [true, false, nil] as [Bool?])
-    func structuredBindPreservesCreationPolicy(_ policy: Bool?) async throws {
+    func `structured bind preserves creation policy`(_ policy: Bool?) async throws {
         let runtime = InMemoryRuntime()
         await runtime.seedImage(.init(id: "sha256:fixture", references: ["fixture:test"], createdAt: Date(), size: 1))
         var options: [String: Any] = [:]
         options["CreateMountpoint"] = policy
-        let response = await DockerRouter(runtime: runtime).respond(to: .init(
+        let response = try await DockerRouter(runtime: runtime).respond(to: .init(
             method: .post, target: "/containers/create?name=bind-policy",
-            body: try JSONSerialization.data(withJSONObject: [
+            body: JSONSerialization.data(withJSONObject: [
                 "Image": "fixture:test", "HostConfig": ["Mounts": [[
                     "Type": "bind", "Source": "/tmp/source", "Target": "/work", "ReadOnly": true,
                     "BindOptions": options
@@ -30,13 +30,13 @@ struct DockerBindSourcePolicyTests {
         #expect(mount.source == "/tmp/source")
     }
 
-    @Test func legacyBindsCreateDirectoriesButNotNamedVolumes() throws {
+    @Test func `legacy binds create directories but not named volumes`() throws {
         let mounts = try DockerRouter(runtime: InMemoryRuntime()).bindMounts(["/tmp/host:/work:ro", "cache:/cache"])
         #expect(mounts[0].createSourceDirectory == true)
         #expect(mounts[1].createSourceDirectory == nil)
     }
 
-    @Test func nonBindCreationOptionRemainsRejected() async throws {
+    @Test func `non bind creation option remains rejected`() async {
         let response = await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
             method: .post, target: "/containers/create",
             body: Data(#"""

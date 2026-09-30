@@ -89,9 +89,18 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
         listCalls
     }
 
-    func getCallCount() -> Int { getCalls }
-    func holdOneGet() { holdNextGet = true }
-    func isGetHeld() -> Bool { heldGet != nil }
+    func getCallCount() -> Int {
+        getCalls
+    }
+
+    func holdOneGet() {
+        holdNextGet = true
+    }
+
+    func isGetHeld() -> Bool {
+        heldGet != nil
+    }
+
     func releaseGet() {
         heldGet?.resume()
         heldGet = nil

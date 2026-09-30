@@ -9,7 +9,7 @@ import Testing
 struct DockerRecoveryBarrierTests {
     private let owner = String(repeating: "a", count: 64)
 
-    @Test func inFlightAndUncertainWorkCannotGrantRecovery() async throws {
+    @Test func `in flight and uncertain work cannot grant recovery`() async throws {
         let barrier = DockerRecoveryBarrier()
         let token = try await barrier.begin(.post)
         await #expect(throws: DevContainerError.self) {
@@ -19,7 +19,7 @@ struct DockerRecoveryBarrierTests {
         await #expect(throws: DevContainerError.self) { try await barrier.requireIdle() }
     }
 
-    @Test func preflightRejectionFreezesAllocationsButAllowsExactDeletion() async throws {
+    @Test func `preflight rejection freezes allocations but allows exact deletion`() async throws {
         let runtime = InMemoryRuntime()
         let router = DockerRouter(runtime: runtime)
         let session = await router.respond(to: .init(method: .get, target: DockerRecoveryBarrier.route))
@@ -30,9 +30,9 @@ struct DockerRecoveryBarrierTests {
         ))
         #expect(rejected.status == 501)
         let epoch = try #require(value["epoch"])
-        let freeze = await router.respond(to: .init(
+        let freeze = try await router.respond(to: .init(
             method: .post, target: DockerRecoveryBarrier.route,
-            body: try JSONEncoder().encode(["epoch": epoch, "owner": owner])
+            body: JSONEncoder().encode(["epoch": epoch, "owner": owner])
         ))
         #expect(freeze.status == 200)
         let later = await router.respond(to: .init(method: .post, target: "/containers/create", body: Data("{}".utf8)))
@@ -41,7 +41,7 @@ struct DockerRecoveryBarrierTests {
         #expect(deleted.status == 404)
     }
 
-    @Test func epochOwnerAndStreamingUncertaintyFailClosed() async throws {
+    @Test func `epoch owner and streaming uncertainty fail closed`() async throws {
         let barrier = DockerRecoveryBarrier()
         await #expect(throws: DevContainerError.self) { try await barrier.freeze(epoch: "old", owner: owner) }
         await #expect(throws: DevContainerError.self) { try await barrier.freeze(epoch: barrier.epoch, owner: "bad") }

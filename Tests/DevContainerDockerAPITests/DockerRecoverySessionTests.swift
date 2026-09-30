@@ -36,7 +36,7 @@ struct DockerRecoverySessionTests {
         )
     }
 
-    @Test func inFlightHealthPreventsFreezeAndFrozenInspectionDoesNotProbe() async throws {
+    @Test func `in flight health prevents freeze and frozen inspection does not probe`() async throws {
         let fixture = try await fixture(health: true)
         let router = fixture.router, id = fixture.id, session = fixture.session
         let freeze = try await freezeRequest(router)
@@ -56,7 +56,7 @@ struct DockerRecoverySessionTests {
         #expect(await router.respond(to: freeze).status == 200)
     }
 
-    @Test func freezeBeforeFirstHealthInspectionDoesNotLaunchProbe() async throws {
+    @Test func `freeze before first health inspection does not launch probe`() async throws {
         let fixture = try await fixture(health: true)
         let router = fixture.router, id = fixture.id, session = fixture.session
         let freeze = try await freezeRequest(router)
@@ -66,7 +66,7 @@ struct DockerRecoverySessionTests {
         #expect(await router.respond(to: freeze).status == 200)
     }
 
-    @Test func failedHealthCompletionCannotGrantQuiescence() async throws {
+    @Test func `failed health completion cannot grant quiescence`() async throws {
         let fixture = try await fixture(health: true, healthFailure: true)
         let router = fixture.router, id = fixture.id, session = fixture.session
         let freeze = try await freezeRequest(router)
@@ -78,7 +78,7 @@ struct DockerRecoverySessionTests {
     }
 
     @Test(arguments: [false, true])
-    func attachSessionsPreventRecovery(webSocket: Bool) async throws {
+    func `attach sessions prevent recovery`(webSocket: Bool) async throws {
         let fixture = try await fixture()
         let router = fixture.router, id = fixture.id
         let freeze = try await freezeRequest(router)
@@ -93,7 +93,7 @@ struct DockerRecoverySessionTests {
     }
 
     @Test(arguments: [false, true])
-    func attachedAndDetachedExecPreventRecovery(detached: Bool) async throws {
+    func `attached and detached exec prevent recovery`(detached: Bool) async throws {
         let fixture = try await fixture()
         let router = fixture.router, id = fixture.id, session = fixture.session
         let freeze = try await freezeRequest(router)
@@ -102,9 +102,9 @@ struct DockerRecoverySessionTests {
         ))
         let object = try #require(JSONSerialization.jsonObject(with: bytes(created)) as? [String: String])
         let execID = try #require(object["Id"])
-        let started = await router.respond(to: .init(
+        let started = try await router.respond(to: .init(
             method: .post, target: "/exec/\(execID)/start",
-            body: try JSONEncoder().encode(["Detach": detached])
+            body: JSONEncoder().encode(["Detach": detached])
         ))
         #expect(started.status == (detached ? 200 : 101))
         await session.waitForStart()

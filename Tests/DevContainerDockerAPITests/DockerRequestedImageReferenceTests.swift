@@ -10,14 +10,14 @@ struct DockerRequestedImageReferenceTests {
     private let imageID = "sha256:" + String(repeating: "a", count: 64)
 
     @Test(arguments: ["fixture:mutable", "fixture:tag@sha256:" + String(repeating: "b", count: 64)])
-    func displaySpellingNeverBecomesLaunchIdentity(_ reference: String) async throws {
+    func `display spelling never becomes launch identity`(_ reference: String) async throws {
         let runtime = InMemoryRuntime()
         // The declared spelling is intentionally absent from the image store.
         await runtime.seedImage(.init(id: imageID, references: [], createdAt: Date(), size: 1))
         let router = DockerRouter(runtime: runtime)
-        let created = await router.respond(to: .init(
+        let created = try await router.respond(to: .init(
             method: .post, target: "/containers/create?name=alias",
-            body: try JSONSerialization.data(withJSONObject: ["Image": imageID, "ContainerImageReference": reference])
+            body: JSONSerialization.data(withJSONObject: ["Image": imageID, "ContainerImageReference": reference])
         ))
         #expect(created.status == 201)
         let native = try await runtime.inspectContainer(id: "alias", context: .init())
@@ -36,15 +36,15 @@ struct DockerRequestedImageReferenceTests {
     }
 
     @Test(arguments: ["", "bad\nreference", String(repeating: "a", count: 1025)])
-    func invalidDisplayRejectedBeforeLookup(_ reference: String) async throws {
-        let response = await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
+    func `invalid display rejected before lookup`(_ reference: String) async throws {
+        let response = try await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
             method: .post, target: "/containers/create",
-            body: try JSONSerialization.data(withJSONObject: ["Image": imageID, "ContainerImageReference": reference])
+            body: JSONSerialization.data(withJSONObject: ["Image": imageID, "ContainerImageReference": reference])
         ))
         #expect(response.status == 400)
     }
 
-    @Test func mutableLaunchIdentityCannotUseDisplayExtension() async throws {
+    @Test func `mutable launch identity cannot use display extension`() async {
         let response = await DockerRouter(runtime: InMemoryRuntime()).respond(to: .init(
             method: .post, target: "/containers/create",
             body: Data(#"{"Image":"fixture:mutable","ContainerImageReference":"other:tag"}"#.utf8)
@@ -52,14 +52,14 @@ struct DockerRequestedImageReferenceTests {
         #expect(response.status == 400)
     }
 
-    @Test func providerCannotSubstituteTheSelectedImage() async throws {
+    @Test func `provider cannot substitute the selected image`() async throws {
         let runtime = InMemoryRuntime()
         await runtime.seedImage(.init(
             id: "sha256:" + String(repeating: "b", count: 64), references: [imageID], createdAt: Date(), size: 1
         ))
-        let response = await DockerRouter(runtime: runtime).respond(to: .init(
+        let response = try await DockerRouter(runtime: runtime).respond(to: .init(
             method: .post, target: "/containers/create",
-            body: try JSONSerialization.data(withJSONObject: [
+            body: JSONSerialization.data(withJSONObject: [
                 "Image": imageID, "ContainerImageReference": "fixture:mutable"
             ])
         ))

@@ -20,7 +20,9 @@ actor RecoveryProcessSession: RuntimeProcessSession {
     }
 
     func waitForStart() async {
-        if started { return }
+        if started {
+            return
+        }
         await withCheckedContinuation { startedWaiters.append($0) }
     }
 
@@ -30,7 +32,9 @@ actor RecoveryProcessSession: RuntimeProcessSession {
         startedWaiters.forEach { $0.resume() }
         startedWaiters.removeAll()
         let result = released ? 0 : await withCheckedContinuation { waiters.append($0) }
-        if failAfterRelease { throw ProbeFailure.unobservedCompletion }
+        if failAfterRelease {
+            throw ProbeFailure.unobservedCompletion
+        }
         return result
     }
 
@@ -43,5 +47,7 @@ actor RecoveryProcessSession: RuntimeProcessSession {
     func write(_: Data) { /* This probe has no input channel. */ }
     func closeStandardInput() { /* This probe has no input channel. */ }
     func resize(width _: UInt16, height _: UInt16) { /* This probe has no terminal. */ }
-    func cancel() { release() }
+    func cancel() {
+        release()
+    }
 }

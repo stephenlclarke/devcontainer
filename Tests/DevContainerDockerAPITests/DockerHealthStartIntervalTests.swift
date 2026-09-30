@@ -8,7 +8,7 @@ import Testing
 
 struct DockerHealthStartIntervalTests {
     @Test(arguments: [Int64(0), 1_000_000, 750_000_000])
-    func createInspectionPreservesStartupInterval(_ interval: Int64) async throws {
+    func `create inspection preserves startup interval`(_ interval: Int64) async throws {
         let runtime = InMemoryRuntime()
         await runtime.seedImage(.init(id: "sha256:health", references: ["health:test"], createdAt: Date(), size: 1))
         let router = DockerRouter(runtime: runtime)
@@ -27,7 +27,7 @@ struct DockerHealthStartIntervalTests {
     }
 
     @Test(arguments: [Int64(-1), 1, 999_999])
-    func invalidIntervalsFailBeforeImageLookup(_ interval: Int64) async throws {
+    func `invalid intervals fail before image lookup`(_ interval: Int64) async throws {
         let body = try JSONSerialization.data(withJSONObject: [
             "Image": "missing", "Healthcheck": ["Test": ["CMD", "true"], "StartInterval": interval]
         ])
@@ -37,7 +37,7 @@ struct DockerHealthStartIntervalTests {
         #expect(response.status == 400)
     }
 
-    @Test func legacyHealthPolicyDecodesWithoutStartupInterval() throws {
+    @Test func `legacy health policy decodes without startup interval`() throws {
         let json = #"{"test":["CMD","true"],"intervalNanoseconds":1000000000,"timeoutNanoseconds":1000000000,"#
             + #""retries":3,"startPeriodNanoseconds":0}"#
         let data = Data(json.utf8)

@@ -11,7 +11,9 @@ actor DockerRecoveryBarrier {
     private var active = Set<UUID>()
     private var uncertain = false
 
-    var healthProbesAllowed: Bool { owner == nil }
+    var healthProbesAllowed: Bool {
+        owner == nil
+    }
 
     func begin(_ method: DockerHTTPMethod, path: String = "") throws -> UUID {
         let segments = path.split(separator: "/")
@@ -39,7 +41,10 @@ actor DockerRecoveryBarrier {
             uncertain = true // Detached execution has no response-body lifetime.
         }
         if method != .get, method != .head, response.status >= 400,
-           response.headers[Self.preflightHeader] != "rejected" { uncertain = true }
+           response.headers[Self.preflightHeader] != "rejected"
+        {
+            uncertain = true
+        }
     }
 
     func recordUncertainWork() {

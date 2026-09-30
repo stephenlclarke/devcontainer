@@ -8,12 +8,16 @@ import Foundation
 import Testing
 
 struct AppleContainerEnvironmentTests {
-    @Test func removesInheritedValuesFromNativeProcessAndAdoption() throws {
+    @Test func `removes inherited values from native process and adoption`() throws {
         let image = try JSONDecoder().decode(ImageConfig.self, from: Data(
             #"{"Cmd":["/bin/true"],"Env":["REMOVE=secret","KEEP=yes","EMPTY=old"]}"#.utf8
         ))
-        let spec = ContainerSpec(name: "fixture", image: "fixture:latest", environment: ["EMPTY": ""],
-                                 removedEnvironmentKeys: ["REMOVE"])
+        let spec = ContainerSpec(
+            name: "fixture",
+            image: "fixture:latest",
+            environment: ["EMPTY": ""],
+            removedEnvironmentKeys: ["REMOVE"]
+        )
         let process = try AppleContainerCreateProjection.process(spec, image: image)
         #expect(!process.environment.contains { $0.hasPrefix("REMOVE=") })
         #expect(process.environment.contains("KEEP=yes"))
@@ -25,7 +29,7 @@ struct AppleContainerEnvironmentTests {
         #expect(adopted.removedEnvironmentKeys == ["REMOVE"])
     }
 
-    @Test func legacyCLIRejectsRemovalBeforeCreate() async throws {
+    @Test func `legacy CLI rejects removal before create`() async throws {
         let fixture = try FakeAppleCLI()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let runtime = try fixture.runtime()

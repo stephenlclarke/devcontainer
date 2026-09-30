@@ -5,7 +5,7 @@ import Foundation
 import Testing
 
 struct ContainerEnvironmentOverridesTests {
-    @Test func distinguishesRemovalAndEmptyValues() throws {
+    @Test func `distinguishes removal and empty values`() throws {
         let value = try ContainerEnvironmentOverrides(["REMOVE=old", "REMOVE", "EMPTY=", "SET", "SET=a=b", "Z"])
         #expect(value.values == ["EMPTY": "", "SET": "a=b"])
         #expect(value.removedKeys == ["REMOVE", "Z"])
@@ -13,11 +13,11 @@ struct ContainerEnvironmentOverridesTests {
     }
 
     @Test(arguments: ["", "=value", "BAD\0=value", "KEY=v\0"])
-    func rejectsInvalidEntries(_ entry: String) {
+    func `rejects invalid entries`(_ entry: String) {
         #expect(throws: DevContainerError.self) { try ContainerEnvironmentOverrides([entry]) }
     }
 
-    @Test func optionalMetadataIsBackwardCompatible() throws {
+    @Test func `optional metadata is backward compatible`() throws {
         let original = ContainerSpec(name: "test", image: "test")
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()

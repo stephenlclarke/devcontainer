@@ -6,7 +6,7 @@ import Foundation
 import Testing
 
 struct DockerEnvironmentOverridesTests {
-    @Test func inspectionRetainsBareRemovalKeys() async throws {
+    @Test func `inspection retains bare removal keys`() async throws {
         let runtime = InMemoryRuntime()
         await runtime.seedImage(.init(id: "sha256:env", references: ["env:test"], createdAt: Date(), size: 1))
         let router = DockerRouter(runtime: runtime)
@@ -21,7 +21,7 @@ struct DockerEnvironmentOverridesTests {
         #expect(Set(env) == ["REMOVE", "EMPTY="])
     }
 
-    @Test func createPreservesRemovalSeparatelyFromEmpty() throws {
+    @Test func `create preserves removal separately from empty`() throws {
         let request = try JSONDecoder().decode(DockerCreateContainerRequest.self, from: Data(
             #"{"Image":"fixture","Env":["REMOVE","EMPTY=","VALUE=a=b"]}"#.utf8
         ))

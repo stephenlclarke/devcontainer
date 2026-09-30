@@ -13,7 +13,8 @@ extension DockerRouter {
         guard !reference.isEmpty, reference.utf8.count <= 1024,
               reference.allSatisfy({ allowed.contains($0) }),
               request.image.hasPrefix("sha256:"), request.image.utf8.count == 71,
-              request.image.dropFirst(7).allSatisfy({ "0123456789abcdef".contains($0) }) else {
+              request.image.dropFirst(7).allSatisfy({ "0123456789abcdef".contains($0) })
+        else {
             throw DevContainerError(.invalidRequest, message: "Image reference display requires an immutable image ID")
         }
         let image = try await runtime.inspectImage(reference: request.image, context: context)

@@ -11,7 +11,7 @@ import Testing
 #if !DEVCONTAINER_ENHANCED_RUNTIME
     struct ApplePortForwardingObservationTests {
         @Test
-        func shutdownJoinsReplacedObserver() async throws {
+        func `shutdown joins replaced observer`() async throws {
             try await withFixture { runtime, inventory, snapshot, _ in
                 await inventory.holdOneGet()
                 try await runtime.startPortForwarding(snapshot: snapshot, startedAt: Date())
@@ -35,7 +35,7 @@ import Testing
         }
 
         @Test
-        func dynamicRestorePreservesInferredStartTime() async throws {
+        func `dynamic restore preserves inferred start time`() async throws {
             try await withFixture(unknownStart: true) { runtime, inventory, snapshot, store in
                 #expect(snapshot.startedAt == snapshot.createdAt)
                 try await runtime.restorePortForwarding(context: RuntimeRequestContext())
@@ -50,7 +50,7 @@ import Testing
         }
 
         @Test
-        func transportFailurePreservesListenersAndConfirmedAbsenceClosesThem() async throws {
+        func `transport failure preserves listeners and confirmed absence closes them`() async throws {
             try await withFixture { runtime, inventory, snapshot, _ in
                 await inventory.setGetFailure(.failed)
                 try await runtime.startPortForwarding(snapshot: snapshot, startedAt: Date())
@@ -66,7 +66,7 @@ import Testing
         }
 
         @Test
-        func nativeRestartClosesOnlyTheOldListenerGeneration() async throws {
+        func `native restart closes only the old listener generation`() async throws {
             try await withFixture { runtime, inventory, snapshot, _ in
                 try await runtime.startPortForwarding(snapshot: snapshot, startedAt: Date())
                 let native = try await inventory.get(id: "app")
@@ -87,8 +87,12 @@ import Testing
 
         private func withFixture(
             unknownStart: Bool = false,
-            operation: (AppleContainerRuntime, FakeContainerInventory, DevContainerModel.ContainerSnapshot,
-                        SQLiteStateStore) async throws -> Void
+            operation: (
+                AppleContainerRuntime,
+                FakeContainerInventory,
+                DevContainerModel.ContainerSnapshot,
+                SQLiteStateStore
+            ) async throws -> Void
         ) async throws {
             let fixture = try FakeAppleCLI()
             defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -122,7 +126,9 @@ import Testing
         private func eventually(_ predicate: () async -> Bool) async -> Bool {
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
             while ContinuousClock.now < deadline {
-                if await predicate() { return true }
+                if await predicate() {
+                    return true
+                }
                 try? await Task.sleep(for: .milliseconds(10))
             }
             return await predicate()
@@ -131,6 +137,8 @@ import Testing
 
     private actor CompletionFlag {
         private(set) var value = false
-        func mark() { value = true }
+        func mark() {
+            value = true
+        }
     }
 #endif

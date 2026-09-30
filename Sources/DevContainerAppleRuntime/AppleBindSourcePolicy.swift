@@ -24,7 +24,9 @@ enum AppleBindSourcePolicy {
         _ = try Parser.mounts([
             "type=bind,source=\(source),target=\(mount.destination)" + (mount.readOnly ? ",readonly" : "")
         ])
-        if FileManager.default.fileExists(atPath: mount.source) { return }
+        if FileManager.default.fileExists(atPath: mount.source) {
+            return
+        }
         // These directories belong to the caller, not the container. As with
         // Docker bind-create-src, removal must never delete their contents.
         try FileManager.default.createDirectory(
