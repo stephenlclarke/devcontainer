@@ -104,7 +104,7 @@ let package = Package(
             stockURL: "https://github.com/apple/container.git",
             stockVersion: "1.4.1",
             enhancedURL: "https://github.com/stephenlclarke/container.git",
-            enhancedRevision: "228897171d71975988ccdc690f1982e7433952af"
+            enhancedRevision: "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
         ),
         runtimeDependency(
             name: "containerization",
@@ -227,7 +227,6 @@ let package = Package(
         .target(
             name: "DevContainerTestSupport",
             dependencies: [
-                "DevContainerDockerAPI",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI"
             ]

@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from retain_evidence import artifact_paths, digest, evidence_paths, restore_candidate, retain
+from retain_evidence import artifact_paths, digest, evidence_paths, restore_candidate, retain, validate_client_environment
 
 
 class RetentionTests(unittest.TestCase):
@@ -81,6 +81,33 @@ class RetentionTests(unittest.TestCase):
             self.assertNotIn("fixture-secret", str(error.exception))
             self.assertFalse(self.database.exists())
             self.records.pop()
+
+    def test_launcher_git_prompt_suppression_has_only_exact_values(self) -> None:
+        safe = ["GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/usr/bin/false",
+                "GCM_INTERACTIVE=never", "GIT_CONFIG_COUNT=1",
+                "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
+                "SSH_ASKPASS=/usr/bin/false", "SSH_ASKPASS_REQUIRE=never",
+                "GIT_SSH_COMMAND=/usr/bin/ssh -oBatchMode=yes"]
+        for value in safe:
+            validate_client_environment({"optionName": "client_env", "optionValue": value})
+        for value in ("GIT_CONFIG_COUNT=2", "GIT_CONFIG_VALUE_0=token",
+                      "GIT_SSH_COMMAND=/tmp/other-ssh"):
+            with self.assertRaisesRegex(ValueError, "prompt suppression"):
+                validate_client_environment({"optionName": "client_env", "optionValue": value})
+
+    def test_configured_graph_and_source_graph_are_retained_exactly(self) -> None:
+        captured = {"aquery.stdout.log": b'{"actions":[]}\n',
+                    "source-graph.json": b'{"profile":"enhanced"}\n'}
+        for name, content in captured.items():
+            (self.root / name).write_bytes(content)
+        self.write_events()
+        retain(self.events, self.database, self.root)
+        with sqlite3.connect(self.database) as db:
+            manifest = json.loads(db.execute("SELECT manifest FROM invocations").fetchone()[0])
+            for name, content in captured.items():
+                self.assertEqual(manifest[name], digest(content))
+                self.assertEqual(db.execute("SELECT bytes FROM blobs WHERE sha256=?",
+                                            (manifest[name],)).fetchone()[0], content)
 
     def test_external_network_and_symlink_escapes_are_rejected(self) -> None:
         link = self.root / "escape"

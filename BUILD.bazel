@@ -276,7 +276,7 @@ swift_library(
     name = "DevContainerTestSupport",
     srcs = glob(["Sources/DevContainerTestSupport/*.swift"]),
     module_name = "DevContainerTestSupport",
-    deps = [":DevContainerDockerAPI", ":DevContainerModel", ":DevContainerRuntimeSPI"],
+    deps = [":DevContainerModel", ":DevContainerRuntimeSPI"],
 )
 
 swift_library(
@@ -317,7 +317,7 @@ swift_binary(
 
 filegroup(
     name = "products",
-    srcs = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine"],
+    srcs = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine", ":devcontainer-docker"],
 )
 
 swift_test(
@@ -503,3 +503,36 @@ test_suite(
         "//Tools/bazel:version_generator_tests",
     ],
 )
+
+# Explicit dependency order for compiled devcontainer-owned layers. These do
+# not replace source_tests; each group names its exact owned tests.
+filegroup(name = "layer_model", srcs = [":DevContainerModel", ":DevContainerVersionGenerator"])
+test_suite(name = "layer_model_tests", tests = [":DevContainerModelTests"])
+
+filegroup(name = "layer_runtime_foundation", srcs = [
+    ":DevContainerRuntimeSPI", ":DevContainerProcess", ":DevContainerState",
+])
+test_suite(name = "layer_runtime_foundation_tests", tests = [
+    ":DevContainerProcessTests", ":DevContainerStateTests",
+])
+
+filegroup(name = "layer_core", srcs = [":DevContainerCore"])
+test_suite(name = "layer_core_tests", tests = [":DevContainerCoreTests"])
+
+filegroup(name = "layer_adapters", srcs = [
+    ":DevContainerComposeProvider", ":DevContainerDockerAPI", ":DevContainerDockerClient",
+])
+test_suite(name = "layer_adapters_tests", tests = [
+    ":DevContainerComposeProviderTests", ":DevContainerDockerAPITests", ":DevContainerDockerClientTests",
+])
+
+filegroup(name = "layer_host", srcs = [":DevContainerAppleRuntime", ":DevContainerService"])
+test_suite(name = "layer_host_tests", tests = [
+    ":DevContainerAppleRuntimeTests", ":DevContainerServiceTests",
+])
+
+filegroup(name = "layer_cli", srcs = [
+    ":DevContainerCLI", ":DevContainerComposeCLI", ":devcontainer", ":devcontainer-compose",
+    ":devcontainer-engine", ":devcontainer-docker",
+])
+test_suite(name = "layer_cli_tests", tests = [":DevContainerCLITests", ":DevContainerComposeCLITests"])

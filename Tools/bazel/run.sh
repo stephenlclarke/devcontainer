@@ -112,6 +112,70 @@ runtime_profile() {
     printf '%s\n' "$profile"
 }
 
+prebuilt_argument_parser() {
+    local argument selected=0 release=0
+    for argument in "$@"; do
+        case "$argument" in
+            --config=prebuilt-argument-parser|--config=prebuilt-foundation|--config=prebuilt-containerization|--config=prebuilt-engine-api|--config=prebuilt-container-sdk) selected=1 ;;
+            --config=release) release=1 ;;
+        esac
+    done
+    if [[ "$selected" == 1 ]]; then
+        [[ "$release" == 1 ]] || { error 'Compiled ArgumentParser requires --config=release.'; return 2; }
+        for argument in "$@"; do
+            case "$argument" in
+                --config=asan|--config=tsan|-c|--compilation_mode*|--host_compilation_mode*|--macos_minimum_os*|--macos_sdk_version*|--xcode_version*|--swiftcopt*|--copt*|--conlyopt*|--cxxopt*|--objcopt*|--host_copt*|--host_conlyopt*|--host_cxxopt*|--linkopt*|--features*|--host_features*|--platforms*|--host_platform*|--cpu*|--host_cpu*|--apple_platform_type*|--apple_split_cpu*|--extra_toolchains*|--define*|--@build_bazel_rules_swift//swift:copt*)
+                    error 'Compiled package layers forbid caller-selected compilation options.'; return 2 ;;
+            esac
+        done
+    fi
+    printf '%s\n' "$selected"
+}
+
+# Expand only the finite compiled-package dependency chain selected by callers.
+prebuilt_groups() {
+    local argument foundation=0 containerization=0 engine_api=0 container_sdk=0
+    for argument in "$@"; do
+        case "$argument" in
+            --config=prebuilt-foundation) foundation=1 ;;
+            --config=prebuilt-containerization) foundation=1; containerization=1 ;;
+            --config=prebuilt-engine-api) foundation=1; engine_api=1 ;;
+            --config=prebuilt-container-sdk) foundation=1; containerization=1; engine_api=1; container_sdk=1 ;;
+        esac
+    done
+    [[ "$foundation" == 0 ]] || printf 'foundation\n'
+    [[ "$containerization" == 0 ]] || printf 'containerization\n'
+    [[ "$engine_api" == 0 ]] || printf 'engine-api\n'
+    [[ "$container_sdk" == 0 ]] || printf 'container-sdk\n'
+}
+
+# Only these maintained roots reach the Container source package. An output
+# base may retain a Container directory from a prior invocation, so its mere
+# existence cannot make a model or ArgumentParser-only command require Q.
+requires_loaded_container_source() {
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            //:products|:products|products|//:product|:product|product|\
+            //:candidate_archive|:candidate_archive|candidate_archive|\
+            //:candidate_archive_payload|:candidate_archive_payload|candidate_archive_payload|\
+            //:candidate_archive_receipt|:candidate_archive_receipt|candidate_archive_receipt|\
+            //:devcontainer-engine|:devcontainer-engine|devcontainer-engine|\
+            //:DevContainerAppleRuntime|:DevContainerAppleRuntime|DevContainerAppleRuntime|\
+            //:DevContainerService|:DevContainerService|DevContainerService|\
+            //:DevContainerAppleRuntimeTests|:DevContainerAppleRuntimeTests|DevContainerAppleRuntimeTests|\
+            //:DevContainerServiceTests|:DevContainerServiceTests|DevContainerServiceTests|\
+            //:DevContainerServiceIntegrationTests|:DevContainerServiceIntegrationTests|DevContainerServiceIntegrationTests|\
+            //:DevContainerHostIntegrationTests|:DevContainerHostIntegrationTests|DevContainerHostIntegrationTests|\
+            //:source_tests|:source_tests|source_tests|//:unit|:unit|unit|\
+            //:layer_host|:layer_host|layer_host|//:layer_host_tests|:layer_host_tests|layer_host_tests|\
+            //:layer_cli|:layer_cli|layer_cli|//...)
+                printf '1\n'; return ;;
+        esac
+    done
+    printf '0\n'
+}
+
 # Emit non-profile arguments losslessly; the selected profile is added once.
 execution_arguments() {
     local argument
@@ -149,11 +213,48 @@ clean_environment() {
 run_bazel() {
     local repo="$1" command="$2" invocation="$3" executable="$4" profile="$5"
     shift 5
-    local part bazel_args=()
+    local part group mirror mirror_uri imported selected imported_layers expected_groups=0 observed_groups=0
+    local bazel_args=() group_args=()
     bazel_args=(--nosystem_rc --nohome_rc --noworkspace_rc "--bazelrc=$repo/.bazelrc"
         "--output_user_root=$SSD_ROOT/output" "--host_jvm_args=-Djava.io.tmpdir=$TMPDIR"
         "$command" "--config=$profile")
     while IFS= read -r -d '' part; do bazel_args+=("$part"); done < <(execution_arguments "$@")
+    if [[ "$(prebuilt_argument_parser "$@")" == 1 ]]; then
+        imported="$(clean_environment /usr/bin/env PATH=/usr/bin:/bin:/opt/homebrew/bin \
+            /usr/bin/python3 "$TOOL_DIRECTORY/artifacts/import_argument_parser.py" prepare)" || return
+        selected="$(printf '%s' "$imported" | /usr/bin/plutil -extract selected raw -)" || return
+        [[ "$selected" == /* && -d "$selected" && ! -L "$selected" ]] || {
+            error 'Compiled ArgumentParser has no admitted selected repository.'; return 2;
+        }
+        bazel_args+=("--override_repository=+dependencies+swiftpkg_swift_argument_parser=$selected")
+    fi
+    while IFS= read -r group; do
+        [[ -n "$group" ]] || continue
+        group_args+=(--group "$group")
+        ((expected_groups += 1))
+    done < <(prebuilt_groups "$@")
+    if ((expected_groups > 0)); then
+        imported_layers="$(clean_environment /usr/bin/env PATH=/usr/bin:/bin:/opt/homebrew/bin \
+            /usr/bin/python3 "$TOOL_DIRECTORY/artifacts/import_layers.py" prepare \
+            --profile "$profile" "${group_args[@]}")" || return
+        while IFS=$'\t' read -r group mirror mirror_uri; do
+            [[ -n "$group" && "$mirror" == /* && -f "$mirror" && ! -L "$mirror" &&
+               "$mirror_uri" == file:///* && "$mirror_uri" != *' '* && "$mirror_uri" != *'#'* ]] || {
+                error 'Compiled group has no admitted local archive.'; return 2;
+            }
+            case "$group" in
+                foundation) bazel_args+=("--repo_env=DEVCONTAINER_FOUNDATION_LAYER_MIRROR=$mirror_uri") ;;
+                containerization) bazel_args+=("--repo_env=DEVCONTAINER_CONTAINERIZATION_LAYER_MIRROR=$mirror_uri") ;;
+                engine-api) bazel_args+=("--repo_env=DEVCONTAINER_ENGINE_API_LAYER_MIRROR=$mirror_uri") ;;
+                container-sdk) bazel_args+=("--repo_env=DEVCONTAINER_CONTAINER_SDK_LAYER_MIRROR=$mirror_uri") ;;
+                *) error 'Compiled group selection is not finite.'; return 2 ;;
+            esac
+            ((observed_groups += 1))
+        done <<< "$imported_layers"
+        [[ "$observed_groups" == "$expected_groups" ]] || {
+            error 'Compiled group importer returned an incomplete set.'; return 2;
+        }
+    fi
     for part in "$@"; do
         if [[ "$part" == --config=release && "$command" =~ ^(build|test|coverage|cquery|aquery)$ ]]; then
             local source_commit source_dirty
@@ -192,14 +293,67 @@ run_bazel() {
 execute_invocation() {
     local repo="$1" command="$2" invocation="$3" executable="$4" profile="$5"
     shift 5
-    local part suite="" inventory=unit status=0 validation=0
+    local part group suite="" inventory=unit status=0 validation=0 imported output_base selected sdk_prebuilt=0
+    local group_args=()
     # Bazel info emits no BEP. It is a leased diagnostic, not retained build proof.
     if [[ "$command" == info ]]; then
         run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@"
         return
     fi
     /usr/bin/python3 "$TOOL_DIRECTORY/input_identity.py" "$repo" --tooling "$TOOL_DIRECTORY" > "$invocation/inputs-before.json" || return
-    run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@" || status=$?
+    if [[ "$command" == aquery ]]; then
+        # Retain the exact configured action graph before returning it to the
+        # caller; the compiled consumer proof replays this owned byte stream.
+        run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@" \
+            > "$invocation/aquery.stdout.log" || status=$?
+        cat "$invocation/aquery.stdout.log" || validation=$?
+    else
+        run_bazel "$repo" "$command" "$invocation" "$executable" "$profile" "$@" || status=$?
+    fi
+    if [[ "$status" == 0 && "$(prebuilt_argument_parser "$@")" == 1 ]]; then
+        imported="$(clean_environment /usr/bin/env PATH=/usr/bin:/bin:/opt/homebrew/bin \
+            /usr/bin/python3 "$TOOL_DIRECTORY/artifacts/import_argument_parser.py" prepare)" || validation=$?
+        if [[ "$validation" == 0 ]]; then
+            selected="$(printf '%s' "$imported" | /usr/bin/plutil -extract selected raw -)" || validation=$?
+            output_base="$(clean_environment "$executable" --nosystem_rc --nohome_rc --noworkspace_rc \
+                "--bazelrc=$repo/.bazelrc" "--output_user_root=$SSD_ROOT/output" \
+                "--host_jvm_args=-Djava.io.tmpdir=$TMPDIR" info output_base)" || validation=$?
+        fi
+        if [[ "$validation" == 0 ]]; then
+            clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/artifacts/import_argument_parser.py" \
+                verify-origin --output-base "$output_base" --selected "$selected" || validation=$?
+        fi
+    fi
+    if [[ "$status" == 0 && "$validation" == 0 ]]; then
+        while IFS= read -r group; do
+            [[ -z "$group" ]] || group_args+=(--group "$group")
+        done < <(prebuilt_groups "$@")
+        if ((${#group_args[@]} > 0)); then
+            [[ -n "$output_base" ]] || { error 'Compiled group lacks a Bazel output base.'; return 2; }
+            clean_environment /usr/bin/env PATH=/usr/bin:/bin:/opt/homebrew/bin \
+                /usr/bin/python3 "$TOOL_DIRECTORY/artifacts/import_layers.py" verify-origin \
+                --profile "$profile" "${group_args[@]}" --output-base "$output_base" || validation=$?
+        fi
+    fi
+    for part in "$@"; do
+        [[ "$part" != --config=prebuilt-container-sdk ]] || sdk_prebuilt=1
+    done
+    if [[ "$status" == 0 && "$validation" == 0 && "$sdk_prebuilt" == 0 &&
+          "$(requires_loaded_container_source "$@")" == 1 ]]; then
+        case "$command" in
+            build|test|coverage)
+                if [[ -z "$output_base" ]]; then
+                    output_base="$(clean_environment "$executable" --nosystem_rc --nohome_rc --noworkspace_rc \
+                        "--bazelrc=$repo/.bazelrc" "--output_user_root=$SSD_ROOT/output" \
+                        "--host_jvm_args=-Djava.io.tmpdir=$TMPDIR" info output_base)" || validation=$?
+                fi
+                if [[ "$validation" == 0 ]]; then
+                    clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/source_graph.py" \
+                        --output-base "$output_base" --profile "$profile" \
+                        --output "$invocation/source-graph.json" >/dev/null || validation=$?
+                fi ;;
+        esac
+    fi
     /usr/bin/python3 "$TOOL_DIRECTORY/input_identity.py" "$repo" --tooling "$TOOL_DIRECTORY" \
         --verify "$invocation/inputs-before.json" > "$invocation/inputs-after.json" || validation=$?
     if [[ ( "$command" == coverage || "$command" == test ) && "$status" == 0 && "$validation" == 0 ]]; then
@@ -292,9 +446,13 @@ main() {
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
     validate_arguments "$@" || return
     profile="$(runtime_profile "$@")" || return
+    prebuilt_argument_parser "$@" >/dev/null || return
     first_argument="${1:-}"
     second_argument="${2:-}"
     repo="${workspace:-$(cd "$TOOL_DIRECTORY/../.." && pwd -P)}"
+    if [[ "$(prebuilt_argument_parser "$@")" == 1 && "$repo" != "$(cd "$TOOL_DIRECTORY/../.." && pwd -P)" ]]; then
+        error 'Compiled ArgumentParser requires this repository and its own reviewed lock.'; return 2
+    fi
     [[ -f "$repo/MODULE.bazel" && -f "$repo/.bazelrc" ]] || { error 'Workspace must declare its Bazel module and configuration.'; return 2; }
     read -r pinned_version < "$repo/.bazelversion"
     [[ "$pinned_version" == "$BAZEL_VERSION" ]] || { error 'Bazel version and verified bootstrap checksum disagree.'; return 2; }

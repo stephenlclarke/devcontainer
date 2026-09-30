@@ -34,5 +34,15 @@ coverage --@build_bazel_rules_swift//swift:copt=-instrprof-atomic-counter-update
 coverage --copt=-fprofile-update=atomic
 coverage --strategy=SwiftCompile=sandboxed
 build:release --compilation_mode=opt
+common:prebuilt-argument-parser --repo_env=DEVCONTAINER_ARGUMENT_PARSER_LAYER=prebuilt
+common:prebuilt-foundation --config=prebuilt-argument-parser
+common:prebuilt-foundation --repo_env=DEVCONTAINER_FOUNDATION_LAYER=prebuilt
+common:prebuilt-containerization --config=prebuilt-foundation
+common:prebuilt-containerization --repo_env=DEVCONTAINER_CONTAINERIZATION_LAYER=prebuilt
+common:prebuilt-engine-api --config=prebuilt-foundation
+common:prebuilt-engine-api --repo_env=DEVCONTAINER_ENGINE_API_LAYER=prebuilt
+common:prebuilt-container-sdk --config=prebuilt-containerization
+common:prebuilt-container-sdk --config=prebuilt-engine-api
+common:prebuilt-container-sdk --repo_env=DEVCONTAINER_CONTAINER_SDK_LAYER=prebuilt
 build:asan --features=asan
 build:tsan --features=tsan

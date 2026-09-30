@@ -50,6 +50,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-activate-runtime
 .PHONY: bazel-parity-report
 .PHONY: bazel-release-comparison
+.PHONY: bazel-layers bazel-layer-model bazel-layer-runtime-foundation bazel-layer-core bazel-layer-adapters bazel-layer-host bazel-layer-cli bazel-compiled-argument-parser bazel-compiled-consumers
 export BASELINE_CAMPAIGN TARGET_CAMPAIGN CASE_LANE
 .PHONY: bazel-prepare-guest-images
 .PHONY: bazel-import-guest-image
@@ -63,6 +64,7 @@ export GUEST_ARCHIVE_NAME GUEST_ARCHIVE_PATH
 export CASE_ID
 export CASE_FIXTURE
 BAZEL_PROFILE ?= enhanced
+LAYER_PROFILE ?= both
 RELEASE_SET ?= Tools/bazel/releases.lock.json
 
 # Opt-in native qualification; existing product/release entry points are unchanged.
@@ -124,6 +126,45 @@ bazel-recover-runtime-apply:
 
 bazel-build:
 	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
+
+# Dependency-order entry points; tests remain source-mode and retain all eleven
+# original //:source_tests targets. These targets are not release admission.
+bazel-layers:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/layered_build.py --profile "$(LAYER_PROFILE)" --output "$(LAYER_EVIDENCE)" $(if $(filter 1,$(LAYER_DEVELOPMENT)),--development)
+
+# This separate proof builds all four products against admitted released layers.
+bazel-compiled-consumers:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/compiled_consumers.py --profile "$(LAYER_PROFILE)" --output "$(LAYER_EVIDENCE)" $(if $(filter 1,$(LAYER_DEVELOPMENT)),--development)
+
+bazel-layer-model:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_model
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_model_tests
+
+bazel-layer-runtime-foundation:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_runtime_foundation
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_runtime_foundation_tests
+
+bazel-layer-core:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_core
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_core_tests
+
+bazel-layer-adapters:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_adapters
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_adapters_tests
+
+bazel-layer-host:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_host
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_host_tests
+
+bazel-layer-cli:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_cli
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_cli_tests
+
+bazel-compiled-argument-parser:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/artifacts/prove_argument_parser.py --output "$(LAYER_EVIDENCE)"
 
 bazel-coverage-counters:
 	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //Tools/bazel:coverage_counter_tests

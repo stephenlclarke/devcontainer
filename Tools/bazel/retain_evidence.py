@@ -22,12 +22,19 @@ def validate_client_environment(value: object) -> None:
                "DEVELOPER_DIR", "PYTHONDONTWRITEBYTECODE", "PWD", "SHLVL", "_",
                "DARWIN_USER_TEMP_DIR", "DARWIN_USER_CACHE_DIR", "__CF_USER_TEXT_ENCODING",
                "DEVCONTAINER_HOST_INTEGRATION"}
+    fixed_git = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false",
+                 "GCM_INTERACTIVE": "never", "GIT_CONFIG_COUNT": "1",
+                 "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "",
+                 "SSH_ASKPASS": "/usr/bin/false", "SSH_ASKPASS_REQUIRE": "never",
+                 "GIT_SSH_COMMAND": "/usr/bin/ssh -oBatchMode=yes"}
     if isinstance(value, dict):
         if value.get("optionName") == "client_env":
             assignment = value.get("optionValue", "")
             key = assignment.split("=", 1)[0]
-            if key not in allowed:
+            if key not in allowed and key not in fixed_git:
                 raise ValueError("Unsafe inherited environment in Bazel evidence; do not share raw logs")
+            if key in fixed_git and assignment != key + "=" + fixed_git[key]:
+                raise ValueError("Git prompt suppression environment changed")
             if key == "DEVCONTAINER_HOST_INTEGRATION" and assignment not in {key + "=0", key + "=1"}:
                 raise ValueError("Invalid host integration environment")
         for child in value.values():
@@ -124,7 +131,9 @@ def retain(events_path: Path, database: Path, scratch_root: Path) -> str:
     contents = {"events.json": event_bytes}
     contents.update({name: path.read_bytes() for name, path in evidence_paths(events, scratch_root).items()})
     contents.update({name: path.read_bytes() for name, path in artifact_paths(events, scratch_root).items()})
-    for name in ("owner.json", "qualification.json", "source-tests.json", "inputs-before.json", "inputs-after.json", "outcome.json", "timing.json"):
+    for name in ("owner.json", "qualification.json", "source-tests.json", "inputs-before.json",
+                 "inputs-after.json", "outcome.json", "timing.json", "aquery.stdout.log",
+                 "source-graph.json"):
         path = events_path.with_name(name)
         if path.is_file():
             contents[name] = path.read_bytes()
