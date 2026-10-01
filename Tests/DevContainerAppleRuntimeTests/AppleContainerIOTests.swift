@@ -101,8 +101,15 @@ struct AppleContainerIOTests {
         let input = try #require(handles[0])
         try await channel.bind(AttachProcess())
         let write = Task { try await first.write(Data(repeating: 65, count: 4 * 1024 * 1024)) }
-        var event = pollfd(fd: input.fileDescriptor, events: Int16(POLLIN), revents: 0)
-        #expect(Darwin.poll(&event, 1, 5000) > 0)
+        let ready = await waitForInput(input.fileDescriptor)
+        if ready <= 0 {
+            write.cancel()
+            await channel.shutdown()
+            for handle in handles {
+                try? handle?.close()
+            }
+        }
+        try #require(ready > 0)
         if detach {
             await first.cancel()
         } else {
@@ -132,8 +139,15 @@ struct AppleContainerIOTests {
         let input = try #require(handles[0])
         try await channel.bind(AttachProcess())
         let blocked = Task { try await first.write(Data(repeating: 65, count: 4 * 1024 * 1024)) }
-        var event = pollfd(fd: input.fileDescriptor, events: Int16(POLLIN), revents: 0)
-        #expect(Darwin.poll(&event, 1, 5000) > 0)
+        let ready = await waitForInput(input.fileDescriptor)
+        if ready <= 0 {
+            blocked.cancel()
+            await channel.shutdown()
+            for handle in handles {
+                try? handle?.close()
+            }
+        }
+        try #require(ready > 0)
         // Output failure can revoke a subscription before transport cleanup.
         // Its EOF still belongs to this init, never a replacement generation.
         await second.cancel()
@@ -186,12 +200,29 @@ struct AppleContainerIOTests {
         let input = try #require(handles[0])
         try await channel.bind(AttachProcess())
         let blocked = Task { try await first.write(Data(repeating: 65, count: 4 * 1024 * 1024)) }
-        var event = pollfd(fd: input.fileDescriptor, events: Int16(POLLIN), revents: 0)
-        #expect(Darwin.poll(&event, 1, 5000) > 0)
+        let ready = await waitForInput(input.fileDescriptor)
+        if ready <= 0 {
+            blocked.cancel()
+            await channel.shutdown()
+            for handle in handles {
+                try? handle?.close()
+            }
+        }
+        try #require(ready > 0)
         let queued = Task { try await second.write(Data("must not write".utf8)) }
-        while channel.pendingInputWrites != 2 {
+        let queueDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while channel.pendingInputWrites != 2, ContinuousClock.now < queueDeadline {
             await Task.yield()
         }
+        if channel.pendingInputWrites != 2 {
+            queued.cancel()
+            blocked.cancel()
+            await channel.shutdown()
+            for handle in handles {
+                try? handle?.close()
+            }
+        }
+        try #require(channel.pendingInputWrites == 2)
         if detach {
             await second.cancel()
         } else {
@@ -325,4 +356,15 @@ actor HeldResizeProcess: ClientProcess {
     #if DEVCONTAINER_ENHANCED_RUNTIME
         nonisolated func disconnect() { /* No XPC transport in this fixture. */ }
     #endif
+}
+
+private func waitForInput(_ descriptor: Int32) async -> Int32 {
+    await withCheckedContinuation { continuation in
+        // The existing five-second poll runs on an OS queue so it cannot
+        // occupy a Swift cooperative executor thread needed by the writer.
+        DispatchQueue.global(qos: .utility).async {
+            var event = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            continuation.resume(returning: Darwin.poll(&event, 1, 5000))
+        }
+    }
 }
