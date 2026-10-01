@@ -35,6 +35,10 @@ jobs:
       publish: ${{ steps.publish.outputs.publish }}
       ref_name: ${{ steps.publish.outputs.ref_name }}
       sha: ${{ steps.publish.outputs.sha }}
+      parity_run_id: ${{ steps.publish.outputs.parity_run_id }}
+      parity_artifact_id: ${{ steps.publish.outputs.parity_artifact_id }}
+      parity_artifact_digest: ${{ steps.publish.outputs.parity_artifact_digest }}
+      parity_artifact_size: ${{ steps.publish.outputs.parity_artifact_size }}
     steps:
       - name: Resolve trusted source and authorities
         id: publish
@@ -51,6 +55,10 @@ jobs:
           lane=""
           ref_name=""
           sha=""
+          parity_run_id=""
+          parity_artifact_id=""
+          parity_artifact_digest=""
+          parity_artifact_size=""
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
             if [[ "${WORKFLOW_HEAD_BRANCH}" != "main" ]]; then
@@ -229,11 +237,42 @@ jobs:
               done
             done
           fi
+          if [[ "${publish}" == "true" ]]; then
+            parity_runs="$(gh run list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --workflow parity.yml --event push --commit "${sha}" --limit 100 \
+              --json databaseId,status,conclusion,headBranch,event,createdAt \
+              --jq 'map(select(.headBranch == "main" and .event == "push")) | sort_by(.createdAt) | reverse | .[0].databaseId // empty')"
+            if [[ ! "${parity_runs}" =~ ^[0-9]+$ ]]; then
+              printf 'successful exact-source main-push parity run is missing for %s\n' "${sha}" >&2
+              exit 1
+            fi
+            parity_run_id="${parity_runs}"
+            parity_run_document="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${parity_run_id}")"
+            jq -e --argjson run_id "${parity_run_id}" --arg sha "${sha}" \
+              '.id == $run_id and .path == ".github/workflows/parity.yml" and .event == "push" and .head_branch == "main" and .head_sha == $sha and .status == "completed" and .conclusion == "success"' \
+              <<<"${parity_run_document}" >/dev/null
+            parity_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${parity_run_id}/artifacts")"
+            parity_artifact="$(jq -ce '[.artifacts[] | select(.name == "parity-comparison" and .expired == false)] | if length == 1 then .[0] else error("expected exactly one unexpired parity-comparison artifact") end' <<<"${parity_artifacts}")"
+            parity_artifact_id="$(jq -r '.id' <<<"${parity_artifact}")"
+            parity_artifact_digest="$(jq -r '.digest | sub("^sha256:"; "")' <<<"${parity_artifact}")"
+            parity_artifact_size="$(jq -r '.size_in_bytes' <<<"${parity_artifact}")"
+            if [[ ! "${parity_artifact_id}" =~ ^[0-9]+$ || ! "${parity_artifact_digest}" =~ ^[0-9a-f]{64}$ \
+                || ! "${parity_artifact_size}" =~ ^[0-9]+$ ]] \
+                || (( parity_artifact_size <= 0 || parity_artifact_size > 67108864 )); then
+              printf 'parity artifact ID or digest is malformed\n' >&2
+              exit 1
+            fi
+          fi
           {
             printf 'lane=%s\n' "${lane}"
             printf 'publish=%s\n' "${publish}"
             printf 'ref_name=%s\n' "${ref_name}"
             printf 'sha=%s\n' "${sha}"
+            printf 'parity_run_id=%s\n' "${parity_run_id}"
+            printf 'parity_artifact_id=%s\n' "${parity_artifact_id}"
+            printf 'parity_artifact_digest=%s\n' "${parity_artifact_digest}"
+            printf 'parity_artifact_size=%s\n' "${parity_artifact_size}"
           } >>"${GITHUB_OUTPUT}"
 
   package:
@@ -244,6 +283,7 @@ jobs:
     environment: release
     timeout-minutes: 180
     permissions:
+      actions: read
       attestations: write
       contents: write
       id-token: write
@@ -276,6 +316,19 @@ jobs:
           fetch-depth: 0
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Download exact successful parity comparison bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARITY_ARTIFACT_ID: ${{ needs.resolve.outputs.parity_artifact_id }}
+          PARITY_ARTIFACT_SIZE: ${{ needs.resolve.outputs.parity_artifact_size }}
+        run: |
+          set -euo pipefail
+          [[ "${PARITY_ARTIFACT_ID}" =~ ^[0-9]+$ ]]
+          [[ "${PARITY_ARTIFACT_SIZE}" =~ ^[0-9]+$ ]]
+          (( PARITY_ARTIFACT_SIZE > 0 && PARITY_ARTIFACT_SIZE <= 67108864 ))
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PARITY_ARTIFACT_ID}/zip" \
+            >"${RUNNER_TEMP}/parity-comparison.zip"
+          test -s "${RUNNER_TEMP}/parity-comparison.zip"
       - name: Require a clean tap
         run: |
           set -euo pipefail
@@ -283,6 +336,7 @@ jobs:
       - name: Verify signed and notarized native package
         id: package
         env:
+          GH_TOKEN: ${{ github.token }}
           DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
           DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
           DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
@@ -343,6 +397,29 @@ jobs:
             "${archive}.context.json" "${archive}.verification.json" \
             "${archive}.native-finalization-provenance.json" \
             "${assets}/"
+          parity_run_json="${RUNNER_TEMP}/parity-workflow-run.json"
+          parity_artifacts_json="${RUNNER_TEMP}/parity-workflow-artifacts.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${{ needs.resolve.outputs.parity_run_id }}" \
+            >"${parity_run_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${{ needs.resolve.outputs.parity_run_id }}/artifacts" \
+            >"${parity_artifacts_json}"
+          python3 Tools/release/verify_parity_release_evidence.py \
+            --repository "${PWD}" \
+            --run-json "${parity_run_json}" \
+            --artifact-json "${parity_artifacts_json}" \
+            --run-id "${{ needs.resolve.outputs.parity_run_id }}" \
+            --artifact-id "${{ needs.resolve.outputs.parity_artifact_id }}" \
+            --artifact-digest "${{ needs.resolve.outputs.parity_artifact_digest }}" \
+            --artifact-archive "${RUNNER_TEMP}/parity-comparison.zip" \
+            --artifact-directory "${RUNNER_TEMP}/parity-comparison-verified" \
+            --publish-sha "${PUBLISH_SHA}" \
+            --archive "${archive}" \
+            --checksum "${archive}.sha256" \
+            --context "${archive}.context.json" \
+            --verification "${archive}.verification.json" \
+            --finalization-provenance "${archive}.native-finalization-provenance.json" \
+            --finalization-sha256 "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256}" \
+            --output-directory "${assets}"
           root="devcontainer-${version}/share/devcontainer"
           tar -xOf "${archive}" "${root}/build-info.json" \
             >"${assets}/build-info.json"
