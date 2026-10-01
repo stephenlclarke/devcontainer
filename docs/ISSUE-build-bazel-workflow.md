@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+Hosted CI and Sonar reject the output-journal SPI because LLVM omits its protocol-only declaration file from executable coverage. Recognize only a conservative declaration subset while continuing to reject missing executable, unreadable or unrecognized sources. Preserve the original failures and the unchanged coverage thresholds.
+
 A release-admission file group changed the full product build recipe and caused all eight immutable dependency-layer locks to reject an otherwise unchanged SDK graph. Move this harness-only input group to a dedicated release package, preserving the original product build recipe and every dependency checksum. Explicitly export the shared archive helper and update its two consumers; cross-package source files cannot be assumed visible. Verify actual Bazel visibility and runfiles before restoring compiled-consumer qualification.
 
 Current and stable publication omitted CodeQL from their exact-source workflow authorities. Require its successful main-push run in both paths and reject disabled analysis on main, so a skipped job cannot admit a release. Preserve draft-PR iteration without analysis.

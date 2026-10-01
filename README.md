@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+Hosted changed-source coverage recognizes a strict subset of protocol-only Swift declarations that LLVM does not instrument. Executable or unrecognized missing sources still fail the gate; the overall and changed-code coverage thresholds remain unchanged.
+
 Native release-harness inputs are declared in a separate release package so changes to that data closure do not invalidate the product build recipe used by released dependency layers. Layer admission still requires exact recipe and archive identities; harness checks and four-product consumption proof remain separate.
 
 Current and stable publication require successful CodeQL analysis for the exact main commit, alongside the existing source-quality and runtime release gates. Keep the repository variable `CODEQL_ENABLED=true` for release validation; disabling it makes main checks fail. Draft pull requests retain their analysis skip.
