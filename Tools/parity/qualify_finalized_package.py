@@ -540,13 +540,16 @@ def terminate_process_group(process: subprocess.Popen[str], *, grace: float = 30
         process.communicate()
 
 
-def read_context_endpoint(docker: Path, context: str, env: dict[str, str]) -> str:
-    result = run([str(docker), "context", "inspect", context, "--format",
-                  "{{.Endpoints.docker.Host}}"], env=env, capture=True)
-    endpoint = result.stdout.strip()
-    if not endpoint or "\n" in endpoint:
-        raise RuntimeError("Colima Docker context has no single explicit endpoint")
-    return endpoint
+def default_colima_endpoint(home: Path) -> str:
+    """Use the controlled default profile socket even when stopped Colima removes its context."""
+    profile = home / ".colima/default"
+    if (not home.is_absolute() or home.resolve(strict=True) != home
+            or profile.resolve(strict=True) != profile or not profile.is_dir()):
+        raise ValueError("Colima default profile requires canonical configured account storage")
+    info = profile.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError("Colima default profile is not protected user-owned storage")
+    return "unix://" + str(profile / "docker.sock")
 
 
 def colima_state(colima: Path, env: dict[str, str]) -> tuple[str, str]:
@@ -1077,8 +1080,7 @@ def main() -> int:
     if stat_mode(JOURNAL_PARENT) != 0o700 or stat_mode(GUARD_PATH.parent) != 0o700:
         raise ValueError("private retained journal and guard directories must be mode 0700")
     original_environment = dict(os.environ)
-    endpoint_env = {"HOME": str(ACCOUNT_HOME), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
-    endpoint = read_context_endpoint(args.docker_bin, "colima", endpoint_env)
+    endpoint = default_colima_endpoint(ACCOUNT_HOME)
     base_env = {key: value for key, value in original_environment.items()
                 if key in {"LANG", "LC_ALL", "LC_CTYPE", "DEVELOPER_DIR", "SDKROOT", "TOOLCHAINS"}}
     base_env.update({"HOME": str(ACCOUNT_HOME),

@@ -180,6 +180,35 @@ class AdmissionBoundaryTests(unittest.TestCase):
 
 
 class ProviderPinTests(unittest.TestCase):
+    def test_stopped_colima_needs_no_docker_context_or_existing_socket(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve()
+            profile = home / ".colima/default"
+            profile.mkdir(parents=True)
+            with mock.patch.object(qualify, "run") as command:
+                endpoint = qualify.default_colima_endpoint(home)
+            self.assertEqual(endpoint, "unix://" + str(profile / "docker.sock"))
+            self.assertFalse((profile / "docker.sock").exists())
+            self.assertFalse((home / ".docker/contexts").exists())
+            command.assert_not_called()
+
+    def test_colima_endpoint_rejects_aliased_or_writable_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve()
+            parent = home / ".colima"
+            parent.mkdir()
+            target = home / "other-profile"
+            target.mkdir()
+            profile = parent / "default"
+            profile.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "canonical"):
+                qualify.default_colima_endpoint(home)
+            profile.unlink()
+            profile.mkdir(mode=0o777)
+            profile.chmod(0o777)
+            with self.assertRaisesRegex(ValueError, "protected"):
+                qualify.default_colima_endpoint(home)
+
     def test_provider_versions_and_commits_must_appear_in_actual_json_output(self) -> None:
         pin = {"stableVersion": "1.2.3", "stableCommit": "a" * 40}
         self.assertTrue(qualify.output_contains_pin(

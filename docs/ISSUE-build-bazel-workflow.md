@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The default Colima socket is derived from its protected account profile, so cold startup does not require a Docker context that Colima removes on shutdown; daemon version, commit, API and executable hashes remain mandatory before fixtures start. The failed stopped-profile admission and original package identities remain preserved.
+
 The first finalized-package campaign falsely treated an unrelated CI listener as an outgoing owned process. The handoff stalled beyond its signal deadline; cancellation restored the original service identities but retained quarantine solely because the final lane had never started. Scope process attribution to captured ownership and exact provider paths, bound polling with monotonic elapsed time, and distinguish untouched lanes from uncertain restoration while continuing to reject missing qualification fixtures. Preserve both the failed campaign and its independently verified recovery.
 
 The temporary Homebrew test also forcibly removed installed stable/current packages and left them uninstalled on exit. Preserve their exact kegs, managed links and owned Homebrew service before candidate testing; verify restoration on both success and failure, retaining backups and blocking publication if restoration is uncertain.
