@@ -74,7 +74,7 @@ sh_test(
         "test_prepare_candidate.py",
         "candidate_archive.py",
         "test_candidate_archive.py",
-        "//:Tools/release/create-reproducible-archive.py",
+        "//Tools/release:create-reproducible-archive.py",
         "retain_evidence.py",
         "prepare_guest_images.py",
         "test_prepare_guest_images.py",

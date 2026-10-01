@@ -7,7 +7,7 @@ sh_test(
     name = "case_evidence_tests",
     srcs = ["test-evidence.sh"],
     data = [
-        "//:native_release_admission_inputs",
+        "//Tools/release:native_release_admission_inputs",
         "case_evidence.py",
         "campaign_identity.py",
         "test_campaign_identity.py",
@@ -184,7 +184,7 @@ sh_test(
 filegroup(
     name = "released_engine_inputs",
     srcs = [
-        "//:native_release_admission_inputs",
+        "//Tools/release:native_release_admission_inputs",
         "build_probe.py",
         "build_images.py",
         "build_fixture.py",

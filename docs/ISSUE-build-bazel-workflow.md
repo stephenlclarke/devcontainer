@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+A release-admission file group changed the full product build recipe and caused all eight immutable dependency-layer locks to reject an otherwise unchanged SDK graph. Move this harness-only input group to a dedicated release package, preserving the original product build recipe and every dependency checksum. Explicitly export the shared archive helper and update its two consumers; cross-package source files cannot be assumed visible. Verify actual Bazel visibility and runfiles before restoring compiled-consumer qualification.
+
 Current and stable publication omitted CodeQL from their exact-source workflow authorities. Require its successful main-push run in both paths and reject disabled analysis on main, so a skipped job cannot admit a release. Preserve draft-PR iteration without analysis.
 
 Three workflow regression checks still assumed the older inline stock test command and aggregate counts of timeout settings and hidden artifact uploads. Verify the actual named stock, coverage, sanitizer and Sonar steps instead, including their bounded process-group runner, unchanged strict compiler flags and retained hidden logs. Preserve the failed CI receipt rather than weakening execution or evidence requirements.

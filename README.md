@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+Native release-harness inputs are declared in a separate release package so changes to that data closure do not invalidate the product build recipe used by released dependency layers. Layer admission still requires exact recipe and archive identities; harness checks and four-product consumption proof remain separate.
+
 Current and stable publication require successful CodeQL analysis for the exact main commit, alongside the existing source-quality and runtime release gates. Keep the repository variable `CODEQL_ENABLED=true` for release validation; disabling it makes main checks fail. Draft pull requests retain their analysis skip.
 
 Release-comparison work now includes a [published devcontainer 1.0.1 baseline adapter and live results](docs/bazel-test-harness.md#published-devcontainer-baseline). The current stock candidate passes image-configuration and lifecycle checks that 1.0.1 fails on image identity/lookup. This demonstrates correctness improvements, not speedups: failed cases are excluded from timing ratios. Quiet previous/new stable-release benchmarks remain outstanding.

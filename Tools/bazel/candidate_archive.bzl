@@ -58,6 +58,6 @@ candidate_archive = rule(
         "reference_cli": attr.label(allow_files = True, mandatory = True),
         "reference_lock": attr.label(allow_single_file = True, mandatory = True),
         "_packager": attr.label(default = Label("//Tools/bazel:candidate_archive.py"), allow_single_file = True),
-        "_archive_tool": attr.label(default = Label("//:Tools/release/create-reproducible-archive.py"), allow_single_file = True),
+        "_archive_tool": attr.label(default = Label("//Tools/release:create-reproducible-archive.py"), allow_single_file = True),
     },
 )
