@@ -66,6 +66,25 @@ class SuiteLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "lanes"):
             qualify.require_host_restoration(cleanup, "stopped", "stopped", True)
 
+    def test_cancelled_campaign_clears_guard_only_after_mutated_lanes_restore(self) -> None:
+        cleanup = {"docker": {"status": "restored"}, "apple-stock": {"status": "restored"},
+                   "container-compose": {"status": "not-started"}}
+        self.assertTrue(qualify.host_can_clear_guard(cleanup, "stopped", "stopped", "same", "same"))
+        # Restoration permits another campaign; it cannot qualify absent suites.
+        with self.assertRaisesRegex(RuntimeError, "lanes"):
+            qualify.require_host_restoration(cleanup, "stopped", "stopped", True)
+
+    def test_guard_remains_when_any_started_lane_or_host_identity_is_uncertain(self) -> None:
+        cleanup = {lane: {"status": "restored"} for lane in qualify.LANES}
+        for status in ("active", "uncertain", None):
+            with self.subTest(status=status):
+                cleanup["apple-stock"]["status"] = status
+                self.assertFalse(qualify.host_can_clear_guard(
+                    cleanup, "stopped", "stopped", "same", "same"))
+        cleanup["apple-stock"]["status"] = "restored"
+        self.assertFalse(qualify.host_can_clear_guard(cleanup, "stopped", "running", "same", "same"))
+        self.assertFalse(qualify.host_can_clear_guard(cleanup, "stopped", "stopped", "before", "after"))
+
 
 class TimeoutOwnershipTests(unittest.TestCase):
     def test_timeout_sends_term_then_kill_to_the_new_session_process_group(self) -> None:

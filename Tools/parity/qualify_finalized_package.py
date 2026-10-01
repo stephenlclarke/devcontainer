@@ -179,6 +179,14 @@ def require_host_restoration(cleanup: dict, initial_colima: str, final_colima: s
         raise RuntimeError("host runtime state or admission guard was not restored")
 
 
+def host_can_clear_guard(cleanup: dict, initial_colima: str, final_colima: str,
+                         initial_services: str, final_services: str) -> bool:
+    """Clear quarantine after exact restoration, including lanes never mutated."""
+    return (initial_colima == final_colima and initial_services == final_services
+            and all(cleanup.get(lane, {}).get("status") in {"restored", "not-started"}
+                    for lane in LANES))
+
+
 def validate_provider_fingerprint(path: Path, lane: str, expected: dict[str, str], manifest: dict) -> None:
     """Bind each maintained CLI/V01 observation to the selected provider bytes."""
     fingerprint = json.loads(path.read_text())
@@ -1156,8 +1164,8 @@ def main() -> int:
                 errors.append("qualification interrupted; child groups were terminated and cleanup was attempted")
             final_colima, final_colima_detail = colima_state(args.colima_bin, base_env)
             final_services, final_service_count = host_service_digest()
-            host_restorable = (final_colima == initial_colima and final_services == initial_services
-                               and all(cleanup[lane].get("status") == "restored" for lane in LANES))
+            host_restorable = host_can_clear_guard(
+                cleanup, initial_colima, final_colima, initial_services, final_services)
             if host_restorable:
                 guard.clear(transaction_owner)
                 guard_cleared = True

@@ -1,5 +1,6 @@
 """Service adapter tests use real private files but never touch host launchd."""
 
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import plistlib
@@ -117,15 +118,26 @@ class RuntimeServicesTests(unittest.TestCase):
         self.assertEqual(len(self.launchd.mutations), count)
         self.assertEqual(runtime.receipt(), {"status": "not-started"})
 
-    def test_surviving_listener_blocks_selected_start_and_originals_can_be_restored(self):
+    def test_unrelated_listener_does_not_block_selected_start(self):
         runtime = self.runtime()
         self.processes.return_value = ["/runner/bin/Runner.Listener"]
-        with self.assertRaisesRegex(ValueError, "survived"):
-            runtime.start()
-        self.assertEqual(self.launchd.jobs, {})
-        self.processes.return_value = []
+        runtime.start()
+        self.assertEqual(set(self.launchd.jobs), {API})
         runtime.restore()
         self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_captured_listener_survivor_still_blocks_selected_start(self):
+        runtime = self.runtime()
+        runtime.start()
+        row = {"pid": 123, "parent": 1, "group": 123, "started": "captured",
+               "program": "/runner/bin/Runner.Listener", "labels": ["actions.runner.fixture"]}
+        runtime.original_processes = [row]
+        self.inventory.return_value = {123: row}
+        self.launchd.jobs.clear()
+        with self.assertRaisesRegex(ProcessSurvivors, "owned original service process"):
+            runtime.require_workers_stopped()
+        self.inventory.return_value = {}
+        runtime.restore()
 
     def test_surviving_original_provider_prevents_selected_registration(self):
         runtime = self.runtime()
@@ -375,6 +387,22 @@ class RuntimeServicesTests(unittest.TestCase):
         blocked = Mock(side_effect=ProcessSurvivors("still stopping"))
         with self.assertRaises(TimeoutError):
             wait_stopped(blocked, seconds=0.02)
+
+    def test_monotonic_deadline_bounds_wait_when_signal_alarm_is_inert(self):
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        blocked = Mock(side_effect=ProcessSurvivors("still stopping"))
+        with patch("runtime_services.deadline", return_value=nullcontext()), \
+                patch("runtime_services.time.monotonic", side_effect=lambda: now[0]), \
+                patch("runtime_services.time.sleep", side_effect=sleep):
+            with self.assertRaisesRegex(TimeoutError, "monotonic|deadline"):
+                wait_stopped(blocked, seconds=0.12)
+        self.assertGreaterEqual(now[0], 0.12)
+        self.assertLess(now[0], 0.13)
+        self.assertEqual(blocked.call_count, 4)
 
     def test_lingering_original_registration_blocks_new_provider(self):
         runtime = self.runtime()

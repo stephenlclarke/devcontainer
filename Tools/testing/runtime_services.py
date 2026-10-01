@@ -41,13 +41,17 @@ def require_owned_volume(volume: Path) -> dict:
 
 def wait_stopped(probe, seconds: float = 15):
     """Wait only for process/registration disappearance, not a failed case retry."""
+    expires = time.monotonic() + seconds
     with deadline(seconds):
         while True:
             try:
                 probe()
                 return
             except ProcessSurvivors:
-                time.sleep(0.05)
+                remaining = expires - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Owned runtime processes did not stop before the deadline")
+                time.sleep(min(0.05, remaining))
 
 
 def process_inventory() -> dict[int, dict]:
@@ -239,8 +243,7 @@ class ControlledRuntime:
         programs = process_programs()
         require_idle(programs)
         outgoing = {Path(item["program"]).resolve() for item in self.switch.prior if item["label"] in BASE_SERVICES}
-        if any(Path(program).name in {"Runner.Listener", "devcontainer-engine"} or Path(program).resolve() in outgoing
-               for program in programs):
+        if any(Path(program).resolve() in outgoing for program in programs):
             raise ProcessSurvivors("An outgoing provider, runtime consumer or CI listener survived service removal")
 
     def require_original_processes_stopped(self, *, allow_registered=False):

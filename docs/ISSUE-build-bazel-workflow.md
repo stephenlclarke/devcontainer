@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The first finalized-package campaign falsely treated an unrelated CI listener as an outgoing owned process. The handoff stalled beyond its signal deadline; cancellation restored the original service identities but retained quarantine solely because the final lane had never started. Scope process attribution to captured ownership and exact provider paths, bound polling with monotonic elapsed time, and distinguish untouched lanes from uncertain restoration while continuing to reject missing qualification fixtures. Preserve both the failed campaign and its independently verified recovery.
+
 The temporary Homebrew test also forcibly removed installed stable/current packages and left them uninstalled on exit. Preserve their exact kegs, managed links and owned Homebrew service before candidate testing; verify restoration on both success and failure, retaining backups and blocking publication if restoration is uncertain.
 
 The remaining parity publication path still starts installed runtimes, broadly stops Apple services, assumes ambient tool versions and repeats the full guest/editor campaign in GitHub. Run that heavy campaign once through a maintained local owner/restoration controller, then require GitHub to authenticate its exact-source retained receipt and recompute comparisons. Preserve every failed attempt and all cleanup/timing gates; an absent, stale or quarantined receipt must never authorize publication.
