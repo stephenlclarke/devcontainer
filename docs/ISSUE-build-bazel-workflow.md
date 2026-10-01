@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+Three workflow regression checks still assumed the older inline stock test command and aggregate counts of timeout settings and hidden artifact uploads. Verify the actual named stock, coverage, sanitizer and Sonar steps instead, including their bounded process-group runner, unchanged strict compiler flags and retained hidden logs. Preserve the failed CI receipt rather than weakening execution or evidence requirements.
+
 The legacy parity contract named older runtime releases and an older physical host than the immutable assets and toolchain used for native qualification. Align those recorded pins with the selected released inputs and actual designated host before the next campaign; retain all fixture semantics and require fresh identity-bound evidence. Hosted source validation has a separate toolchain and need not be migrated to change the physical qualification contract.
 
 The public signed package path rebuilt three SwiftPM products and lacked authenticated native staging inputs. Add explicit Make entry points for retained four-product staging, six-executable signing/notarization and checkout-free accepted-state finalization, then consume their completed bytes for stable/current publication. Preserve the original candidate identity, source-pinned legal closure, all release authority gates and failed evidence. Missing native input must fail before a compiler or signer starts; portable tests must isolate synthetic output from the shared checkout.
