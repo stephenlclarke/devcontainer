@@ -171,7 +171,6 @@ def require_production_storage(repository: Path, finalized: Path, state: Path, s
     proof_state = json.loads((state / "state.json").read_bytes())
     if state.stat().st_uid != os.getuid() or state.stat().st_mode & 0o777 != 0o700:
         raise ValueError("Accepted state must be user-owned and private")
-    signer.validate_storage(Path(proof_state["stage"]), state, scratch, Path(proof_state["evidence"]))
     consumer = load_tool(repository / "Tools/release/consume-native-finalized-package.py",
                          "native_finalized_consumer_admission")
     identity_path = consumer.SSD_IDENTITY
@@ -186,6 +185,8 @@ def require_production_storage(repository: Path, finalized: Path, state: Path, s
                             check=True, capture_output=True, timeout=10,
                             env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
     consumer.validate_ssd_identity(expected_uuid, result.stdout)
+    # The signer may create scratch; authenticate the volume before any write.
+    signer.validate_storage(Path(proof_state["stage"]), state, scratch, Path(proof_state["evidence"]))
     for path in (retained, evidence_root):
         if path.exists():
             physical(path)

@@ -345,6 +345,15 @@ class FinalizedAdmissionTests(unittest.TestCase):
                 patch.object(MODULE.Path, "stat", external_scratch_stat), \
                 patch.object(MODULE.subprocess, "run", return_value=disk_info), \
                 patch.object(signer, "validate_storage") as validate_stage:
+            disk_info.stdout = plistlib.dumps({"MountPoint": "/Volumes/SSD", "Internal": False,
+                                               "VolumeUUID": "00000000-0000-0000-0000-000000000000"})
+            with self.assertRaises(ValueError):
+                MODULE.require_production_storage(REPOSITORY, finalized, state, scratch,
+                                                  retained, evidence, MODULE.digest(state / "state.json"), signer)
+            validate_stage.assert_not_called()
+            self.assertFalse(retained.exists())
+            self.assertFalse(evidence.exists())
+            disk_info.stdout = volume
             MODULE.require_production_storage(REPOSITORY, finalized, state, scratch,
                                               retained, evidence, MODULE.digest(state / "state.json"), signer)
         validate_stage.assert_called_once_with(Path(state_record["stage"]), state, scratch,
