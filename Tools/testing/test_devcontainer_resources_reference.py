@@ -151,8 +151,9 @@ class ResourcesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unrecorded"):
             self.fixture.cleanup()
         self.assertEqual(self.deletes(), [])
+        records = self.vm.journal.records()
         with self.assertRaisesRegex(ValueError, "C03"):
-            require_guest_resources_stopped(self.vm.journal.records())
+            require_guest_resources_stopped(records)
 
     def test_missing_volume_after_unknown_create_preserves_quarantine(self):
         self.fixture.setup()
@@ -178,8 +179,9 @@ class ResourcesTests(unittest.TestCase):
             self.fixture.cleanup()
         self.assertEqual(self.server.services, {})
         self.assertIsNone(self.server.network)
+        records = self.vm.journal.records()
         with self.assertRaisesRegex(ValueError, "C03"):
-            require_guest_resources_stopped(self.vm.journal.records())
+            require_guest_resources_stopped(records)
         self.server.volume_delete_status = 204
         self.reopen().cleanup()
         self.assertEqual(len([path for path in self.deletes() if "/containers/" in path]), 2)

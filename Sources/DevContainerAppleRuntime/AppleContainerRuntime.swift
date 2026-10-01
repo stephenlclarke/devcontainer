@@ -77,6 +77,28 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let handoff: (any AppleContainerLoggingHandoffClient)?
     }
 
+    struct DirectClientOverrides {
+        let allocatedNetworks: (any AppleNetworkAllocationClient)?
+        let bootstrap: (any AppleContainerBootstrapClient)?
+        let images: (any AppleImageIdentityClient)?
+        let creator: (any AppleContainerCreateClient)?
+        let logging: LoggingClients
+
+        init(
+            allocatedNetworks: (any AppleNetworkAllocationClient)? = nil,
+            bootstrap: (any AppleContainerBootstrapClient)? = nil,
+            images: (any AppleImageIdentityClient)? = nil,
+            creator: (any AppleContainerCreateClient)? = nil,
+            logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
+        ) {
+            self.allocatedNetworks = allocatedNetworks
+            self.bootstrap = bootstrap
+            self.images = images
+            self.creator = creator
+            self.logging = logging
+        }
+    }
+
     struct DirectClients {
         let api: ContainerClient
         let bootstrap: any AppleContainerBootstrapClient
@@ -94,23 +116,19 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             inventory: any AppleContainerInventoryClient,
             files: any AppleContainerFileClient,
             networks: any AppleNetworkClient,
-            allocatedNetworks: any AppleNetworkAllocationClient = LiveAppleNetworkAllocationClient(),
-            bootstrap: (any AppleContainerBootstrapClient)? = nil,
-            images: any AppleImageIdentityClient = LiveAppleImageIdentityClient(),
-            creator: (any AppleContainerCreateClient)? = nil,
-            logging: LoggingClients = LoggingClients(records: nil, handoff: nil)
+            overrides: DirectClientOverrides = .init()
         ) {
             self.api = api
-            self.bootstrap = bootstrap ?? LiveAppleContainerBootstrapClient()
+            bootstrap = overrides.bootstrap ?? LiveAppleContainerBootstrapClient()
             self.inventory = inventory
             self.files = files
             self.networks = networks
-            self.allocatedNetworks = allocatedNetworks
-            self.images = images
-            self.creator = creator ?? LiveAppleContainerCreateClient(client: api)
-            loggingRecords = logging.records
+            allocatedNetworks = overrides.allocatedNetworks ?? LiveAppleNetworkAllocationClient()
+            images = overrides.images ?? LiveAppleImageIdentityClient()
+            self.creator = overrides.creator ?? LiveAppleContainerCreateClient(client: api)
+            loggingRecords = overrides.logging.records
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
-            loggingHandoffClientOverride = logging.handoff
+            loggingHandoffClientOverride = overrides.logging.handoff
         }
     }
 

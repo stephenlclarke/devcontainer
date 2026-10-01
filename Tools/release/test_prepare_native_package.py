@@ -183,12 +183,12 @@ class NativeStageTests(unittest.TestCase):
                             for name, entry in prepare_releases.inventory(tree).items()
                             if entry["kind"] == "file"}
         self.assertEqual(result["unsignedPayloadInventory"], expected_payload)
-        self.assertTrue({"share/devcontainer/THIRD-PARTY-NOTICES.txt",
-                         "share/devcontainer/dependency-licenses.selected.json",
-                         "share/devcontainer/build-info.json",
-                         "share/devcontainer/devcontainer.spdx.json",
-                         "bin/devcontainer", "libexec/devcontainer/reference/NODE-LICENSE.txt"}
-                        <= set(expected_payload))
+        self.assertLessEqual({"share/devcontainer/THIRD-PARTY-NOTICES.txt",
+                              "share/devcontainer/dependency-licenses.selected.json",
+                              "share/devcontainer/build-info.json",
+                              "share/devcontainer/devcontainer.spdx.json",
+                              "bin/devcontainer", "libexec/devcontainer/reference/NODE-LICENSE.txt"},
+                             set(expected_payload))
         self.assertTrue(all(set(entry) == {"sha256", "size", "mode"} for entry in expected_payload.values()))
         self.assertFalse(any(name.startswith("devcontainer-1.2.3/") for name in expected_payload))
         notices = tree / "share/devcontainer/THIRD-PARTY-NOTICES.txt"
@@ -198,8 +198,8 @@ class NativeStageTests(unittest.TestCase):
         self.assertFalse((self.fixture.scratch / "invocations/run.query").exists())
 
     def test_rejects_failed_dirty_or_corrupt_retained_candidate(self):
+        self.fixture.save(exit_code=1)
         with self.assertRaisesRegex(ValueError, "successful"):
-            self.fixture.save(exit_code=1)
             MODULE.retained_bytes(self.fixture.database, self.fixture.invocation)
         self.fixture.save()
         dirty = dict(self.source, dirty=True)
@@ -272,9 +272,10 @@ class NativeStageTests(unittest.TestCase):
     def test_aliased_proof_is_not_accepted(self):
         alias = self.root / "proof-alias.json"
         alias.symlink_to(self.proof_path)
+        inputs_sha = MODULE.digest(self.fixture.contents["inputs-before.json"])
         with self.assertRaisesRegex(ValueError, "aliased"):
             MODULE.admit_proof(alias, "stock", self.source["commit"],
-                               MODULE.digest(self.fixture.contents["inputs-before.json"]),
+                               inputs_sha,
                                self.fixture.receipt["products"], self.fixture.retained,
                                self.fixture.scratch, self.repository, self.source)
 
@@ -367,9 +368,10 @@ class NativeStageTests(unittest.TestCase):
         path = self.bundle / "legal.json"
         def check_failure(pattern):
             path.write_text(json.dumps(manifest))
+            manifest_sha = MODULE.digest(path)
             with self.assertRaisesRegex(ValueError, pattern):
                 MODULE.admit_legal_bundle(self.repository, self.fixture.retained, self.bundle,
-                                          MODULE.digest(path), lock, selected)
+                                          manifest_sha, lock, selected)
         manifest["dependencies"][0]["revision"] = "c" * 40
         check_failure("identity")
         manifest = json.loads(original)
@@ -384,14 +386,16 @@ class NativeStageTests(unittest.TestCase):
         manifest = json.loads(original)
         path.write_text(json.dumps(manifest))
         (self.bundle / "THIRD-PARTY-NOTICES.txt").write_bytes(b"notices replaced")
+        manifest_sha = MODULE.digest(path)
         with self.assertRaisesRegex(ValueError, "policy differs"):
             MODULE.admit_legal_bundle(self.repository, self.fixture.retained, self.bundle,
-                                      MODULE.digest(path), lock, selected)
+                                      manifest_sha, lock, selected)
         (self.bundle / "THIRD-PARTY-NOTICES.txt").write_bytes(MODULE.legal_notices(manifest["dependencies"]))
         (self.bundle / "dependency-licenses.json").write_text('{"schemaVersion":1,"licenses":{"other":"MIT"}}')
+        manifest_sha = MODULE.digest(path)
         with self.assertRaisesRegex(ValueError, "policy differs"):
             MODULE.admit_legal_bundle(self.repository, self.fixture.retained, self.bundle,
-                                      MODULE.digest(path), lock, selected)
+                                      manifest_sha, lock, selected)
 
     def test_legal_bundle_rejects_alias_and_collector_drift(self):
         lock, selected, manifest, sha = self._legal_fixture()
@@ -402,9 +406,10 @@ class NativeStageTests(unittest.TestCase):
         manifest["collectorSHA256"] = "0" * 64
         path = self.bundle / "legal.json"
         path.write_text(json.dumps(manifest))
+        manifest_sha = MODULE.digest(path)
         with self.assertRaisesRegex(ValueError, "policy differs"):
             MODULE.admit_legal_bundle(self.repository, self.fixture.retained, self.bundle,
-                                      MODULE.digest(path), lock, selected)
+                                      manifest_sha, lock, selected)
 
     def test_source_date_epoch_is_nonnegative_and_commit_bound(self):
         with patch.object(MODULE.subprocess, "check_output", return_value=b"1700000000\n") as git:

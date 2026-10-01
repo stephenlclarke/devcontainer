@@ -347,9 +347,10 @@ class FinalizedAdmissionTests(unittest.TestCase):
                 patch.object(signer, "validate_storage") as validate_stage:
             disk_info.stdout = plistlib.dumps({"MountPoint": "/Volumes/SSD", "Internal": False,
                                                "VolumeUUID": "00000000-0000-0000-0000-000000000000"})
+            trusted_sha = MODULE.digest(state / "state.json")
             with self.assertRaises(ValueError):
                 MODULE.require_production_storage(REPOSITORY, finalized, state, scratch,
-                                                  retained, evidence, MODULE.digest(state / "state.json"), signer)
+                                                  retained, evidence, trusted_sha, signer)
             validate_stage.assert_not_called()
             self.assertFalse(retained.exists())
             self.assertFalse(evidence.exists())

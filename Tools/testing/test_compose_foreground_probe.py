@@ -97,18 +97,21 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
 
     def test_wrong_exit_is_not_replaced_with_success(self):
+        changed_command = COMMAND[2].replace("exit 17", "exit 0")
         with self.assertRaisesRegex(ValueError, "lost the guest exit"):
-            self.run_cli(COMMAND[2].replace("exit 17", "exit 0"))
+            self.run_cli(changed_command)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_stdout_corruption_and_stderr_omission_fail(self):
+        changed_command = COMMAND[2].replace("printf 'compose-stderr\\n' >&2", ":")
         with self.assertRaisesRegex(ValueError, "changed or merged"):
-            self.run_cli(COMMAND[2].replace("printf 'compose-stderr\\n' >&2", ":"))
+            self.run_cli(changed_command)
         self.fixture.cleanup()
 
     def test_guest_bytes_on_wrong_stream_fail(self):
+        changed_command = COMMAND[2].replace("exit 17", "printf 'compose-stdout\\n' >&2; exit 17")
         with self.assertRaisesRegex(ValueError, "changed or merged"):
-            self.run_cli(COMMAND[2].replace("exit 17", "printf 'compose-stdout\\n' >&2; exit 17"))
+            self.run_cli(changed_command)
         self.fixture.cleanup()
 
     def test_unexpected_early_stdout_fails_and_exact_owned_guest_is_recovered(self):
@@ -142,8 +145,9 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_missing_process_closure_quarantines_recovery(self):
+        record_json = {PROCESS + "-intent.json": canonical({})}
         with self.assertRaisesRegex(ValueError, "explicit reconciliation"):
-            require_guest_commands_stopped({PROCESS + "-intent.json": canonical({})})
+            require_guest_commands_stopped(record_json)
 
     def test_reopened_fixture_cannot_claim_an_existing_child_stopped(self):
         self.fixture.prepare()
@@ -151,8 +155,9 @@ class ComposeForegroundTests(unittest.TestCase):
             self.fixture.child.start(["/bin/sleep", "30"], self.root, output)
         self.journal.put(PROCESS + "-process.json", canonical(self.fixture.child.identity()))
         self.server.guest = self.guest()
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "incarnation reconciliation"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertIsNone(self.fixture.child.process.poll())
         self.assertNotIn(PROCESS + "-stopped.json", self.journal.records())
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
@@ -180,8 +185,11 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(environment["CONTAINER_COMPOSE_ENGINE_SOCKET"], str(self.socket))
         self.assertEqual(environment["CONTAINER_COMPOSE_CONTAINER"], str(self.root / "bin/container"))
         self.assertEqual(environment["CONTAINER_BIN"], str(self.root / "bin/container"))
+        process = OwnedProcess()
+        mock_value = Mock()
+        socket_path = Path("relative")
         with self.assertRaisesRegex(ValueError, "canonical"):
-            OwnedProcess().start(["/owned/compose"], self.root, Mock(), runtime_socket=Path("relative"))
+            process.start(["/owned/compose"], self.root, mock_value, runtime_socket=socket_path)
 
 
 class ComposeSignalTests(unittest.TestCase):
@@ -232,19 +240,22 @@ class ComposeSignalTests(unittest.TestCase):
         self.assertEqual(configuration["services"]["app"]["command"], list(self.fixture.command))
 
     def test_wrong_trap_exit_is_not_success(self):
+        changed_command = self.fixture.command[2].replace("exit 23", "exit 0")
         with self.assertRaisesRegex(ValueError, "guest trap status"):
-            self.run_cli(self.fixture.command[2].replace("exit 23", "exit 0"))
+            self.run_cli(changed_command)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_wrong_usr1_bytes_fail_without_second_signal(self):
+        changed_command = self.fixture.command[2].replace("signal:USR1", "wrong:USR1")
         with self.assertRaisesRegex(ValueError, "did not forward"):
-            self.run_cli(self.fixture.command[2].replace("signal:USR1", "wrong:USR1"))
+            self.run_cli(changed_command)
         self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_wrong_term_bytes_fail_after_real_exit(self):
+        changed_command = self.fixture.command[2].replace("signal:TERM", "wrong:TERM")
         with self.assertRaisesRegex(ValueError, "exact guest streams"):
-            self.run_cli(self.fixture.command[2].replace("signal:TERM", "wrong:TERM"))
+            self.run_cli(changed_command)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_signal_target_is_revalidated_before_any_signal(self):
@@ -277,8 +288,9 @@ class ComposeSignalTests(unittest.TestCase):
                 original(expected, end)
 
         with patch.object(self.fixture, "require_signal_output", side_effect=expire_signal_wait):
+            changed_command = self.fixture.command[2].replace('printf "signal:USR1\\n"', ":")
             with self.assertRaisesRegex(TimeoutError, "signal deadline"):
-                self.run_cli(self.fixture.command[2].replace('printf "signal:USR1\\n"', ":"))
+                self.run_cli(changed_command)
         self.assertIn(PROCESS + "-sigusr1-intent.json", self.journal.records())
         self.assertNotIn(PROCESS + "-sigterm-intent.json", self.journal.records())
         self.assertEqual(self.fixture.cleanup()["status"], "passed")

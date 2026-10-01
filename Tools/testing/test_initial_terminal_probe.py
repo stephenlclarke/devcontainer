@@ -92,16 +92,18 @@ class InitialTerminalReadTests(unittest.TestCase):
                 probe, connection = self.probe(), Mock()
                 connection.recv.return_value = b""
                 connection.recv.side_effect = error
+                deadline = time.monotonic() + 1
                 with self.assertRaises((ValueError, TimeoutError)):
-                    probe.receive_initial_size(connection, b"initial-", time.monotonic() + 1)
+                    probe.receive_initial_size(connection, b"initial-", deadline)
                 probe.journal.put.assert_any_call("initial-terminal-output.log", b"initial-")
 
     def test_oversized_or_extra_output_is_never_accepted_or_retained_unbounded(self):
         for initial in (b"x" * 100, OUTPUT + b"trailing", b"113 37\n"):
             with self.subTest(initial=initial):
                 probe, connection = self.probe(), Mock()
+                deadline = time.monotonic() + 1
                 with self.assertRaisesRegex(ValueError, "First guest terminal size"):
-                    probe.receive_initial_size(connection, initial, time.monotonic() + 1)
+                    probe.receive_initial_size(connection, initial, deadline)
                 connection.recv.assert_not_called()
                 probe.journal.put.assert_any_call("initial-terminal-output.log", initial[:64])
                 capture = json.loads(probe.journal.put.call_args.args[1])
@@ -111,8 +113,9 @@ class InitialTerminalReadTests(unittest.TestCase):
     def test_socket_overflow_is_detected_with_one_bounded_extra_byte(self):
         probe, connection = self.probe(), Mock()
         connection.recv.side_effect = [b"x" * 64, b"x"]
+        deadline = time.monotonic() + 1
         with self.assertRaisesRegex(ValueError, "First guest terminal size"):
-            probe.receive_initial_size(connection, b"", time.monotonic() + 1)
+            probe.receive_initial_size(connection, b"", deadline)
         probe.journal.put.assert_any_call("initial-terminal-output.log", b"x" * 64)
         self.assertEqual(json.loads(probe.journal.put.call_args.args[1]),
                          {"observedBytes": 65, "retainedBytes": 64, "truncated": True})

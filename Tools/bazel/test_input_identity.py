@@ -119,8 +119,9 @@ class InputIdentityTests(unittest.TestCase):
                 self.assertTrue(before["dirty"])
                 self.assertIn("Sources/Module.docc/Hidden.md", before["files"])
                 source.write_text("# Changed\n")
+                after = source_identity(root)
                 with self.assertRaisesRegex(ValueError, "Sources changed"):
-                    verify(before, source_identity(root))
+                    verify(before, after)
 
     @staticmethod
     def git(root: Path, *arguments: str) -> None:

@@ -32,8 +32,12 @@ extension DockerRouter {
             }
             continuation.onTermination = { _ in
                 task.cancel()
-                Task { await registration.cancel() }
+                scheduleExitWaitCancellation(registration)
             }
         }
     }
+}
+
+private func scheduleExitWaitCancellation(_ registration: any RuntimeContainerExitWait) {
+    Task { await registration.cancel() }
 }

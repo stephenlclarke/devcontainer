@@ -47,6 +47,8 @@ jobs:
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer context --format value | grep '^unix://'
+          DEVCONTAINER_COMPOSE_PROVIDER=docker \
+          DEVCONTAINER_DOCKER_COMPOSE_BIN='' \
           DEVCONTAINER_DOCKER_BIN="$PWD/Tools/ci/docker-compose-smoke-fixture.sh" \
             DEVCONTAINER_STATE="${RUNNER_TEMP}/devcontainer-smoke-state.sqlite" \
             .build/debug/devcontainer-compose version \

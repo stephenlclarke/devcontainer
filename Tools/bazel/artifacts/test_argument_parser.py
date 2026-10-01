@@ -131,8 +131,9 @@ class ArgumentParserLayerTests(unittest.TestCase):
         selected.write_bytes(b"module")
         paths = f"{plain.relative_to(execution)}\n{selected.relative_to(execution)}"
         self.assertEqual(selected_output(paths, "Module.swiftmodule", execution, self.root), selected.resolve())
+        missing_path = str(plain.relative_to(execution))
         with self.assertRaisesRegex(ValueError, "expected one"):
-            selected_output(str(plain.relative_to(execution)), "Module.swiftmodule", execution, self.root)
+            selected_output(missing_path, "Module.swiftmodule", execution, self.root)
 
     def test_verified_release_cache_reuses_offline_and_rejects_mutation(self) -> None:
         evidence = b'{"archiveSHA256":"' + digest(self.archive.read_bytes()).encode() + b'"}\n'

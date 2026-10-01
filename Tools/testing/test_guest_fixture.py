@@ -212,8 +212,9 @@ class GuestFixtureTests(unittest.TestCase):
         self.assertEqual(self.fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
         self.assertEqual(self.reopen().cleanup()["status"], "passed")
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "reconcile"):
-            self.reopen().create()
+            fixture.create()
 
     def test_rejection_without_one_exact_preflight_marker_stays_uncertain(self):
         self.server.reject_create = True
@@ -253,14 +254,16 @@ class GuestFixtureTests(unittest.TestCase):
         for value in invalid:
             changed = dict(records, **{"container-create-rejected.json": canonical(value)})
             with self.subTest(receipt=value), patch.object(self.journal, "records", return_value=changed):
+                fixture = self.reopen()
                 with self.assertRaisesRegex(ValueError, "Invalid or contradictory"):
-                    self.reopen().cleanup()
+                    fixture.cleanup()
         for name in ("container-created.json", "container-delete-intent.json"):
             for value in (None, {"id": "b" * 64}):
                 changed = dict(records, **{name: canonical(value)})
                 with self.subTest(record=name, value=value), patch.object(self.journal, "records", return_value=changed):
+                    fixture = self.reopen()
                     with self.assertRaisesRegex(ValueError, "Invalid or contradictory"):
-                        self.reopen().cleanup()
+                        fixture.cleanup()
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
         self.assertNotIn("container-removed.json", self.journal.records())
 

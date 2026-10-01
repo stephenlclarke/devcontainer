@@ -12,8 +12,9 @@ usage() {
 # Compare every raw function/line counter, including unexecuted branches. The
 # reviewed inventory deliberately changes if the fixture or compiler changes.
 validate_counters() {
-    /usr/bin/awk '/^(FNDA|DA|LF|LH):/' "$1" | LC_ALL=C /usr/bin/sort > "$TEST_TMPDIR/actual-counters"
-    /usr/bin/diff -u "$2" "$TEST_TMPDIR/actual-counters"
+    local report="$1" expected="$2"
+    /usr/bin/awk '/^(FNDA|DA|LF|LH):/' "$report" | LC_ALL=C /usr/bin/sort > "$TEST_TMPDIR/actual-counters"
+    /usr/bin/diff -u "$expected" "$TEST_TMPDIR/actual-counters"
 }
 
 # The validator must reject missing records and plausible in-range lost hits,

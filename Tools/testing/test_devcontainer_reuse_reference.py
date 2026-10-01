@@ -207,8 +207,9 @@ class ReuseTests(unittest.TestCase):
             self.start()
         self.assertEqual(self.server.guests, {})
         self.assertNotIn("devcontainer-removed.json", self.vm.journal.records())
+        records = self.vm.journal.records()
         with self.assertRaisesRegex(ValueError, "D07 volume"):
-            require_guest_resources_stopped(self.vm.journal.records())
+            require_guest_resources_stopped(records)
         self.server.fail_volume_delete = False
         self.reopen().cleanup()
         self.assertIsNone(self.server.volume)
@@ -246,9 +247,10 @@ class ReuseTests(unittest.TestCase):
             with self.subTest(guests=guests):
                 self.server.guests = guests
                 self.server.routes.clear()
-                with patch.object(self.vm.journal, "records", return_value=records), \
-                        self.assertRaisesRegex(ValueError, "rebuild outcome"):
-                    self.reopen().cleanup()
+                with patch.object(self.vm.journal, "records", return_value=records):
+                    fixture = self.reopen()
+                    with self.assertRaisesRegex(ValueError, "rebuild outcome"):
+                        fixture.cleanup()
                 self.assertIsNotNone(self.server.volume)
                 self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
 
@@ -274,8 +276,9 @@ class ReuseTests(unittest.TestCase):
         self.fixture.setup()
         self.command("devcontainer-up", [], timeout=120)
         self.server.guests.clear()
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "no observed"):
-            self.reopen().cleanup()
+            fixture.cleanup()
 
     def test_container_reappearing_after_removal_is_not_deleted(self):
         self.start()
@@ -284,8 +287,9 @@ class ReuseTests(unittest.TestCase):
         records = self.vm.journal.records()
         self.server.volume = json.loads(records["d07-volume-created.json"])
         self.server.routes.clear()
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "reappeared"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
 
 

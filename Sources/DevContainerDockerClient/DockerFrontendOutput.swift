@@ -27,12 +27,16 @@ public final class DockerFrontendOutput: @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 DispatchQueue.global(qos: .userInitiated).async { [self] in
-                    continuation.resume(with: Result { try writeLock.withLock { try writeBlocking(data) } })
+                    continuation.resume(with: writeResult(data))
                 }
             }
         } onCancel: {
             self.cancel()
         }
+    }
+
+    private func writeResult(_ data: Data) -> Result<Void, any Error> {
+        Result { try writeLock.withLock { try writeBlocking(data) } }
     }
 
     /// Used only by the shared HTTP client's blocking body worker, never a Swift

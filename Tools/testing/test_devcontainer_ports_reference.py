@@ -68,9 +68,10 @@ class PortsReferenceTests(reference_tests.ReferenceTests):
 
     def test_fake_probe_metadata_cannot_replace_actual_cli_metadata(self):
         for value in (None, {}, {**FORWARD, "forwardPorts": []}, {**FORWARD, "portsAttributes": {}}):
+            record_json = canonical({"outcome": "success", "containerId": reference_tests.ID,
+                                                    "configuration": value})
             with self.subTest(config=value), self.assertRaisesRegex(ValueError, "forward metadata"):
-                self.fixture.up_identity(canonical({"outcome": "success", "containerId": reference_tests.ID,
-                                                    "configuration": value}))
+                self.fixture.up_identity(record_json)
 
     def test_foreign_host_listener_blocks_before_workspace_or_cli_mutation(self):
         self.require_free_port.side_effect = OSError("address in use")
@@ -206,8 +207,9 @@ class CollisionTests(unittest.TestCase):
     def test_real_socket_collision_is_owned_stopped_and_cleaned(self):
         self.fixture.reject()
         self.assertEqual(self.server.guest["HostConfig"]["PortBindings"], BINDINGS)
+        records = self.journal.records()
         with self.assertRaisesRegex(ValueError, "collision resource"):
-            require_guest_cleanup(self.journal.records())
+            require_guest_cleanup(records)
         self.fixture.cleanup()
         require_guest_cleanup(self.journal.records())
         self.assertIsNone(self.server.guest)

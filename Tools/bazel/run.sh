@@ -118,6 +118,7 @@ prebuilt_argument_parser() {
         case "$argument" in
             --config=prebuilt-argument-parser|--config=prebuilt-foundation|--config=prebuilt-containerization|--config=prebuilt-engine-api|--config=prebuilt-container-sdk) selected=1 ;;
             --config=release) release=1 ;;
+            *) : ;; # Other arguments do not select ArgumentParser.
         esac
     done
     if [[ "$selected" == 1 ]]; then
@@ -126,6 +127,7 @@ prebuilt_argument_parser() {
             case "$argument" in
                 --config=asan|--config=tsan|-c|--compilation_mode*|--host_compilation_mode*|--macos_minimum_os*|--macos_sdk_version*|--xcode_version*|--swiftcopt*|--copt*|--conlyopt*|--cxxopt*|--objcopt*|--host_copt*|--host_conlyopt*|--host_cxxopt*|--linkopt*|--features*|--host_features*|--platforms*|--host_platform*|--cpu*|--host_cpu*|--apple_platform_type*|--apple_split_cpu*|--extra_toolchains*|--define*|--@build_bazel_rules_swift//swift:copt*)
                     error 'Compiled package layers forbid caller-selected compilation options.'; return 2 ;;
+                *) : ;; # Only the deny-listed compilation options are rejected.
             esac
         done
     fi
@@ -141,6 +143,7 @@ prebuilt_groups() {
             --config=prebuilt-containerization) foundation=1; containerization=1 ;;
             --config=prebuilt-engine-api) foundation=1; engine_api=1 ;;
             --config=prebuilt-container-sdk) foundation=1; containerization=1; engine_api=1; container_sdk=1 ;;
+            *) : ;; # Other arguments do not select a compiled dependency group.
         esac
     done
     [[ "$foundation" == 0 ]] || printf 'foundation\n'
@@ -171,6 +174,7 @@ requires_loaded_container_source() {
             //:layer_host|:layer_host|layer_host|//:layer_host_tests|:layer_host_tests|layer_host_tests|\
             //:layer_cli|:layer_cli|layer_cli|//...)
                 printf '1\n'; return ;;
+            *) : ;; # Only maintained product roots require loaded Container sources.
         esac
     done
     printf '0\n'
@@ -352,6 +356,7 @@ execute_invocation() {
                         --output-base "$output_base" --profile "$profile" \
                         --output "$invocation/source-graph.json" >/dev/null || validation=$?
                 fi ;;
+            *) : ;; # Other launcher commands do not produce source-graph evidence.
         esac
     fi
     /usr/bin/python3 "$TOOL_DIRECTORY/input_identity.py" "$repo" --tooling "$TOOL_DIRECTORY" \

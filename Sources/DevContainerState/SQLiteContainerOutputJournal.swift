@@ -84,16 +84,7 @@ final class SQLiteContainerOutputJournal: RuntimeContainerOutputJournal, @unchec
                 let records = try nextEncoder.append(frame)
                 try connection.transaction {
                     try reserve(frame)
-                    try connection.statement("""
-                    INSERT INTO runtime_output_frames(docker_id, sequence, channel, payload)
-                    SELECT docker_id, last_sequence, ?, ? FROM runtime_output_journals
-                    WHERE docker_id = ? AND generation = ?
-                    """) { statement in
-                        try connection.bind(frame.channel == .standardOutput ? 1 : 2, to: statement, at: 1)
-                        try connection.bind(frame.data, to: statement, at: 2)
-                        try bindIdentity(statement, startingAt: 3)
-                        try connection.done(statement)
-                    }
+                    try insertFrame(frame)
                     try appendLogs(records)
                 }
                 encoder = nextEncoder
@@ -105,6 +96,19 @@ final class SQLiteContainerOutputJournal: RuntimeContainerOutputJournal, @unchec
                 try? setCompletion(-1)
                 throw error
             }
+        }
+    }
+
+    private func insertFrame(_ frame: RuntimeIOFrame) throws {
+        try connection.statement("""
+        INSERT INTO runtime_output_frames(docker_id, sequence, channel, payload)
+        SELECT docker_id, last_sequence, ?, ? FROM runtime_output_journals
+        WHERE docker_id = ? AND generation = ?
+        """) { statement in
+            try connection.bind(frame.channel == .standardOutput ? 1 : 2, to: statement, at: 1)
+            try connection.bind(frame.data, to: statement, at: 2)
+            try bindIdentity(statement, startingAt: 3)
+            try connection.done(statement)
         }
     }
 

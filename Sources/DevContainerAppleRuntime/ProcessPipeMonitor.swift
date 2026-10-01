@@ -8,6 +8,28 @@ import Foundation
 /// block independently without occupying Swift's cooperative executor or
 /// relying on a one-shot readiness edge while a child performs duplex I/O.
 final class ProcessPipeMonitor: @unchecked Sendable {
+    struct Callbacks {
+        let onRead: (@Sendable (Int) -> Void)?
+        let onFinish: (@Sendable () -> Void)?
+        let onEOF: (@Sendable () -> Void)?
+        let onFrame: (@Sendable (RuntimeIOFrame) -> Void)?
+        let onError: (@Sendable (any Error) -> Void)?
+
+        init(
+            onRead: (@Sendable (Int) -> Void)? = nil,
+            onFinish: (@Sendable () -> Void)? = nil,
+            onEOF: (@Sendable () -> Void)? = nil,
+            onFrame: (@Sendable (RuntimeIOFrame) -> Void)? = nil,
+            onError: (@Sendable (any Error) -> Void)? = nil
+        ) {
+            self.onRead = onRead
+            self.onFinish = onFinish
+            self.onEOF = onEOF
+            self.onFrame = onFrame
+            self.onError = onError
+        }
+    }
+
     private let handle: FileHandle
     private let descriptor: Int32
     private let channel: RuntimeIOChannel
@@ -15,13 +37,9 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         RuntimeIOFrame,
         any Error
     >.Continuation?
-    private let onFrame: (@Sendable (RuntimeIOFrame) -> Void)?
-    private let onError: (@Sendable (any Error) -> Void)?
+    private let callbacks: Callbacks
     private let endOnEIO: Bool
     private let closeHandleOnFinish: Bool
-    private let onRead: (@Sendable (Int) -> Void)?
-    private let onFinish: (@Sendable () -> Void)?
-    private let onEOF: (@Sendable () -> Void)?
     private let stateLock = NSLock()
     private var finished = false
     private var cancelled = false
@@ -36,11 +54,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         >.Continuation? = nil,
         endOnEIO: Bool = false,
         closeHandleOnFinish: Bool = true,
-        onRead: (@Sendable (Int) -> Void)? = nil,
-        onFinish: (@Sendable () -> Void)? = nil,
-        onEOF: (@Sendable () -> Void)? = nil,
-        onFrame: (@Sendable (RuntimeIOFrame) -> Void)? = nil,
-        onError: (@Sendable (any Error) -> Void)? = nil
+        callbacks: Callbacks = .init()
     ) {
         self.handle = handle
         descriptor = handle.fileDescriptor
@@ -48,11 +62,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         self.frames = frames
         self.endOnEIO = endOnEIO
         self.closeHandleOnFinish = closeHandleOnFinish
-        self.onRead = onRead
-        self.onFinish = onFinish
-        self.onEOF = onEOF
-        self.onFrame = onFrame
-        self.onError = onError
+        self.callbacks = callbacks
         Thread.detachNewThread { [self] in
             Thread.current.name =
                 "io.github.stephenlclarke.devcontainer.cli-process-\(channel)"
@@ -106,10 +116,10 @@ final class ProcessPipeMonitor: @unchecked Sendable {
                 Darwin.read(descriptor, bytes.baseAddress, bytes.count)
             }
             if count > 0 {
-                onRead?(count)
+                callbacks.onRead?(count)
                 let frame = RuntimeIOFrame(channel: channel, data: Data(buffer.prefix(count)))
                 frames?.yield(frame)
-                onFrame?(frame)
+                callbacks.onFrame?(frame)
                 continue
             }
             if count == 0 {
@@ -143,7 +153,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         // EOF is distinct from cancellation, read failure, and joining the
         // monitor. Only the reader can establish the end of a source stream.
         if !stateLock.withLock({ cancelled }) {
-            onEOF?()
+            callbacks.onEOF?()
         }
     }
 
@@ -152,7 +162,7 @@ final class ProcessPipeMonitor: @unchecked Sendable {
         if closeHandleOnFinish {
             try? handle.close()
         }
-        onFinish?()
+        callbacks.onFinish?()
         let waiters = stateLock.withLock {
             finished = true
             defer { completionWaiters.removeAll() }
@@ -165,6 +175,6 @@ final class ProcessPipeMonitor: @unchecked Sendable {
 
     private func fail(_ error: any Error) {
         frames?.finish(throwing: error)
-        onError?(error)
+        callbacks.onError?(error)
     }
 }

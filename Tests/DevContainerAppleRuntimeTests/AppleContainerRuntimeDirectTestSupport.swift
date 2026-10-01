@@ -354,7 +354,7 @@ func directRuntime(
             inventory: inventory,
             files: files,
             networks: networks,
-            images: FakeAppleImageIdentityClient()
+            overrides: .init(images: FakeAppleImageIdentityClient())
         )
     )
 }

@@ -129,8 +129,9 @@ class BuildRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'uncertain'):
             self.builder.cleanup()
         self.assertNotIn(['builder', 'delete'], self.calls)
+        records = self.journal.records()
         with self.assertRaisesRegex(ValueError, 'explicit reconciliation'):
-            require_guest_cleanup(self.journal.records())
+            require_guest_cleanup(records)
 
     def test_identity_change_and_wrong_export_mount_block_cleanup(self):
         self.builder.provision()

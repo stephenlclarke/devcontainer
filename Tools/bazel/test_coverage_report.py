@@ -77,8 +77,9 @@ class CoverageReportTests(unittest.TestCase):
         self.contents[self.logs[0]] = b"All tests passed\n"
         self.store()
         self.assertIn("coverage.xml", report_bytes(self.database, "fixture"))
+        malformed_lcov = LCOV.replace(b"DA:1,2", b"DA:1,18446744073709551615")
         with self.assertRaisesRegex(ValueError, "LCOV line"):
-            sonar_xml(LCOV.replace(b"DA:1,2", b"DA:1,18446744073709551615"))
+            sonar_xml(malformed_lcov)
 
     def test_collector_failures_cannot_hide_behind_successful_test_status(self) -> None:
         require_clean_coverage_log(b"error: intentional CLI test failure\nwarning: test fixture missing\n")

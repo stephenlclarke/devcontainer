@@ -144,13 +144,15 @@ class GuestImageTests(unittest.TestCase):
         index = json.loads(self.files["index.json"])
         index["manifests"].append(dict(leaf, annotations={"org.opencontainers.image.ref.name": "foreign:tag"}))
         self.files["index.json"] = canonical(index).encode()
+        archive = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "differs from the pin"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(archive, self.image)
         index["manifests"].pop()
         self.files["index.json"] = canonical(index).encode()
         self.image["config"] = "sha256:" + "a" * 64
+        archive = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "config differs"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(archive, self.image)
 
     def test_index_with_multiple_images_is_not_an_implicit_platform_selection(self):
         leaf = json.loads(self.files["index.json"])["manifests"][0]
@@ -160,8 +162,9 @@ class GuestImageTests(unittest.TestCase):
         self.files["blobs/sha256/" + root["digest"].split(":")[1]] = nested
         self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [root]}).encode()
         self.image["manifest"] = root["digest"]
+        archive = self.archive(self.root)
         with self.assertRaisesRegex(ValueError, "unambiguous"):
-            verify_archive(self.archive(self.root), self.image)
+            verify_archive(archive, self.image)
 
     def test_published_archive_pin_does_not_fall_back_to_registry_repacking(self):
         self.image["archiveSHA256"] = "a" * 64

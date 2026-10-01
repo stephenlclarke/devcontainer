@@ -821,6 +821,11 @@ jobs:
             )
 
     def test_docker_compose_smoke_fixture_is_strict(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        smoke = workflow_step_block(
+            workflow_job_block(ci, "test"),
+            "CLI smoke",
+        )
         success = subprocess.run(
             [SMOKE_FIXTURE, "compose", "version"],
             capture_output=True,
@@ -832,6 +837,12 @@ jobs:
             text=True,
         )
 
+        self.assertIn("DEVCONTAINER_COMPOSE_PROVIDER=docker \\", smoke)
+        self.assertIn("DEVCONTAINER_DOCKER_COMPOSE_BIN='' " + "\\", smoke)
+        self.assertIn(
+            'DEVCONTAINER_DOCKER_BIN="$PWD/Tools/ci/docker-compose-smoke-fixture.sh"',
+            smoke,
+        )
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertEqual(success.stdout, '{"Version":"fixture"}\n')
         self.assertEqual(invalid.returncode, 64)

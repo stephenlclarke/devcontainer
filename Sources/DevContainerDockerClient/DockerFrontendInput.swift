@@ -24,12 +24,16 @@ public final class DockerFrontendInput: @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async { [self] in
-                    continuation.resume(with: Result { try readLock.withLock { try readBlocking() } })
+                    continuation.resume(with: readResult())
                 }
             }
         } onCancel: {
             self.lock.withLock { self.cancelled = true }
         }
+    }
+
+    private func readResult() -> Result<Data?, any Error> {
+        Result { try readLock.withLock { try readBlocking() } }
     }
 
     private func readBlocking() throws -> Data? {

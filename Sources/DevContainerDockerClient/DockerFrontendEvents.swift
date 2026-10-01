@@ -60,9 +60,7 @@ public extension DockerFrontend {
             group.addTask {
                 try await withTaskCancellationHandler {
                     try Task.checkCancellation()
-                    try await transport.events(spec.request()) { bytes in
-                        try lines.consume(bytes) { try output.writeSynchronously($0) }
-                    }
+                    try await transport.events(spec.request(), onBody: lines.outputHandler(output))
                     if let tail = try lines.finish() {
                         try await output.write(tail)
                     }
@@ -101,6 +99,14 @@ final class DockerEventLines: @unchecked Sendable {
                 throw DockerFrontendError.invalidResponse("event record exceeds 1 MiB")
             }
         }
+    }
+
+    func consume(_ bytes: Data, output: DockerFrontendOutput) throws {
+        try consume(bytes, emit: output.writeSynchronously)
+    }
+
+    func outputHandler(_ output: DockerFrontendOutput) -> @Sendable (Data) throws -> Void {
+        { bytes in try self.consume(bytes, output: output) }
     }
 
     func finish() throws -> Data? {

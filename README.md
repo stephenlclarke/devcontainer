@@ -150,6 +150,10 @@ advanced mount options.
 
 ## Development
 
+The hosted CLI smoke check explicitly selects the Docker provider and disables standalone Compose autodiscovery so it uses the pinned test fixture. The native provider remains the product default.
+
+Release quality checks retain the original assertions and thresholds. Shared test-fixture helpers and fixed Docker protocol routes are reviewed as analysis false positives, with recorded usage evidence. The exported test-support initializer keeps its existing source interface under a documented compatibility exception. Actual source findings are corrected before a fresh exact-commit scan.
+
 Hosted changed-source coverage recognizes a strict subset of protocol-only Swift declarations that LLVM does not instrument. Executable or unrecognized missing sources still fail the gate; the overall and changed-code coverage thresholds remain unchanged.
 
 Native release-harness inputs are declared in a separate release package so changes to that data closure do not invalidate the product build recipe used by released dependency layers. Layer admission still requires exact recipe and archive identities; harness checks and four-product consumption proof remain separate.

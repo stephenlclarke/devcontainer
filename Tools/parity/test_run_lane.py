@@ -36,8 +36,9 @@ class FinalizedSelectionTests(unittest.TestCase):
                       finalization_state=Path("/state"), expected_source_commit="b" * 40)
         self.assertEqual(finalized_selection(argparse.Namespace(**values)), values)
         values["finalization_state"] = None
+        invalid_arguments = argparse.Namespace(**values)
         with self.assertRaisesRegex(ParityError, "all four"):
-            finalized_selection(argparse.Namespace(**values))
+            finalized_selection(invalid_arguments)
 
     def test_release_uses_signed_binaries_and_private_reference(self) -> None:
         runner = LaneRunner.__new__(LaneRunner)

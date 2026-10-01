@@ -189,8 +189,9 @@ class NativeActivationTests(unittest.TestCase):
         alias.symlink_to(self.slot / "payload/bin/container")
         self.launchd.labels.return_value = {"custom.provider"}
         self.launchd.program.return_value = str(alias)
+        release = self.release("two")
         with self.assertRaisesRegex(ValueError, "registration still owns"):
-            self.activate(self.release("two"))
+            self.activate(release)
         self.assertFalse((self.slot / "pending.json").exists())
 
     def test_confirmed_absent_transient_registration_does_not_own_a_slot(self):

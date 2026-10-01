@@ -87,8 +87,9 @@ class AppleBuildRecoveryTests(unittest.TestCase):
         with patch("recover_apple_build.process_inventory", return_value={}) as inventory:
             require_previous_commands_closed(records)
             for missing in ("-process.json", "-stopped.json", ".log", "-log.json"):
+                expected_argument = {key: value for key, value in records.items() if key != name + missing}
                 with self.subTest(missing=missing), self.assertRaises(ValueError):
-                    require_previous_commands_closed({key: value for key, value in records.items() if key != name + missing})
+                    require_previous_commands_closed(expected_argument)
             for item in ({"pid": 42, "group": 42}, {"pid": 43, "group": 42}):
                 inventory.return_value = {item["pid"]: item}
                 with self.subTest(item=item), self.assertRaisesRegex(ValueError, "helper"):

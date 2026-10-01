@@ -857,10 +857,10 @@ struct FakeAppleCLI {
                     ?? LiveAppleContainerInventoryClient(client: ContainerClient()),
                 files: files,
                 networks: networks,
-                allocatedNetworks: allocations,
-                bootstrap: bootstrap,
-                images: images,
-                creator: creator
+                overrides: .init(
+                    allocatedNetworks: allocations, bootstrap: bootstrap,
+                    images: images, creator: creator
+                )
             )
         )
     }

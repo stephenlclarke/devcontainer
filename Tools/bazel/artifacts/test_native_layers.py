@@ -149,9 +149,10 @@ class NativeLayersTests(unittest.TestCase):
         logs = self.root / "logs"
         logs.mkdir()
         try:
+            environment = os.environ.copy()
             with self.assertRaises(subprocess.TimeoutExpired):
                 foundation.runner_command(root, "build", [], "//:products",
-                                          environment=os.environ.copy(), logs=logs,
+                                          environment=environment, logs=logs,
                                           name="fake-producer", timeout=0.5)
             session, child = map(int, (logs / "fake-producer.stdout.log").read_text().split())
             self.assertFalse(foundation.session_members(session))

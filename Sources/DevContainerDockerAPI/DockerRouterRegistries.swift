@@ -116,8 +116,13 @@ actor ContainerHealthRegistry {
         } ?? false)
         let configuredStartInterval = healthcheck.startIntervalNanoseconds ?? 0
         let startupInterval = configuredStartInterval > 0 ? Double(configuredStartInterval) / 1_000_000_000 : 5
-        let interval = inStartup ? startupInterval : (healthcheck.intervalNanoseconds > 0
-            ? Double(healthcheck.intervalNanoseconds) / 1_000_000_000 : 30)
+        let steadyInterval: Double
+        if healthcheck.intervalNanoseconds > 0 {
+            steadyInterval = Double(healthcheck.intervalNanoseconds) / 1_000_000_000
+        } else {
+            steadyInterval = 30
+        }
+        let interval = inStartup ? startupInterval : steadyInterval
         if let lastCheckedAt = current.lastCheckedAt,
            now.timeIntervalSince(lastCheckedAt) < interval
         {

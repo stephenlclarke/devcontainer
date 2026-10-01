@@ -205,8 +205,9 @@ class ReferenceTests(unittest.TestCase):
         self.fixture.setup()
         self.command("devcontainer-up", [], timeout=120)
         self.server.guest = None
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "no observed"):
-            self.reopen().cleanup()
+            fixture.cleanup()
 
     def test_known_absent_guest_finishes_recovery_without_second_delete(self):
         self.start()
@@ -216,8 +217,9 @@ class ReferenceTests(unittest.TestCase):
 
     def test_setup_is_not_retried_and_config_pin_drift_is_refused(self):
         self.fixture.setup()
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "already"):
-            self.reopen().setup()
+            fixture.setup()
         fake = self.root / "repo/Tests/Parity/fixtures/D01-image-config"
         (fake / ".devcontainer").mkdir(parents=True)
         (fake / ".devcontainer/devcontainer.json").write_text('{"image":"alpine:latest"}')

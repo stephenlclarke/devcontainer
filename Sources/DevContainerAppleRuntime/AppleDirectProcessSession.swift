@@ -140,11 +140,10 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
             handle: pipe.fileHandleForReading,
             channel: channel,
             frames: streams.frameContinuation,
-            onRead: { count in
+            callbacks: .init(onRead: { count in
                 streams.drainState.markActivity()
                 trace("\(channel == .standardOutput ? "stdout" : "stderr") produced \(count) bytes")
-            },
-            onFinish: {
+            }, onFinish: {
                 if channel == .standardOutput {
                     streams.drainState.finishOutput()
                     trace("stdout EOF")
@@ -152,7 +151,7 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                     streams.drainState.finishError()
                     trace("stderr EOF")
                 }
-            }
+            })
         )
     }
 

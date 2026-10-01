@@ -127,7 +127,8 @@ class Fixture:
             assert command[3] == SUBMISSION_ID
             out = json.dumps({"id": self.info_id, "status": self.info_status, "private": "not-public"}).encode()
         elif command[0].endswith("/" + signing.NODE):
-            assert "NODE_OPTIONS" not in env and "DYLD_INSERT_LIBRARIES" not in env
+            assert "NODE_OPTIONS" not in env
+            assert "DYLD_INSERT_LIBRARIES" not in env
             out = self.node_version.encode() if len(command) == 2 else b"0.88.0\n"
         elif command[0].endswith("/bin/devcontainer"):
             assert command[1:] == ["version", "--format", "json"]

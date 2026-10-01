@@ -17,12 +17,11 @@ struct ProcessPipeMonitorCancellationTests {
         let monitor = ProcessPipeMonitor(
             handle: pipe.fileHandleForReading, channel: .standardOutput,
             frames: frames,
-            onRead: { count in
+            callbacks: .init(onRead: { count in
                 delivery.recordRead(count)
                 enteredContinuation.finish()
                 #expect(release.wait(timeout: .now() + 10) == .success)
-            },
-            onFinish: { delivery.recordFinish() }
+            }, onFinish: { delivery.recordFinish() })
         )
         defer { release.signal(); monitor.cancel() }
         try pipe.fileHandleForWriting.write(contentsOf: Data([42]))
@@ -60,7 +59,7 @@ struct ProcessPipeMonitorCancellationTests {
         let monitor = ProcessPipeMonitor(
             handle: pipe.fileHandleForReading, channel: .standardOutput,
             frames: frames, closeHandleOnFinish: false,
-            onEOF: { delivery.recordRead(-1) }
+            callbacks: .init(onEOF: { delivery.recordRead(-1) })
         )
         monitor.cancel()
         await monitor.waitForCompletion()
@@ -77,7 +76,7 @@ struct ProcessPipeMonitorCancellationTests {
         let delivery = MonitorDelivery()
         let monitor = ProcessPipeMonitor(
             handle: pipe.fileHandleForReading, channel: .standardError, frames: frames,
-            onFinish: { delivery.recordFinish() }, onEOF: { delivery.recordRead(-1) }
+            callbacks: .init(onFinish: { delivery.recordFinish() }, onEOF: { delivery.recordRead(-1) })
         )
         defer { monitor.cancel() }
         let payload = Data(repeating: 23, count: 1024 * 1024)
@@ -104,8 +103,11 @@ struct ProcessPipeMonitorCancellationTests {
         let delivery = MonitorDelivery()
         let monitor = ProcessPipeMonitor(
             handle: FileHandle(fileDescriptor: Int32.max, closeOnDealloc: false), channel: .standardOutput,
-            closeHandleOnFinish: false, onFinish: { delivery.recordFinish() },
-            onEOF: { delivery.recordRead(-1) }, onError: { _ in delivery.recordRead(-2) }
+            closeHandleOnFinish: false,
+            callbacks: .init(
+                onFinish: { delivery.recordFinish() }, onEOF: { delivery.recordRead(-1) },
+                onError: { _ in delivery.recordRead(-2) }
+            )
         )
         await monitor.waitForCompletion()
         #expect(delivery.snapshot() == [-2, 0])

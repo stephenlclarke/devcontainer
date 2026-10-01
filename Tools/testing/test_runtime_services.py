@@ -175,8 +175,9 @@ class RuntimeServicesTests(unittest.TestCase):
 
     def test_private_home_failure_restores_originals_without_starting_api(self):
         runtime = self.runtime()
+        mock_value = Mock(side_effect=RuntimeError("private home failure"))
         with self.assertRaisesRegex(RuntimeError, "private home failure"):
-            runtime.start(prepare_home=Mock(side_effect=RuntimeError("private home failure")))
+            runtime.start(prepare_home=mock_value)
         self.assertNotIn("service-selected.plist", runtime.journal.records())
         self.probe.assert_not_called()
         runtime.restore()

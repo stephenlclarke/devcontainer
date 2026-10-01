@@ -1,5 +1,9 @@
 # Issue: implement the native Bazel workflow
 
+The hosted CLI smoke check selected the new native default and looked for an installed container-compose binary. Explicitly select its intended Docker fixture and disable standalone Compose autodiscovery, which could otherwise bypass that fixture.
+
+Once hosted coverage could proceed, the clean-project Sonar check exposed 137 findings. Correct the real source and test-quality problems without removing assertions or breaking the public test-support API; distinguish actual inherited-helper/protocol-literal false positives through recorded source evidence. A launcher-byte change also requires newly qualified dependency-layer releases under the strict recipe policy, rather than relabeling old assets or weakening their hashes.
+
 Hosted CI and Sonar reject the output-journal SPI because LLVM omits its protocol-only declaration file from executable coverage. Recognize only a conservative declaration subset while continuing to reject missing executable, unreadable or unrecognized sources. Preserve the original failures and the unchanged coverage thresholds.
 
 A release-admission file group changed the full product build recipe and caused all eight immutable dependency-layer locks to reject an otherwise unchanged SDK graph. Move this harness-only input group to a dedicated release package, preserving the original product build recipe and every dependency checksum. Explicitly export the shared archive helper and update its two consumers; cross-package source files cannot be assumed visible. Verify actual Bazel visibility and runfiles before restoring compiled-consumer qualification.

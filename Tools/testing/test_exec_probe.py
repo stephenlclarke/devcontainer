@@ -280,8 +280,9 @@ class ExecTransportTests(unittest.TestCase):
         left, right = self.pair()
         right.sendall(b"private-output")
         progress = {}
+        deadline = time.monotonic() + 0.03
         with self.assertRaises(TimeoutError):
-            duplex(left, b"initial", b"private-input", time.monotonic() + 0.03, progress=progress)
+            duplex(left, b"initial", b"private-input", deadline, progress=progress)
         self.assertEqual(progress, {"inputAcceptedBytes": 13, "outputWireBytes": 21,
                                     "inputHalfClosed": True, "outputEOF": False})
         self.assertEqual(right.recv(100), b"private-input")
@@ -291,8 +292,9 @@ class ExecTransportTests(unittest.TestCase):
         left, right = self.pair()
         right.shutdown(socket.SHUT_WR)
         progress = {}
+        deadline = time.monotonic() + 1
         with self.assertRaisesRegex(ValueError, "before input"):
-            duplex(left, b"", BINARY_INPUT, time.monotonic() + 1, progress=progress)
+            duplex(left, b"", BINARY_INPUT, deadline, progress=progress)
         self.assertEqual(progress, {"inputAcceptedBytes": 0, "outputWireBytes": 0,
                                     "inputHalfClosed": False, "outputEOF": True})
 

@@ -257,8 +257,9 @@ class DependenciesTests(unittest.TestCase):
     def test_unknown_creation_and_incomplete_command_never_delete(self):
         self.fixture.setup()
         self.command("devcontainer-up", [], timeout=120)
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "unobserved"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         records = self.vm.journal.records()
         del records["devcontainer-up-exit.json"]
         with patch.object(self.vm.journal, "records", return_value=records), self.assertRaisesRegex(ValueError, "completion"):
@@ -315,8 +316,9 @@ class DependenciesTests(unittest.TestCase):
     def test_invisible_pending_native_creation_never_grants_cleanup(self):
         self.failed_creation((), network=False)
         self.server.pending_creation = True
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "pending"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         records = self.vm.journal.records()
         self.assertNotIn("c02-project-partial.json", records)
         self.assertNotIn("c02-project-removed.json", records)
@@ -326,8 +328,9 @@ class DependenciesTests(unittest.TestCase):
         self.failed_creation()
         self.fixture.recovery_plan()
         self.server.epoch = "22222222-2222-2222-2222-222222222222"
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "pending"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertEqual(self.deletes(), [])
 
     def test_partial_recovery_rejects_foreign_network_before_sealing(self):
@@ -348,12 +351,14 @@ class DependenciesTests(unittest.TestCase):
         self.failed_creation()
         self.fixture.recovery_plan()
         self.server.services[IDS["app"]] = self.service("app")
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "unrecorded"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         del self.server.services[IDS["app"]]
         self.server.services[IDS["database"]]["Created"] = "new incarnation"
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "replaced"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertEqual(self.deletes(), [])
 
     def test_failed_delete_retains_receipts_and_resumes_remaining_services(self):
@@ -372,8 +377,9 @@ class DependenciesTests(unittest.TestCase):
         self.server.network["Containers"].pop(IDS["app"])
         self.vm.journal.put("c02-app-removed.json", canonical({"id": IDS["app"], "absent": True}))
         self.server.services[IDS["app"]] = app
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "reappeared"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertEqual(self.deletes(), [])
         del self.server.services[IDS["app"]]
         self.reopen().cleanup()
@@ -390,8 +396,9 @@ class DependenciesTests(unittest.TestCase):
         original["Containers"] = {}
         self.server.network = original
         count = len(self.deletes())
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "reappeared"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertEqual(len(self.deletes()), count)
 
     def test_existing_project_and_unclosed_recovery_are_refused(self):
@@ -399,8 +406,9 @@ class DependenciesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             self.fixture.setup()
         self.assertEqual(self.commands, [])
+        record_json = {"c02-project-intent.json": canonical(self.fixture.plan)}
         with self.assertRaisesRegex(ValueError, "C02"):
-            require_guest_resources_stopped({"c02-project-intent.json": canonical(self.fixture.plan)})
+            require_guest_resources_stopped(record_json)
 
     def test_empty_preparation_cleanup_and_plan_drift(self):
         self.fixture.cleanup()

@@ -184,8 +184,9 @@ class AttachmentTests(unittest.TestCase):
                 (b"\x01\0\0\0\0\x01\0\0", [], "frame exceeds"),
                 (b"x" * 4097, [], "output exceeds")):
             connection.recv.side_effect = chunks
+            deadline = time.monotonic() + 3
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
-                started_output(connection, initial, time.monotonic() + 3)
+                started_output(connection, initial, deadline)
 
     def test_replayed_first_generation_cannot_replace_second_history(self):
         self.server.duplicate_first = True
@@ -266,8 +267,9 @@ class AttachmentIOTests(unittest.TestCase):
     def test_startup_timeout_retains_only_wire_progress(self):
         connection, progress = Mock(), {}
         connection.recv.side_effect = [frame(OUTPUT_PREFIX), TimeoutError("no stderr")]
+        deadline = time.monotonic() + 3
         with self.assertRaises(TimeoutError):
-            started_output(connection, b"", time.monotonic() + 3, progress=progress)
+            started_output(connection, b"", deadline, progress=progress)
         self.assertEqual(progress, {"outputWireBytes": len(frame(OUTPUT_PREFIX)), "outputEOF": False})
 
     def test_duplex_timeout_distinguishes_input_and_each_output(self):
@@ -281,10 +283,11 @@ class AttachmentIOTests(unittest.TestCase):
         selector.select.return_value = [(Mock(fileobj=primary), selectors.EVENT_WRITE)]
         writer.settimeout(1)
         # Expire after exactly one write instead of depending on host scheduling.
+        deadline = time.monotonic() + 3
         with patch("attachment_probe.selectors.DefaultSelector", return_value=selector), \
                 patch("attachment_probe.remaining", side_effect=[3, TimeoutError("deadline")]), \
                 self.assertRaises(TimeoutError):
-            observed_duplex(primary, markers, observer, markers, b"payload", time.monotonic() + 3,
+            observed_duplex(primary, markers, observer, markers, b"payload", deadline,
                             progress=progress)
         self.assertEqual(writer.recv(8), b"payload")
         self.assertEqual(progress, {"inputAcceptedBytes": 7, "inputHalfClosed": True,
@@ -301,10 +304,12 @@ class AttachmentIOTests(unittest.TestCase):
         observer = MagicMock()
         observer.__enter__.return_value = observer
         observer.recv.side_effect = TimeoutError("no history")
+        mock_value = Mock()
+        deadline = time.monotonic() + 3
         with patch("attachment_probe.socket.socket", return_value=observer), \
                 patch("attachment_probe.upgrade", return_value=(101, b"")), \
                 patch("attachment_probe.observed_duplex") as transfer, self.assertRaises(TimeoutError):
-            fixture.observe_running(Mock(), b"", b"payload", time.monotonic() + 3)
+            fixture.observe_running(mock_value, b"", b"payload", deadline)
         transfer.assert_not_called()
         self.assertEqual(events[0]["stage"], "observer-startup-history")
         self.assertEqual(events[0]["stream"], {"outputWireBytes": 0, "outputEOF": False})
@@ -320,10 +325,11 @@ class AttachmentIOTests(unittest.TestCase):
                     writer.sendall(frame(b"too much"))
                 writer.shutdown(socket.SHUT_WR)
                 replay.shutdown(socket.SHUT_WR)
+                deadline = time.monotonic() + (3 if kind != "deadline" else -1)
                 with patch("attachment_probe.MAX_OUTPUT", 1), \
                         self.assertRaisesRegex((ValueError, TimeoutError), message):
                     observed_duplex(primary, b"", observer, b"", b"pending" if kind == "input" else b"",
-                                    time.monotonic() + (3 if kind != "deadline" else -1))
+                                    deadline)
 
     def test_zero_length_write_fails_instead_of_spinning(self):
         primary, observer = Mock(), Mock()
@@ -332,6 +338,7 @@ class AttachmentIOTests(unittest.TestCase):
         selector.__enter__.return_value = selector
         selector.get_map.return_value = {1: object()}
         selector.select.return_value = [(Mock(fileobj=primary), selectors.EVENT_WRITE)]
+        deadline = time.monotonic() + 3
         with patch("attachment_probe.selectors.DefaultSelector", return_value=selector), \
                 self.assertRaisesRegex(ValueError, "stopped accepting input"):
-            observed_duplex(primary, b"", observer, b"", b"pending", time.monotonic() + 3)
+            observed_duplex(primary, b"", observer, b"", b"pending", deadline)

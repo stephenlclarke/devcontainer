@@ -82,8 +82,9 @@ class BackgroundItemsTests(unittest.TestCase):
 
     def test_metadata_changes_unsupported_modes_and_conflicting_fields_fail(self):
         for old, new in (("Submitted", "Unknown"), ("mode: 2", "mode: 3")):
+            changed_command = self.output.replace(old, new)
             with self.subTest(old=old), self.assertRaises(ValueError):
-                btm.resolve(self.output.replace(old, new), "test.agent", self.items)
+                btm.resolve(changed_command, "test.agent", self.items)
         with self.assertRaises(ValueError):
             btm.resolve(self.output + "\tBTM uuid = other\n", "test.agent", self.items)
         self.parent["Bundle Identifier"] = "other"
@@ -124,8 +125,9 @@ class BackgroundItemsTests(unittest.TestCase):
         for broken in (b"", payload + b"  UUID: duplicate\n", section(os.getuid(), [{}]).encode(),
                        payload + b"Records for UID 0 : malformed!\n #1:\n", payload + b" #bad:\n",
                        b"x" * (4 * 1024 * 1024 + 1)):
+            uid = os.getuid()
             with self.assertRaises(ValueError):
-                btm.records(broken, os.getuid())
+                btm.records(broken, uid)
         with patch.object(btm, "capture_inventory", return_value=payload):
             self.assertEqual(btm.host_records(), self.items)
 

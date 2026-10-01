@@ -107,8 +107,9 @@ class ComposeTests(unittest.TestCase):
         original["Containers"] = {}
         self.server.network = original
         count = sum(method == "DELETE" for method, _ in self.server.routes)
+        fixture = self.reopen()
         with self.assertRaisesRegex(ValueError, "reappeared"):
-            self.reopen().cleanup()
+            fixture.cleanup()
         self.assertIsNotNone(self.server.network)
         self.assertEqual(sum(method == "DELETE" for method, _ in self.server.routes), count)
 
@@ -143,8 +144,9 @@ class ComposeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "removal unverified"):
             self.fixture.cleanup()
         self.assertNotIn("c01-project-removed.json", self.vm.journal.records())
+        records = self.vm.journal.records()
         with self.assertRaisesRegex(ValueError, "C01 project"):
-            require_guest_resources_stopped(self.vm.journal.records())
+            require_guest_resources_stopped(records)
 
     def test_unfinished_command_cannot_remove_resources(self):
         self.start()

@@ -20,7 +20,8 @@ from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("consume-native-finalized-package.py")
 SPEC = importlib.util.spec_from_file_location("consume_native_finalized_package", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 

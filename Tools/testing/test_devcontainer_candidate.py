@@ -137,8 +137,9 @@ class CandidateTests(reference_tests.ReferenceTests):
             self.assertEqual(self.fixture.identifier, identifier)
             self.assertEqual(self.fixture.recovery_plan(), identifier)
             self.fixture.cleanup()
+        record_json = canonical({"outcome": "success", "containerId": identifier})
         with self.assertRaisesRegex(ValueError, "immutable"):
-            created_id(canonical({"outcome": "success", "containerId": identifier}))
+            created_id(record_json)
 
     def test_real_guest_cleanup_owns_only_one_deadline(self):
         self.start()

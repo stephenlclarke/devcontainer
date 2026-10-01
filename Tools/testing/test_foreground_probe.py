@@ -203,11 +203,13 @@ class ForegroundTests(unittest.TestCase):
         receive_exact(connection, b"t", b"tty\n", time.monotonic() + 3)
         for initial, incoming, message in ((b"tty\r\n", [], "differs"), (b"", [b""], "before expected")):
             connection.recv.side_effect = incoming
+            deadline = time.monotonic() + 3
             with self.assertRaisesRegex(ValueError, message):
-                receive_exact(connection, initial, b"tty\n", time.monotonic() + 3)
+                receive_exact(connection, initial, b"tty\n", deadline)
         connection.recv.side_effect = [b"unexpected"]
+        deadline = time.monotonic() + 3
         with self.assertRaisesRegex(ValueError, "unexpected trailing"):
-            require_eof(connection, time.monotonic() + 3)
+            require_eof(connection, deadline)
 
     def test_exit_receipt_requires_bounded_complete_json(self):
         for payload, length, message in ((b"x" * 4097, 0, "exceeds"),
@@ -216,10 +218,14 @@ class ForegroundTests(unittest.TestCase):
                                          (b'{"StatusCode":17,"Error":{"Message":"failed"}}', 0, "real exit")):
             response = Mock(length=length)
             response.read1.side_effect = [payload, b""]
+            mock_value = Mock()
+            deadline = time.monotonic() + 3
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
-                self.fixture.require_exit(Mock(), response, time.monotonic() + 3)
+                self.fixture.require_exit(mock_value, response, deadline)
 
     def test_incarnation_requires_a_complete_bounded_uuid(self):
         for output in (b"", b"x" * 38, b"not-a-uuid\n"):
+            mock_value = Mock(recv=Mock(return_value=output))
+            deadline = time.monotonic() + 3
             with self.subTest(output=output), self.assertRaisesRegex(ValueError, "process incarnation"):
-                receive_incarnation(Mock(recv=Mock(return_value=output)), time.monotonic() + 3)
+                receive_incarnation(mock_value, deadline)

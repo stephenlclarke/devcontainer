@@ -176,8 +176,9 @@ class FinalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Trusted accepted-state"):
             FINAL.admitted_state(self.state, "0" * 64, self.signer)
         self.record["phase"] = "submitted"
+        trusted_hash = self.save_record()
         with self.assertRaisesRegex(ValueError, "not one accepted"):
-            FINAL.admitted_state(self.state, self.save_record(), self.signer)
+            FINAL.admitted_state(self.state, trusted_hash, self.signer)
 
     def test_zip_or_acceptance_mismatch_fails(self):
         trusted = self.save_record()
@@ -188,8 +189,9 @@ class FinalizationTests(unittest.TestCase):
         self.evidence.write_bytes(b'{"archiveSHA256":"' + sha(self.archive.read_bytes()).encode()
                                   + b'","id":"ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee","status":"Accepted"}\n')
         self.record["acceptanceSHA256"] = sha(self.evidence.read_bytes())
+        trusted_hash = self.save_record()
         with self.assertRaisesRegex(ValueError, "unexpected fields"):
-            FINAL.admitted_state(self.state, self.save_record(), self.signer)
+            FINAL.admitted_state(self.state, trusted_hash, self.signer)
 
     def test_only_a_nonnegative_integer_stager_epoch_is_admitted(self):
         self.assertEqual(FINAL.source_epoch({"sourceDateEpoch": 0}), 0)
@@ -248,12 +250,12 @@ class FinalizationTests(unittest.TestCase):
                             output.addfile(member, contents)
         FINAL.verify_tar_closure(archive, tree, {"payload": {"sha256": sha(b"content"),
                                                              "size": 7, "mode": 0o644}}, 1234567890)
+        wrong_closure = {"payload": {"sha256": sha(b"wrong"), "size": 5, "mode": 0o644}}
         with self.assertRaisesRegex(ValueError, "closure differs"):
-            FINAL.verify_tar_closure(archive, tree, {"payload": {"sha256": sha(b"wrong"),
-                                                                 "size": 5, "mode": 0o644}}, 1234567890)
+            FINAL.verify_tar_closure(archive, tree, wrong_closure, 1234567890)
+        unnormalized_closure = {"payload": {"sha256": sha(b"content"), "size": 7, "mode": 0o644}}
         with self.assertRaisesRegex(ValueError, "metadata is not normalized"):
-            FINAL.verify_tar_closure(archive, tree, {"payload": {"sha256": sha(b"content"),
-                                                                 "size": 7, "mode": 0o644}}, 1)
+            FINAL.verify_tar_closure(archive, tree, unnormalized_closure, 1)
 
     def test_full_assembly_calls_signature_and_cli_smoke_before_promotion(self):
         self.signer.payload = {

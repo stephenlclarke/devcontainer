@@ -145,13 +145,15 @@ class ComposeTerminalSizeTests(unittest.TestCase):
         self.assertIsNone(self.fixture.master)
 
     def test_wrong_terminal_exit_is_not_success(self):
+        changed_command = self.fixture.command[2].replace("exit 17", "exit 0")
         with self.assertRaisesRegex(ValueError, "lost the guest exit"):
-            self.run_cli(self.fixture.command[2].replace("exit 17", "exit 0"))
+            self.run_cli(changed_command)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_terminal_echo_or_extra_guest_bytes_fail(self):
+        changed_command = self.fixture.command[2].replace("exit 17", "printf extra; exit 17")
         with self.assertRaisesRegex(ValueError, "changed or duplicated"):
-            self.run_cli(self.fixture.command[2].replace("exit 17", "printf extra; exit 17"))
+            self.run_cli(changed_command)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_early_terminal_close_is_bounded_and_recoverable(self):

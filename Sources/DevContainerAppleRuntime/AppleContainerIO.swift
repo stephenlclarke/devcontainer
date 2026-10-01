@@ -55,14 +55,18 @@ final class AppleContainerIO: @unchecked Sendable {
         }
         outputMonitor = ProcessPipeMonitor(
             handle: output.fileHandleForReading, channel: .standardOutput,
-            onEOF: { state.endSource(.standardOutput) },
-            onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+            callbacks: .init(
+                onEOF: { state.endSource(.standardOutput) },
+                onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+            )
         )
         errorMonitor = error.map {
             ProcessPipeMonitor(
                 handle: $0.fileHandleForReading, channel: .standardError,
-                onEOF: { state.endSource(.standardError) },
-                onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+                callbacks: .init(
+                    onEOF: { state.endSource(.standardError) },
+                    onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+                )
             )
         }
     }
@@ -123,7 +127,12 @@ final class AppleContainerIO: @unchecked Sendable {
         closeTransferredEnds()
     }
 
-    func didStart(at startedAt: Date, validate: @escaping @Sendable () async throws -> Void = {}) async throws {
+    func didStart(
+        at startedAt: Date,
+        validate: @escaping @Sendable () async throws -> Void = {
+            // Callers without generation tracking have nothing to validate.
+        }
+    ) async throws {
         let resize: Task<Void, any Error>? = try lock.withLock {
             if nativeExitObserved {
                 return nil
