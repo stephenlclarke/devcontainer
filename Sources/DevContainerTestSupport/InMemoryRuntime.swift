@@ -18,10 +18,19 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-public actor InMemoryRuntime: DevContainerRuntime {
+public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
+    public func requireRecoveryQuiescence(context: RuntimeRequestContext) throws {
+        // This fake's mutations are synchronous and have no native RPCs.
+        try context.checkActive()
+    }
+
     private let runtimeDescriptor: ProtocolDescriptor
     private let execSession: (any RuntimeProcessSession)?
+    private let attachmentSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
+    private let containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)?
+    private let buildImageStream: (@Sendable (ImageBuildRequest) async throws
+        -> AsyncThrowingStream<Data, any Error>)?
     private let pullImageStream: (@Sendable (String) async throws
         -> AsyncThrowingStream<Data, any Error>)?
     private var requestCancellationCount = 0
@@ -34,26 +43,36 @@ public actor InMemoryRuntime: DevContainerRuntime {
     private var archives: [String: Data] = [:]
     private var eventValues: [RuntimeEvent] = []
     private var nextEventSequence: Int64 = 1
+    public private(set) var stopTimeouts: [Duration?] = []
+    public private(set) var attachmentCount = 0
 
     public init(
         provider: BackendProvider = .stock,
         version: String = "test",
         commit: String = "test",
         distribution: String = "test",
+        capabilities: [RuntimeCapability: CapabilityStatus]? = nil,
         execSession: (any RuntimeProcessSession)? = nil,
+        attachmentSession: (any RuntimeProcessSession)? = nil,
         descriptorDelay: Duration? = nil,
         pullImageStream: (@Sendable (String) async throws
-            -> AsyncThrowingStream<Data, any Error>)? = nil
+            -> AsyncThrowingStream<Data, any Error>)? = nil,
+        buildImageStream: (@Sendable (ImageBuildRequest) async throws
+            -> AsyncThrowingStream<Data, any Error>)? = nil,
+        containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)? = nil
     ) {
         self.execSession = execSession
+        self.attachmentSession = attachmentSession
         self.descriptorDelay = descriptorDelay
+        self.containerExitWait = containerExitWait
+        self.buildImageStream = buildImageStream
         self.pullImageStream = pullImageStream
         runtimeDescriptor = ProtocolDescriptor(
             provider: provider,
             providerVersion: version,
             providerCommit: commit,
             distribution: distribution,
-            capabilities: Dictionary(
+            capabilities: capabilities ?? Dictionary(
                 uniqueKeysWithValues: RuntimeCapability.allCases.map { ($0, .native) }
             )
         )
@@ -128,7 +147,10 @@ public actor InMemoryRuntime: DevContainerRuntime {
     public func buildImage(
         request: ImageBuildRequest,
         context _: RuntimeRequestContext
-    ) -> AsyncThrowingStream<Data, any Error> {
+    ) async throws -> AsyncThrowingStream<Data, any Error> {
+        if let buildImageStream {
+            return try await buildImageStream(request)
+        }
         let id = "sha256:\(Self.identifier())"
         let snapshot = ImageSnapshot(
             id: id,
@@ -235,10 +257,11 @@ public actor InMemoryRuntime: DevContainerRuntime {
 
     public func stopContainer(
         id: String,
-        timeout _: Duration?,
+        timeout: Duration?,
         context _: RuntimeRequestContext
     ) throws {
         var snapshot = try container(id: id)
+        stopTimeouts.append(timeout)
         snapshot.state = .stopped
         snapshot.finishedAt = Date()
         snapshot.exitCode = 0
@@ -306,6 +329,21 @@ public actor InMemoryRuntime: DevContainerRuntime {
         return snapshot.exitCode ?? 0
     }
 
+    public var supportsContainerExitWaitRegistration: Bool {
+        containerExitWait != nil
+    }
+
+    public func prepareContainerExitWait(
+        id: String, context: RuntimeRequestContext
+    ) async throws -> any RuntimeContainerExitWait {
+        try context.checkActive()
+        let snapshot = try container(id: id)
+        guard let containerExitWait else {
+            throw DevContainerError(.unsupportedCapability, message: "Test exit registration is unavailable")
+        }
+        return try await containerExitWait(snapshot)
+    }
+
     public func containerLogs(
         id: String,
         follow _: Bool,
@@ -324,12 +362,24 @@ public actor InMemoryRuntime: DevContainerRuntime {
         return Self.frameStream(frames)
     }
 
+    public func containerAttachmentHistory(
+        id: String, standardOutput: Bool, standardError: Bool, context: RuntimeRequestContext
+    ) throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
+        try containerLogs(
+            id: id, follow: false, standardOutput: standardOutput, standardError: standardError, context: context
+        )
+    }
+
     public func attachContainer(
         id: String,
         terminal: Bool,
         context _: RuntimeRequestContext
     ) throws -> any RuntimeProcessSession {
         _ = try container(id: id)
+        attachmentCount += 1
+        if let attachmentSession {
+            return attachmentSession
+        }
         return InMemoryProcessSession(
             frames: [
                 RuntimeIOFrame(
@@ -339,6 +389,17 @@ public actor InMemoryRuntime: DevContainerRuntime {
             ],
             exitCode: 0
         )
+    }
+
+    public func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) throws -> RuntimeContainerAttachment {
+        // Finite fixture history and registration have no suspension point.
+        let saved = history ? try containerAttachmentHistory(
+            id: id, standardOutput: true, standardError: true, context: context
+        ) : nil
+        let session = live ? try attachContainer(id: id, terminal: terminal, context: context) : nil
+        return RuntimeContainerAttachment(history: saved, session: session)
     }
 
     public func createExec(

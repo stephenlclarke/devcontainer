@@ -67,10 +67,27 @@ main() {
   fi
 
   local lane
+  local -a finalized_arguments=()
+  if [[ -n "${DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY:-}${DEVCONTAINER_NATIVE_FINALIZATION_SHA256:-}${DEVCONTAINER_NATIVE_NOTARY_STATE:-}${DEVCONTAINER_NATIVE_SOURCE_COMMIT:-}" ]]; then
+    finalized_arguments=(
+      --finalized-directory "${DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY:?Set finalized package directory}"
+      --finalization-provenance-sha256 "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256:?Set trusted finalization SHA-256}"
+      --finalization-state "${DEVCONTAINER_NATIVE_NOTARY_STATE:?Set accepted notary state directory}"
+      --expected-source-commit "${DEVCONTAINER_NATIVE_SOURCE_COMMIT:?Set exact finalized source SHA}"
+    )
+  fi
   for lane in "${lanes[@]}"; do
     validate_lane "$lane"
-    python3 "$REPOSITORY_ROOT/Tools/parity/run_vscode.py" \
-      "$lane" "$evidence_dir"
+    local container_bin="${DEVCONTAINER_CONTAINER_BIN:-}"
+    if (( ${#finalized_arguments[@]} > 0 )); then
+      if [[ "$lane" == apple-stock ]]; then
+        container_bin="${DEVCONTAINER_RUNTIME_STOCK_BIN:-${DEVCONTAINER_CONTAINER_BIN:?Set qualified stock Container executable}}"
+      elif [[ "$lane" == container-compose ]]; then
+        container_bin="${DEVCONTAINER_RUNTIME_COMPOSE_BIN:-${DEVCONTAINER_CONTAINER_BIN:?Set qualified Compose provider Container executable}}"
+      fi
+    fi
+    DEVCONTAINER_CONTAINER_BIN="$container_bin" python3 "$REPOSITORY_ROOT/Tools/parity/run_vscode.py" \
+      "$lane" "$evidence_dir" "${finalized_arguments[@]}"
   done
 
   if (( ${#lanes[@]} == ${#ALL_LANES[@]} )); then

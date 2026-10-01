@@ -1,0 +1,9 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+
+exports_files([
+    "argument-parser.lock.json",
+    "argument_parser_import.BUILD.bazel",
+    "argument_parser_import.REPO.bazel",
+    "compiled_outputs.bzl",
+    "foundation_import.bzl",
+] + glob(["*-enhanced.lock.json", "*-stock.lock.json"]))

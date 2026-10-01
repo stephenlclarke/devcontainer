@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import CSQLite
+import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
 import DevContainerState
@@ -23,6 +24,137 @@ import Testing
 
 @Suite(.serialized)
 struct SQLiteStateStoreTests {
+    private func creation() -> RuntimeContainerCreation {
+        RuntimeContainerCreation(
+            runtimeID: "pending", nativeCreatedAt: Date(timeIntervalSince1970: 123),
+            imageID: "sha256:fixture", spec: ContainerSpec(name: "pending", image: "fixture"),
+            nativeConfiguration: Data("native identity".utf8)
+        )
+    }
+
+    private func completed(_ creation: RuntimeContainerCreation) -> RuntimeContainerMetadata {
+        RuntimeContainerMetadata(
+            runtimeID: RuntimeID(rawValue: creation.runtimeID),
+            dockerID: DockerID(rawValue: String(repeating: "a", count: 64)),
+            imageID: creation.imageID, spec: creation.spec, createdAt: creation.nativeCreatedAt
+        )
+    }
+
+    @Test func `aliased parent stays canonical across reopen without following the database leaf`() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let actualParent = directory.appendingPathComponent("actual/child", isDirectory: true)
+        try FileManager.default.createDirectory(at: actualParent, withIntermediateDirectories: true)
+        let alias = directory.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            at: alias, withDestinationURL: directory.appendingPathComponent("actual", isDirectory: true)
+        )
+        let input = alias.appendingPathComponent("child/state.sqlite")
+        let resolvedParent = try #require(realpath(actualParent.path, nil))
+        defer { free(resolvedParent) }
+        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
+        let expected = canonicalParent.appendingPathComponent("state.sqlite")
+        let store = try SQLiteStateStore(path: input)
+        let storePath = await store.path
+        #expect(storePath.path == expected.path)
+        let metadata = completed(creation())
+        try await store.recordContainerMetadata(metadata)
+
+        let reopened = try SQLiteStateStore(path: input)
+        let reopenedPath = await reopened.path
+        #expect(reopenedPath.path == expected.path)
+        let snapshot = ContainerSnapshot(
+            runtimeID: metadata.runtimeID, dockerID: metadata.dockerID,
+            spec: metadata.spec, state: .created, createdAt: metadata.createdAt
+        )
+        let frame = RuntimeIOFrame(channel: .standardOutput, data: Data("aliased parent".utf8))
+        let journal = try await reopened.beginContainerOutputCapture(snapshot: snapshot)
+        try journal.append(frame)
+        try journal.endSource(.standardOutput)
+        try journal.endSource(.standardError)
+        try journal.finish(complete: true)
+        let history = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
+        var collected: [RuntimeIOFrame] = []
+        for try await saved in history {
+            collected.append(saved)
+        }
+        #expect(collected == [frame])
+
+        let linkedLeaf = actualParent.appendingPathComponent("linked.sqlite")
+        try FileManager.default.createSymbolicLink(at: linkedLeaf, withDestinationURL: expected)
+        let linkedStore = try SQLiteStateStore(path: linkedLeaf)
+        let linkedPath = await linkedStore.path
+        #expect(linkedPath.path == canonicalParent.appendingPathComponent("linked.sqlite").path)
+        await #expect(throws: DevContainerError.self) {
+            try await linkedStore.beginContainerOutputCapture(snapshot: snapshot)
+        }
+    }
+
+    @Test func `pending creation survives reopen and commits with metadata`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            #expect(try await !store.hasPendingContainerCreations())
+            try await store.beginContainerCreation(intent)
+            let reopened = try await SQLiteStateStore(path: store.path)
+            #expect(try await reopened.hasPendingContainerCreations())
+            let recoveryStore: any RuntimeCreationStore = reopened
+            #expect(try await recoveryStore.hasPendingContainerCreations())
+            #expect(try await reopened.pendingContainerCreation(id: "pending") == intent)
+            #expect(try await reopened.containerMetadata(id: "pending") == nil)
+            await #expect(throws: DevContainerError.self) { try await reopened.beginContainerCreation(intent) }
+            try await reopened.finishContainerCreation(completed(intent), operationID: intent.operationID)
+            #expect(try await store.pendingContainerCreation(id: "pending") == nil)
+            #expect(try await !store.hasPendingContainerCreations())
+            #expect(try await store.containerMetadata(id: "pending") == completed(intent))
+            try await executeSQL(path: store.path, sql: "DROP TABLE runtime_container_creations")
+            await #expect(throws: DevContainerError.self) { try await recoveryStore.hasPendingContainerCreations() }
+        }
+    }
+
+    @Test func `failed creation completion rolls back metadata and preserves intent`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            try await store.beginContainerCreation(intent)
+            try await executeSQL(path: store.path, sql: """
+            CREATE TRIGGER fail_creation_commit BEFORE DELETE ON runtime_container_creations
+            BEGIN SELECT RAISE(ABORT, 'injected completion failure'); END;
+            """)
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(completed(intent), operationID: intent.operationID)
+            }
+            #expect(try await store.pendingContainerCreation(id: "pending") == intent)
+            #expect(try await store.containerMetadata(id: "pending") == nil)
+        }
+    }
+
+    @Test func `creation intent ownership and completion identity are enforced`() async throws {
+        try await withStore { store in
+            let intent = creation()
+            try await store.beginContainerCreation(intent)
+            await #expect(throws: DevContainerError.self) {
+                try await store.discardContainerCreation(id: "pending", operationID: UUID())
+            }
+            var wrong = completed(intent)
+            wrong.imageID = "sha256:wrong"
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(wrong, operationID: intent.operationID)
+            }
+            wrong = completed(intent)
+            wrong.createdAt = wrong.createdAt.addingTimeInterval(1)
+            await #expect(throws: DevContainerError.self) {
+                try await store.finishContainerCreation(wrong, operationID: intent.operationID)
+            }
+            await #expect(throws: DevContainerError.self) {
+                try await store.recordContainerMetadata(completed(intent))
+            }
+            #expect(try await store.containerMetadata(id: "pending") == nil)
+            #expect(try await store.pendingContainerCreation(id: "pending") == intent)
+            try await store.discardContainerCreation(id: "pending", operationID: intent.operationID)
+            try await store.discardContainerCreation(id: "pending", operationID: intent.operationID)
+            #expect(try await store.pendingContainerCreation(id: "pending") == nil)
+        }
+    }
+
     @Test
     func `claims are durable and provider immutable`() async throws {
         try await withStore { store in
@@ -155,7 +287,8 @@ struct SQLiteStateStoreTests {
                     name: "workspace",
                     image: "alpine:latest",
                     user: "501:20",
-                    autoRemove: true
+                    autoRemove: true,
+                    requestedNetworkMode: "none"
                 ),
                 createdAt: createdAt
             )
@@ -169,6 +302,11 @@ struct SQLiteStateStoreTests {
                     == metadata
             )
             #expect(try await store.listContainerMetadata() == [metadata])
+            let reopened = try await SQLiteStateStore(path: store.path)
+            #expect(
+                try await reopened.containerMetadata(id: metadata.runtimeID.rawValue)?
+                    .spec.requestedNetworkMode == "none"
+            )
 
             let startedAt = Date(timeIntervalSinceReferenceDate: 2000)
             try await store.markContainerStarted(
@@ -191,7 +329,7 @@ struct SQLiteStateStoreTests {
 
     @Test
     func `version two state migrates image identity transactionally`() throws {
-        let directory = temporaryDirectory()
+        let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("state.sqlite")
         _ = try SQLiteStateStore(path: path)
@@ -212,8 +350,27 @@ struct SQLiteStateStoreTests {
     }
 
     @Test
+    func `version three state adds creation journal without losing metadata`() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("state.sqlite")
+        let original = try SQLiteStateStore(path: path)
+        let intent = creation()
+        try await original.recordContainerMetadata(completed(intent))
+        try executeSQL(path: path, sql: """
+        DROP TABLE runtime_container_creations;
+        UPDATE schema_meta SET version = 3;
+        """)
+        let migrated = try SQLiteStateStore(path: path)
+        #expect(try scalar(path: path, sql: "SELECT version FROM schema_meta") == Int64(SQLiteStateStore.schemaVersion))
+        #expect(try await migrated.containerMetadata(id: "pending") == completed(intent))
+        try await migrated.beginContainerCreation(intent)
+        #expect(try await migrated.pendingContainerCreation(id: "pending") == intent)
+    }
+
+    @Test
     func `future state schema is rejected without mutation`() throws {
-        let directory = temporaryDirectory()
+        let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("state.sqlite")
         _ = try SQLiteStateStore(path: path)
@@ -314,8 +471,7 @@ struct SQLiteStateStoreTests {
     private func withStore(
         _ body: (SQLiteStateStore) async throws -> Void
     ) async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("devcontainer-state-test-\(UUID().uuidString)", isDirectory: true)
+        let directory = try temporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -323,12 +479,20 @@ struct SQLiteStateStoreTests {
         try await body(store)
     }
 
-    private func temporaryDirectory() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "devcontainer-state-migration-test-\(UUID().uuidString)",
-                isDirectory: true
-            )
+    private func temporaryDirectory() throws -> URL {
+        // On Darwin Foundation prefers the per-user system directory over
+        // TMPDIR. Honour the test runner's owned storage explicitly.
+        let environment = ProcessInfo.processInfo.environment
+        let path = environment["TEST_TMPDIR"] ?? environment["TMPDIR"]
+            ?? FileManager.default.temporaryDirectory.path
+        try #require(path.hasPrefix("/"))
+        if environment["BAZEL_TEST"] == "1" {
+            try #require(path.hasPrefix("/Volumes/SSD/cf/bazel/"))
+        }
+        return URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent(
+            "devcontainer-state-migration-test-\(UUID().uuidString)",
+            isDirectory: true
+        )
     }
 
     private func executeSQL(path: URL, sql: String) throws {

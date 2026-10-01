@@ -8,6 +8,7 @@ import ContainerEngineRuntimeSPI
 import ContainerResource
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -404,31 +405,6 @@ struct AppleContainerRuntimeLoggingHandoffTests {
 
         #expect(!requestSucceeded)
     }
-
-    @Test
-    func `live record client forwards read-only missing-container calls`() async {
-        let client = LiveAppleContainerLoggingRecordClient(client: ContainerClient())
-        let missingID = "devcontainer-logging-handoff-\(UUID().uuidString)"
-        var recordsSucceeded = false
-        var streamSucceeded = false
-
-        do {
-            _ = try await client.loggingRecords(id: missingID)
-            recordsSucceeded = true
-        } catch {
-            // A missing container or unavailable local API server is the
-            // expected read-only failure result for this unique fixture ID.
-        }
-        do {
-            _ = try await client.loggingRecordStream(id: missingID)
-            streamSucceeded = true
-        } catch {
-            // See the record retrieval assertion above.
-        }
-
-        #expect(!recordsSucceeded)
-        #expect(!streamSucceeded)
-    }
 }
 
 private actor HandoffClient:
@@ -504,7 +480,7 @@ private final class HandoffRuntimeFixture {
         records: any AppleContainerLoggingRecordClient,
         handoffOverride: (any AppleContainerLoggingHandoffClient)? = nil
     ) throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        root = TestStorage.temporaryDirectory.appendingPathComponent(
             "devcontainer-logging-handoff-\(UUID().uuidString)",
             isDirectory: true
         )
@@ -518,14 +494,16 @@ private final class HandoffRuntimeFixture {
             useDirectProcessAPI: false,
             useDirectContainerAPI: false,
             metadataStore: nil,
-            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true),
+            storageRoots: AppleContainerRuntime.StorageRoots(
+                volumes: root.appendingPathComponent("volumes", isDirectory: true),
+                transfers: root.appendingPathComponent("transfers", isDirectory: true)
+            ),
             clients: AppleContainerRuntime.DirectClients(
                 api: ContainerClient(),
                 inventory: EmptyInventoryClient(),
                 files: EmptyFileClient(),
                 networks: EmptyNetworkClient(),
-                loggingRecords: records,
-                loggingHandoffClientOverride: handoffOverride
+                logging: .init(records: records, handoff: handoffOverride)
             )
         )
     }

@@ -32,18 +32,21 @@ struct VersionCommand: ParsableCommand {
     var format = "pretty"
 
     func run() throws {
+        try FileHandle.standardOutput.write(contentsOf: outputData())
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    func outputData() throws -> Data {
         let info = DevContainerProject.buildInfo
         if short {
-            print(info.version)
-            return
+            return Data(info.version.utf8)
         }
         switch format {
         case "pretty":
-            print("devcontainer \(info.version) (lane: \(info.lane), commit: \(info.commit), source: \(info.source))")
+            let text = "devcontainer \(info.version) (lane: \(info.lane), commit: \(info.commit), source: \(info.source))"
+            return Data(text.utf8)
         case "json":
-            let data = try JSONEncoder.pretty.encode(info)
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            return try JSONEncoder.pretty.encode(info)
         default:
             throw ValidationError("unsupported format \(format); expected pretty or json")
         }

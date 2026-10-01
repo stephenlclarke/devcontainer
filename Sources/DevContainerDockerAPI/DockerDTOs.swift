@@ -133,6 +133,7 @@ struct DockerCreateContainerRequest: Decodable {
     var env: [String]?
     var cmd: [String]?
     var image: String
+    var containerImageReference: String?
     var exposedPorts: [String: EmptyObject]?
     var volumes: [String: EmptyObject]?
     var workingDir: String?
@@ -165,6 +166,7 @@ struct DockerCreateContainerRequest: Decodable {
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
         case image = "Image"
+        case containerImageReference = "ContainerImageReference"
         case labels = "Labels"
         case macAddress = "MacAddress"
         case mounts = "Mounts"
@@ -189,11 +191,13 @@ struct DockerHealthcheck: Codable, Equatable, Sendable {
     var timeout: Int64?
     var retries: Int?
     var startPeriod: Int64?
+    var startInterval: Int64?
 
     enum CodingKeys: String, CodingKey {
         case interval = "Interval"
         case retries = "Retries"
         case startPeriod = "StartPeriod"
+        case startInterval = "StartInterval"
         case test = "Test"
         case timeout = "Timeout"
     }
@@ -692,6 +696,7 @@ struct DockerContainerConfig: Encodable {
     let attachStderr: Bool
     let tty: Bool
     let openStdin: Bool
+    let stdinOnce: Bool
     let env: [String]
     let cmd: [String]
     let image: String
@@ -701,6 +706,8 @@ struct DockerContainerConfig: Encodable {
     let entrypoint: [String]
     let labels: [String: String]
     let healthcheck: DockerHealthcheck?
+    var stopSignal: String?
+    var stopTimeout: Int?
 
     enum CodingKeys: String, CodingKey {
         case attachStderr = "AttachStderr"
@@ -712,23 +719,16 @@ struct DockerContainerConfig: Encodable {
         case exposedPorts = "ExposedPorts"
         case healthcheck = "Healthcheck"
         case hostname = "Hostname"
+        case stopSignal = "StopSignal"
+        case stopTimeout = "StopTimeout"
         case image = "Image"
         case labels = "Labels"
         case openStdin = "OpenStdin"
+        case stdinOnce = "StdinOnce"
         case tty = "Tty"
         case user = "User"
         case volumes = "Volumes"
         case workingDir = "WorkingDir"
-    }
-}
-
-struct DockerInspectHostConfig: Encodable {
-    let binds: [String]
-    let networkMode = "default"
-
-    enum CodingKeys: String, CodingKey {
-        case binds = "Binds"
-        case networkMode = "NetworkMode"
     }
 }
 
@@ -864,7 +864,7 @@ struct DockerImageSummary: Encodable {
     let containers: Int = -1
     let created: Int64
     let id: String
-    let labels: [String: String] = [:]
+    let labels: [String: String]
     let parentID = ""
     let repoDigests: [String]
     let repoTags: [String]
@@ -897,10 +897,12 @@ struct DockerImageInspect: Encodable {
     let variant: String
     let operatingSystem: String
     let config: DockerImageConfig
+    let rootFS: DockerImageRootFS?
 
     enum CodingKeys: String, CodingKey {
         case architecture = "Architecture"
         case config = "Config"
+        case rootFS = "RootFS"
         case created = "Created"
         case id = "Id"
         case operatingSystem = "Os"
@@ -909,6 +911,16 @@ struct DockerImageInspect: Encodable {
         case size = "Size"
         case variant = "Variant"
         case virtualSize = "VirtualSize"
+    }
+}
+
+struct DockerImageRootFS: Encodable {
+    let type = "layers"
+    let layers: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case layers = "Layers"
     }
 }
 

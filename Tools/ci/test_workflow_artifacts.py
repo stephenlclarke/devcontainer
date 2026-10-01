@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -54,6 +56,31 @@ STDOUT.write(JSON.generate(selectors))
 def workflow_files(directory: Path = WORKFLOWS) -> list[Path]:
     """Return every supported GitHub Actions workflow file."""
     return sorted((*directory.glob("*.yml"), *directory.glob("*.yaml")))
+
+
+def workflow_job_block(contents: str, job_name: str) -> str:
+    """Return one top-level job's source block without matching nested keys."""
+    jobs_start = re.search(r"^jobs:\s*$", contents, re.MULTILINE)
+    if jobs_start is None:
+        raise ValueError("workflow has no jobs mapping")
+    job_pattern = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
+    matches = list(job_pattern.finditer(contents, jobs_start.end()))
+    for index, match in enumerate(matches):
+        if match.group(1) == job_name:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(contents)
+            return contents[match.start():end]
+    raise ValueError(f"workflow has no {job_name!r} job")
+
+
+def workflow_step_block(job: str, step_name: str) -> str:
+    """Return one named workflow step's source block."""
+    step_pattern = re.compile(r"^      - name: (.+)$", re.MULTILINE)
+    matches = list(step_pattern.finditer(job))
+    for index, match in enumerate(matches):
+        if match.group(1) == step_name:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(job)
+            return job[match.start():end]
+    raise ValueError(f"job has no {step_name!r} step")
 
 
 def workflow_runner_labels(
@@ -172,7 +199,15 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("results_format: sarif", scorecard)
 
     def test_hidden_build_evidence_is_explicitly_included(self) -> None:
-        checked_blocks = 0
+        required_uploads = (
+            ("ci.yml", "test", "Upload test logs"),
+            ("ci.yml", "stock-test", "Upload stock test logs"),
+            ("parity.yml", "lane", "Upload lane evidence"),
+            ("parity.yml", "compare", "Upload candidate-bound comparison"),
+            ("quality.yml", "sanitizer", "Upload sanitizer log"),
+            ("sonar.yml", "analyze", "Upload coverage evidence"),
+            ("stable-release-gate.yml", "authority", "Upload candidate-bound authority"),
+        )
         pinned_uploader = (
             ROOT / "Tools" / "ci" / "upload-artifact-pinned.sh"
         ).read_text(encoding="utf-8")
@@ -193,7 +228,6 @@ class WorkflowArtifactTests(unittest.TestCase):
                 if ".build/" not in block:
                     continue
 
-                checked_blocks += 1
                 if uses_action:
                     self.assertIn(
                         "include-hidden-files: true",
@@ -207,7 +241,29 @@ class WorkflowArtifactTests(unittest.TestCase):
                         "pinned uploader omits hidden .build evidence",
                     )
 
-        self.assertEqual(checked_blocks, 6)
+        for workflow_name, job_name, step_name in required_uploads:
+            contents = (WORKFLOWS / workflow_name).read_text(encoding="utf-8")
+            job = workflow_job_block(contents, job_name)
+            step = workflow_step_block(job, step_name)
+            with self.subTest(workflow=workflow_name, job=job_name):
+                self.assertIn(".build/", step)
+                if "uses: actions/upload-artifact@" in step:
+                    self.assertIn("include-hidden-files: true", step)
+                else:
+                    self.assertIn(
+                        "uses: ./Tools/ci/upload-artifact-action",
+                        step,
+                    )
+                    self.assertIn(
+                        "INPUT_INCLUDE-HIDDEN-FILES=true",
+                        pinned_uploader,
+                    )
+
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        stock_job = workflow_job_block(ci, "stock-test")
+        stock_upload = workflow_step_block(stock_job, "Upload stock test logs")
+        self.assertIn("path: .build/swift-test.log", stock_upload)
+        self.assertIn("include-hidden-files: true", stock_upload)
 
     def test_self_hosted_parity_lane_avoids_runner_action_downloads(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
@@ -401,18 +457,24 @@ jobs:
             self.assertIn("  cancel-in-progress: true\n", contents, name)
 
     def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
-        for name in ("ci.yml", "quality.yml", "sonar.yml"):
-            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
-            self.assertEqual(
-                contents.count('SWIFT_TEST_ATTEMPTS: "1"'),
-                1,
-                name,
-            )
-            self.assertEqual(
-                contents.count('SWIFT_TEST_TIMEOUT_SECONDS: "300"'),
-                1,
-                name,
-            )
+        required_steps = (
+            ("ci.yml", "test", "Test and enforce coverage"),
+            ("ci.yml", "stock-test", "Test against unmodified Apple packages"),
+            ("quality.yml", "sanitizer", "Run sanitizer"),
+            ("sonar.yml", "analyze", "Generate and enforce Swift coverage"),
+        )
+        for workflow_name, job_name, step_name in required_steps:
+            contents = (WORKFLOWS / workflow_name).read_text(encoding="utf-8")
+            job = workflow_job_block(contents, job_name)
+            step = workflow_step_block(job, step_name)
+            with self.subTest(workflow=workflow_name, job=job_name):
+                self.assertIn('SWIFT_TEST_ATTEMPTS: "1"', step)
+                self.assertIn('SWIFT_TEST_TIMEOUT_SECONDS: "300"', step)
+
+        runner = (ROOT / "Tools" / "ci" / "run-swift-test.sh").read_text(encoding="utf-8")
+        self.assertIn("start_new_session=True", runner)
+        self.assertIn("os.killpg(process.pid, signal.SIGTERM)", runner)
+        self.assertIn("os.killpg(process.pid, signal.SIGKILL)", runner)
 
     def test_hosted_swift_tests_reuse_the_resolved_default_scratch(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -468,14 +530,24 @@ jobs:
 
     def test_ci_builds_the_unmodified_stock_apple_graph(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        stock_job = workflow_job_block(ci, "stock-test")
 
-        self.assertIn("  stock-test:\n", ci)
-        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", ci)
-        self.assertIn("cp Package.stock.resolved Package.resolved", ci)
-        self.assertIn(
-            "swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors",
-            ci,
-        )
+        self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", stock_job)
+        self.assertIn("cp Package.stock.resolved Package.resolved", stock_job)
+        resolve_step = workflow_step_block(stock_job, "Resolve stock dependencies")
+        self.assertIn("swift package resolve", resolve_step)
+        self.assertIn("cmp /tmp/devcontainer-stock-Package.resolved Package.resolved", resolve_step)
+        test_step = workflow_step_block(stock_job, "Test against unmodified Apple packages")
+        self.assertIn('SWIFT_TEST_ATTEMPTS: "1"', test_step)
+        self.assertIn('SWIFT_TEST_ACCEPT_SIGNAL_13: "0"', test_step)
+        self.assertIn("run: make test", test_step)
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors", makefile)
+        self.assertIn("test: swift-test", makefile)
+        swift_test = makefile[makefile.index("swift-test:\n"):makefile.index("\ncoverage:\n")]
+        self.assertIn("$(SWIFT_STRICT_FLAGS)", swift_test)
+        self.assertIn("Tools/ci/run-swift-test.sh", swift_test)
+        self.assertIn("Tools/ci/run-swift-testing-bundle.sh", swift_test)
         self.assertIn("needs: [test, stock-test]", ci)
 
         resolved = json.loads(
@@ -541,6 +613,50 @@ jobs:
         self.assertLess(prime, initialize)
         self.assertLess(initialize, recompile)
         self.assertLess(recompile, analyze)
+
+    def test_codeql_is_required_by_release_authorities_and_fails_closed(self) -> None:
+        for name in ("prebuilt-binaries.yml", "stable-release-gate.yml"):
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            required = re.search(
+                r"(?ms)^[ \t]+required_workflows=\([ \t]*\n(.*?)^[ \t]+\)",
+                contents,
+            )
+            self.assertIsNotNone(required, name)
+            entries = re.findall(
+                r"(?m)^[ \t]+([a-z0-9-]+\.yml)[ \t]*$", required.group(1)
+            )
+            self.assertIn("codeql.yml", entries, name)
+
+        codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
+        guard = workflow_job_block(codeql, "require-main-push-enabled")
+        self.assertIn(
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            guard,
+        )
+        step = workflow_step_block(guard, "Fail closed when CodeQL is disabled")
+        self.assertIn("CODEQL_ENABLED: ${{ vars.CODEQL_ENABLED }}", step)
+        script_match = re.search(
+            r"(?m)^        run: \|\n((?:^          .*\n)+)", step
+        )
+        self.assertIsNotNone(script_match)
+        script = textwrap.dedent(script_match.group(1))
+        for value, expected in (("false", 1), ("true", 0)):
+            with self.subTest(CODEQL_ENABLED=value):
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", script],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "CODEQL_ENABLED": value},
+                    check=False,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if value == "false":
+                    self.assertIn("CodeQL is required for main release authority", result.stderr)
+
+        analyze = workflow_job_block(codeql, "analyze")
+        self.assertIn("vars.CODEQL_ENABLED == 'true'", analyze)
+        self.assertIn("github.event_name != 'pull_request'", analyze)
+        self.assertIn("github.event.pull_request.draft == false", analyze)
 
     def test_write_permissions_are_scoped_to_mutating_jobs(self) -> None:
         codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")

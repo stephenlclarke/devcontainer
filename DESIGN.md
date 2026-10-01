@@ -2,6 +2,8 @@
 
 ## Status and decision
 
+The next native qualification contract uses the already locked stock Apple `container` 1.4.1 and separately released `container-compose` 0.15.1 assets on the designated macOS 27/Xcode 27 host. Historical stable behavior described below remains tied to its original runtime versions. Updating the campaign pins does not certify the newer combination: all 28 scenarios in all three lanes must retain fresh identity-bound evidence, including Compose lifecycle and actual VS Code sessions.
+
 This document describes the implemented `devcontainer` architecture. The
 project provides unmodified VS Code Dev Containers compatibility by placing a
 Docker Engine API compatibility service in front of Apple-native runtime
@@ -16,7 +18,15 @@ The product has two first-class runtime modes:
 
 The selected provider is immutable while a Dev Container project owns resources. Changing providers requires an explicit down/recreate operation so container identifiers, labels, networks, and volumes never become split-brain state.
 
+D06's captured startup command adds explicit IPv4/fixed TCP publication to the unreleased frontend. It sends `ExposedPorts` and `HostConfig.PortBindings` through the shared Unix transport; it does not create a second forwarding service or invoke Docker. Native inspection derives host bindings from the stored runtime specification, excluding expose-only entries. Dynamic ports, ranges, IPv6 and UDP publish syntax remain rejected by this bounded frontend until qualified. The reference-only Colima VM's narrowly scoped SSH forwarder is test infrastructure, not a candidate dependency. [D06 evidence](docs/bazel-test-harness.md#d06-published-ports) records passing Docker and stock-native runs; enhanced qualification remains blocked on its exact guest input.
+
+D07 adds typed bind/named-volume projection to the same frontend mount parser. It preserves the named source and target in `HostConfig.Mounts`; the existing runtime remains the sole volume owner and no Docker process is introduced. Anonymous or advanced mount forms fail before create until separately qualified. Rebuild's `rm -f/--force` accepts exactly one full container ID and sends forced deletion through the selected private socket, without deleting volumes or resolving names. Unsupported forms fail before mutation; engine errors propagate. The [D07 contract](docs/bazel-test-harness.md#d07-reuse-and-cleanup) binds repeated CLI generations to the same owned volume and requires actual hook counters and resource absence.
+
 ## Goals
+
+C02's unreleased stock Compose bridge carries requested health policy in a bounded versioned native label, negotiated before project resources. The stock adapter validates and adopts it; the existing Engine evaluator executes guest probes and derives observed health. Unique probe reservations reject late results across reset/restart/removal. No Docker process or enhanced fork dependency is introduced. This bounded inspect-driven bridge does not claim autonomous Docker health scheduling or event persistence; [the contract](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) records qualification and unsupported fields.
+
+The unreleased Bazel candidate adds a project-owned `devcontainer-docker` frontend beneath its private official Dev Containers CLI bundle. D02 builds use the shared Unix HTTP transport, local tar contexts and the selected stock/enhanced Apple builder. Generated Dockerfiles outside the workspace are injected with archive-only exclusions; build errors remain failures even inside HTTP 200 progress streams. The current bounded frontend rejects existing `.dockerignore` files and unsupported flags rather than claiming full Docker-build semantics. Native image inspection projects ordered uncompressed layer digests from descriptor-bound OCI configuration. Candidate live qualification remains distinct from the immutable stable-release matrix.
 
 - Reach 100% behavioural parity with Docker-based Development Containers across the complete audited Development Containers surface.
 - Reach comparable or better user-visible performance than the matching Docker oracle, measured independently from functional parity.
@@ -165,6 +175,8 @@ or attributed across provider lanes.
 
 ### Apple adapter fast path
 
+The unreleased direct-start path owns init input/output independently of attached clients. It supplies descriptors during bootstrap, preserves them through managed-host preparation, starts init once, and validates the observed native start identity. Stock Apple permits resize only after start; pending sizes are applied at that point. Per-client cancellation does not stop init or close other clients' input, except when the explicit non-TTY `StdinOnce` policy requires shared stdin EOF. An ID-scoped closing barrier joins descriptor/control cleanup before replacement. External init descriptors cannot be adopted. The HTTP adapter applies effective stream selection, TTY detach keys and bounded forwarding; quiet output-consumer cancellation joins EOF policy and native subscription cleanup. Attachment history uses a separate source-aware SPI and schema-6 saved-log projection; native providers never relabel Apple's merged log as stdout or stderr. Component implementation does not establish complete live logging parity. The [development evidence and limitations](docs/bazel-test-harness.md#foreground-init-attachment-development) leave complete HTTP/Compose attachment and live parity unqualified.
+
 The adapter keeps reusable official clients for the lifetime of each engine
 process. Stock Apple container inventory and exact inspection use the typed
 1.1.0 schema. A separately fingerprinted enhanced distribution retains its
@@ -173,6 +185,10 @@ discard additive exit, hostname, security, alias, and health fields. Network,
 archive, and managed `/etc/hosts` transfers continue to use distribution-safe
 direct clients. Operations without a certified typed equivalent continue
 through the selected `container` executable.
+
+Archive uploads validate their tar input before host extraction and preserve member permission bits independently of the service's file-creation mask. Extraction uses a child of an untouched private `0700` temporary directory: an archive's `.` entry may change the child mode but cannot expose the enclosing host staging tree. Both direct-client and CLI copy paths upload only that extracted child. This does not claim UID/GID or extended-attribute parity beyond the separately qualified fixture scope.
+
+Enhanced CLI inventory retains provider-only fields but rounds timestamps. For managed or adopted resources, a narrow native XPC identity read validates labels, image and encoded creation/start dates, then restores both precise native timestamps. It avoids decoding enhanced attachment schemas through stock types. Attachment/terminal control continues to require exact process-generation identity; same-second restarts do not receive a tolerance waiver. The [enhanced terminal regression and live proof](docs/evidence/enhanced-engine-20260920.md) cover this boundary without declaring full attachment or release parity.
 
 ```mermaid
 flowchart LR
@@ -190,10 +206,24 @@ flowchart LR
 The event loop wakes immediately after an in-process mutation and retains a
 200ms reconciliation fallback for changes made by another process. Managed
 host-file content is cached by container runtime identifier, creation
-timestamp, and desired block. Runtime bootstrap recreates the guest's default
+timestamp, observed start timestamp, and desired block. Runtime bootstrap recreates the guest's default
 `/etc/hosts`, so the cache is invalidated on every adapter-owned start,
 including transient archive starts, as well as container recreation, removal,
 or archive upload.
+
+Running-state reconciliation is serialized across file-transfer awaits and obtains an unfiltered inventory after entering that queue. Native Compose service names require a complete versioned native identity, a non-one-off container and a safe hosts-entry name. Docker label mirrors are optional because API inspection synthesizes them without modifying native resources; any persisted mirror must agree with its native field. Addresses come exclusively from observed shared network attachments. Native Compose exec preparation reconciles only the requested target, not every project; ordinary inventory and inspect calls do not write guest files. Reconciliation propagates request cancellation, checks target creation/start identity before transfers and before caching success, and preserves unmanaged hosts entries. These changes are supporting C02 work, not proof of startup-time resolution or a completed parity contract.
+
+#### Startup-time name resolution: remaining C02 implementation
+
+`ManagedNetworkHostsStore` is connected to gateway creation and lifecycle calls for validated native Compose identities. The creation journal durably records the operation UUID, owned specification and complete native configuration before allocating the backing file; uncertain creation retains both intent and file. Completion checks the observed mount and inode provenance and commits the identical specification through the real SQLite transaction. The store publishes an operation-UUID directory only after its contents and provenance are durable; unpublished `.alloc` directories are never native mount sources. Verified removal first retires the directory, then removes only known members through directory descriptors. Metadata remains the recovery authority after native disappearance, and replacement creation/adoption cannot silently overwrite it. Interrupted active/retired cleanup is retryable; unexpected members, changed provenance and unsafe paths remain untouched. The shared parent contains only the read-only-mounted hosts file, and host updates retain its inode. These component tests do not establish live startup DNS parity.
+
+The creation adapter preserves prepared typed mounts when adding parsed user mounts, and journals that complete configuration before native submission. User mounts that lexically overlap a prepared mount (including ancestors, descendants and normalized paths) fail before kernel lookup or journalling; lexical checks cannot establish image-internal symlink safety. The stock CLI parser rejects regular-file bind sources even though the typed runtime supports them, so the managed file bypasses CLI mount parsing.
+
+Direct startup writes running-peer addresses before bootstrap, then obtains the container's own real allocation through the specific network plugin's read-only `lookup(hostname:)` before starting the original application. Missing or mismatched allocations fail without starting the application. Stock inventory hides allocations in the booted state; global DNS and guessed addresses are not substitutes. Mounted updates revalidate creation and running-start generation before writing. A preparation failure retains the booted VM for retry/removal; stop skips the native command when already stopped but still closes host forwarding and reconciles peers. Restart likewise avoids stopping a booted VM. Actual native process-start failures explicitly require removal/recreation because stock may retain an unusable cached client. Managed startup/restart rejects the CLI-only fallback rather than reporting success without this boundary.
+
+The pinned stock runtime's global DNS lookup traverses all networks, so assigning bare service names to it is not a network-isolated replacement. A pre-entrypoint file-copy shortcut is also invalid: the outer API requires a running container, and although the runtime-service copy/dial methods accept a booted state, their underlying `LinuxContainer` calls require the started state. Stopping that partly bootstrapped container also needs care because the outer service's cached stopped snapshot can skip normal exit cleanup. No preboot copy adapter is connected to the product.
+
+The viable stock primitive is a single-file bind mount, installed by `FileMountContext` before `LinuxProcess.start`. Native Compose creation still must negotiate and enter the implemented gateway creation/start boundary rather than bypassing it with detached CLI `run`. Running-peer updates and restart recovery must not depend on an event-stream subscriber or a later exec. Compose integration, a pre-entrypoint reference fixture, live crash/restart proof and stock/enhanced qualification remain required before a DNS parity claim.
 
 For a coordinated provider migration, the adapter exports one atomic,
 quiescence-checked identity/lifecycle view. Each record preserves the canonical
@@ -210,7 +240,7 @@ The generated shared route ledger contains all 107 method/path operations in the
 | Area | Required endpoints or behavior |
 | --- | --- |
 | Negotiation | `/_ping`, `/version`, `/info`, version-prefixed routes |
-| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; running-container resize remains unavailable on stock Apple because the public API cannot retrieve the exact active init-process handle |
+| Containers | list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; unreleased running-terminal resize uses its retained native process handle and passes stock E08; enhanced and full release qualification remain pending |
 | Exec | create, start, resize, inspect, stdin/stdout/stderr multiplexing |
 | Files | archive upload/download and path stat headers |
 | Images | list, inspect, create/pull, build, tag, remove |
@@ -238,6 +268,49 @@ Apple-authored Compose product. The provider adapter and inspection layer
 project them into `com.docker.compose.*` labels and translate Docker label
 filters back to native discovery queries. A projected label never overwrites
 conflicting runtime data; conflict is a reconciliation error.
+
+### Image identity binding
+
+Docker image IDs are the SHA-256 digest of the original OCI configuration blob, not Apple's image-index identifier and not a hash of re-encoded JSON. The adapter resolves that digest from the selected platform manifest using the stock `ClientImage` API. Listings and inspection group tags sharing a configuration ID; `repository@digest` matching ignores tags but must still bind the canonical repository. The source correction is under Bazel validation; it is not yet published runtime evidence.
+
+Creation and image mutations must preserve that identity through the native operation. Do not translate a digest to a mutable tag and record the original digest as if the operation were pinned. The draft native create path captures `ImageDescription` and platform, rereads configuration from that descriptor, validates process/security/network/mount inputs before allocating volumes, and sends a complete `ContainerConfiguration` through stock `ContainerClient.create`. It checks the returned descriptor/platform before publishing compatibility metadata. Both named and digest-addressed requests use this path when the direct API is enabled; missing captured content must not trigger a mutable-tag pull. Empty user and working-directory overrides inherit the image defaults, including non-root USER. Its live SDK transport and init/kernel closure still require integration proof.
+
+Stock `ClientImage.tag(new:)` resolves a source reference, so it is not a descriptor-bound substitute. Config-ID deletion must account for every alias and Docker force/conflict semantics. Digest-addressed tag/delete still fail before CLI mutation. Digest creation is also refused if the direct API is explicitly disabled: forwarding a config digest is unsafe because stock CLI may parse it as a repository/tag and fetch different content. These remaining refusals are visible implementation gaps, not accepted parity or a final solution.
+
+### Native creation recovery
+
+The draft native path requires a durable `RuntimeCreationStore`; production supplies `SQLiteStateStore`. It resolves volume arguments, final native mounts, the kernel and the request deadline before recording a possible container submission. Immediately before the native create RPC, a callback records a distinct operation UUID, native identifier, exact creation timestamp, selected configuration-image ID, requested spec and final encoded native configuration including mounts. Preparation errors leave no pending container intent, so repairing a corrupt volume or missing kernel permits retry; separately created volume resources are not implicitly deleted. This is intent, not successful metadata. After creation, final typed inspection must match the captured identifier, descriptor, platform and timestamp. Only then does one database transaction publish compatibility metadata and remove the matching intent. Inventory adoption rejects pending intent in its own transaction, closing the concurrent reconciliation race.
+
+Failure, cancellation, verification mismatch or metadata failure retains the intent. Bridge start/restart/exec, rename and both archive-transfer directions reject the unresolved incarnation; read-only inspection remains available. A demonstrably different native incarnation is not quarantined, but never clears the earlier operation's evidence. Neither absence nor a name-based delete proves a timed-out RPC cannot still complete. No automatic rollback deletion is issued for failed native creation, because stock Apple provides no incarnation-conditional deletion. Explicit deletion retains unresolved intent as well. The separate CLI compatibility-create path is unchanged and is not covered by this native recovery guarantee.
+
+Schema 4 introduced `runtime_container_creations`; schema 5 added raw output and current schema 6 adds the versioned log projection below, preserving schema-2/3/4/5 metadata transactionally. `RuntimeCreationStore` implementations must reject ordinary metadata writes while an intent exists and atomically validate operation/spec/image/timestamp at completion. Its token-checked discard primitive is reserved for explicit reconciliation after proving the old writer cannot still create; a safe operator reconciliation interface and live crash/restart proof remain release blockers. Do not delete journal rows to make a test pass. For rollback to a pre-schema-6 binary, restore the quiescent pre-upgrade database backup rather than lowering the schema number or dropping journal tables.
+
+### Source-aware output history
+
+Live E07 reference evidence exposes a required distinction between raw attachment bytes and saved Docker `json-file` history: invalid UTF-8 bytes are replaced when logical log records are encoded, while live attachment remains byte-exact. Schema 6 implements a versioned projection: each source assembles newline/16-KiB records across raw frame boundaries, and only natural source EOF flushes its residual record. Encoding consumes one invalid UTF-8 byte per replacement, matching pinned Moby rather than Swift's sequence-coalescing decoder. Snapshot cutoffs are not EOF; cancellation/error is not natural EOF. Legacy journals retain projection version zero and refuse projected history/new capture without fabricating missing boundaries; retain raw evidence and recreate those disposable development containers. [Exact Docker evidence and the independent expected-value model](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguish component implementation from pending native live qualification.
+
+The unreleased direct provider captures stdout/stderr at the descriptors it supplies before bootstrap. `RuntimeContainerOutputStore` and `RuntimeContainerOutputJournal` keep persistence behind runtime-neutral interfaces; neither stock Apple packages nor Compose libraries are modified or required for this capture. Production uses `SQLiteStateStore`. External processes whose descriptors were never owned cannot acquire fabricated history from Apple's merged log file.
+
+```mermaid
+flowchart LR
+    Pipes[Native stdout/stderr] --> Broker[Ordered output broker]
+    Broker -->|Commit raw and completed log records| Journal[SQLite output journal]
+    EOF[Natural source EOF] --> Broker
+    Broker -->|Then publish| Live[Live subscriptions]
+    Journal --> History[Versioned saved-log cursor]
+    History --> Reader[Demand-driven HTTP reader]
+    Live --> Reader
+```
+
+Under one broker lock, raw bytes and completed projected records commit before raw live publication. The encoder's copied state becomes authoritative only after the transaction commits. Natural EOF persists its final projected records and per-source marker atomically. The same lock captures the finite projected-record cutoff and registers live delivery: an unfinished pre-attachment line is deliberately absent from saved history, so this is an atomic log/live boundary, not a lossless raw replay guarantee. Capture is prepared exactly once before bootstrap. Restart preserves earlier records for the same immutable identity; generation replacement waits for reader/control joins and durable completion with every expected source at natural EOF. TTY has one merged stdout source; non-TTY requires both. A cancelled attachment does not stop capture or manufacture EOF/exit.
+
+Schema 6 retains `runtime_output_journals`/`runtime_output_frames` and adds `runtime_output_generations`/`runtime_output_logs`. Projected sequence cutoffs are independent of raw bytes, so a later EOF cannot enter an earlier snapshot. Completed logical records may coalesce into at-most-64-KiB rows without changing their bytes. Foreign keys delete output with its exact metadata identity. Each writer and reader owns a separate full-mutex SQLite connection; output and lifecycle connections have a one-second contention bound. WAL transactions use full durability and never remain open between replay reads. Missing records, failed writes/EOF/completion, changed identity, interrupted ownership and removal during replay are errors, not clean EOF. Shared failure state invalidates already-open readers even when disk/lock failure prevents updating the durable marker. `ContainerSpec.outputLogFormat` retains provider-selected policy; explicit `json-file` selection requires direct creation, descriptor-based process APIs and output storage, and start/restart revalidate it after engine reopen.
+
+Current development limits are 64 KiB per raw frame (checked before encoding), independently 1 GiB/1,048,576 rows for raw and projected bytes, 1,048,576 generation records, and five minutes (or an earlier request deadline) for finite replay. Pending encoder state is below 16 KiB per source; invalid input can expand projected bytes threefold. Index/WAL overhead is additional. Exhaustion fails explicitly without deleting or truncating previous records. Live subscribers have a 256-frame bound; replay adds no intermediate HTTP queue, but a slow client can exhaust its live subscription. These limits and interrupted-capture refusal are visible compatibility constraints, not unlimited Docker log parity. General `/logs`, imported/external history, live fault tests and the complete foreground oracle remain unqualified by component evidence.
+
+The development-only recovery control at `GET/POST /_container-family/recovery` uses the same private Unix socket, not a TCP listener. GET returns a process epoch and protocol version 1; POST requires that captured epoch and a 64-character lowercase hexadecimal owner token. Freezing closes new mutation admission, including WebSocket attach; DELETE remains available for independently ownership-verified cleanup. Every ordinary handler is tracked, including inspections that may run health probes. Frozen inspection returns cached health without starting another probe. A successful response requires no active handler, uncertain stream/attach/detached-exec outcome, failed health completion, native lifecycle mutation or durable pending create. Uncertain work remains quarantined for that epoch; this control does not reconcile or erase it. Runtime stores without an explicit quiescence implementation fail closed.
+
+C02 failed-create cleanup additionally requires recorded nonzero CLI exit, verified disappearance of each command group and an unchanged captured receiver epoch before taking a fresh, fully owned partial inventory. A separate partial receipt is never a successful creation or parity receipt. Each removal pass rechecks epoch, exact service/network identity, incarnation and membership; unfamiliar resources prevent cleanup. Process restart, unknown command completion, pending native submission or unavailable recovery protocol prevents automatic adoption. This is component-tested recovery, not yet live fault qualification or a general operator reconciliation interface.
 
 ## Provider selection
 
@@ -351,6 +424,8 @@ The service uses Swift actors for state isolation and a keyed async lock per pro
 
 Cleanup requires both a project label and the invocation lease. Broad name prefixes, shell globs, and unverified filesystem roots are never deletion authority.
 
+Process input descriptors have one owning serial worker. Input cancellation sets a synchronized flag before queueing closure, so it cannot deadlock behind a backpressured write. Nonblocking writes and bounded readiness polls observe explicit or task cancellation; ordinary input close remains ordered after accepted writes and preserves EOF. CLI-backed, PTY and direct-API output now share `ProcessPipeMonitor`. Its cancellation-resistant join waits for reader-owned closure and callbacks before session completion, preventing cross-thread close/reuse races. Terminal cancellation preserves the real process-exit waiter. Terminal master input is nonblocking; the guest terminal slave retains its separate I/O behavior. This implementation is a prerequisite, not completion, of prepared foreground container attachment.
+
 ## Error model
 
 Provider errors become a stable internal error taxonomy before Docker serialization:
@@ -414,6 +489,8 @@ paths fail closed. Per-project provider choice and configuration digest live in
 the service database. Secrets are not accepted in configuration files.
 `container devcontainer doctor --format json` emits a machine-readable backend
 fingerprint and capability report.
+
+The unreleased Compose wrapper defaults an omitted provider to `container-compose`; existing explicit provider choices are not rewritten. It passes the resolved socket as `CONTAINER_COMPOSE_ENGINE_SOCKET` and the resolved executable as both `CONTAINER_BIN` and `CONTAINER_COMPOSE_CONTAINER`, including configuration and cleanup probes. These values supersede inherited Compose-specific settings. Project ownership comes from the resolved runtime backend, not the frontend. Both frontend choices preserve the same runtime claim and reject conflicts before mutation. The selected frontend must be executable before project state is created; a missing native executable never triggers a Docker fallback. These checks establish configuration and state consistency, not runtime-service identity qualification. The explicit Docker example above documents the legacy opt-in path.
 
 ## Observability
 

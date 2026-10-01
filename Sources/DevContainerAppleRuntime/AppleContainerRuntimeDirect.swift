@@ -17,11 +17,21 @@
 import ContainerAPIClient
 import ContainerizationError
 import ContainerResource
+import ContainerXPC
 import DevContainerModel
+import Foundation
 
 protocol AppleContainerInventoryClient: Sendable {
     func list() async throws -> [ContainerResource.ContainerSnapshot]
     func get(id: String) async throws -> ContainerResource.ContainerSnapshot
+    func identity(id: String) async throws -> AppleContainerIdentity
+}
+
+extension AppleContainerInventoryClient {
+    func identity(id: String) async throws -> AppleContainerIdentity {
+        let snapshot = try await get(id: id)
+        return AppleContainerIdentity(snapshot.configuration, startedDate: snapshot.startedDate)
+    }
 }
 
 protocol AppleContainerFileClient: Sendable {
@@ -67,6 +77,7 @@ struct LiveAppleContainerFileClient: AppleContainerFileClient {
 
 struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
     let client: ContainerClient
+    private let identityClient = XPCClient(service: "com.apple.container.apiserver")
 
     func list() async throws -> [ContainerResource.ContainerSnapshot] {
         try await client.list(filters: .all.withoutMachines())
@@ -74,6 +85,16 @@ struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
 
     func get(id: String) async throws -> ContainerResource.ContainerSnapshot {
         try await client.get(id: id)
+    }
+
+    func identity(id: String) async throws -> AppleContainerIdentity {
+        let request = XPCMessage(route: .containerList)
+        try request.set(key: .listFilters, value: JSONEncoder().encode(ContainerListFilters(ids: [id])))
+        let response = try await identityClient.send(request, responseTimeout: .seconds(10))
+        guard let data = response.dataNoCopy(key: .containers) else {
+            throw ContainerizationError(.notFound, message: "Container identity is absent")
+        }
+        return try AppleContainerIdentity.decode(data, id: id)
     }
 }
 
@@ -156,7 +177,7 @@ extension AppleContainerRuntime {
                 && metadata[$0.runtimeID.rawValue]?.imageID == nil
         }
         let images = requiresImageResolution
-            ? try await listImages(context: context)
+            ? try await resolvedImages(context: context)
             : []
 
         var snapshots: [DevContainerModel.ContainerSnapshot] = []
@@ -219,7 +240,7 @@ extension AppleContainerRuntime {
         if imageID == nil {
             imageID = try await Self.imageID(
                 for: observed.spec.image,
-                in: listImages(context: context)
+                in: resolvedImages(context: context)
             )
         }
         let snapshot = try await containerSnapshotWithMetadata(

@@ -122,9 +122,9 @@ struct ManagedVolumeStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let metadataURL = directory.appendingPathComponent("metadata.json")
-            try encoder.encode(metadata).write(
-                to: metadataURL,
-                options: .atomic
+            try AtomicFile.write(
+                encoder.encode(metadata),
+                to: metadataURL
             )
             guard setMetadataMode(metadataURL.path, S_IRUSR | S_IWUSR) == 0 else {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

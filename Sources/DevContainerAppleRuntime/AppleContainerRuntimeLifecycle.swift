@@ -109,7 +109,7 @@ public extension AppleContainerRuntime {
         runtimeID resolved: String,
         context: RuntimeRequestContext
     ) async throws {
-        let processGeneration = try await launchContainerProcess(id: resolved)
+        let processGeneration = try await launchContainerProcess(id: resolved, context: context)
         // Runtime bootstrap recreates the guest's default /etc/hosts, even
         // when the container incarnation itself is unchanged.
         managedHostsState.removeValue(forKey: resolved)
@@ -120,18 +120,12 @@ public extension AppleContainerRuntime {
             runtimeID: resolved,
             startedAt: startedAt
         )
-        let inventory = try await listContainers(
-            all: true,
-            labels: [:],
-            context: context
-        )
-        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
-        try await startPortForwarding(
-            snapshot: snapshot,
-            startedAt: startedAt,
-            processGeneration: processGeneration
-        )
-        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        _ = try await synchronizeNetworkHostsAndInventory(context: context) { inventory in
+            let snapshot = try await self.resolvedContainerSnapshot(id: resolved, in: inventory)
+            try await self.startPortForwarding(
+                snapshot: snapshot, startedAt: startedAt, processGeneration: processGeneration
+            )
+        }
         await signalEventPollers()
     }
 
@@ -140,43 +134,6 @@ public extension AppleContainerRuntime {
             return
         }
         containerStartOperations.removeValue(forKey: id)
-    }
-
-    private func launchContainerProcess(id: String) async throws -> UUID? {
-        guard useDirectProcessAPI else {
-            try await requireSuccess(
-                command(["start", id]),
-                operation: "container start"
-            )
-            return nil
-        }
-        let process = try await apiClient.bootstrap(
-            id: id,
-            stdio: [nil, nil, nil]
-        )
-        try await process.start()
-        let task = Task {
-            try await ContainerExit(
-                code: process.wait(),
-                finishedAt: Date()
-            )
-        }
-        let registration = UUID()
-        containerExitTasks[id]?.cancel()
-        containerExitTasks[id] = task
-        containerExitRegistrations[id] = registration
-        containerExits.removeValue(forKey: id)
-        Task { [weak self] in
-            guard let exit = try? await task.value else {
-                return
-            }
-            await self?.handleContainerExit(
-                exit,
-                id: id,
-                registration: registration
-            )
-        }
-        return registration
     }
 
     internal func handleContainerExit(
@@ -255,13 +212,16 @@ public extension AppleContainerRuntime {
         }
     }
 
-    private func startPortForwarding(
+    internal func startPortForwarding(
         snapshot: DevContainerModel.ContainerSnapshot,
         startedAt: Date,
         processGeneration: UUID? = nil,
         stopContainerOnFailure: Bool = true
     ) async throws {
+        guard !portForwardingShuttingDown else { throw CancellationError() }
         let resolved = snapshot.runtimeID.rawValue
+        let forwardingGeneration = processGeneration ?? UUID()
+        portForwardingObservers.removeValue(forKey: resolved)?.task.cancel()
         do {
             let optionSupport = try await supportedCreateOptions()
             let emulated = snapshot.spec.ports.filter {
@@ -274,7 +234,7 @@ public extension AppleContainerRuntime {
                 containerID: resolved,
                 bindings: emulated,
                 networkAddresses: snapshot.networkAddresses,
-                generation: processGeneration
+                generation: forwardingGeneration
             ).makeIterator()
             let ports = snapshot.spec.ports.map { binding in
                 guard Self.requiresHostForwarding(
@@ -285,18 +245,21 @@ public extension AppleContainerRuntime {
                 }
                 return replacements.next() ?? binding
             }
-            guard ports != snapshot.spec.ports else {
-                return
+            if ports != snapshot.spec.ports {
+                try await recordResolvedPortBindings(
+                    ports,
+                    snapshot: snapshot,
+                    startedAt: startedAt
+                )
             }
-            try await recordResolvedPortBindings(
-                ports,
-                snapshot: snapshot,
-                startedAt: startedAt
-            )
+            guard !portForwardingShuttingDown else { throw CancellationError() }
+            if processGeneration == nil, !emulated.isEmpty {
+                observePortForwardingExit(snapshot: snapshot, generation: forwardingGeneration)
+            }
         } catch {
             await portForwarding.stop(
                 containerID: resolved,
-                generation: processGeneration
+                generation: forwardingGeneration
             )
             if stopContainerOnFailure {
                 _ = try? await command(["stop", "--time", "0", resolved])
@@ -359,6 +322,10 @@ public extension AppleContainerRuntime {
         mutationIdentifiers.insert(resolved)
         includeContainerLifecycleMutation(id: resolved, registration: mutation)
         var arguments = ["stop"]
+        // Stock bootstrap retains a client before the application has started.
+        // Stopping that VM poisons its next bootstrap, including after a prior
+        // successful run. A stop of an already-stopped container is a no-op.
+        let alreadyStopped = try await managedContainerIsStopped(id: resolved)
         if let timeout {
             let components = timeout.components
             let seconds = components.seconds
@@ -366,10 +333,12 @@ public extension AppleContainerRuntime {
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(
-            command(arguments),
-            operation: "container stop"
-        )
+        if !alreadyStopped {
+            try await requireSuccess(
+                command(arguments),
+                operation: "container stop"
+            )
+        }
         await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
         try await synchronizeNetworkHosts(context: context)
@@ -439,6 +408,13 @@ public extension AppleContainerRuntime {
         timeout: Duration?,
         context: RuntimeRequestContext
     ) async throws {
+        try await requireCompletedCreation(id: resolved)
+        try await requireRetainedOutputLogPolicy(id: resolved)
+        if !useDirectProcessAPI, try await managedHostsConfiguration(id: resolved) != nil {
+            throw DevContainerError(
+                .unsupportedCapability, message: "Managed hosts restart requires direct process APIs"
+            )
+        }
         var arguments = [useDirectProcessAPI ? "stop" : "restart"]
         if let timeout {
             let components = timeout.components
@@ -447,12 +423,14 @@ public extension AppleContainerRuntime {
             arguments += ["--time", String(seconds)]
         }
         arguments.append(resolved)
-        try await requireSuccess(
-            command(arguments),
-            operation: "container restart"
-        )
+        if try await !managedContainerIsStopped(id: resolved) {
+            try await requireSuccess(
+                command(arguments),
+                operation: "container restart"
+            )
+        }
         let processGeneration = useDirectProcessAPI
-            ? try await launchContainerProcess(id: resolved)
+            ? try await launchContainerProcess(id: resolved, context: context)
             : nil
 
         // Restart/bootstrap recreates the guest's default /etc/hosts.
@@ -465,18 +443,12 @@ public extension AppleContainerRuntime {
             runtimeID: resolved,
             startedAt: startedAt
         )
-        let inventory = try await listContainers(
-            all: true,
-            labels: [:],
-            context: context
-        )
-        let snapshot = try resolvedContainerSnapshot(id: resolved, in: inventory)
-        try await startPortForwarding(
-            snapshot: snapshot,
-            startedAt: startedAt,
-            processGeneration: processGeneration
-        )
-        try await synchronizeNetworkHosts(context: context, containers: inventory)
+        _ = try await synchronizeNetworkHostsAndInventory(context: context) { inventory in
+            let snapshot = try await self.resolvedContainerSnapshot(id: resolved, in: inventory)
+            try await self.startPortForwarding(
+                snapshot: snapshot, startedAt: startedAt, processGeneration: processGeneration
+            )
+        }
         await signalEventPollers()
     }
 
@@ -501,7 +473,9 @@ public extension AppleContainerRuntime {
             operation: "container kill"
         )
         await signalEventPollers()
-        await portForwarding.stop(containerID: resolved)
+        // Successful delivery is not process exit: user signals and trapped
+        // termination signals can leave the same guest running. The registered
+        // exit observer owns listener teardown for that process generation.
         try await synchronizeNetworkHosts(context: context)
         await signalEventPollers()
     }
@@ -524,6 +498,7 @@ public extension AppleContainerRuntime {
         }
         let containers = try await listContainers(all: true, labels: [:], context: context)
         let snapshot = try resolvedContainerSnapshot(id: id, in: containers)
+        try await requireCompletedCreation(id: snapshot.runtimeID.rawValue)
         mutationIdentifiers.formUnion([
             snapshot.runtimeID.rawValue,
             snapshot.dockerID.rawValue,
@@ -587,7 +562,15 @@ public extension AppleContainerRuntime {
                 registration: mutation
             )
         }
-        let snapshot = try await inspectContainer(id: id, context: context)
+        let snapshot: ContainerSnapshot
+        do {
+            snapshot = try await inspectContainer(id: id, context: context)
+        } catch let error as DevContainerError where error.code == .notFound {
+            if try await recoverRemovedManagedContainer(id: id, context: context) {
+                return
+            }
+            throw error
+        }
         let resolved = snapshot.runtimeID.rawValue
         mutationIdentifiers.formUnion([
             resolved,
@@ -598,6 +581,8 @@ public extension AppleContainerRuntime {
             identifiers: mutationIdentifiers,
             registration: mutation
         )
+        let hostsConfiguration = snapshot.spec.labels[Self.managedNetworkHostsLabel] == nil
+            ? nil : try await managedHostsConfiguration(id: resolved)
         var arguments = ["delete"]
         if force {
             arguments.append("--force")
@@ -607,25 +592,19 @@ public extension AppleContainerRuntime {
             command(arguments),
             operation: "container delete"
         )
+        if let hostsConfiguration {
+            try await removeManagedHostsAfterNativeDeletion(configuration: hostsConfiguration)
+        }
         await signalEventPollers()
         await portForwarding.stop(containerID: resolved)
+        await discardContainerState(snapshot: snapshot)?.shutdown()
         requestedContainers.removeValue(forKey: id)
-        requestedContainers.removeValue(forKey: resolved)
-        requestedContainers.removeValue(forKey: snapshot.dockerID.rawValue)
-        requestedContainers.removeValue(forKey: snapshot.spec.name)
-        managedHostsState.removeValue(forKey: resolved)
         startedContainers.remove(id)
-        startedContainers.remove(resolved)
-        startedContainers.remove(snapshot.dockerID.rawValue)
-        startedContainers.remove(snapshot.spec.name)
         containerStartedAt.removeValue(forKey: id)
-        containerStartedAt.removeValue(forKey: resolved)
-        containerStartedAt.removeValue(forKey: snapshot.dockerID.rawValue)
-        containerStartedAt.removeValue(forKey: snapshot.spec.name)
-        containerExitTasks.removeValue(forKey: resolved)?.cancel()
-        containerExitRegistrations.removeValue(forKey: resolved)
-        containerExits.removeValue(forKey: resolved)
         try await metadataStore?.removeContainerMetadata(id: resolved)
+        // A name-based delete cannot prove which create operation it removed,
+        // or that an earlier timed-out create cannot still complete. Keep any
+        // pending intent, including one inserted while this delete was running.
         try await synchronizeNetworkHosts(context: context)
         await signalEventPollers()
     }
@@ -634,47 +613,65 @@ public extension AppleContainerRuntime {
         id: String,
         context: RuntimeRequestContext
     ) async throws -> Int32 {
+        var observedExit: (snapshot: ContainerSnapshot, exit: ContainerExit)?
         while !Task.isCancelled {
+            try context.checkActive()
             do {
                 let snapshot = try await inspectContainer(id: id, context: context)
+                if let previous = observedExit?.snapshot,
+                   previous.runtimeID != snapshot.runtimeID
+                   || previous.dockerID != snapshot.dockerID
+                   || previous.createdAt != snapshot.createdAt
+                   || previous.startedAt != snapshot.startedAt
+                {
+                    observedExit = nil
+                }
                 if wasStarted(id: id, snapshot: snapshot),
                    let exit = containerExits[snapshot.runtimeID.rawValue]
                 {
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
+                    observedExit = (snapshot, exit)
+                    if snapshot.state == .stopped {
+                        try await finishStoppedContainerWait(snapshot, context: context)
+                        return exit.code
                     }
-                    return exit.code
                 }
                 if wasStarted(id: id, snapshot: snapshot),
                    let exit = try await waitForRegisteredContainerExit(
                        id: snapshot.runtimeID.rawValue
                    )
                 {
-                    return exit.code
+                    observedExit = (snapshot, exit)
+                    // Apple's process wait completes before its exit monitor
+                    // finishes native teardown. Reinspect that authority before
+                    // exposing a completed Docker wait followed by running/0.
+                    continue
                 }
                 if snapshot.state == .stopped, wasStarted(id: id, snapshot: snapshot) {
-                    await portForwarding.stop(
-                        containerID: snapshot.runtimeID.rawValue
-                    )
                     let exitCode = snapshot.exitCode ?? 0
-                    try await synchronizeNetworkHosts(context: context)
-                    if snapshot.spec.autoRemove {
-                        scheduleAutomaticRemoval(id: id)
-                    }
+                    try await finishStoppedContainerWait(snapshot, context: context)
                     return exitCode
                 }
             } catch let error as DevContainerError where error.code == .notFound {
                 if requestedContainers[id] == nil {
-                    return 0
+                    // Auto-removal can win the native-state poll and discard
+                    // cached metadata. Keep this waiter's authenticated exit.
+                    return observedExit?.exit.code ?? 0
                 }
             }
             try await Task.sleep(for: .milliseconds(200))
         }
         throw DevContainerError(.cancelled, message: "container wait was cancelled")
+    }
+
+    private func finishStoppedContainerWait(
+        _ snapshot: ContainerSnapshot,
+        context: RuntimeRequestContext
+    ) async throws {
+        await portForwarding.stop(containerID: snapshot.runtimeID.rawValue)
+        try await synchronizeNetworkHosts(context: context)
+        if snapshot.spec.autoRemove {
+            scheduleAutomaticRemoval(id: snapshot.runtimeID.rawValue)
+        }
     }
 
     private func recordContainerExit(_ exit: ContainerExit, id: String) {
@@ -734,24 +731,21 @@ public extension AppleContainerRuntime {
         return try process(arguments).frames
     }
 
-    func attachContainer(
-        id: String,
-        terminal _: Bool,
-        context: RuntimeRequestContext
-    ) async throws -> any RuntimeProcessSession {
-        ApplePollingLogSession {
-            try await self.pollLogs(id: id, context: context)
-        }
-    }
-
     func createExec(
         containerID: String,
         spec: ExecSpec,
         context: RuntimeRequestContext
     ) async throws -> ExecSnapshot {
         let container = try await inspectContainer(id: containerID, context: context)
+        try await requireCompletedCreation(id: container.runtimeID.rawValue)
         guard container.state == .running else {
             throw DevContainerError(.conflict, message: "container \(containerID) is not running")
+        }
+        if Self.nativeComposeServiceName(labels: container.spec.labels) != nil {
+            // Native Compose can start containers outside gateway lifecycle
+            // calls. Reconcile from a fresh, unfiltered inventory before an
+            // exec, without making ordinary inspect/list calls mutate guests.
+            try await synchronizeNetworkHosts(context: context, targetID: container.runtimeID)
         }
         let exec = ExecSnapshot(
             id: .random(),
@@ -769,6 +763,7 @@ public extension AppleContainerRuntime {
         guard var exec = execs[id] else {
             throw DevContainerError(.notFound, message: "exec \(id) was not found")
         }
+        try await requireCompletedCreation(id: exec.containerID.rawValue)
         guard !exec.running, exec.exitCode == nil else {
             throw DevContainerError(.conflict, message: "exec \(id) has already started")
         }

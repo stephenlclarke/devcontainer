@@ -8,7 +8,7 @@
     "helper"
   ],
   "shutdownAction": "stopCompose",
-  "overrideCommand": true,
+  "overrideCommand": false,
   "remoteUser": "root",
   "workspaceFolder": "/workspaces/devcontainer-parity"
 }

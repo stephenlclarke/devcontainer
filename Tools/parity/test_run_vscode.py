@@ -96,6 +96,26 @@ class Response:
 
 
 class VSCodeParityTests(unittest.TestCase):
+    def test_native_compose_setting_selects_admitted_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "devcontainer-compose"
+            executable.write_bytes(b"signed adapter")
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "container-compose"
+            lane.repository = Path("/repository")
+            lane.runtime = mock.Mock()
+            lane.runtime.package_executable.return_value = str(executable)
+            self.assertEqual(lane.compose_path(), str(executable))
+            lane.runtime.package_executable.assert_called_once_with("devcontainer-compose")
+
+    def test_native_vscode_uses_packaged_docker_surface(self) -> None:
+        lane = VSCodeLane.__new__(VSCodeLane)
+        lane.lane = "apple-stock"
+        lane.runtime = mock.Mock()
+        lane.runtime.finalized_selection = {"expected_source_commit": "a" * 40}
+        lane.runtime.package_executable.return_value = "/signed/devcontainer-docker"
+        self.assertEqual(lane.devcontainer_docker_path(), "/signed/devcontainer-docker")
+
     def test_code_version_requires_all_three_identity_lines(self) -> None:
         self.assertEqual(
             parse_code_version(f"1.2.3\n{'a' * 40}\narm64\n"),

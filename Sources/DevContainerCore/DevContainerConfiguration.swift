@@ -33,7 +33,7 @@ public struct DevContainerConfiguration: Codable, Equatable, Sendable {
 
     public init(
         backend: BackendProvider = .stock,
-        composeProvider: ComposeProviderKind = .docker,
+        composeProvider: ComposeProviderKind = .containerCompose,
         containerExecutable: String = DevContainerPathDefaults.containerExecutable,
         socket: String,
         stateDatabase: String = DevContainerPathDefaults.stateDatabase,
@@ -328,7 +328,7 @@ public enum DevContainerConfigurationStore {
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
-        let composeText = values["compose.provider"] ?? ComposeProviderKind.docker.rawValue
+        let composeText = values["compose.provider"] ?? ComposeProviderKind.containerCompose.rawValue
         guard let compose = ComposeProviderKind(rawValue: composeText) else {
             throw DevContainerError(
                 .invalidRequest,
@@ -384,7 +384,7 @@ public enum DevContainerConfigurationStore {
         [compatibility]
         strict = \(configuration.strictCompatibility ? "true" : "false")
         """
-        try Data((text + "\n").utf8).write(to: url, options: .atomic)
+        try AtomicFile.write(Data((text + "\n").utf8), to: url)
         guard chmod(url.path, S_IRUSR | S_IWUSR) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }

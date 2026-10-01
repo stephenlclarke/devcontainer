@@ -24,7 +24,9 @@ import Foundation
 struct DoctorCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "Validate the local Apple runtime and compatibility endpoint"
+        abstract: "Validate the local Apple runtime and compatibility endpoint",
+        discussion: "External probes have a five-second deadline and reap owned processes on cancellation. "
+            + "The engine socket check validates file ownership, type and permissions, not HTTP responsiveness."
     )
 
     @Option(name: .long, help: "Apple container executable.")
@@ -43,6 +45,20 @@ struct DoctorCommand: AsyncParsableCommand {
     var format = "pretty"
 
     mutating func run() async throws {
+        guard format == "pretty" || format == "json" else {
+            throw ValidationError("unsupported format \(format); expected pretty or json")
+        }
+        let report = try await report()
+        try write(report)
+        if !report.ready {
+            throw ExitCode.failure
+        }
+    }
+
+    func report(probeTimeout: TimeInterval = 5) async throws -> DoctorReport {
+        guard probeTimeout.isFinite, probeTimeout > 0 else {
+            throw ValidationError("diagnostic probe timeout must be finite and positive")
+        }
         let selection = try DevContainerRuntimeSelectionResolver.resolve(
             configuration: config,
             containerExecutable: container,
@@ -50,20 +66,17 @@ struct DoctorCommand: AsyncParsableCommand {
         )
         let checks = await checks(
             container: selection.containerExecutable,
-            socket: selection.socket
+            socket: selection.socket,
+            probeTimeout: probeTimeout
         )
-        let report = DoctorReport(
+        return DoctorReport(
             build: DevContainerProject.buildInfo,
             checks: checks,
             ready: checks.allSatisfy { $0.status != .fail }
         )
-        try write(report)
-        if !report.ready {
-            throw ExitCode.failure
-        }
     }
 
-    private func checks(container: String, socket: String) async -> [DoctorCheck] {
+    private func checks(container: String, socket: String, probeTimeout: TimeInterval) async -> [DoctorCheck] {
         var checks: [DoctorCheck] = []
         let architecture = machineArchitecture()
         checks.append(
@@ -87,12 +100,14 @@ struct DoctorCommand: AsyncParsableCommand {
             await checks.append(commandCheck(
                 name: "container-version",
                 executable: containerURL,
-                arguments: ["system", "version", "--format", "json"]
+                arguments: ["system", "version", "--format", "json"],
+                timeout: probeTimeout
             ))
             await checks.append(commandCheck(
                 name: "container-service",
                 executable: containerURL,
-                arguments: ["system", "status"]
+                arguments: ["system", "status"],
+                timeout: probeTimeout
             ))
         }
 
@@ -103,7 +118,8 @@ struct DoctorCommand: AsyncParsableCommand {
             await checks.append(commandCheck(
                 name: "container-compose",
                 executable: composeURL,
-                arguments: ["version", "--format", "json"]
+                arguments: ["version", "--format", "json"],
+                timeout: probeTimeout
             ))
         }
         return checks
@@ -127,13 +143,14 @@ struct DoctorCommand: AsyncParsableCommand {
     private func commandCheck(
         name: String,
         executable: URL,
-        arguments: [String]
+        arguments: [String],
+        timeout: TimeInterval
     ) async -> DoctorCheck {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             return DoctorCheck(name: name, status: .fail, detail: "not executable at \(executable.path)")
         }
         do {
-            let result = try await runProcess(executable: executable, arguments: arguments)
+            let result = try await Self.runProcess(executable: executable, arguments: arguments, timeout: timeout)
             if result.status == 0 {
                 let output = String(
                     bytes: result.standardOutput.prefix(1024),
@@ -187,16 +204,26 @@ struct DoctorCommand: AsyncParsableCommand {
         }
     }
 
-    private func runProcess(
+    private static func runProcess(
         executable: URL,
-        arguments: [String]
+        arguments: [String],
+        timeout: TimeInterval
     ) async throws -> DoctorProcessResult {
-        let result = try await ProcessRunner.captured(
-            executable: executable,
-            arguments: arguments,
-            environment: CLIPaths.safeEnvironment,
-            maximumOutputBytes: 1024 * 1024
-        )
+        var context = RuntimeRequestScope.context ?? RuntimeRequestContext()
+        let deadline = Date().addingTimeInterval(timeout)
+        context.deadline = min(context.deadline ?? deadline, deadline)
+        // Cancellation must drain and reap the owned process before the next
+        // probe starts. Preserve a caller's earlier deadline when present.
+        let result = try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                try await ProcessRunner.captured(
+                    executable: executable,
+                    arguments: arguments,
+                    environment: CLIPaths.safeEnvironment,
+                    maximumOutputBytes: 1024 * 1024
+                )
+            }
+        }
         return DoctorProcessResult(
             standardOutput: result.standardOutput,
             standardError: result.standardError,
@@ -211,19 +238,19 @@ private struct DoctorProcessResult: Sendable {
     let status: Int32
 }
 
-private enum DoctorStatus: String, Codable, Sendable {
+enum DoctorStatus: String, Codable, Sendable {
     case pass
     case warning
     case fail
 }
 
-private struct DoctorCheck: Codable, Sendable {
+struct DoctorCheck: Codable, Sendable {
     let name: String
     let status: DoctorStatus
     let detail: String
 }
 
-private struct DoctorReport: Codable, Sendable {
+struct DoctorReport: Codable, Sendable {
     let build: BuildInfo
     let checks: [DoctorCheck]
     let ready: Bool

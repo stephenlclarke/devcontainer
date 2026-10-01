@@ -17,11 +17,50 @@
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerTestStorage
 import Foundation
 import Testing
 
 @Suite(.serialized)
 struct AppleRuntimeStreamTests {
+    @Test
+    func `process sessions reject concurrent missing interpreters without fork cleanup`() async throws {
+        let script = TestStorage.temporaryDirectory.appendingPathComponent("bad-apple-exec-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: script) }
+        try Data("#!/missing-apple-interpreter\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 20 {
+                group.addTask {
+                    #expect(throws: POSIXError(.ENOENT)) {
+                        try AppleProcessSession(executable: script, arguments: [], environment: [:])
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    func `process session reports signal exit and rejects absent working directory`() async throws {
+        let shell = URL(fileURLWithPath: "/bin/sh")
+        let absent = TestStorage.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        #expect(throws: POSIXError(.ENOENT)) {
+            try AppleProcessSession(
+                executable: shell, arguments: ["-c", "exit 0"], environment: [:], workingDirectory: absent
+            )
+        }
+        let session = try AppleProcessSession(
+            executable: shell, arguments: ["-c", "kill -TERM $$"], environment: [:]
+        )
+        defer { session.cancel() }
+        #expect(try await session.wait() == 128 + SIGTERM)
+        var output = Data()
+        for try await frame in session.frames {
+            output.append(frame.data)
+        }
+        #expect(output.isEmpty)
+    }
+
     @Test
     func `stream failures and invalid requests surface typed errors`() async throws {
         let fixture = try FakeAppleCLI()
@@ -118,7 +157,7 @@ struct AppleRuntimeStreamTests {
 
     @Test
     func `process cancellation escalates across the complete owned process group`() async throws {
-        let pidFile = FileManager.default.temporaryDirectory
+        let pidFile = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-process-group-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: pidFile) }
         let session = try AppleProcessSession(
@@ -201,6 +240,30 @@ struct AppleRuntimeStreamTests {
         #expect(try await session.wait() == 0)
         let text = try #require(String(data: output, encoding: .utf8))
         #expect(text.contains("terminal-output"))
+    }
+
+    @Test
+    func `terminal cancellation waits for the owned process exit status`() async throws {
+        let session = try AppleTerminalProcessSession(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "trap 'exit 42' TERM; printf ready; IFS= read -r line"],
+            environment: [:]
+        )
+        defer { session.cancel() }
+        var output = Data()
+        for try await frame in session.frames {
+            output.append(frame.data)
+            if String(data: output, encoding: .utf8)?.contains("ready") == true {
+                break
+            }
+        }
+        #expect(String(data: output, encoding: .utf8)?.contains("ready") == true)
+        session.cancel()
+        let exitCode = try await session.wait()
+        #expect(exitCode == 42)
+        await #expect(throws: DevContainerError.self) {
+            try await session.write(Data("late".utf8))
+        }
     }
 
     @Test

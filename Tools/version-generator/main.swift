@@ -87,12 +87,23 @@ enum GeneratedBuildIdentity {
 
 do {
     let destination = URL(fileURLWithPath: output)
+    let contents = source + "\n"
     try FileManager.default.createDirectory(
         at: destination.deletingLastPathComponent(),
         withIntermediateDirectories: true
     )
-    if (try? String(contentsOf: destination, encoding: .utf8)) != source {
-        try Data((source + "\n").utf8).write(to: destination, options: .atomic)
+    if (try? String(contentsOf: destination, encoding: .utf8)) != contents {
+        // Foundation's atomic write can use a volume-level replacement directory
+        // outside a build sandbox. A sibling plus rename keeps the same atomic
+        // publication guarantee entirely within the declared output directory.
+        let temporary = destination.deletingLastPathComponent().appending(
+            path: ".devcontainer-version-\(UUID().uuidString).tmp"
+        )
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try Data(contents.utf8).write(to: temporary)
+        guard rename(temporary.path, destination.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 } catch {
     fail("could not write \(output): \(error)")

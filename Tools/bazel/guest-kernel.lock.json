@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "stock-apple-container-1.4.1-recommended-guest-kernel",
+  "assets": [
+    {
+      "repository": "kata-containers/kata-containers",
+      "tag": "3.32.0",
+      "releaseID": 342786122,
+      "tagObject": "337b6002681479fb6a605ca8a7a1138e81b6098c",
+      "commit": "337b6002681479fb6a605ca8a7a1138e81b6098c",
+      "publisher": "github-actions[bot]",
+      "prerelease": false,
+      "assetID": 454456632,
+      "name": "kata-static-3.32.0-arm64.tar.zst",
+      "architecture": "arm64",
+      "size": 696573576,
+      "sha256": "8736c054d9223974735394f822000823baef509e1c33405ec798240fa9b6e4b5"
+    }
+  ]
+}

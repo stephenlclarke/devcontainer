@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "scope": "released-stock-and-enhanced-init-and-shared-workload-images; live-qualification-separate",
+  "images": [
+    {
+      "name": "enhanced-vminit",
+      "repository": "ghcr.io/stephenlclarke/containerization/vminit",
+      "reference": "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567",
+      "manifest": "sha256:3ca52a360d90f94ac86462e16c7e4edf7c63409b1956c297250f49000f6aeb17",
+      "config": "sha256:21fedd0994f906876e82fbc8a47ce614ce5d421fb7b61d6e44610eefd5f292e9",
+      "archiveSHA256": "9e18071a3c508d4376bd734fa0a22c61326907edd4ec35a74d84edce17062596"
+    },
+    {
+      "name": "python-workload",
+      "repository": "docker.io/library/python",
+      "reference": "docker.io/library/python:3.13-alpine",
+      "manifest": "sha256:0515d7a37d0febc8bd7d88b4879b8598f4e1a1aae16307c733fd34f36be18f15",
+      "config": "sha256:8916b0d1897684408d57200dbe62d6b718655110b8911a66bc8eeec3c8a6e3e4"
+    },
+    {
+      "name": "ubuntu-workload",
+      "repository": "docker.io/library/ubuntu",
+      "reference": "docker.io/library/ubuntu:24.04",
+      "manifest": "sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab",
+      "config": "sha256:ea17ec341c4211d1dd7f184a0dedf7dcb7945e92db20a5dde20544262214b84f"
+    },
+    {
+      "name": "stock-vminit",
+      "repository": "ghcr.io/apple/containerization/vminit",
+      "manifest": "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",
+      "config": "sha256:c7146472cafa9cb0334fb309054c38b2c7836149da9cf06b0906dfa494862c87",
+      "reference": "ghcr.io/apple/containerization/vminit:0.45.0"
+    },
+    {
+      "name": "alpine-workload",
+      "repository": "docker.io/library/alpine",
+      "manifest": "sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37",
+      "config": "sha256:2c15e55df5d63efb31b629a557df305130612a16feb029c93447e54dda2c4189",
+      "reference": "docker.io/library/alpine:3.22.5"
+    }
+  ]
+}

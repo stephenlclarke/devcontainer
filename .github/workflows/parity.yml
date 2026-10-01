@@ -39,6 +39,10 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
       DEVCONTAINER_CONTAINER_BIN: ${{ matrix.container-bin }}
       DEVCONTAINER_COMPOSE_BIN: ${{ matrix.compose-bin }}
+      DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
+      DEVCONTAINER_NATIVE_FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
+      DEVCONTAINER_NATIVE_NOTARY_STATE: ${{ vars.DEVCONTAINER_NATIVE_NOTARY_STATE }}
+      DEVCONTAINER_NATIVE_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - name: Check out exact trusted commit
         env:
@@ -52,9 +56,30 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
           git -C "${GITHUB_WORKSPACE}" clean -ffdx
           test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
-      - name: Build compatibility bridge
+      - name: Require the exact finalized release input
+        run: |
+          set -euo pipefail
+          test -n "${DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY}"
+          test -n "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256}"
+          test -n "${DEVCONTAINER_NATIVE_NOTARY_STATE}"
+          test "$(git rev-parse HEAD)" = "${DEVCONTAINER_NATIVE_SOURCE_COMMIT}"
+          test -z "$(git status --porcelain)"
+      - name: Resolve selected provider paths
         if: matrix.lane != 'docker'
-        run: swift build --disable-automatic-resolution
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          names = ["DEVCONTAINER_CONTAINER_BIN"]
+          if os.environ["DEVCONTAINER_COMPOSE_BIN"]:
+              names.append("DEVCONTAINER_COMPOSE_BIN")
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              for name in names:
+                  path = Path(os.environ[name]).resolve(strict=True)
+                  if not path.is_file() or not os.access(path, os.X_OK):
+                      raise SystemExit("Selected provider is not executable")
+                  output.write(name + "=" + str(path) + "\n")
+          PY
       - name: Prepare isolated runtime
         run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
       - name: Validate runner provenance

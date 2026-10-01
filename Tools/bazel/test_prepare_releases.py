@@ -1,0 +1,496 @@
+"""Release preparation never installs, compiles, overwrites or trusts SSD residue."""
+
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import tarfile
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+import prepare_releases as preparation
+from release_inputs import sha256
+
+
+class PrepareReleasesTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        self.prepared = self.root / "prepared"
+        self.receipts = self.root / "receipts"
+        self.prepared.mkdir()
+        self.receipts.mkdir()
+        self.source = self.root / "download"
+        self.asset = {"repository": "stephenlclarke/container-compose", "tag": "0.15.1",
+                      "name": "container-compose-plugin-release-arm64.tar.gz"}
+
+    def archive(self, extra=(), *, executable=True):
+        with tarfile.open(self.source, "w:gz") as archive:
+            directory = tarfile.TarInfo("./")
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
+            for name in ["compose", "compose/bin", "compose/resources"]:
+                directory = tarfile.TarInfo(name)
+                directory.type = tarfile.DIRTYPE
+                archive.addfile(directory)
+            for name in ["compose/bin/compose", "compose/resources/compose-normalizer"]:
+                entry = tarfile.TarInfo(name)
+                entry.size = 7
+                entry.mode = 0o755 if executable else 0o644
+                archive.addfile(entry, io.BytesIO(b"fixture"))
+            for entry in extra:
+                archive.addfile(entry, io.BytesIO(b"x" * entry.size))
+        self.asset.update(size=self.source.stat().st_size, sha256=sha256(self.source))
+
+    def prepare(self, **kwargs):
+        return preparation.prepare(self.asset, self.source, self.prepared, self.receipts, **kwargs)
+
+    def test_all_five_published_layouts_are_explicit(self):
+        for repository, name, count in [
+            ("stephenlclarke/devcontainer", "devcontainer-release-arm64.tar.gz", 3),
+            ("stephenlclarke/container-compose", "container-compose-plugin-release-arm64.tar.gz", 2),
+            ("stephenlclarke/container-compose", "container-release-arm64.tar.gz", 3),
+            ("apple/container", "container-1.4.1-installer-signed.pkg", 2),
+            ("docker/compose", "docker-compose-darwin-aarch64", 1),
+        ]:
+            value = preparation.layout({"repository": repository, "name": name, "tag": "1.4.1"})
+            self.assertEqual(len(value["executables"]), count)
+        with self.assertRaisesRegex(ValueError, "reviewed layout"):
+            preparation.layout({"repository": "unknown/repo", "name": "tool", "tag": "1"})
+
+    def test_tar_reuses_authenticated_preparation_without_extraction(self):
+        self.archive()
+        result = self.prepare()
+        self.assertEqual(Path(result["executables"]["compose"]).read_bytes(), b"fixture")
+        with patch.object(preparation, "unpack_tar", side_effect=AssertionError("must not repeat")):
+            self.assertEqual(self.prepare(), result)
+        shutil.rmtree(Path(result["root"]))
+        self.assertEqual(self.prepare(), result)  # SSD eviction never loses the retained asset.
+        self.assertEqual(len(list(self.prepared.iterdir())), 1)
+
+    def test_kernel_preparation_retains_data_not_an_executable_and_reuses_it(self):
+        self.source.write_bytes(b"reviewed compressed archive fixture")
+        self.asset = {"repository": "kata-containers/kata-containers", "tag": "3.32.0",
+                      "name": "kata-static-3.32.0-arm64.tar.zst", "size": self.source.stat().st_size,
+                      "sha256": sha256(self.source)}
+        kernel = b"x" * 56 + b"ARMd" + b"x" * 4
+        with patch.object(preparation, "KERNEL_BYTES", len(kernel)), \
+                patch.object(preparation.subprocess, "run", return_value=SimpleNamespace(stdout=kernel, stderr=b"")) as extract:
+            prepared = self.prepare()
+            self.assertEqual(prepared["executables"], {})
+            self.assertEqual(Path(prepared["files"]["kernel"]).read_bytes(), kernel)
+            self.assertEqual(extract.call_args.args[0][-1], preparation.KERNEL_MEMBER)
+            self.assertEqual(extract.call_args.kwargs["timeout"], 60)
+            self.assertEqual(self.prepare(), prepared)
+            extract.assert_called_once()
+            retained = self.durable_root()
+            result = preparation.retain_prepared(self.asset, self.source, self.prepared, retained, self.receipts)
+            self.assertEqual(Path(result["files"]["kernel"]).stat().st_mode & 0o777, 0o600)
+            shutil.rmtree(Path(prepared["root"]))
+            self.assertEqual(preparation.require_retained(self.asset, self.source, retained, self.receipts), result)
+
+    def test_kernel_invalid_header_duplicate_output_and_tar_warnings_fail(self):
+        kernel = b"x" * 56 + b"ARMd" + b"x" * 4
+        self.source.write_bytes(b"fixture")
+        for payload, warning in ((kernel * 2, b""), (b"x" * 64, b""), (kernel, b"warning")):
+            with self.subTest(warning=warning, size=len(payload)), \
+                    patch.object(preparation, "KERNEL_BYTES", len(kernel)), \
+                    patch.object(preparation.subprocess, "run", return_value=SimpleNamespace(stdout=payload, stderr=warning)), \
+                    self.assertRaisesRegex(ValueError, "kernel has unexpected"):
+                preparation.unpack_kernel(self.source, self.prepared)
+            self.assertEqual(list(self.prepared.iterdir()), [])
+
+    def test_kernel_member_must_exist_as_nonempty_nonexecutable_data(self):
+        self.archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        receipt = json.loads((root / preparation.RECEIPT).read_text())
+        specification = receipt["specification"]
+        for path in ("missing", "compose/bin/compose"):
+            specification["layout"]["files"] = {"kernel": path}
+            (root / preparation.RECEIPT).write_text(json.dumps(receipt))
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "data file"):
+                preparation.validate_prepared(root, specification, receipt)
+
+    def test_runtime_admission_never_recreates_missing_payloads(self):
+        self.archive()
+        with self.assertRaises(FileNotFoundError):
+            preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts)
+        prepared = self.prepare()
+        self.assertEqual(preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts), prepared)
+        shutil.rmtree(Path(prepared["root"]))
+        with self.assertRaisesRegex(ValueError, "root or receipt"):
+            preparation.require_prepared(self.asset, self.source, self.prepared, self.receipts)
+        self.assertEqual(list(self.prepared.iterdir()), [])
+
+    def durable_root(self):
+        path = self.root / "durable-assets"
+        path.mkdir(mode=0o700)
+        return path
+
+    def test_retained_executables_match_release_and_survive_ssd_eviction(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(result["inventorySHA256"], prepared["inventorySHA256"])
+        self.assertEqual(result["preparationSHA256"], prepared["preparationSHA256"])
+        self.assertTrue(Path(result["executables"]["compose"]).is_relative_to(durable))
+        with patch.object(preparation, "durable_file", side_effect=AssertionError("must reuse sealed assets")):
+            self.assertEqual(preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts), result)
+        shutil.rmtree(Path(prepared["root"]))
+        self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), result)
+        self.assertEqual(len(list(durable.iterdir())), 1)
+
+    def test_pending_publication_refuses_admission_and_resumes_without_recopying_complete_files(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        original = preparation.durable_file
+        writes = []
+        def interrupt(path, source, *args, **kwargs):
+            writes.append(path.name)
+            if path.name == "compose-normalizer":
+                path.write_bytes(b"partial")
+                raise OSError("injected interruption")
+            return original(path, source, *args, **kwargs)
+        with patch.object(preparation, "durable_file", side_effect=interrupt), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        with self.assertRaisesRegex(ValueError, "unfinished"):
+            preparation.require_retained(self.asset, self.source, durable, self.receipts)
+        with patch.object(preparation, "durable_file", wraps=original) as copy:
+            result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+            self.assertNotIn("compose", [call.args[0].name for call in copy.call_args_list])
+        self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), result)
+
+    def test_sealed_retained_corruption_is_not_silently_repaired(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        result = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        command = Path(result["executables"]["compose"])
+        command.write_bytes(b"corruption")
+        with self.assertRaisesRegex(ValueError, "bytes or modes changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(command.read_bytes(), b"corruption")
+
+    def test_pending_foreign_files_links_or_marker_mismatch_are_never_overwritten(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        destination = durable / prepared["preparationSHA256"]
+        foreign = destination / "unregistered"
+        foreign.write_bytes(b"preserve")
+        with self.assertRaisesRegex(ValueError, "Unregistered"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(foreign.read_bytes(), b"preserve")
+        foreign.unlink()
+        target = destination / "compose/bin/compose"
+        target.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "link or special"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target.unlink()
+        pending = durable / (prepared["preparationSHA256"] + ".pending.json")
+        pending.write_text("different owner")
+        with self.assertRaisesRegex(ValueError, "ownership changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+
+    def test_pending_hardlinked_file_and_alias_root_fail_closed(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target = durable / prepared["preparationSHA256"] / "compose/bin/compose"
+        foreign = self.root / "foreign"
+        foreign.write_bytes(b"preserve")
+        os.link(foreign, target)
+        with self.assertRaisesRegex(ValueError, "privately owned"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(foreign.read_bytes(), b"preserve")
+        alias = self.root / "alias"
+        alias.symlink_to(durable)
+        with self.assertRaisesRegex(ValueError, "canonical directory"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, alias, self.receipts)
+
+    def test_private_parent_pending_alias_and_complete_hardlink_are_rejected(self):
+        self.archive()
+        prepared = self.prepare()
+        durable = self.durable_root()
+        durable.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "must be private"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        durable.chmod(0o700)
+        pending = durable / (prepared["preparationSHA256"] + ".pending.json")
+        pending.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "aliases"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        pending.unlink()
+        with patch.object(preparation, "durable_file", side_effect=OSError("injected crash")), self.assertRaises(OSError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        target = durable / prepared["preparationSHA256"] / "compose/bin/compose"
+        foreign = self.root / "complete-linked-file"
+        foreign.write_bytes(b"fixture")
+        foreign.chmod(0o755)
+        os.link(foreign, target)
+        with self.assertRaisesRegex(ValueError, "file ownership changed"):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+
+    def test_changed_source_during_copy_cannot_publish_executables(self):
+        self.archive()
+        self.prepare()
+        durable = self.durable_root()
+        original = preparation.durable_file
+        def changed_source(path, source, *args, **kwargs):
+            original(path, source, *args, **kwargs)
+            if path.name == preparation.RECEIPT:
+                self.source.write_bytes(b"changed release archive")
+        with patch.object(preparation, "durable_file", side_effect=changed_source), self.assertRaises(ValueError):
+            preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        self.assertEqual(len(list(durable.glob("*.pending.json"))), 1)
+        with self.assertRaisesRegex(ValueError, "unfinished"):
+            preparation.require_retained(self.asset, self.source, durable, self.receipts)
+
+    def test_raw_release_has_only_the_pinned_binary(self):
+        self.source.write_bytes(b"released executable")
+        self.asset.update(repository="docker/compose", name="docker-compose-darwin-aarch64",
+                          size=self.source.stat().st_size, sha256=sha256(self.source))
+        result = self.prepare()
+        command = Path(result["executables"]["docker-compose"])
+        self.assertEqual(command.read_bytes(), self.source.read_bytes())
+        self.assertEqual(command.stat().st_mode & 0o777, 0o755)
+
+    def oracle_asset(self, repository, tag, name):
+        self.asset = {"repository": repository, "tag": tag, "name": name,
+                      "size": self.source.stat().st_size, "sha256": sha256(self.source)}
+
+    def lima_archive(self, *, target="../../lima/templates", kind=tarfile.SYMTYPE,
+                     include_link=True, extra=None):
+        with tarfile.open(self.source, "w:gz") as archive:
+            for name, mode in [("bin/limactl", 0o755), ("bin/lima", 0o755),
+                               ("share/lima/lima-guestagent.Linux-aarch64.gz", 0o644),
+                               ("share/lima/templates/default.yaml", 0o644)]:
+                entry = tarfile.TarInfo(name)
+                entry.mode, entry.size = mode, 7
+                archive.addfile(entry, io.BytesIO(b"fixture"))
+            if include_link:
+                entry = tarfile.TarInfo("./share/doc/lima/templates")
+                entry.type, entry.linkname = kind, target
+                archive.addfile(entry)
+            if extra is not None:
+                archive.addfile(extra)
+        self.oracle_asset("lima-vm/lima", "v2.2.0", "lima-2.2.0-Darwin-arm64.tar.gz")
+
+    def test_colima_raw_binary_uses_its_own_reviewed_path(self):
+        self.source.write_bytes(b"released colima")
+        self.oracle_asset("abiosoft/colima", "v0.10.3", "colima-Darwin-arm64")
+        result = self.prepare()
+        command = Path(result["executables"]["colima"])
+        self.assertEqual(command.relative_to(result["root"]).as_posix(), "bin/colima")
+        self.assertEqual(command.read_bytes(), self.source.read_bytes())
+        self.assertEqual(command.stat().st_mode & 0o777, 0o755)
+        self.assertFalse((Path(result["root"]) / "bin/docker-compose").exists())
+
+    def test_vm_image_remains_compressed_nonexecutable_data_and_reuses_retention(self):
+        self.source.write_bytes(b"compressed published disk image fixture")
+        self.oracle_asset("abiosoft/colima-core", "v0.10.4", "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz")
+        result = self.prepare()
+        self.assertEqual(result["executables"], {})
+        image = Path(result["files"]["disk-image"])
+        self.assertEqual(image.read_bytes(), self.source.read_bytes())
+        self.assertEqual(image.stat().st_mode & 0o777, 0o600)
+        durable = self.durable_root()
+        retained = preparation.retain_prepared(self.asset, self.source, self.prepared, durable, self.receipts)
+        shutil.rmtree(Path(result["root"]))
+        with patch.object(preparation, "copy_raw", side_effect=AssertionError("must not recopy")):
+            self.assertEqual(preparation.require_retained(self.asset, self.source, durable, self.receipts), retained)
+
+    def test_lima_omits_only_the_exact_documentation_alias(self):
+        self.lima_archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        self.assertFalse((root / "share/doc/lima/templates").exists())
+        self.assertEqual(Path(result["files"]["guest-agent"]).read_bytes(), b"fixture")
+        self.assertEqual((root / "share/lima/templates/default.yaml").read_bytes(), b"fixture")
+        receipt = json.loads((root / preparation.RECEIPT).read_text())
+        self.assertEqual(receipt["specification"]["layout"]["omittedLinks"],
+                         {"share/doc/lima/templates": "../../lima/templates"})
+        with patch.object(preparation, "unpack_tar", side_effect=AssertionError("must reuse")):
+            self.assertEqual(self.prepare(), result)
+
+    def test_lima_missing_changed_or_nonlink_documentation_alias_is_rejected(self):
+        for options in ({"include_link": False}, {"target": "/outside"},
+                        {"kind": tarfile.REGTYPE}, {"kind": tarfile.LNKTYPE}):
+            with self.subTest(options=options):
+                self.lima_archive(**options)
+                with self.assertRaisesRegex(ValueError, "documentation link"):
+                    self.prepare()
+                self.assertEqual(list(self.prepared.iterdir()), [])
+                self.assertEqual(list(self.receipts.iterdir()), [])
+
+    def test_lima_exception_does_not_admit_other_links_or_duplicate_members(self):
+        for name in ("bin/alias", "share/doc/lima/templates", "../outside"):
+            with self.subTest(name=name):
+                extra = tarfile.TarInfo(name)
+                extra.type, extra.linkname = tarfile.SYMTYPE, "../../lima/templates"
+                self.lima_archive(extra=extra)
+                with self.assertRaises(ValueError):
+                    self.prepare()
+                self.assertEqual(list(self.prepared.iterdir()), [])
+        # The generic extractor retains its no-link policy.
+        self.lima_archive()
+        with self.assertRaisesRegex(ValueError, "only files and directories"):
+            preparation.unpack_tar(self.source, self.prepared)
+
+    def test_oracle_layouts_are_version_specific(self):
+        for repository, tag, name in [
+            ("abiosoft/colima", "v0.10.4", "colima-Darwin-arm64"),
+            ("lima-vm/lima", "v2.3.0", "lima-2.2.0-Darwin-arm64.tar.gz"),
+            ("abiosoft/colima-core", "v0.10.3", "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz"),
+        ]:
+            with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, "reviewed layout"):
+                preparation.layout({"repository": repository, "tag": tag, "name": name})
+
+    def test_invalid_raw_layout_and_unknown_format_fail_before_publication(self):
+        self.source.write_bytes(b"fixture")
+        self.oracle_asset("abiosoft/colima", "v0.10.3", "colima-Darwin-arm64")
+        for layout in ({"format": "raw", "executables": {}},
+                       {"format": "unknown", "executables": {}}):
+            with self.subTest(layout=layout), patch.object(preparation, "layout", return_value=layout), \
+                    self.assertRaises(ValueError):
+                self.prepare()
+            self.assertEqual(list(self.prepared.iterdir()), [])
+            self.assertEqual(list(self.receipts.iterdir()), [])
+
+    def test_package_expansion_not_installation_and_exact_layout(self):
+        self.source.write_bytes(b"signed package fixture")
+        self.asset.update(repository="apple/container", tag="1.4.1", name="container-1.4.1-installer-signed.pkg",
+                          size=self.source.stat().st_size, sha256=sha256(self.source))
+
+        def expand(source, destination):
+            self.assertEqual(source, self.source)
+            binary_root = destination / "Payload/bin"
+            binary_root.mkdir(parents=True)
+            for name in ("container", "container-apiserver"):
+                binary = binary_root / name
+                binary.write_bytes(b"fixture")
+                binary.chmod(0o755)
+
+        result = self.prepare(expand=expand)
+        self.assertTrue(Path(result["executables"]["container"]).is_file())
+        with patch.object(preparation.subprocess, "run") as run:
+            preparation.expand_package(self.source, self.root / "expansion")
+        self.assertEqual(run.call_args.args[0][:2], ["/usr/sbin/pkgutil", "--expand-full"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 120)
+        self.assertNotIn("HOME", run.call_args.kwargs["env"])
+
+    def test_archive_path_and_member_types_fail_before_publication(self):
+        for name, kind in [("/outside", tarfile.REGTYPE), ("../outside", tarfile.REGTYPE),
+                           ("bad\\path", tarfile.REGTYPE), (preparation.RECEIPT, tarfile.REGTYPE),
+                           ("compose/bin/compose", tarfile.REGTYPE), ("link", tarfile.SYMTYPE),
+                           ("hardlink", tarfile.LNKTYPE), ("device", tarfile.CHRTYPE), (".", tarfile.REGTYPE)]:
+            with self.subTest(name=name):
+                entry = tarfile.TarInfo(name)
+                entry.type = kind
+                entry.linkname = "/outside"
+                self.archive([entry])
+                with self.assertRaises(ValueError):
+                    self.prepare()
+                self.assertEqual(list(self.prepared.iterdir()), [])
+                self.assertEqual(list(self.receipts.iterdir()), [])
+
+    def test_bounded_inventory_and_expansion(self):
+        self.archive()
+        with patch.object(preparation, "MAX_FILES", 1), self.assertRaisesRegex(ValueError, "excessive"):
+            self.prepare()
+        with patch.object(preparation, "MAX_BYTES", 1), self.assertRaisesRegex(ValueError, "size limit"):
+            self.prepare()
+        result = self.prepare()
+        with patch.object(preparation, "MAX_BYTES", 1), self.assertRaisesRegex(ValueError, "inventory limits"):
+            preparation.inventory(Path(result["root"]))
+
+    def test_missing_execute_permission_is_not_a_ready_binary(self):
+        self.archive(executable=False)
+        with self.assertRaisesRegex(ValueError, "not executable"):
+            self.prepare()
+        self.assertEqual(list(self.prepared.iterdir()), [])
+
+    def test_mutated_download_and_payload_are_rejected(self):
+        self.archive()
+        result = self.prepare()
+        command = Path(result["executables"]["compose"])
+        command.write_bytes(b"substitution")
+        with self.assertRaisesRegex(ValueError, "bytes or modes"):
+            self.prepare()
+        self.source.write_bytes(b"changed retained archive")
+        with self.assertRaisesRegex(ValueError, "failed verification"):
+            self.prepare()
+
+    def test_changed_ssd_receipt_cannot_authorize_changed_payload(self):
+        self.archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        Path(result["executables"]["compose"]).write_bytes(b"substitution")
+        receipt = root / preparation.RECEIPT
+        value = json.loads(receipt.read_text())
+        value["inventory"] = preparation.inventory(root)
+        receipt.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "internally retained"):
+            self.prepare()
+
+    def test_changed_specification_and_missing_receipt_are_rejected(self):
+        self.archive()
+        result = self.prepare()
+        root = Path(result["root"])
+        receipt = json.loads((root / preparation.RECEIPT).read_text())
+        with self.assertRaisesRegex(ValueError, "identity differs"):
+            preparation.validate_prepared(root, {}, receipt)
+        next(self.receipts.iterdir()).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_symlinks_and_unknown_residue_are_never_overwritten(self):
+        self.archive()
+        alias = self.root / "alias"
+        alias.symlink_to(self.prepared)
+        with self.assertRaisesRegex(ValueError, "non-symlinked"):
+            preparation.prepare(self.asset, self.source, alias, self.receipts)
+        result = self.prepare()
+        command = Path(result["executables"]["compose"])
+        command.unlink()
+        command.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "link or special"):
+            self.prepare()
+        retained = next(self.receipts.iterdir())
+        retained.unlink()
+        retained.symlink_to(self.source)
+        with self.assertRaisesRegex(ValueError, "Symlinked retained"):
+            self.prepare()
+        with self.assertRaisesRegex(ValueError, "Symlinked retained"):
+            preparation.retain_receipt(retained, {})
+
+    def test_recovery_refuses_inconsistent_retained_manifest(self):
+        self.archive()
+        result = self.prepare()
+        shutil.rmtree(Path(result["root"]))
+        next(self.receipts.iterdir()).write_text("{}")
+        with self.assertRaisesRegex(ValueError, "different retained"):
+            self.prepare()
+        self.assertEqual(list(self.prepared.iterdir()), [])
+
+    def test_matching_recovered_receipt_reestablishes_file_and_directory_durability(self):
+        path = self.receipts / "recovered.json"
+        path.write_text('{"receipt":"fixture"}')
+        with patch.object(preparation.os, "fsync", wraps=os.fsync) as sync:
+            preparation.retain_receipt(path, {"receipt": "fixture"})
+        self.assertEqual(sync.call_count, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

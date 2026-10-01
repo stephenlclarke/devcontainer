@@ -17,12 +17,33 @@
 import DevContainerCore
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
 
 @Suite(.serialized)
 struct CoreBehaviorTests {
+    @Test
+    func `omitted Compose provider selects native without replacing explicit choices`() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.toml")
+        #expect(DevContainerConfiguration(socket: "/test.sock").composeProvider == .containerCompose)
+        #expect(try DevContainerRuntimeSelectionResolver.resolve(
+            environment: [:], configuration: path.path
+        ).composeProvider == .containerCompose)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try Data("backend = \"stock\"\n".utf8).write(to: path)
+        #expect(try DevContainerRuntimeSelectionResolver.resolve(
+            environment: [:], configuration: path.path
+        ).composeProvider == .containerCompose)
+        try Data("[compose]\nprovider = \"docker\"\n".utf8).write(to: path)
+        #expect(try DevContainerRuntimeSelectionResolver.resolve(
+            environment: [:], configuration: path.path
+        ).composeProvider == .docker)
+    }
+
     @Test
     func `configuration round trips and rejects invalid values`() throws {
         let directory = temporaryDirectory()
@@ -385,7 +406,7 @@ struct CoreBehaviorTests {
     }
 
     private func temporaryDirectory() -> URL {
-        FileManager.default.temporaryDirectory
+        TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-core-\(UUID().uuidString)", isDirectory: true)
     }
 }

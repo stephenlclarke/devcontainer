@@ -181,7 +181,7 @@ struct DockerNetworkContainer: Encodable {
     let endpointID = ""
     let macAddress = ""
     let ipv4Address: String
-    let ipv6Address = ""
+    var ipv6Address = ""
 
     enum CodingKeys: String, CodingKey {
         case endpointID = "EndpointID"

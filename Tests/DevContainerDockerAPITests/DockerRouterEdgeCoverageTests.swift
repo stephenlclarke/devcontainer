@@ -18,6 +18,7 @@ import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -55,7 +56,7 @@ private func makeEdgeFixture(name: String = "edge") async throws -> EdgeFixture 
 @Test
 // swiftlint:disable:next function_body_length
 func `auto removed container releases resource and empty project claim`() async throws {
-    let directory = FileManager.default.temporaryDirectory
+    let directory = TestStorage.temporaryDirectory
         .appendingPathComponent(
             "devcontainer-router-auto-remove-\(UUID().uuidString)",
             isDirectory: true
@@ -204,6 +205,30 @@ func `container creation rejects invalid bind port and mount forms`() async thro
     }
 }
 
+@Test(arguments: ["", "json-file"])
+func `inspection advertises only retained effective logging policy`(_ driver: String) async throws {
+    let fixture = try await makeEdgeFixture()
+    let body = try JSONSerialization.data(withJSONObject: [
+        "Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": driver, "Config": [:]]]
+    ])
+    let response = await fixture.router.respond(to: .init(method: .post, target: "/containers/create", body: body))
+    #expect(response.status == 201)
+    let created = try #require(JSONSerialization.jsonObject(with: responseBytes(response)) as? [String: Any])
+    let id = try #require(created["Id"] as? String)
+    let inspection = await fixture.router.respond(to: .init(method: .get, target: "/containers/\(id)/json"))
+    #expect(inspection.status == 200)
+    let data = try #require(JSONSerialization.jsonObject(with: responseBytes(inspection)) as? [String: Any])
+    let host = try #require(data["HostConfig"] as? [String: Any])
+    if driver.isEmpty {
+        // This fake has no provider default. Missing authority remains absent.
+        #expect(host["LogConfig"] == nil)
+        return
+    }
+    let log = try #require(host["LogConfig"] as? [String: Any])
+    #expect(log["Type"] as? String == "json-file")
+    #expect((log["Config"] as? [String: String]) == [:])
+}
+
 @Test
 // swiftlint:disable:next function_body_length
 func `container creation rejects every unsupported root and host field`() async throws {
@@ -215,9 +240,7 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "NetworkDisabled": true],
         ["Image": "edge:latest", "OnBuild": ["RUN true"]],
         ["Image": "edge:latest", "Shell": ["/bin/sh"]],
-        ["Image": "edge:latest", "StdinOnce": true],
-        ["Image": "edge:latest", "StopSignal": "SIGKILL"],
-        ["Image": "edge:latest", "StopTimeout": 1],
+        ["Image": "edge:latest", "StopTimeout": -1],
         ["Image": "edge:latest", "HostConfig": ["CpuShares": 1]],
         ["Image": "edge:latest", "HostConfig": ["CpusetCpus": "0"]],
         ["Image": "edge:latest", "HostConfig": ["CpusetMems": "0"]],
@@ -225,16 +248,14 @@ func `container creation rejects every unsupported root and host field`() async 
         ["Image": "edge:latest", "HostConfig": ["Devices": [["PathOnHost": "/dev/null"]]]],
         ["Image": "edge:latest", "HostConfig": ["BlkioWeight": 1]],
         ["Image": "edge:latest", "HostConfig": ["BlkioDeviceWriteIOps": [[:]]]],
-        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file"]]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "local"]]],
+        ["Image": "edge:latest", "HostConfig": ["LogConfig": ["Type": "json-file", "Config": ["max-size": "1m"]]]],
         ["Image": "edge:latest", "HostConfig": ["MemorySwappiness": 0]],
         ["Image": "edge:latest", "HostConfig": ["IOMaximumBandwidth": 1]],
         ["Image": "edge:latest", "HostConfig": ["IOMaximumIOps": 1]],
         ["Image": "edge:latest", "HostConfig": ["PublishAllPorts": true]],
-        ["Image": "edge:latest", "HostConfig": ["Sysctls": ["kernel.test": "1"]]],
-        ["Image": "edge:latest", "HostConfig": ["ReadonlyRootfs": true]],
         ["Image": "edge:latest", "HostConfig": ["OomKillDisable": true]],
         ["Image": "edge:latest", "HostConfig": ["OomScoreAdj": 1]],
-        ["Image": "edge:latest", "HostConfig": ["Dns": ["192.0.2.53"]]],
         ["Image": "edge:latest", "HostConfig": ["VolumesFrom": ["fixture"]]],
         ["Image": "edge:latest", "HostConfig": ["Annotations": ["test": "value"]]],
         ["Image": "edge:latest", "HostConfig": ["Tmpfs": ["/tmp": "size=1m"]]],
@@ -372,6 +393,9 @@ func `network and volume creation reject unsupported Docker fields`() async thro
 @Test
 func `container inspect accepts empty port bindings and sorted aliases`() async throws {
     let fixture = try await makeEdgeFixture()
+    _ = try await fixture.runtime.createNetwork(
+        spec: NetworkSpec(name: "edge-network"), context: RuntimeRequestContext()
+    )
     let body = try JSONSerialization.data(
         withJSONObject: [
             "Image": "edge:latest",
@@ -384,6 +408,7 @@ func `container inspect accepts empty port bindings and sorted aliases`() async 
     let created = await fixture.router.respond(
         to: DockerHTTPRequest(method: .post, target: "/containers/create?name=configured", body: body)
     )
+    #expect(created.status == 201)
     let object = try JSONSerialization.jsonObject(with: responseBytes(created)) as? [String: Any]
     let identifier = try #require(object?["Id"] as? String)
     #expect(
@@ -488,7 +513,7 @@ func `health registry accepts a missing container start time`() async {
     let registry = ContainerHealthRegistry()
     let now = Date(timeIntervalSince1970: 1000)
     let check = ContainerHealthcheck(test: ["CMD", "true"])
-    guard case .check = await registry.decision(
+    guard case let .check(reservation) = await registry.decision(
         id: "nil-start",
         startedAt: nil,
         healthcheck: check,
@@ -500,6 +525,7 @@ func `health registry accepts a missing container start time`() async {
     let health = await registry.record(
         id: "nil-start",
         startedAt: nil,
+        reservation: reservation,
         healthcheck: check,
         observation: ContainerHealthObservation(
             exitCode: 0,
@@ -507,7 +533,7 @@ func `health registry accepts a missing container start time`() async {
             ended: now
         )
     )
-    #expect(health.status == "healthy")
+    #expect(health?.status == "healthy")
 }
 
 @Test

@@ -137,6 +137,7 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         try await Task.sleep(for: .milliseconds(20))
         let newTask = Task {
             try await Task.sleep(for: .milliseconds(700))
+            try fixture.setState("stopped")
             return AppleContainerRuntime.ContainerExit(
                 code: 22,
                 finishedAt: Date()
@@ -146,6 +147,82 @@ struct AppleContainerRuntimeLifecycleRaceTests {
 
         let exitCode = try await result
         #expect(exitCode == 22)
+    }
+
+    @Test
+    func `wait does not return before native exit is observable`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("running")
+        let runtime = try fixture.runtime()
+        let exit = AppleContainerRuntime.ContainerExit(code: 42, finishedAt: Date())
+        await runtime.registerTestExitTask(id: "fixture", task: Task { exit })
+        let completion = WaitCompletion()
+        let waiting = Task {
+            let code = try await runtime.waitContainer(id: "fixture", context: RuntimeRequestContext())
+            await completion.finish()
+            return code
+        }
+        defer { waiting.cancel() }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await runtime.containerExits["fixture"] == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await runtime.containerExits["fixture"]?.code == 42)
+        // Allow the old early-return path to finish while inventory still says running.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await !completion.finished)
+        try fixture.setState("stopped")
+        #expect(try await waiting.value == 42)
+        let snapshot = try await runtime.inspectContainer(id: "fixture", context: RuntimeRequestContext())
+        #expect(snapshot.state == .stopped)
+        #expect(snapshot.exitCode == 42)
+        #expect(snapshot.finishedAt == exit.finishedAt)
+    }
+
+    @Test
+    func `wait respects the deadline when native exit never becomes observable`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("running")
+        let runtime = try fixture.runtime()
+        await runtime.registerTestExitTask(
+            id: "fixture",
+            task: Task { AppleContainerRuntime.ContainerExit(code: 42, finishedAt: Date()) }
+        )
+        let context = RuntimeRequestContext(deadline: Date().addingTimeInterval(0.3))
+        do {
+            _ = try await runtime.waitContainer(id: "fixture", context: context)
+            Issue.record("wait returned before native teardown")
+        } catch let error as DevContainerError {
+            #expect(error.code == .deadlineExceeded)
+        }
+    }
+
+    @Test
+    func `wait retains observed exit when removal wins native reinspection`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("running")
+        let runtime = try fixture.runtime()
+        await runtime.registerTestExitTask(
+            id: "fixture",
+            task: Task { AppleContainerRuntime.ContainerExit(code: 42, finishedAt: Date()) }
+        )
+        let waiting = Task {
+            try await runtime.waitContainer(
+                id: "fixture",
+                context: RuntimeRequestContext(deadline: Date().addingTimeInterval(5))
+            )
+        }
+        defer { waiting.cancel() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while await runtime.containerExits["fixture"] == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await runtime.containerExits["fixture"]?.code == 42)
+        // Model automatic removal winning the next native inventory read,
+        // including its deletion of the runtime's cached lifecycle metadata.
+        try fixture.setState("missing")
+        await runtime.discardContainerState(id: "fixture", dockerID: "fixture")
+        #expect(try await waiting.value == 42)
     }
 
     @Test
@@ -195,6 +272,14 @@ struct AppleContainerRuntimeLifecycleRaceTests {
                 context: RuntimeRequestContext()
             )
         }
+    }
+}
+
+private actor WaitCompletion {
+    private(set) var finished = false
+
+    func finish() {
+        finished = true
     }
 }
 
