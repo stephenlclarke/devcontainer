@@ -202,8 +202,7 @@ class WorkflowArtifactTests(unittest.TestCase):
         required_uploads = (
             ("ci.yml", "test", "Upload test logs"),
             ("ci.yml", "stock-test", "Upload stock test logs"),
-            ("parity.yml", "lane", "Upload lane evidence"),
-            ("parity.yml", "compare", "Upload candidate-bound comparison"),
+            ("parity.yml", "verify", "Upload authenticated local qualification and recomputed comparisons"),
             ("quality.yml", "sanitizer", "Upload sanitizer log"),
             ("sonar.yml", "analyze", "Upload coverage evidence"),
             ("stable-release-gate.yml", "authority", "Upload candidate-bound authority"),
@@ -265,9 +264,9 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("path: .build/swift-test.log", stock_upload)
         self.assertIn("include-hidden-files: true", stock_upload)
 
-    def test_self_hosted_parity_lane_avoids_runner_action_downloads(self) -> None:
+    def test_self_hosted_parity_verifier_avoids_runner_action_downloads(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
-        lane = contents[contents.index("  lane:\n"):contents.index("  compare:\n")]
+        lane = workflow_job_block(contents, "verify")
 
         self.assertNotRegex(lane, r"\n        uses:\s+[^./]")
         self.assertIn(
@@ -677,6 +676,7 @@ jobs:
         self.assertNotIn("contents: write", prebuilt_top_level)
         self.assertIn(
             "    permissions:\n"
+            "      actions: read\n"
             "      attestations: write\n"
             "      contents: write\n"
             "      id-token: write\n",
@@ -746,25 +746,23 @@ jobs:
             dependabot,
         )
 
-    def test_parity_comparison_survives_failed_lanes(self) -> None:
+    def test_parity_verifies_authenticated_local_inputs_without_repeating_guests(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
-        compare = contents[contents.index("  compare:\n"):]
-
-        self.assertIn("    if: ${{ always() }}\n", compare)
-        self.assertIn("          status=0\n", compare)
-        self.assertIn(
-            "compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1",
-            compare,
-        )
-        self.assertIn(
-            "compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1",
-            compare,
-        )
-        self.assertIn(
-            "validate_manifest.py --release || status=1",
-            compare,
-        )
-        self.assertIn('          exit "${status}"\n', compare)
+        verify = workflow_job_block(contents, "verify")
+        step = workflow_step_block(verify, "Authenticate locally executed qualification and recompute comparisons")
+        for required in ("QUALIFICATION_DIRECTORY", "QUALIFICATION_SHA256", "FINALIZED_DIRECTORY",
+                         "FINALIZATION_SHA256", "ACCEPTED_STATE"):
+            self.assertIn(f'test -n "${{{required}}}"', step)
+        self.assertIn("verify_local_qualification.py", step)
+        self.assertIn('--expected-source-commit "${EXPECTED_SOURCE}"', step)
+        self.assertIn("EXPECTED_SOURCE: ${{ github.sha }}", verify)
+        self.assertNotIn("runner-runtime.sh", contents)
+        self.assertNotIn("make parity-", contents)
+        upload = workflow_step_block(verify, "Upload authenticated local qualification and recomputed comparisons")
+        self.assertNotIn("if: always()", upload)
+        for path in ("comparison.json", "matrix.md", "vscode/comparison.json",
+                     "vscode/matrix.md", "local-qualification.json"):
+            self.assertIn(".build/parity/" + path, upload)
 
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
         contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
@@ -793,8 +791,13 @@ jobs:
             contents,
         )
         self.assertIn("export HOMEBREW_NO_AUTO_UPDATE=1", contents)
-        self.assertIn('brew tap-new --no-git "${test_tap}"', contents)
-        self.assertIn('brew install --formula "${test_tap}/${formula}"', contents)
+        installation = workflow_step_block(contents, "Install and test tap formula")
+        self.assertIn("Tools/release/homebrew_installation.py", installation)
+        self.assertIn('--formula-path "${formula_path}"', installation)
+        self.assertIn('--test-tap "${test_tap}"', installation)
+        self.assertIn('--expected-source-sha "${{ needs.resolve.outputs.sha }}"', installation)
+        self.assertIn('--receipt-output "${RUNNER_TEMP}/homebrew-installation.json"', installation)
+        self.assertNotIn("brew uninstall --force", contents)
         self.assertNotIn('brew tap "${tap}" "${PWD}/homebrew-tap"', contents)
         self.assertNotIn('brew untap "stephenlclarke/tap"', contents)
 

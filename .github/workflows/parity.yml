@@ -13,36 +13,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  lane:
-    if: github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        include:
-          - lane: docker
-            runner: devcontainer-docker
-            container-bin: ""
-            compose-bin: ""
-          - lane: apple-stock
-            runner: devcontainer-apple-stock
-            container-bin: /usr/local/bin/container
-            compose-bin: ""
-          - lane: container-compose
-            runner: devcontainer-container-compose
-            container-bin: /opt/homebrew/opt/container/bin/container
-            compose-bin: /opt/homebrew/opt/container-compose/bin/container-compose
-    runs-on:
-      [self-hosted, macOS, ARM64, devcontainer-designated-mbp, "${{ matrix.runner }}"]
-    timeout-minutes: 240
+  verify:
+    name: Verify local runtime qualification
+    runs-on: [self-hosted, macOS, ARM64, devcontainer-release, devcontainer-designated-mbp]
+    timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
-      DEVCONTAINER_CONTAINER_BIN: ${{ matrix.container-bin }}
-      DEVCONTAINER_COMPOSE_BIN: ${{ matrix.compose-bin }}
-      DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
-      DEVCONTAINER_NATIVE_FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
-      DEVCONTAINER_NATIVE_NOTARY_STATE: ${{ vars.DEVCONTAINER_NATIVE_NOTARY_STATE }}
-      DEVCONTAINER_NATIVE_SOURCE_COMMIT: ${{ github.sha }}
+      QUALIFICATION_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_QUALIFICATION_DIRECTORY }}
+      QUALIFICATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_QUALIFICATION_SHA256 }}
+      FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
+      FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
+      ACCEPTED_STATE: ${{ vars.DEVCONTAINER_NATIVE_NOTARY_STATE }}
+      EXPECTED_SOURCE: ${{ github.sha }}
     steps:
       - name: Check out exact trusted commit
         env:
@@ -56,83 +38,25 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
           git -C "${GITHUB_WORKSPACE}" clean -ffdx
           test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
-      - name: Require the exact finalized release input
+      - name: Authenticate locally executed qualification and recompute comparisons
         run: |
           set -euo pipefail
-          test -n "${DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY}"
-          test -n "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256}"
-          test -n "${DEVCONTAINER_NATIVE_NOTARY_STATE}"
-          test "$(git rev-parse HEAD)" = "${DEVCONTAINER_NATIVE_SOURCE_COMMIT}"
-          test -z "$(git status --porcelain)"
-      - name: Resolve selected provider paths
-        if: matrix.lane != 'docker'
-        run: |
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          names = ["DEVCONTAINER_CONTAINER_BIN"]
-          if os.environ["DEVCONTAINER_COMPOSE_BIN"]:
-              names.append("DEVCONTAINER_COMPOSE_BIN")
-          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
-              for name in names:
-                  path = Path(os.environ[name]).resolve(strict=True)
-                  if not path.is_file() or not os.access(path, os.X_OK):
-                      raise SystemExit("Selected provider is not executable")
-                  output.write(name + "=" + str(path) + "\n")
-          PY
-      - name: Prepare isolated runtime
-        run: Tools/parity/runner-runtime.sh start "${{ matrix.lane }}"
-      - name: Validate runner provenance
-        run: Tools/parity/runner-preflight.sh "${{ matrix.lane }}"
-      - name: Run Dev Containers CLI parity
-        run: make "parity-${{ matrix.lane }}"
-      - name: Run real VS Code parity
-        env:
-          DEVCONTAINER_VSCODE_LIVE: "1"
-        run: make "parity-vscode-${{ matrix.lane }}"
-      - name: Scrub and validate VS Code evidence
-        if: always()
-        run: >-
-          python3 Tools/parity/scrub_vscode_evidence.py
-          ".build/parity/vscode/${{ matrix.lane }}"
-      - name: Stop isolated runtime
-        if: always()
-        run: Tools/parity/runner-runtime.sh stop "${{ matrix.lane }}"
-      - name: Upload lane evidence
-        if: always()
+          test -n "${QUALIFICATION_DIRECTORY}"
+          test -n "${QUALIFICATION_SHA256}"
+          test -n "${FINALIZED_DIRECTORY}"
+          test -n "${FINALIZATION_SHA256}"
+          test -n "${ACCEPTED_STATE}"
+          python3 Tools/parity/verify_local_qualification.py \
+            --repository "$PWD" \
+            --qualification-directory "${QUALIFICATION_DIRECTORY}" \
+            --trusted-qualification-sha256 "${QUALIFICATION_SHA256}" \
+            --expected-source-commit "${EXPECTED_SOURCE}" \
+            --finalized-directory "${FINALIZED_DIRECTORY}" \
+            --finalization-provenance-sha256 "${FINALIZATION_SHA256}" \
+            --accepted-state "${ACCEPTED_STATE}" \
+            --output-directory .build/parity
+      - name: Upload authenticated local qualification and recomputed comparisons
         uses: ./Tools/ci/upload-artifact-action
-        with:
-          name: "parity-${{ matrix.lane }}"
-          path: |
-            .build/parity/${{ matrix.lane }}
-            .build/parity/vscode/${{ matrix.lane }}
-
-  compare:
-    if: ${{ always() }}
-    needs: lane
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Check out exact trusted commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Download all lane evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: parity-*
-          path: .build/parity
-          merge-multiple: true
-      - name: Require exact CLI and VS Code equivalence
-        run: |
-          status=0
-          python3 Tools/parity/compare_results.py .build/parity --manifest Tests/Parity/manifest.json --suite cli || status=1
-          python3 Tools/parity/compare_results.py .build/parity/vscode --manifest Tests/Parity/manifest.json --suite vscode || status=1
-          python3 Tools/parity/validate_manifest.py --release || status=1
-          exit "${status}"
-      - name: Upload candidate-bound comparison
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: parity-comparison
           path: |
@@ -140,5 +64,4 @@ jobs:
             .build/parity/matrix.md
             .build/parity/vscode/comparison.json
             .build/parity/vscode/matrix.md
-          include-hidden-files: true
-          if-no-files-found: error
+            .build/parity/local-qualification.json

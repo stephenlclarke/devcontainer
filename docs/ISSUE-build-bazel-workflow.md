@@ -1,5 +1,9 @@
 # Issue: implement the native Bazel workflow
 
+The temporary Homebrew test also forcibly removed installed stable/current packages and left them uninstalled on exit. Preserve their exact kegs, managed links and owned Homebrew service before candidate testing; verify restoration on both success and failure, retaining backups and blocking publication if restoration is uncertain.
+
+The remaining parity publication path still starts installed runtimes, broadly stops Apple services, assumes ambient tool versions and repeats the full guest/editor campaign in GitHub. Run that heavy campaign once through a maintained local owner/restoration controller, then require GitHub to authenticate its exact-source retained receipt and recompute comparisons. Preserve every failed attempt and all cleanup/timing gates; an absent, stale or quarantined receipt must never authorize publication.
+
 The changed launcher recipe has now been addressed with eight newly qualified and published stock/enhanced layer archives. Each archive and qualification sidecar was verified through the maintained downloaded-consumer path before its lock was committed. Final-head product and release gates remain required.
 
 The hosted CLI smoke check selected the new native default and looked for an installed container-compose binary. Explicitly select its intended Docker fixture and disable standalone Compose autodiscovery, which could otherwise bypass that fixture.

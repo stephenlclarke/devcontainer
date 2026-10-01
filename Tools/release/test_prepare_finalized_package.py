@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 import zipfile
 from unittest.mock import patch
@@ -341,7 +341,8 @@ class FinalizedAdmissionTests(unittest.TestCase):
             return result
 
         disk_info = type("DiskInfo", (), {"stdout": volume})()
-        with patch.object(MODULE.Path, "home", return_value=home), \
+        with patch.object(MODULE.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(home))), \
+                patch.dict(os.environ, {"HOME": str(self.root / "private-runtime-home")}), \
                 patch.object(MODULE.Path, "stat", external_scratch_stat), \
                 patch.object(MODULE.subprocess, "run", return_value=disk_info), \
                 patch.object(signer, "validate_storage") as validate_stage:

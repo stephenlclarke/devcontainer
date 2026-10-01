@@ -190,7 +190,7 @@ class SigningToolTests(unittest.TestCase):
             fixture.state = parent / (fixture.args.candidate_sha256 + "-" + fixture.args.stage_provenance_sha256)
         self.assertEqual(current.args.candidate_sha256, stable.args.candidate_sha256)
         self.assertNotEqual(current.args.stage_provenance_sha256, stable.args.stage_provenance_sha256)
-        with mock.patch.object(signing.Path, "home", return_value=home):
+        with mock.patch.object(signing, "account_home", return_value=home):
             self.assertEqual(current.run()["phase"], "accepted")
             current_record = (current.state / "state.json").read_bytes()
             self.assertEqual(stable.run()["phase"], "accepted")
@@ -382,7 +382,7 @@ class SigningToolTests(unittest.TestCase):
         f.state = f.root / "Library/Application Support/ContainerFamily/retained/devcontainer/notary" / (
             f.args.candidate_sha256 + "-" + f.args.stage_provenance_sha256)
         f.state.parent.mkdir(parents=True)
-        with mock.patch.object(signing.Path, "home", return_value=f.root):
+        with mock.patch.object(signing, "account_home", return_value=f.root):
             with self.assertRaises(InterruptedError): f.run()
             original = signing.digest(f.state / "submitted.zip")
             with self.assertRaises(FileExistsError): f.run()

@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 import platform
+import pwd
 import shlex
 import shutil
 import signal
@@ -44,7 +45,7 @@ from parity_lib import (
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
 FINALIZED_SCRATCH = Path("/Volumes/SSD/cf/finalized-admission")
-FINALIZED_RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
+FINALIZED_RETAINED = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
 
 
 def finalized_selection(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -1658,7 +1659,9 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "CONTAINER_COMPOSE_BUILD_INFO",
         "CONTAINER_COMPOSE_CONTAINER",
         "CONTAINER_HOST",
+        "CONTAINER_INSTALL_ROOT",
         "CONTAINER_INSTALLATION_ROOT",
+        "CONTAINER_LOG_ROOT",
         "CONTAINER_REGISTRY_CONFIG",
         "CONTAINER_RUNTIME_CONFIG",
         "CONTAINER_SERVICE_NAMESPACE",

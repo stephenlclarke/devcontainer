@@ -55,7 +55,8 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
                                           "archiveSHA256": sha(self.archive.read_bytes()),
                                           "archiveSize": self.archive.stat().st_size,
                                           "packageContextSHA256": sha(self.context.read_bytes()),
-                                          "packageVerificationSHA256": sha(self.verification.read_bytes())}))
+                                          "packageVerificationSHA256": sha(self.verification.read_bytes()),
+                                          "submissionID": "12345678-1234-1234-1234-123456789012"}))
         self.finalization_sha = sha(self.proof.read_bytes())
         self.identity = {
             "scope": "finalized-native-package-runtime-input",
@@ -84,6 +85,24 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
                 "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt",
             )},
         }
+        self.local_document = {
+            "schemaVersion": 1, "scope": "local-native-package-parity-qualification",
+            "executedLocally": True, "status": "passed", "sourceCommit": SOURCE,
+            "sourceDirty": False, "parityHarnessSHA256": HARNESS_SHA,
+            "controllerSHA256": evidence.digest(REPOSITORY / "Tools/parity/qualify_finalized_package.py"),
+            "finalizationProvenanceSHA256": self.finalization_sha,
+            "archiveSHA256": sha(self.archive.read_bytes()), "trustedStateSHA256": "f" * 64,
+            "submissionID": "12345678-1234-1234-1234-123456789012",
+            "fixtureCounts": {"cliPerLane": 27, "vscodePerLane": 1, "laneCount": 3,
+                              "totalLaneFixtureResults": 84},
+            "restoration": {lane: "restored" for lane in ("docker", "apple-stock", "container-compose")},
+            "guardCleared": True,
+        }
+        self.local_path = self.artifact / "local-qualification.json"
+        self.local_path.write_text(json.dumps(self.local_document))
+        self.qualification_sha = sha(self.local_path.read_bytes())
+        self.local_identity = {"receiptSHA256": self.qualification_sha, "executedLocally": True,
+                               "sourceCommit": SOURCE, "controllerSHA256": self.local_document["controllerSHA256"]}
         self.run_json = self.root / "run.json"
         self.run_document = {"id": 6001, "run_number": 12, "event": "push",
                              "head_branch": "main", "head_sha": SOURCE,
@@ -109,6 +128,7 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
                 "performanceInvestigationRequired": False,
                 "performancePolicy": evidence.PERFORMANCE_POLICY,
                 "finalizedPackage": self.identity, "parityHarnessSHA256": HARNESS_SHA,
+                "localQualification": self.local_identity,
                 "fixtures": [{"id": fixture, "statuses": {"docker": "passed", "apple-stock": "passed",
                     "container-compose": "passed"}, "functionalEquivalent": True,
                     "functionalDifferences": [], "timingEvidenceValid": True, "timingDifferences": [],
@@ -143,7 +163,32 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
         return evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", ARTIFACT_ID,
                                  artifact_digest or actual_digest, self.artifact_zip, self.extracted,
                                  SOURCE, self.archive, self.checksum,
-                                 self.context, self.verification, self.proof, self.finalization_sha, self.output)
+                                 self.context, self.verification, self.proof, self.finalization_sha, self.output, self.qualification_sha)
+
+    def test_rejects_changed_local_receipt_even_with_authenticated_artifact(self) -> None:
+        self.local_document["guardCleared"] = False
+        self.local_path.write_text(json.dumps(self.local_document))
+        with self.assertRaisesRegex(evidence.EvidenceError, "local qualification checksum"):
+            self.validate()
+
+    def test_rejects_trusted_but_stale_or_unrestored_local_receipt(self) -> None:
+        for key, value in (("sourceCommit", "0" * 40), ("guardCleared", False),
+                           ("restoration", {"docker": "uncertain"}), ("status", "failed")):
+            with self.subTest(field=key):
+                document = dict(self.local_document)
+                document[key] = value
+                self.local_path.write_text(json.dumps(document))
+                self.qualification_sha = sha(self.local_path.read_bytes())
+                with self.assertRaisesRegex(evidence.EvidenceError, "stale, incomplete"):
+                    self.validate()
+
+    def test_rejects_comparison_claiming_another_local_receipt(self) -> None:
+        path = self.artifact / "vscode/comparison.json"
+        payload = json.loads(path.read_text())
+        payload["localQualification"]["receiptSHA256"] = "0" * 64
+        path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(evidence.EvidenceError, "differs from authenticated local"):
+            self.validate()
 
     def test_rejects_tampered_download_bytes_against_api_digest(self) -> None:
         artifact_digest = self.create_artifact_zip()
@@ -153,10 +198,10 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
             evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", ARTIFACT_ID,
                               artifact_digest, self.artifact_zip, self.extracted, SOURCE, self.archive,
                               self.checksum, self.context, self.verification, self.proof,
-                              self.finalization_sha, self.output)
+                              self.finalization_sha, self.output, self.qualification_sha)
 
     def test_rejects_zip_symlink_member_even_when_api_digest_matches(self) -> None:
-        regular_names = ("matrix.md", "vscode/comparison.json", "vscode/matrix.md")
+        regular_names = ("matrix.md", "vscode/comparison.json", "vscode/matrix.md", "local-qualification.json")
         with zipfile.ZipFile(self.artifact_zip, "w") as output:
             link = zipfile.ZipInfo("comparison.json")
             link.external_attr = (stat.S_IFLNK | 0o777) << 16
@@ -171,12 +216,12 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
             evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", ARTIFACT_ID,
                               actual, self.artifact_zip, self.extracted, SOURCE, self.archive,
                               self.checksum, self.context, self.verification, self.proof,
-                              self.finalization_sha, self.output)
+                              self.finalization_sha, self.output, self.qualification_sha)
 
     def test_accepts_exact_run_artifact_package_and_writes_release_contract(self) -> None:
         receipt = self.validate()
         self.assertEqual(receipt["fixtureCounts"]["totalLaneFixtureResults"], 84)
-        self.assertEqual(len(list(self.output.iterdir())), 5)
+        self.assertEqual(len(list(self.output.iterdir())), 6)
         self.assertEqual((self.output / "runtime-parity-cli-comparison.json").read_bytes(),
                          (self.artifact / "comparison.json").read_bytes())
         self.assertFalse(json.loads((self.output / "runtime-parity-provenance.json").read_text())
@@ -199,12 +244,12 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "artifact ID"):
             evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", "9999",
                               "0" * 64, self.artifact_zip, self.extracted, SOURCE, self.archive, self.checksum,
-                              self.context, self.verification, self.proof, self.finalization_sha, self.output)
+                              self.context, self.verification, self.proof, self.finalization_sha, self.output, self.qualification_sha)
         self.create_artifact_zip()
         with self.assertRaisesRegex(evidence.EvidenceError, "artifact digest"):
             evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", ARTIFACT_ID,
                               "9" * 64, self.artifact_zip, self.extracted, SOURCE, self.archive, self.checksum,
-                              self.context, self.verification, self.proof, self.finalization_sha, self.output)
+                              self.context, self.verification, self.proof, self.finalization_sha, self.output, self.qualification_sha)
 
     def test_rejects_artifact_linked_to_another_successful_source_run(self) -> None:
         listing = json.loads(self.artifact_json.read_text())
@@ -219,11 +264,12 @@ class ParityReleaseEvidenceTests(unittest.TestCase):
             self.validate()
 
     def test_rejects_source_or_finalization_proof_mismatch(self) -> None:
+        artifact_sha = self.create_artifact_zip()
         with self.assertRaisesRegex(evidence.EvidenceError, "provenance checksum"):
             evidence.validate(REPOSITORY, self.run_json, self.artifact_json, "6001", ARTIFACT_ID,
-                              self.create_artifact_zip(), self.artifact_zip, self.extracted, SOURCE,
+                              artifact_sha, self.artifact_zip, self.extracted, SOURCE,
                               self.archive, self.checksum, self.context, self.verification,
-                              self.proof, "9" * 64, self.output)
+                              self.proof, "9" * 64, self.output, self.qualification_sha)
         context = json.loads(self.context.read_text())
         context["commit"] = "9" * 40
         self.context.write_text(json.dumps(context))

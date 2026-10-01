@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import plistlib
 import re
@@ -20,11 +21,16 @@ import tarfile
 import tempfile
 
 
+def account_home() -> Path:
+    """Keep durable authority under the real account, independent of fixture HOME."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 PROVENANCE_NAME = "native-finalization-provenance.json"
-INTERNAL_ROOT = Path.home() / "Library/Application Support/ContainerFamily/retained"
+INTERNAL_ROOT = account_home() / "Library/Application Support/ContainerFamily/retained"
 FINAL_ROOT = INTERNAL_ROOT / "devcontainer/finalized"
 SSD_ROOT = Path("/Volumes/SSD")
 SSD_IDENTITY = INTERNAL_ROOT / "workflow/ssd-volume.uuid"
@@ -58,7 +64,7 @@ def validate_ssd_identity(expected_uuid: str, plist_data: bytes) -> None:
 
 def validate_storage(directory: Path, scratch: Path) -> None:
     """Require private internal retained input and the enrolled external SSD."""
-    home_device = Path.home().stat().st_dev
+    home_device = account_home().stat().st_dev
     for path in (INTERNAL_ROOT, FINAL_ROOT, directory, SSD_ROOT, scratch, SSD_IDENTITY):
         physical(path)
     if (not directory.is_relative_to(FINAL_ROOT) or directory == FINAL_ROOT

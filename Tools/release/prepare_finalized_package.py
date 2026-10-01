@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import subprocess
@@ -16,6 +17,11 @@ import sys
 import tempfile
 import time
 import uuid
+
+
+def account_home() -> Path:
+    """Keep durable authority under the real account, independent of fixture HOME."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 SHA = re.compile(r"[0-9a-f]{64}")
@@ -110,7 +116,7 @@ def read_provenance(directory: Path, trusted_sha256: str) -> tuple[dict, dict[st
         physical(path)
         info = path.stat()
         if (not path.is_file() or info.st_nlink != 1 or info.st_uid != os.getuid()
-                or info.st_dev != Path.home().stat().st_dev):
+                or info.st_dev != account_home().stat().st_dev):
             raise ValueError("Finalized member is not a private regular file: " + name)
     if (proof.get("archiveSHA256") != digest(files[archive_name])
             or proof.get("archiveSize") != files[archive_name].stat().st_size
@@ -152,7 +158,7 @@ def require_inventory(tree: object) -> dict:
 def require_production_storage(repository: Path, finalized: Path, state: Path, scratch: Path,
                                retained: Path, evidence_root: Path, trusted_state_sha256: str, signer) -> None:
     """Keep durable package and signature evidence internal and extraction on SSD."""
-    home = Path.home()
+    home = account_home()
     final_root = home / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized"
     admission_root = home / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
     physical(finalized)
@@ -160,7 +166,7 @@ def require_production_storage(repository: Path, finalized: Path, state: Path, s
     physical(evidence_root, exists=False)
     if not finalized.is_relative_to(final_root) or finalized == final_root:
         raise ValueError("Finalized package must be beneath internal retained finalized storage")
-    if finalized.stat().st_dev != Path.home().stat().st_dev or finalized.stat().st_uid != os.getuid():
+    if finalized.stat().st_dev != account_home().stat().st_dev or finalized.stat().st_uid != os.getuid():
         raise ValueError("Finalized package must be user-owned internal storage")
     if finalized.stat().st_mode & 0o777 != 0o700:
         raise ValueError("Finalized package directory must be private")
@@ -398,8 +404,8 @@ def main() -> int:
     parser.add_argument("--provider-lane", choices=("apple-stock", "container-compose"), required=True)
     parser.add_argument("--state-directory", required=True, type=Path)
     parser.add_argument("--scratch-root", type=Path, default=Path("/Volumes/SSD/cf/finalized-admission"))
-    parser.add_argument("--retained-root", type=Path, default=Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions")
-    parser.add_argument("--signature-evidence-root", type=Path, default=Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions/signature-evidence")
+    parser.add_argument("--retained-root", type=Path, default=account_home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions")
+    parser.add_argument("--signature-evidence-root", type=Path, default=account_home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions/signature-evidence")
     args = parser.parse_args()
     result = admit_finalized_package(args.repository, args.finalized_directory,
                                      args.trusted_provenance_sha256, args.expected_source_commit,

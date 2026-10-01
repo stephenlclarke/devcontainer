@@ -341,6 +341,7 @@ jobs:
           DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
           DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
           DEVCONTAINER_NATIVE_FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
+          DEVCONTAINER_NATIVE_QUALIFICATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_QUALIFICATION_SHA256 }}
           DEVCONTAINER_NATIVE_SSD_SCRATCH: ${{ vars.DEVCONTAINER_NATIVE_SSD_SCRATCH }}
           DEVCONTAINER_NATIVE_RELEASE_PROFILE: stock
           LANE: ${{ needs.resolve.outputs.lane }}
@@ -419,6 +420,7 @@ jobs:
             --verification "${archive}.verification.json" \
             --finalization-provenance "${archive}.native-finalization-provenance.json" \
             --finalization-sha256 "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256}" \
+            --qualification-sha256 "${DEVCONTAINER_NATIVE_QUALIFICATION_SHA256}" \
             --output-directory "${assets}"
           root="devcontainer-${version}/share/devcontainer"
           tar -xOf "${archive}" "${root}/build-info.json" \
@@ -601,33 +603,22 @@ jobs:
           fi
           formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"
           test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"
-          cleanup() {
-            for candidate in devcontainer devcontainer-current; do
-              if brew list --formula | grep -Fxq "${candidate}"; then
-                brew uninstall --force "${candidate}" >/dev/null
-              fi
-            done
-            brew untap "${test_tap}" >/dev/null 2>&1 || true
-            brew untrust --formula "${test_tap}/${formula}" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          cleanup
-          brew tap-new --no-git "${test_tap}"
-          test_tap_root="$(brew --repository "${test_tap}")"
-          cp "${formula_path}" "${test_tap_root}/Formula/${formula}.rb"
-          brew trust --formula "${test_tap}/${formula}"
-          brew audit --formula --strict --online "${test_tap}/${formula}"
-          brew fetch --formula --force "${test_tap}/${formula}"
-          brew install --formula "${test_tap}/${formula}"
-          brew test "${test_tap}/${formula}"
-          installed="$(
-            brew --prefix "${test_tap}/${formula}"
-          )/bin/devcontainer"
-          "${installed}" version --format json \
-            | jq -e \
-              --arg commit "${{ needs.resolve.outputs.sha }}" \
-              --arg lane "${LANE}" \
-              '.commit == $commit and .lane == $lane'
+          python3 devcontainer/Tools/release/homebrew_installation.py \
+            --formula-path "${formula_path}" \
+            --test-tap "${test_tap}" \
+            --lane "${LANE}" \
+            --expected-source-sha "${{ needs.resolve.outputs.sha }}" \
+            --finalized-context "${{ steps.package.outputs.archive }}.context.json" \
+            --expected-version "${{ steps.package.outputs.version }}" \
+            --ssd-scratch "/Volumes/SSD/cf/bazel/tmp/homebrew-installation-${GITHUB_RUN_ID}" \
+            --retained-root "${HOME}/Library/Application Support/ContainerFamily/retained/workflow/homebrew-installations" \
+            --receipt-output "${RUNNER_TEMP}/homebrew-installation.json"
+      - name: Retain installation and restoration evidence
+        if: always()
+        uses: ./devcontainer/Tools/ci/upload-artifact-action
+        with:
+          name: homebrew-installation-restoration
+          path: ${{ runner.temp }}/homebrew-installation.json
       - name: Push tested tap state
         shell: bash
         run: |

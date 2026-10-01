@@ -21,6 +21,10 @@ from typing import Any
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 ARTIFACT = "parity-comparison"
+ARTIFACT_FILES = {
+    "comparison.json", "matrix.md", "vscode/comparison.json", "vscode/matrix.md",
+    "local-qualification.json",
+}
 PERFORMANCE_POLICY = {
     "durationMetric": "fixture wall-clock seconds",
     "oracle": "docker",
@@ -141,14 +145,14 @@ def _validate_artifact(artifacts: dict[str, Any], expected_id: str, expected_dig
 
 def extract_authenticated_artifact(archive_path: Path, destination: Path,
                                    expected_digest: str) -> None:
-    """Verify GitHub's pinned ZIP digest, then extract only its four safe files."""
+    """Verify GitHub's pinned ZIP digest, then extract its five safe files."""
     _require(archive_path.is_file() and not archive_path.is_symlink()
              and archive_path.stat().st_nlink == 1, "downloaded parity ZIP is absent or linked")
     _require(archive_path.stat().st_size <= 64 * 1024 * 1024,
              "downloaded parity ZIP exceeds the evidence size limit")
     _require(digest(archive_path) == expected_digest,
              "downloaded parity ZIP bytes differ from GitHub's artifact SHA-256")
-    expected_names = {"comparison.json", "matrix.md", "vscode/comparison.json", "vscode/matrix.md"}
+    expected_names = ARTIFACT_FILES
     try:
         with zipfile.ZipFile(archive_path) as archive:
             members = archive.infolist()
@@ -229,7 +233,8 @@ def _validate_comparison(value: dict[str, Any], matrix: str, suite: str,
 def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str, artifact_id: str,
              artifact_digest: str, artifact_archive: Path, artifact_directory: Path, publish_sha: str,
              archive: Path, checksum: Path, context_path: Path, verification_path: Path,
-             finalization_provenance: Path, finalization_sha: str, output_directory: Path) -> dict[str, Any]:
+             finalization_provenance: Path, finalization_sha: str, output_directory: Path,
+             qualification_sha: str) -> dict[str, Any]:
     """Validate the official download and bind parity to the exact signed package."""
     _require(COMMIT.fullmatch(publish_sha) is not None, "PUBLISH_SHA must be a full lowercase commit SHA")
     _require(SHA256.fullmatch(finalization_sha) is not None
@@ -245,7 +250,7 @@ def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str,
     _require(artifact_directory.parent.is_dir() and not artifact_directory.parent.is_symlink(),
              "parity extraction parent is missing or linked")
     extract_authenticated_artifact(artifact_archive, artifact_directory, artifact_digest)
-    expected_names = {"comparison.json", "matrix.md", "vscode/comparison.json", "vscode/matrix.md"}
+    expected_names = ARTIFACT_FILES
     _require(artifact_directory.is_dir() and not artifact_directory.is_symlink(), "downloaded parity artifact is missing")
     actual_names = {path.relative_to(artifact_directory).as_posix() for path in artifact_directory.rglob("*") if path.is_file()}
     _require(actual_names == expected_names, "downloaded comparison artifact file set is incomplete or unexpected")
@@ -296,6 +301,29 @@ def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str,
     _require(isinstance(harness, str) and SHA256.fullmatch(harness) is not None
              and harness == parity_harness_sha256(repository),
              "comparison parity-harness identity differs from this source commit")
+    local_path = artifact_directory / "local-qualification.json"
+    _require(SHA256.fullmatch(qualification_sha) is not None
+             and digest(local_path) == qualification_sha,
+             "local qualification checksum differs from trusted configuration")
+    local = read_json(local_path)
+    _require(isinstance(local, dict) and local.get("schemaVersion") == 1
+             and local.get("scope") == "local-native-package-parity-qualification"
+             and local.get("status") == "passed" and local.get("executedLocally") is True
+             and local.get("sourceDirty") is False and local.get("sourceCommit") == publish_sha
+             and local.get("parityHarnessSHA256") == harness
+             and local.get("controllerSHA256") == digest(repository / "Tools/parity/qualify_finalized_package.py")
+             and local.get("finalizationProvenanceSHA256") == finalization_sha
+             and local.get("archiveSHA256") == archive_sha
+             and local.get("trustedStateSHA256") == proof.get("trustedStateSHA256")
+             and local.get("submissionID") == proof.get("submissionID")
+             and local.get("fixtureCounts") == {"cliPerLane": 27, "vscodePerLane": 1,
+                                                "laneCount": 3, "totalLaneFixtureResults": 84}
+             and local.get("guardCleared") is True
+             and local.get("restoration") == {"docker": "restored", "apple-stock": "restored",
+                                               "container-compose": "restored"},
+             "local qualification is stale, incomplete or lacks verified restoration")
+    local_identity = {"receiptSHA256": qualification_sha, "executedLocally": True,
+                      "sourceCommit": publish_sha, "controllerSHA256": local["controllerSHA256"]}
 
     for suite, json_name, matrix_name in (
         ("cli", "comparison.json", "matrix.md"),
@@ -303,6 +331,8 @@ def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str,
     ):
         value = read_json(artifact_directory / json_name)
         _require(isinstance(value, dict), f"{suite} comparison is malformed")
+        _require(value.get("localQualification") == local_identity,
+                 f"{suite} comparison differs from authenticated local qualification")
         _validate_comparison(value, (artifact_directory / matrix_name).read_text(encoding="utf-8"),
                              suite, expected_fixture_ids(repository, suite), identity, harness)
 
@@ -312,6 +342,7 @@ def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str,
         "runtime-parity-cli-matrix.md": artifact_directory / "matrix.md",
         "runtime-parity-vscode-comparison.json": artifact_directory / "vscode/comparison.json",
         "runtime-parity-vscode-matrix.md": artifact_directory / "vscode/matrix.md",
+        "local-runtime-qualification.json": local_path,
     }
     file_hashes: dict[str, str] = {}
     for name, source in files.items():
@@ -330,6 +361,8 @@ def validate(repository: Path, run_json: Path, artifact_json: Path, run_id: str,
         "candidateReceiptSHA256": proof["candidateReceiptSHA256"],
         "trustedStateSHA256": proof["trustedStateSHA256"],
         "parityHarnessSHA256": harness,
+        "localExecution": local_identity,
+        "workflowRole": "authenticate local execution and recompute comparisons",
         "performancePolicy": PERFORMANCE_POLICY,
         "fixtureCounts": {"cliPerLane": 27, "vscodePerLane": 1, "laneCount": 3, "totalLaneFixtureResults": 84},
         "workflowRun": run_receipt,
@@ -358,6 +391,7 @@ def main() -> int:
     parser.add_argument("--verification", type=Path, required=True)
     parser.add_argument("--finalization-provenance", type=Path, required=True)
     parser.add_argument("--finalization-sha256", required=True)
+    parser.add_argument("--qualification-sha256", required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -365,7 +399,7 @@ def main() -> int:
                            args.artifact_digest, args.artifact_archive, args.artifact_directory, args.publish_sha,
                            args.archive, args.checksum, args.context, args.verification,
                            args.finalization_provenance, args.finalization_sha256,
-                           args.output_directory)
+                           args.output_directory, args.qualification_sha256)
     except (EvidenceError, OSError, ValueError, KeyError, TypeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

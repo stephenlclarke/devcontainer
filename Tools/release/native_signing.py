@@ -21,6 +21,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pwd
 from pathlib import Path
 import plistlib
 import re
@@ -33,6 +34,11 @@ import sys
 import tempfile
 import time
 import zipfile
+
+def account_home() -> Path:
+    """Keep durable authority under the real account, independent of fixture HOME."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
 
 TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS.parent / "bazel/package_checks"))
@@ -82,7 +88,7 @@ def physical(path: Path) -> Path:
 
 def validate_storage(stage: Path, state: Path, scratch: Path, evidence: Path) -> None:
     """Production policy: durable evidence internal, disposable work on the SSD."""
-    internal = Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/notary"
+    internal = account_home() / "Library/Application Support/ContainerFamily/retained/devcontainer/notary"
     ssd = Path("/Volumes/SSD")
     for path in (stage, state, scratch, evidence, internal, ssd):
         physical(path)
@@ -90,7 +96,7 @@ def validate_storage(stage: Path, state: Path, scratch: Path, evidence: Path) ->
         raise ValueError("Notary state must be beneath internal retained devcontainer/notary")
     if not scratch.is_relative_to(ssd) or scratch == ssd:
         raise ValueError("Notary scratch must be beneath /Volumes/SSD")
-    if not ssd.is_mount() or ssd.stat().st_dev == Path.home().stat().st_dev:
+    if not ssd.is_mount() or ssd.stat().st_dev == account_home().stat().st_dev:
         raise ValueError("SSD scratch is not a separate mounted filesystem")
     if evidence.is_relative_to(stage) or evidence.is_relative_to(scratch):
         raise ValueError("Acceptance evidence must be outside the disposable stage and scratch")
@@ -100,12 +106,12 @@ def validate_storage(stage: Path, state: Path, scratch: Path, evidence: Path) ->
     scratch.mkdir(parents=True, exist_ok=True)
     for path in (state.parent, scratch):
         physical(path)
-    if state.parent.stat().st_dev != Path.home().stat().st_dev:
+    if state.parent.stat().st_dev != account_home().stat().st_dev:
         raise ValueError("Notary evidence is not on internal storage")
     existing = evidence.parent
     while not existing.exists():
         existing = existing.parent
-    if existing.stat().st_dev != Path.home().stat().st_dev:
+    if existing.stat().st_dev != account_home().stat().st_dev:
         raise ValueError("Acceptance evidence must be on internal storage")
     if scratch.stat().st_dev != ssd.stat().st_dev:
         raise ValueError("Scratch is not on the selected SSD")
@@ -391,7 +397,7 @@ def perform(args: argparse.Namespace) -> dict:
     if not SHA.fullmatch(args.stage_provenance_sha256):
         raise ValueError("Stage provenance checksum must be lowercase SHA-256")
     state_key = args.candidate_sha256 + "-" + args.stage_provenance_sha256
-    state = args.state_directory or Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/notary" / state_key
+    state = args.state_directory or account_home() / "Library/Application Support/ContainerFamily/retained/devcontainer/notary" / state_key
     validate_storage(stage, state, scratch, evidence)
     if not args.resume and not stage.is_dir():
         raise ValueError("Stage must already exist before signing")
