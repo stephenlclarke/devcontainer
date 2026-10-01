@@ -236,7 +236,7 @@ jobs:
           } >>"${GITHUB_OUTPUT}"
 
   package:
-    name: Sign, notarize, publish, and promote tap
+    name: Verify native package, publish, and promote tap
     needs: resolve
     if: needs.resolve.outputs.publish == 'true'
     runs-on: [self-hosted, macOS, ARM64, devcontainer-release, devcontainer-designated-mbp]
@@ -279,11 +279,15 @@ jobs:
         run: |
           set -euo pipefail
           test -z "$(git -C homebrew-tap status --short)"
-      - name: Build signed and notarized package
+      - name: Verify signed and notarized native package
         id: package
         env:
           DEVCONTAINER_NOTARY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
           DEVCONTAINER_SIGNING_IDENTITY: ${{ vars.DEVCONTAINER_SIGNING_IDENTITY }}
+          DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
+          DEVCONTAINER_NATIVE_FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
+          DEVCONTAINER_NATIVE_SSD_SCRATCH: ${{ vars.DEVCONTAINER_NATIVE_SSD_SCRATCH }}
+          DEVCONTAINER_NATIVE_RELEASE_PROFILE: stock
           LANE: ${{ needs.resolve.outputs.lane }}
           PUBLISH_SHA: ${{ needs.resolve.outputs.sha }}
         working-directory: devcontainer
@@ -336,6 +340,7 @@ jobs:
           mkdir -p "${assets}"
           cp "${archive}" "${archive}.sha256" \
             "${archive}.context.json" "${archive}.verification.json" \
+            "${archive}.native-finalization-provenance.json" \
             "${assets}/"
           root="devcontainer-${version}/share/devcontainer"
           tar -xOf "${archive}" "${root}/build-info.json" \
