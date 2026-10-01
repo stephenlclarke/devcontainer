@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The sanitized Docker frontend emitted symbolizer warnings with its deliberately restricted PATH and spent about two seconds in sanitizer exit finalization. Identify instrumented fixtures through the maintained TSan commands, supply the absolute system symbolizer and distinguish only their child-exit assertion. Preserve production/in-process limits and all race, signal, exit and cleanup checks.
+
 Hosted output-journal contention exceeded the existing four-second assertion. Bound actual elapsed time per SQLite lock event while preserving separate write/failure-marker budgets, reader invalidation and successful writes after a competing lock is released. Keep the original assertions and failed evidence.
 
 Stock hosted tests stalled after readiness failures because their direct SwiftPM path did not use the maintained sequential, bounded runner. Async input fixtures also blocked cooperative executor threads while waiting for their own scheduled writers. Correct these execution paths without increasing existing readiness deadlines or accepting helper failures; retain full failed-test logs for diagnosis.

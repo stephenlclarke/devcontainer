@@ -268,6 +268,15 @@ struct DockerFrontendSocketTests {
 }
 
 enum FrontendExecutable {
+    static var sanitizerEnvironment: [String: String] {
+        #if DEVCONTAINER_TSAN
+            // The fixture excludes external clients from PATH; retain TSan's symbolizer explicitly.
+            return ["TSAN_OPTIONS": "external_symbolizer_path=/usr/bin/atos"]
+        #else
+            return [:]
+        #endif
+    }
+
     static var executable: URL {
         let environment = ProcessInfo.processInfo.environment
         if let runfile = environment["DEVCONTAINER_DOCKER_TEST_RUNFILE"],
@@ -286,7 +295,9 @@ enum FrontendExecutable {
         socket: String? = nil,
         input: Data? = nil
     ) async throws -> CapturedProcessResult {
-        var childEnvironment = ["PATH": "/no-external-clients", "DEVCONTAINER_CONFIG": "/no-config"]
+        var childEnvironment = sanitizerEnvironment
+        childEnvironment["PATH"] = "/no-external-clients"
+        childEnvironment["DEVCONTAINER_CONFIG"] = "/no-config"
         childEnvironment["TMPDIR"] = TestStorage.temporaryDirectory.path
         if let socket {
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"

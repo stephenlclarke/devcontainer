@@ -50,3 +50,5 @@ common:prebuilt-container-sdk --config=prebuilt-engine-api
 common:prebuilt-container-sdk --repo_env=DEVCONTAINER_CONTAINER_SDK_LAYER=prebuilt
 build:asan --features=asan
 build:tsan --features=tsan
+# Test fixtures account for TSan finalization without changing normal process deadlines.
+test:tsan --@build_bazel_rules_swift//swift:copt=-DDEVCONTAINER_TSAN

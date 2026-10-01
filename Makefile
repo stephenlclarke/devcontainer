@@ -418,10 +418,10 @@ asan:
 tsan:
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --build-tests
+		--sanitize=thread -Xswiftc -DDEVCONTAINER_TSAN --build-tests
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --product devcontainer-engine
+		--sanitize=thread -Xswiftc -DDEVCONTAINER_TSAN --product devcontainer-engine
 	@TEST_BIN_PATH="$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
 		--show-bin-path)"; \

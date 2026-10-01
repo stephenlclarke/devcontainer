@@ -80,7 +80,7 @@ struct DockerBuildCancellationTests {
             environment: [
                 "PATH=/no-docker", "TMPDIR=" + fixture.temporary.path,
                 "DOCKER_HOST=unix://" + socket, "DEVCONTAINER_CONFIG=/no-config"
-            ], directory: nil
+            ] + FrontendExecutable.sanitizerEnvironment.map { "\($0.key)=\($0.value)" }, directory: nil
         )
         process.stdout = handle
         process.attributes.setProcessGroup = true
@@ -105,7 +105,12 @@ struct DockerBuildCancellationTests {
         watchdog.cancel()
         termination.didExit()
         #expect(try process.wait() == 1)
-        #expect(start.duration(to: .now) < .seconds(2))
+        #if DEVCONTAINER_TSAN
+            // Sampled TSan exit finalization adds about two seconds after application cleanup.
+            #expect(start.duration(to: .now) < .seconds(4))
+        #else
+            #expect(start.duration(to: .now) < .seconds(2))
+        #endif
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.temporary.path).isEmpty)
     }
 }

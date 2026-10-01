@@ -278,6 +278,8 @@ Hosted stock tests use the same explicit sequential test runner as `make test`, 
 
 SQLite output journaling bounds each lock-contention sequence with a monotonic one-second deadline, including the best-effort failure marker. A released competing lock still permits the append; the existing four-second failure assertion and incomplete-history checks remain in place.
 
+Thread Sanitizer builds identify their instrumented test fixtures explicitly. Normal process cancellation retains its two-second assertion; only a sanitized child executable receives a four-second exit bound for sanitizer finalization, with the original five-second watchdog and cleanup checks. Fixtures retain race reporting and use the absolute system symbolizer when their PATH excludes external clients.
+
 Use `devcontainer diagnostics --output devcontainer-diagnostics.tar.gz` to
 create a bounded, privacy-redacted support archive whose JSON manifest is
 printed before the archive is written.
