@@ -56,6 +56,8 @@ NATIVE_PARITY_QUALIFICATION_DIRECTORY ?= $(NATIVE_RETAINED_ROOT)/qualifications
 NATIVE_PARITY_CAMPAIGN ?=
 NATIVE_PARITY_DOCKER_BIN ?=
 NATIVE_PARITY_DOCKER_COMPOSE_BIN ?=
+# Retained manifest-pinned Docker CLI Buildx plugin (version/SHA are checked before runtime changes).
+NATIVE_PARITY_DOCKER_BUILDX_BIN ?=
 NATIVE_PARITY_COMPOSE_PROVIDER_BIN ?=
 NATIVE_PARITY_COLIMA_BIN ?=
 NATIVE_PARITY_VSCODE_BIN ?=
@@ -609,7 +611,7 @@ native-parity-release:
 	@test -n "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)" || { printf 'Set exact DEVCONTAINER_NATIVE_SOURCE_COMMIT.\n' >&2; exit 2; }
 	@test -n "$(NATIVE_SSD_SCRATCH)" -a -n "$(NATIVE_PARITY_EVIDENCE)" || { printf 'Set NATIVE_SSD_SCRATCH and a fresh NATIVE_PARITY_EVIDENCE path on that enrolled SSD.\n' >&2; exit 2; }
 	@test -n "$(NATIVE_RETAINED_ROOT)" -a -n "$(NATIVE_PARITY_CAMPAIGN)" || { printf 'Set internal NATIVE_RETAINED_ROOT and NATIVE_PARITY_CAMPAIGN.\n' >&2; exit 2; }
-	@test -n "$(NATIVE_PARITY_DOCKER_BIN)" -a -n "$(NATIVE_PARITY_DOCKER_COMPOSE_BIN)" -a -n "$(NATIVE_PARITY_COMPOSE_PROVIDER_BIN)" -a -n "$(NATIVE_PARITY_COLIMA_BIN)" || { printf 'Set pinned Docker, Docker Compose, container-compose provider, and Colima executable paths.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PARITY_DOCKER_BIN)" -a -n "$(NATIVE_PARITY_DOCKER_COMPOSE_BIN)" -a -n "$(NATIVE_PARITY_DOCKER_BUILDX_BIN)" -a -n "$(NATIVE_PARITY_COMPOSE_PROVIDER_BIN)" -a -n "$(NATIVE_PARITY_COLIMA_BIN)" || { printf 'Set pinned Docker, Docker Compose, Docker Buildx, container-compose provider, and Colima executable paths.\n' >&2; exit 2; }
 	@test -n "$(DEVCONTAINER_RUNTIME_STOCK_BIN)" -a -n "$(DEVCONTAINER_RUNTIME_COMPOSE_BIN)" || { printf 'Set both qualified DEVCONTAINER_RUNTIME_STOCK_BIN and DEVCONTAINER_RUNTIME_COMPOSE_BIN.\n' >&2; exit 2; }
 	@test -n "$(NATIVE_PARITY_VSCODE_BIN)" -a -n "$(NATIVE_PARITY_VSCODE_APP)" -a -n "$(NATIVE_PARITY_VSCODE_VSIX)" || { printf 'Set pinned VS Code launcher, application, and VSIX paths.\n' >&2; exit 2; }
 	@test -n "$(NATIVE_PARITY_STOCK_CONTAINER_SHA256)" -a -n "$(NATIVE_PARITY_STOCK_API_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_CONTAINER_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_API_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_PROVIDER_SHA256)" -a -n "$(NATIVE_PARITY_COLIMA_SHA256)" || { printf 'Set trusted SHA-256 values for all Apple, Colima, and Compose provider executables.\n' >&2; exit 2; }
@@ -626,6 +628,7 @@ native-parity-release:
 		--state-sha256 "$(DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256)" \
 		--docker-bin "$(NATIVE_PARITY_DOCKER_BIN)" \
 		--docker-compose-bin "$(NATIVE_PARITY_DOCKER_COMPOSE_BIN)" \
+		--docker-buildx-bin "$(NATIVE_PARITY_DOCKER_BUILDX_BIN)" \
 		--stock-container-bin "$(DEVCONTAINER_RUNTIME_STOCK_BIN)" \
 		--compose-container-bin "$(DEVCONTAINER_RUNTIME_COMPOSE_BIN)" \
 		--compose-provider-bin "$(NATIVE_PARITY_COMPOSE_PROVIDER_BIN)" \

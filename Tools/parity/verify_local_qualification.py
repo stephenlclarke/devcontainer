@@ -294,8 +294,9 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
             "qualification Docker engine pins differ from the checked-in manifest")
     providers = receipt.get("providerTools")
     provider_fields = {
-        "docker": {"version", "sha256", "engineVersion", "engineCommit",
-                   "engineApiVersion", "engineSHA256", "engineEvidence"},
+        "docker": {"version", "sha256", "buildxVersion", "buildxSHA256",
+                   "engineVersion", "engineCommit", "engineApiVersion",
+                   "engineSHA256", "engineEvidence"},
         "dockerCompose": {"version", "sha256", "bottleSHA256"},
         "appleStock": {"version", "commit", "containerSHA256", "apiServerSHA256",
                        "apiServerEvidence"},
@@ -323,6 +324,8 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
                 validate_file_reference(tool[key], f"qualification {name} {key}")
     require(providers["docker"].get("version") == pins["docker"]["cliVersion"]
             and providers["docker"].get("sha256") == pins["docker"]["cliSHA256"]
+            and providers["docker"].get("buildxVersion") == pins["docker"]["buildxVersion"]
+            and providers["docker"].get("buildxSHA256") == pins["docker"]["buildxSHA256"]
             and providers["docker"].get("engineVersion") == pins["docker"]["engineVersion"]
             and providers["docker"].get("engineCommit") == pins["docker"]["engineCommit"]
             and providers["docker"].get("engineApiVersion") == pins["docker"]["engineApiVersion"]
@@ -513,6 +516,8 @@ def authenticate_provider_evidence(receipt: dict[str, Any],
         "source": "docker-oracle",
         "clientVersion": docker["version"],
         "dockerCLISHA256": docker["sha256"],
+        "buildxVersion": docker["buildxVersion"],
+        "buildxSHA256": docker["buildxSHA256"],
         "engineVersion": docker["engineVersion"],
         "engineCommit": docker["engineCommit"],
         "engineApiVersion": docker["engineApiVersion"],

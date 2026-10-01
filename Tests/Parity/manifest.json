@@ -17,7 +17,9 @@
       "engineApiVersion": "1.54",
       "composeVersion": "5.3.1",
       "composeSHA256": "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3",
-      "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608"
+      "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608",
+      "buildxVersion": "0.37.1",
+      "buildxSHA256": "a3fe0d81584f0fb40bd5941b20c0e7e35ae548144860821a0f6a43e8de47f7b5"
     },
     "appleContainer": {
       "stableVersion": "1.4.1",

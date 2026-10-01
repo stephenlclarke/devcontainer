@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import signal
 import stat
@@ -143,6 +144,30 @@ def command_outcome(command: list[str], *, env: dict[str, str], timeout: int,
         "timedOut": False, "stdoutBytes": stdout_path.stat().st_size,
         "stderrBytes": stderr_path.stat().st_size})
     return outcome
+
+
+def docker_buildx_version(path: Path) -> str:
+    """Read the explicitly admitted Buildx executable's version without invoking Docker."""
+    result = run([str(path), "version"], env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                 timeout=10, capture=True)
+    matches = re.findall(r"(?:^|\s)v(\d+\.\d+\.\d+)(?:\s|$)", result.stdout)
+    if len(matches) != 1:
+        raise ValueError("Docker Buildx executable did not report one parseable semantic version")
+    return matches[0]
+
+
+def admit_docker_buildx(path: Path, pins: dict[str, str]) -> tuple[str, str]:
+    """Authenticate Buildx bytes before executing its read-only version probe."""
+    if (not path.is_absolute() or path.resolve(strict=True) != path
+            or not path.is_file() or not os.access(path, os.X_OK)):
+        raise ValueError("Docker Buildx must be an executable at a canonical absolute path")
+    digest = sha256(path)
+    if digest != pins.get("buildxSHA256"):
+        raise ValueError("Docker Buildx bytes differ from the checked-in parity pins")
+    version = docker_buildx_version(path)
+    if version != pins.get("buildxVersion"):
+        raise ValueError("Docker Buildx version differs from the checked-in parity pins")
+    return version, digest
 
 
 def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup):
@@ -456,8 +481,13 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
     apple_pins = pins["appleContainer"]
     compose_pins = pins["containerCompose"]
     docker_observed = json.loads((evidence / "docker-runtime-identity.json").read_text())
+    if (docker_observed.get("buildxVersion") != docker_pins["buildxVersion"]
+            or docker_observed.get("buildxSHA256") != args._provider_hashes["dockerBuildx"]):
+        raise ValueError("Docker Buildx identity evidence changed before qualification sealing")
     docker_row = {
         "version": docker_pins["cliVersion"], "sha256": args._provider_hashes["docker"],
+        "buildxVersion": docker_observed["buildxVersion"],
+        "buildxSHA256": docker_observed["buildxSHA256"],
         "engineVersion": docker_observed["engineVersion"], "engineCommit": docker_observed["engineCommit"],
         "engineApiVersion": docker_observed["engineApiVersion"], "engineSHA256": docker_observed["dockerdSHA256"],
     }
@@ -493,6 +523,8 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
         "engineApiVersion": docker_observed["engineApiVersion"], "engineSHA256": docker_observed["dockerdSHA256"],
         "composeVersion": docker_observed["composeVersion"],
         "composeSHA256": args._provider_hashes["dockerCompose"],
+        "buildxVersion": docker_observed["buildxVersion"],
+        "buildxSHA256": docker_observed["buildxSHA256"],
         "bottleSHA256": docker_pins["composeBottleSHA256"]})
     return {"docker": docker_row, "dockerCompose": compose_row,
             "appleStock": apple, "containerCompose": compose,
@@ -552,6 +584,16 @@ def default_colima_endpoint(home: Path) -> str:
     return "unix://" + str(profile / "docker.sock")
 
 
+def create_docker_cli_config(evidence: Path, args: argparse.Namespace) -> Path:
+    """Expose only the admitted Compose and Buildx plugins to the Docker CLI."""
+    docker_config = evidence / "docker-config"
+    plugin_directory = docker_config / "cli-plugins"
+    plugin_directory.mkdir(parents=True, mode=0o700)
+    (plugin_directory / "docker-compose").symlink_to(args.docker_compose_bin)
+    (plugin_directory / "docker-buildx").symlink_to(args.docker_buildx_bin)
+    return docker_config
+
+
 def colima_state(colima: Path, env: dict[str, str]) -> tuple[str, str]:
     result = subprocess.run([str(colima), "--profile", "default", "status"],
                             capture_output=True, text=True, env=env, timeout=30, check=False)
@@ -580,6 +622,13 @@ def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[
     return cli, vscode
 
 
+def controller_capture_directory(evidence: Path, lane: str, suite: str) -> Path:
+    """Keep controller-owned process captures outside both runners' replaceable output roots."""
+    if lane not in LANES or suite not in {"cli", "vscode"}:
+        raise ValueError("unknown parity lane or suite for controller output capture")
+    return evidence / "controller-logs" / lane / suite
+
+
 def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
     manifest_path = args.repository / "Tests/Parity/manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -587,6 +636,7 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
     expected = {
         "docker": sha256(args.docker_bin),
         "dockerCompose": sha256(args.docker_compose_bin),
+        "dockerBuildx": sha256(args.docker_buildx_bin),
         "stockContainer": sha256(args.stock_container_bin),
         "composeContainer": sha256(args.compose_container_bin),
         "composeProvider": sha256(args.compose_provider_bin),
@@ -616,14 +666,18 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("Docker CLI bytes differ from the checked-in parity pins")
     if expected["dockerCompose"] != docker_pins.get("composeSHA256"):
         raise ValueError("Docker Compose bytes differ from the checked-in parity pins")
+    if expected["dockerBuildx"] != docker_pins.get("buildxSHA256"):
+        raise ValueError("Docker Buildx bytes differ from the checked-in parity pins")
     for key, path in (("docker", args.docker_bin), ("docker compose", args.docker_compose_bin),
+                      ("docker buildx", args.docker_buildx_bin),
                       ("stock container", args.stock_container_bin),
                       ("compose container", args.compose_container_bin),
                       ("compose provider", args.compose_provider_bin),
                       ("stock API server", args.stock_container_bin.parent / "container-apiserver"),
                       ("compose API server", args.compose_container_bin.parent / "container-apiserver"),
                       ("Colima", args.colima_bin), ("VS Code launcher", args.vscode_bin)):
-        if not path.is_absolute() or path.resolve(strict=True) != path or not path.is_file() or not os.access(path, os.X_OK):
+        if (not path.is_absolute() or path.resolve(strict=True) != path
+                or not path.is_file() or not os.access(path, os.X_OK)):
             raise ValueError(f"{key} must be an executable at a canonical absolute path")
     for key, path in (("repository", args.repository), ("SSD scratch root", args.ssd_root),
                       ("retained root", args.retained_root), ("qualification directory", args.qualification_directory),
@@ -652,6 +706,7 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("accepted notary state differs from its independently trusted SHA-256")
     if expected["dockerCompose"] != "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3":
         raise ValueError("docker-compose reference binary is not the admitted 5.3.1 bottle")
+    admit_docker_buildx(args.docker_buildx_bin, docker_pins)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=args.repository, text=True).strip()
     status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=args.repository, text=True)
     tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=args.repository, text=True).strip()
@@ -776,10 +831,10 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
         suites_started = True
         cli_result, vscode_result, suites_passed = run_suite_pair(
             lambda: command_outcome(cli, env=lane_env, timeout=3 * 60 * 60,
-                                    capture_directory=evidence / lane / "controller-cli"),
+                                    capture_directory=controller_capture_directory(evidence, lane, "cli")),
             lambda: command_outcome(vscode, env={**lane_env, "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                                                  "DEVCONTAINER_VSCODE_APP": str(args.vscode_app)}, timeout=90 * 60,
-                                    capture_directory=evidence / "vscode" / lane / "controller-vscode"),
+                                    capture_directory=controller_capture_directory(evidence, lane, "vscode")),
             lambda: cli_cleanup_is_complete(evidence, lane),
             lambda: vscode_cleanup_is_complete(evidence, lane))
         runtime.verify()
@@ -941,6 +996,11 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
         if (client != pins["cliVersion"] or server != pins["engineVersion"] or
                 api != pins["engineApiVersion"] or commit != pins["engineCommit"]):
             raise RuntimeError("Docker oracle client or daemon identity differs from the parity manifest")
+        buildx_version = docker_buildx_version(args.docker_buildx_bin)
+        buildx_sha256 = sha256(args.docker_buildx_bin)
+        if (buildx_version != pins["buildxVersion"]
+                or buildx_sha256 != pins["buildxSHA256"]):
+            raise RuntimeError("Docker Buildx executable differs from the parity manifest")
         dockerd_hash = run([str(args.colima_bin), "--profile", "default", "ssh", "--",
                             "sha256sum", "/usr/bin/dockerd"],
                            env=base_env, capture=True).stdout.split()[0]
@@ -955,6 +1015,7 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
             {"endpoint": endpoint, "clientVersion": client, "engineVersion": server,
              "engineApiVersion": api, "engineCommit": commit,
              "dockerdSHA256": dockerd_hash, "composeVersion": compose_version,
+             "buildxVersion": buildx_version, "buildxSHA256": buildx_sha256,
              "dockerBinarySHA256": sha256(args.docker_bin),
              "dockerComposeSHA256": sha256(args.docker_compose_bin)},
             sort_keys=True, indent=2) + "\n")
@@ -963,11 +1024,11 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
         cli_result, vscode_result, suites_passed = run_suite_pair(
             lambda: command_outcome(cli, env={**lane_env, "DEVCONTAINER_DOCKER_ORACLE_HOST": endpoint},
                                     timeout=3 * 60 * 60,
-                                    capture_directory=evidence / "docker" / "controller-cli"),
+                                    capture_directory=controller_capture_directory(evidence, "docker", "cli")),
             lambda: command_outcome(vscode, env={**lane_env, "DEVCONTAINER_DOCKER_ORACLE_HOST": endpoint,
                                                  "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                                                  "DEVCONTAINER_VSCODE_APP": str(args.vscode_app)}, timeout=90 * 60,
-                                    capture_directory=evidence / "vscode" / "docker" / "controller-vscode"),
+                                    capture_directory=controller_capture_directory(evidence, "docker", "vscode")),
             lambda: cli_cleanup_is_complete(evidence, "docker"),
             lambda: vscode_cleanup_is_complete(evidence, "docker"))
         for suite, command_result, result_path in (
@@ -1019,6 +1080,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--accepted-state", required=True, type=Path)
     parser.add_argument("--docker-bin", required=True, type=Path)
     parser.add_argument("--docker-compose-bin", required=True, type=Path)
+    parser.add_argument("--docker-buildx-bin", required=True, type=Path,
+                        help="canonical manifest-pinned docker-buildx executable")
     parser.add_argument("--stock-container-bin", required=True, type=Path)
     parser.add_argument("--compose-container-bin", required=True, type=Path)
     parser.add_argument("--compose-provider-bin", required=True, type=Path)
@@ -1091,10 +1154,7 @@ def main() -> int:
                      "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                      "DEVCONTAINER_VSCODE_APP": str(args.vscode_app),
                      "DEVCONTAINER_VSCODE_LIVE": "1"})
-    docker_config = args.evidence / "docker-config"
-    plugin_directory = docker_config / "cli-plugins"
-    plugin_directory.mkdir(parents=True, mode=0o700)
-    (plugin_directory / "docker-compose").symlink_to(args.docker_compose_bin)
+    docker_config = create_docker_cli_config(args.evidence, args)
     base_env["DOCKER_CONFIG"] = str(docker_config)
     reference = args.evidence / "vscode" / "reference"
     reference.mkdir(parents=True, mode=0o700)
@@ -1229,6 +1289,7 @@ def main() -> int:
         # The API/front-end bytes are checked again after all lane switching.
         if (sha256(args.stock_container_bin) != binaries["stockContainer"]
                 or sha256(args.compose_container_bin) != binaries["composeContainer"]
+                or sha256(args.docker_buildx_bin) != binaries["dockerBuildx"]
                 or sha256(args.compose_provider_bin) != binaries["composeProvider"]
                 or sha256(args.stock_container_bin.parent / "container-apiserver") != binaries["stockAPIServer"]
                 or sha256(args.compose_container_bin.parent / "container-apiserver") != binaries["composeAPIServer"]):

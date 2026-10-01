@@ -60,11 +60,16 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         "engineSHA256",
         "composeSHA256",
         "composeBottleSHA256",
+        "buildxSHA256",
     ):
         _require(
             SHA256.fullmatch(str(docker.get(field, ""))) is not None,
             f"referencePins.docker.{field} must be a SHA-256 digest",
         )
+    _require(
+        re.fullmatch(r"\d+\.\d+\.\d+", str(docker.get("buildxVersion", ""))) is not None,
+        "referencePins.docker.buildxVersion must be a pinned semantic version",
+    )
 
     release_host = references.get("releaseHost")
     _require(

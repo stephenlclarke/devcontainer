@@ -87,6 +87,46 @@ class SuiteLifecycleTests(unittest.TestCase):
 
 
 class TimeoutOwnershipTests(unittest.TestCase):
+    def test_runner_can_recreate_disposable_output_without_losing_controller_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "evidence"
+            suite_output = evidence / "docker"
+            suite_output.mkdir(parents=True)
+            (suite_output / "stale.json").write_text("stale")
+            capture = qualify.controller_capture_directory(evidence, "docker", "cli")
+            vscode_output = evidence / "vscode" / "docker"
+            self.assertFalse(capture.is_relative_to(suite_output))
+            self.assertFalse(capture.is_relative_to(vscode_output))
+            script = (
+                "import pathlib,shutil,sys; out=pathlib.Path(sys.argv[1]); "
+                "shutil.rmtree(out); out.mkdir(parents=True); "
+                "print('builder stdout'); print('builder stderr',file=sys.stderr); sys.exit(7)"
+            )
+
+            with mock.patch.object(qualify, "REPOSITORY", Path(__file__).resolve().parents[2]):
+                outcome = qualify.command_outcome(
+                    [sys.executable, "-c", script, str(suite_output)],
+                    env=dict(os.environ), timeout=10, capture_directory=capture)
+
+            self.assertEqual(outcome.returncode, 7)
+            self.assertEqual((capture / "stdout.log").read_text(), "builder stdout\n")
+            self.assertEqual((capture / "stderr.log").read_text(), "builder stderr\n")
+            command = json.loads((capture / "controller-command.json").read_text())
+            self.assertEqual(command["executable"], Path(sys.executable).name)
+            self.assertEqual(command["exitCode"], 7)
+            self.assertFalse(command["timedOut"])
+            self.assertEqual(command["stdoutBytes"], len(b"builder stdout\n"))
+            self.assertEqual(command["stderrBytes"], len(b"builder stderr\n"))
+            self.assertFalse((suite_output / "stale.json").exists())
+
+    def test_controller_capture_rejects_unknown_suite_or_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            for lane, suite in (("unknown", "cli"), ("docker", "unknown")):
+                with self.subTest(lane=lane, suite=suite):
+                    with self.assertRaisesRegex(ValueError, "unknown parity lane or suite"):
+                        qualify.controller_capture_directory(evidence, lane, suite)
+
     def test_timeout_sends_term_then_kill_to_the_new_session_process_group(self) -> None:
         process = mock.Mock()
         process.pid = 9123
@@ -180,6 +220,110 @@ class AdmissionBoundaryTests(unittest.TestCase):
 
 
 class ProviderPinTests(unittest.TestCase):
+    def test_provider_receipt_binds_observed_buildx_version_and_binary_hash(self) -> None:
+        manifest_path = Path(__file__).resolve().parents[2] / "Tests/Parity/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        docker_pins = manifest["referencePins"]["docker"]
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            qualify.write_json(evidence / "docker-runtime-identity.json", {
+                "clientVersion": docker_pins["cliVersion"],
+                "engineVersion": docker_pins["engineVersion"],
+                "engineCommit": docker_pins["engineCommit"],
+                "engineApiVersion": docker_pins["engineApiVersion"],
+                "dockerdSHA256": docker_pins["engineSHA256"],
+                "composeVersion": docker_pins["composeVersion"],
+                "buildxVersion": docker_pins["buildxVersion"],
+                "buildxSHA256": docker_pins["buildxSHA256"],
+            })
+            hashes = {"docker": docker_pins["cliSHA256"],
+                      "dockerBuildx": docker_pins["buildxSHA256"],
+                      "dockerCompose": docker_pins["composeSHA256"],
+                      "stockContainer": "1" * 64, "stockAPIServer": "2" * 64,
+                      "composeContainer": "3" * 64, "composeAPIServer": "4" * 64,
+                      "composeProvider": "5" * 64, "colima": "6" * 64,
+                      "vscode": "7" * 64}
+            args = argparse.Namespace(_manifest=manifest, _provider_hashes=hashes,
+                                      colima_bin=Path("/pinned/colima"))
+            colima = subprocess.CompletedProcess(["colima", "--version"], 0, "colima 0.10.3\n", "")
+            with mock.patch.object(qualify, "run", return_value=colima):
+                providers = qualify.make_provider_tools(args, evidence)
+            self.assertEqual(providers["docker"]["buildxVersion"], "0.37.1")
+            self.assertEqual(providers["docker"]["buildxSHA256"], hashes["dockerBuildx"])
+            docker_evidence = json.loads((evidence / "providers/docker.json").read_text())
+            self.assertEqual(docker_evidence["buildxVersion"], "0.37.1")
+            self.assertEqual(docker_evidence["buildxSHA256"], hashes["dockerBuildx"])
+
+    def test_buildx_hash_mismatch_is_rejected_before_version_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary).resolve() / "docker-buildx"
+            executable.write_text("pinned fixture")
+            executable.chmod(0o755)
+            pins = {"buildxSHA256": "a" * 64, "buildxVersion": "0.37.1"}
+            with (mock.patch.object(qualify, "sha256", return_value="b" * 64),
+                  mock.patch.object(qualify, "docker_buildx_version") as version,
+                  self.assertRaisesRegex(ValueError, "bytes differ")):
+                qualify.admit_docker_buildx(executable, pins)
+            version.assert_not_called()
+
+    def test_buildx_symlink_is_rejected_as_noncanonical(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            executable = root / "docker-buildx"
+            alias = root / "buildx"
+            executable.write_text("pinned fixture")
+            executable.chmod(0o755)
+            alias.symlink_to(executable)
+            with (mock.patch.object(qualify, "sha256") as digest,
+                  self.assertRaisesRegex(ValueError, "canonical absolute path")):
+                qualify.admit_docker_buildx(alias, {"buildxSHA256": "a" * 64,
+                                                    "buildxVersion": "0.37.1"})
+            digest.assert_not_called()
+
+    def test_buildx_version_mismatch_is_rejected_after_hash_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary).resolve() / "docker-buildx"
+            executable.write_text("pinned fixture")
+            executable.chmod(0o755)
+            pins = {"buildxSHA256": "a" * 64, "buildxVersion": "0.37.1"}
+            with (mock.patch.object(qualify, "sha256", return_value="a" * 64),
+                  mock.patch.object(qualify, "docker_buildx_version", return_value="0.37.2"),
+                  self.assertRaisesRegex(ValueError, "version differs")):
+                qualify.admit_docker_buildx(executable, pins)
+
+    def test_isolated_docker_config_contains_only_explicit_compose_and_buildx(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            compose = root / "docker-compose"
+            buildx = root / "docker-buildx"
+            compose.write_text("compose")
+            buildx.write_text("buildx")
+            args = argparse.Namespace(docker_compose_bin=compose, docker_buildx_bin=buildx)
+
+            config = qualify.create_docker_cli_config(root / "evidence", args)
+
+            plugins = config / "cli-plugins"
+            self.assertEqual(sorted(path.name for path in plugins.iterdir()),
+                             ["docker-buildx", "docker-compose"])
+            self.assertEqual((plugins / "docker-buildx").resolve(), buildx)
+            self.assertEqual((plugins / "docker-compose").resolve(), compose)
+
+    def test_buildx_version_is_read_from_the_explicit_executable(self) -> None:
+        executable = Path("/opt/homebrew/Cellar/docker-buildx/0.37.1/bin/docker-buildx")
+        result = subprocess.CompletedProcess([str(executable), "version"], 0,
+                                            "github.com/docker/buildx v0.37.1 Homebrew\n", "")
+        with mock.patch.object(qualify, "run", return_value=result) as run:
+            self.assertEqual(qualify.docker_buildx_version(executable), "0.37.1")
+        run.assert_called_once_with([str(executable), "version"],
+                                    env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                                    timeout=10, capture=True)
+
+    def test_buildx_version_rejects_unparseable_output(self) -> None:
+        with mock.patch.object(qualify, "run", return_value=subprocess.CompletedProcess(
+                ["buildx", "version"], 0, "Buildx development build\n", "")):
+            with self.assertRaisesRegex(ValueError, "parseable semantic version"):
+                qualify.docker_buildx_version(Path("/bin/docker-buildx"))
+
     def test_stopped_colima_needs_no_docker_context_or_existing_socket(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary).resolve()

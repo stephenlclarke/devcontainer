@@ -87,6 +87,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             "providerTools": {
                 "docker": {"sha256": pins["docker"]["cliSHA256"],
                            "version": pins["docker"]["cliVersion"],
+                           "buildxVersion": pins["docker"]["buildxVersion"],
+                           "buildxSHA256": pins["docker"]["buildxSHA256"],
                            "engineVersion": pins["docker"]["engineVersion"],
                            "engineCommit": pins["docker"]["engineCommit"],
                            "engineApiVersion": pins["docker"]["engineApiVersion"],
@@ -198,6 +200,23 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         receipt = dict(self.receipt, sourceCommit="f" * 40)
         with self.assertRaisesRegex(QualificationError, "source commit"):
             validate_receipt(receipt, REPOSITORY, self.commit)
+
+    def test_missing_or_tampered_buildx_identity_is_rejected(self) -> None:
+        receipt = json.loads(json.dumps(self.receipt))
+        del receipt["providerTools"]["docker"]["buildxSHA256"]
+        with patch("verify_local_qualification.subprocess.run", side_effect=self._mock_git):
+            with self.assertRaisesRegex(QualificationError, "docker tool fields"):
+                validate_receipt(receipt, REPOSITORY, self.commit)
+        receipt = json.loads(json.dumps(self.receipt))
+        receipt["providerTools"]["docker"]["buildxSHA256"] = "0" * 64
+        with patch("verify_local_qualification.subprocess.run", side_effect=self._mock_git):
+            with self.assertRaisesRegex(QualificationError, "Docker CLI differs"):
+                validate_receipt(receipt, REPOSITORY, self.commit)
+        receipt = json.loads(json.dumps(self.receipt))
+        receipt["providerTools"]["docker"]["buildxVersion"] = "0.37.2"
+        with patch("verify_local_qualification.subprocess.run", side_effect=self._mock_git):
+            with self.assertRaisesRegex(QualificationError, "Docker CLI differs"):
+                validate_receipt(receipt, REPOSITORY, self.commit)
 
     def test_trusted_receipt_with_wrong_controller_digest_is_rejected(self) -> None:
         receipt = dict(self.receipt, controllerSHA256="f" * 64)
@@ -324,6 +343,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "clientVersion": docker["version"], "dockerCLISHA256": docker["sha256"],
                 "engineVersion": docker["engineVersion"], "engineCommit": docker["engineCommit"],
                 "engineApiVersion": docker["engineApiVersion"], "engineSHA256": docker["engineSHA256"],
+                "buildxVersion": docker["buildxVersion"],
+                "buildxSHA256": docker["buildxSHA256"],
                 "composeVersion": compose["version"], "composeSHA256": compose["sha256"],
                 "bottleSHA256": compose["bottleSHA256"],
             },
@@ -345,6 +366,13 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         }
         inventory = {path: json.dumps(value).encode() for path, value in documents.items()}
         authenticate_provider_evidence(self.receipt, inventory)
+        docker_document = documents[docker["engineEvidence"]["path"]]
+        tampered_inventory = dict(inventory)
+        docker_document = dict(docker_document, buildxSHA256="0" * 64)
+        tampered_inventory[docker["engineEvidence"]["path"]] = json.dumps(
+            docker_document).encode()
+        with self.assertRaisesRegex(QualificationError, "Docker engine evidence"):
+            authenticate_provider_evidence(self.receipt, tampered_inventory)
         apple["apiServerSHA256"] = "0" * 64
         with self.assertRaisesRegex(QualificationError, "apple-stock provider/API"):
             authenticate_provider_evidence(self.receipt, inventory)
@@ -442,6 +470,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             "docker": {
                 "version": pins["docker"]["cliVersion"],
                 "sha256": provider_hashes["docker"],
+                "buildxVersion": pins["docker"]["buildxVersion"],
+                "buildxSHA256": pins["docker"]["buildxSHA256"],
                 "engineVersion": pins["docker"]["engineVersion"],
                 "engineCommit": pins["docker"]["engineCommit"],
                 "engineApiVersion": pins["docker"]["engineApiVersion"],
@@ -617,6 +647,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "engineCommit": tools["docker"]["engineCommit"],
                 "engineApiVersion": tools["docker"]["engineApiVersion"],
                 "engineSHA256": tools["docker"]["engineSHA256"],
+                "buildxVersion": tools["docker"]["buildxVersion"],
+                "buildxSHA256": tools["docker"]["buildxSHA256"],
                 "composeVersion": tools["dockerCompose"]["version"],
                 "composeSHA256": tools["dockerCompose"]["sha256"],
                 "bottleSHA256": tools["dockerCompose"]["bottleSHA256"],
@@ -641,6 +673,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "docker": {
                     "version": tools["docker"]["version"],
                     "sha256": tools["docker"]["sha256"],
+                    "buildxVersion": tools["docker"]["buildxVersion"],
+                    "buildxSHA256": tools["docker"]["buildxSHA256"],
                     "engineVersion": tools["docker"]["engineVersion"],
                     "engineCommit": tools["docker"]["engineCommit"],
                     "engineApiVersion": tools["docker"]["engineApiVersion"],
