@@ -18,6 +18,18 @@ struct ManagedNetworkHostsStoreTests {
         try body(ManagedNetworkHostsStore(root: root))
     }
 
+    @Test func `physical root spelling is stable and a linked root is rejected`() throws {
+        let parent = TestStorage.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let root = parent.appendingPathComponent("network-hosts", isDirectory: true)
+        let store = try ManagedNetworkHostsStore(root: root)
+        #expect(store.root.path == root.path)
+        let linked = parent.appendingPathComponent("linked-network-hosts", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: root)
+        #expect(throws: (any Error).self) { try ManagedNetworkHostsStore(root: linked) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     @Test func `updates retain inode and unmanaged entries across store restart`() throws {
         try withStore { store in
             let owner = identity()

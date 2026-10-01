@@ -89,11 +89,33 @@ public struct DockerBuildArchive: Sendable {
     }
 
     static func requireSeparateStage(_ stage: URL, context: URL) throws {
-        let root = context.standardizedFileURL.resolvingSymlinksInPath().path
-        let path = stage.standardizedFileURL.resolvingSymlinksInPath().path
+        let root = try physicalLocation(context)
+        let path = try physicalLocation(stage)
         guard root != "/", path != root, !path.hasPrefix(root + "/") else {
             throw DockerFrontendError.usage("build context must not contain its temporary staging directory")
         }
+    }
+
+    private static func physicalLocation(_ url: URL) throws -> String {
+        let path = url.path
+        var info = stat()
+        let existing: String
+        let missingLeaf: String?
+        if lstat(path, &info) == 0 {
+            existing = path
+            missingLeaf = nil
+        } else {
+            guard errno == ENOENT else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            existing = url.deletingLastPathComponent().path
+            missingLeaf = url.lastPathComponent
+        }
+        guard let resolved = realpath(existing, nil) else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { free(resolved) }
+        let physical = String(cString: resolved)
+        guard let missingLeaf else { return physical }
+        return URL(fileURLWithPath: physical, isDirectory: true).appendingPathComponent(missingLeaf).path
     }
 
     private static func archive(

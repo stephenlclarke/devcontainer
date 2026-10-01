@@ -34,10 +34,18 @@ struct ManagedNetworkHostsStore: Sendable {
     let root: URL
 
     init(root: URL) throws {
-        self.root = root.standardizedFileURL
         try FileManager.default.createDirectory(
-            at: self.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
+            at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
         )
+        // Foundation can rewrite an existing /private/var path through /var.
+        // Resolve only the parent so openDirectory still rejects a symlinked
+        // root leaf with O_NOFOLLOW.
+        guard let resolvedParent = realpath(root.deletingLastPathComponent().path, nil) else {
+            throw Self.failure()
+        }
+        defer { free(resolvedParent) }
+        self.root = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
+            .appendingPathComponent(root.lastPathComponent, isDirectory: true)
         let descriptor = try Self.openDirectory(self.root.path)
         defer { close(descriptor) }
     }

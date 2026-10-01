@@ -133,6 +133,12 @@ struct DockerBuildTests {
                 try DockerBuildArchive.requireSeparateStage(alias.appendingPathComponent("stage"), context: context)
             }
         }
+        if root.path.hasPrefix("/private/var/") {
+            let varAlias = URL(fileURLWithPath: "/var/" + String(root.path.dropFirst("/private/var/".count)))
+            #expect(throws: DockerFrontendError.self) {
+                try DockerBuildArchive.requireSeparateStage(varAlias.appendingPathComponent("stage"), context: root)
+            }
+        }
         try DockerBuildArchive.requireSeparateStage(
             root.appendingPathComponent("stage"),
             context: root.appendingPathComponent("context")

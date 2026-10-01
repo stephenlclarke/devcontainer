@@ -53,13 +53,33 @@ struct DockerExecTests {
 
     @Test
     func `output writes bytes and reports closed pipes without SIGPIPE`() async throws {
-        let pipe = Pipe()
-        defer { try? pipe.fileHandleForWriting.close() }
-        let writer = try DockerFrontendOutput(descriptor: pipe.fileHandleForWriting.fileDescriptor)
+        var descriptors: [Int32] = [-1, -1]
+        guard Darwin.pipe(&descriptors) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            if descriptors[0] >= 0 {
+                _ = Darwin.close(descriptors[0])
+            }
+            _ = Darwin.close(descriptors[1])
+        }
+        for descriptor in descriptors {
+            guard fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
+        }
+        let writer = try DockerFrontendOutput(descriptor: descriptors[1])
         try await writer.write(Data())
         try await writer.write(Data("hello".utf8))
-        #expect(try pipe.fileHandleForReading.read(upToCount: 5) == Data("hello".utf8))
-        try pipe.fileHandleForReading.close()
+        var received = [UInt8](repeating: 0, count: 5)
+        let count = received.withUnsafeMutableBytes {
+            Darwin.read(descriptors[0], $0.baseAddress, $0.count)
+        }
+        #expect(count == 5)
+        #expect(Data(received) == Data("hello".utf8))
+        #expect(Darwin.close(descriptors[0]) == 0)
+        descriptors[0] = -1
         await #expect(throws: POSIXError.self) { try await writer.write(Data("late".utf8)) }
         #expect(throws: POSIXError.self) { try DockerFrontendOutput(descriptor: -1) }
     }

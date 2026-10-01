@@ -75,6 +75,7 @@ struct LifecycleCommandTests {
         defer { fixture.remove() }
         let plugin = fixture.root.appendingPathComponent("libexec/container/plugins/devcontainer/bin/devcontainer")
         let direct = try LifecycleInstallation(executable: fixture.executable)
+        #expect(direct.node.path == fixture.root.appendingPathComponent("libexec/devcontainer/reference/node").path)
         #expect(try LifecycleInstallation(executable: plugin).node == direct.node)
         let alias = fixture.root.appendingPathComponent("alias")
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.executable)

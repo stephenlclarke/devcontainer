@@ -61,7 +61,9 @@ struct LifecycleInstallation: Sendable {
     let compose: URL
 
     init(executable: URL) throws {
-        let location = executable.resolvingSymlinksInPath().standardizedFileURL
+        guard let location = Self.physicalLocation(executable) else {
+            throw ValidationError("cannot locate the devcontainer installation")
+        }
         let suffix = "/libexec/container/plugins/devcontainer/bin/devcontainer"
         let prefix = location.path.hasSuffix(suffix)
             ? URL(fileURLWithPath: String(location.path.dropLast(suffix.count)), isDirectory: true)
@@ -71,15 +73,33 @@ struct LifecycleInstallation: Sendable {
         docker = prefix.appendingPathComponent("bin/devcontainer-docker")
         compose = prefix.appendingPathComponent("bin/devcontainer-compose")
         for file in [node, cli, docker, compose] {
-            let canonical = file.resolvingSymlinksInPath().standardizedFileURL
-            let values = try? canonical.resourceValues(forKeys: [.isRegularFileKey])
-            guard canonical.path.hasPrefix(prefix.path + "/"), values?.isRegularFile == true,
+            let canonical = Self.physicalLocation(file)
+            let values = try? canonical?.resourceValues(forKeys: [.isRegularFileKey])
+            guard let canonical, canonical.path.hasPrefix(prefix.path + "/"), values?.isRegularFile == true,
                   file == cli || FileManager.default.isExecutableFile(atPath: file.path)
             else {
                 throw ValidationError(
                     "missing or unsafe private lifecycle asset: \(file.path); install a complete package"
                 )
             }
+        }
+    }
+
+    private static func physicalLocation(_ file: URL) -> URL? {
+        var existing = file
+        var missing: [String] = []
+        var info = stat()
+        while lstat(existing.path, &info) != 0 {
+            guard errno == ENOENT else { return nil }
+            missing.insert(existing.lastPathComponent, at: 0)
+            let parent = existing.deletingLastPathComponent()
+            guard parent.path != existing.path else { return nil }
+            existing = parent
+        }
+        guard let resolved = realpath(existing.path, nil) else { return nil }
+        defer { free(resolved) }
+        return missing.reduce(URL(fileURLWithPath: String(cString: resolved))) {
+            $0.appendingPathComponent($1)
         }
     }
 }
