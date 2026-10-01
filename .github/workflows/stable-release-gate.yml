@@ -104,6 +104,7 @@ jobs:
 
           required_workflows=(
             ci.yml
+            codeql.yml
             dependency-review.yml
             docs.yml
             homebrew.yml

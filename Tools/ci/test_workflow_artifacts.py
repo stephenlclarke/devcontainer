@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -611,6 +613,50 @@ jobs:
         self.assertLess(prime, initialize)
         self.assertLess(initialize, recompile)
         self.assertLess(recompile, analyze)
+
+    def test_codeql_is_required_by_release_authorities_and_fails_closed(self) -> None:
+        for name in ("prebuilt-binaries.yml", "stable-release-gate.yml"):
+            contents = (WORKFLOWS / name).read_text(encoding="utf-8")
+            required = re.search(
+                r"(?ms)^[ \t]+required_workflows=\([ \t]*\n(.*?)^[ \t]+\)",
+                contents,
+            )
+            self.assertIsNotNone(required, name)
+            entries = re.findall(
+                r"(?m)^[ \t]+([a-z0-9-]+\.yml)[ \t]*$", required.group(1)
+            )
+            self.assertIn("codeql.yml", entries, name)
+
+        codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")
+        guard = workflow_job_block(codeql, "require-main-push-enabled")
+        self.assertIn(
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            guard,
+        )
+        step = workflow_step_block(guard, "Fail closed when CodeQL is disabled")
+        self.assertIn("CODEQL_ENABLED: ${{ vars.CODEQL_ENABLED }}", step)
+        script_match = re.search(
+            r"(?m)^        run: \|\n((?:^          .*\n)+)", step
+        )
+        self.assertIsNotNone(script_match)
+        script = textwrap.dedent(script_match.group(1))
+        for value, expected in (("false", 1), ("true", 0)):
+            with self.subTest(CODEQL_ENABLED=value):
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", script],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "CODEQL_ENABLED": value},
+                    check=False,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if value == "false":
+                    self.assertIn("CodeQL is required for main release authority", result.stderr)
+
+        analyze = workflow_job_block(codeql, "analyze")
+        self.assertIn("vars.CODEQL_ENABLED == 'true'", analyze)
+        self.assertIn("github.event_name != 'pull_request'", analyze)
+        self.assertIn("github.event.pull_request.draft == false", analyze)
 
     def test_write_permissions_are_scoped_to_mutating_jobs(self) -> None:
         codeql = (WORKFLOWS / "codeql.yml").read_text(encoding="utf-8")

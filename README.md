@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+Current and stable publication require successful CodeQL analysis for the exact main commit, alongside the existing source-quality and runtime release gates. Keep the repository variable `CODEQL_ENABLED=true` for release validation; disabling it makes main checks fail. Draft pull requests retain their analysis skip.
+
 Release-comparison work now includes a [published devcontainer 1.0.1 baseline adapter and live results](docs/bazel-test-harness.md#published-devcontainer-baseline). The current stock candidate passes image-configuration and lifecycle checks that 1.0.1 fails on image identity/lookup. This demonstrates correctness improvements, not speedups: failed cases are excluded from timing ratios. Quiet previous/new stable-release benchmarks remain outstanding.
 
 The [workspace-launch observations](docs/evidence/previous-current-d01-20260920.md) and [lifecycle observations](docs/evidence/previous-current-e02-20260920.md) now include reproducible JSON evidence with exact product hashes, source commits and original case seals. The [read-only previous/current reporter](docs/bazel-test-harness.md#previouscurrent-observation-reports) keeps local candidates separate from published releases, requires matched harness/provider/guest inputs, and never pools away a failed sample. These reports do not establish a measured speed improvement.

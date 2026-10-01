@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+Current and stable publication omitted CodeQL from their exact-source workflow authorities. Require its successful main-push run in both paths and reject disabled analysis on main, so a skipped job cannot admit a release. Preserve draft-PR iteration without analysis.
+
 Three workflow regression checks still assumed the older inline stock test command and aggregate counts of timeout settings and hidden artifact uploads. Verify the actual named stock, coverage, sanitizer and Sonar steps instead, including their bounded process-group runner, unchanged strict compiler flags and retained hidden logs. Preserve the failed CI receipt rather than weakening execution or evidence requirements.
 
 The legacy parity contract named older runtime releases and an older physical host than the immutable assets and toolchain used for native qualification. Align those recorded pins with the selected released inputs and actual designated host before the next campaign; retain all fixture semantics and require fresh identity-bound evidence. Hosted source validation has a separate toolchain and need not be migrated to change the physical qualification contract.
