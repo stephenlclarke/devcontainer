@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "319254d1455e04b7c36837b190cbfc3f76f9ae229589a4443839687cdf915764",
+  "archiveSHA256": "99b5f10537ee6c8c3a1a97e3367f71035e7d70bc9e44e7b983e0d8c0c08deca1",
   "asset": "foundation-enhanced-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "d10f759df18cdd6ebdaa66c9c9c4d0d4090e8e3ae65faf172de322f7643816b0",
+    "eventsSHA256": "bf8f653d75dfd5657ccb5829dff360a6b5a7514f7ca01ede4dbfbe14b6ac67a8",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_swift_configuration_toml/ConfigurationTOML.swiftdoc": {
         "sha256": "156cc91e502fd1e26da5b052b167cb6ac80dbea2c8111fe8c6a9486e9aed3c7c",
@@ -876,8 +876,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "foundation-enhanced-native-evidence.json",
-  "evidenceSHA256": "575ac4858dccecce889db121bd372c2367a68c718f1d7dcfda34bae84e440989",
+  "evidenceAsset": "foundation-enhanced-evidence.json",
+  "evidenceSHA256": "cbcc6ed9612238e789fd99f7b59e8fe1bf7cba186a8454bd75963010feb638b7",
   "group": "foundation",
   "lower": {
     "argument-parser": {
@@ -886,7 +886,7 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     }
   },
-  "producerCommit": "9ff33746bd75608f4be7b594ef44fd84a53cf18f",
+  "producerCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
   "profile": "enhanced",
   "reachedSources": {
     "async-http-client": {
@@ -1046,7 +1046,7 @@
     "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
     "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
     "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
-    "launcher": "8414afcbe61d0df2b2733d2e1b4a8575406d228cdaf7250cb9bd5df56bfd79cd",
+    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
     "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
     "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
     "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
@@ -1186,8 +1186,8 @@
     "yams": "a27b21e0c81c5bf42049b897a62aaf387e80f279",
     "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
   },
-  "tag": "layer-foundation-enhanced-319254d1455e04b7c368",
-  "targetCommit": "9ff33746bd75608f4be7b594ef44fd84a53cf18f",
+  "tag": "layer-foundation-enhanced-99b5f10537ee6c8c3a1a",
+  "targetCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
   "toolchain": {
     "bazelVersion": "8.8.0",
     "sdkSettingsSHA256": "7b93ad7e534cc4b31c6a4e39d19b5e0288acf2168c2649479a796d1cb51939fb",
