@@ -286,6 +286,8 @@ The opt-in `native-package-stage`, `native-package-sign`, and `native-package-fi
 
 This handoff remains opt-in while the public stable/current package workflow is migrated. Finalization records `distributionReady: false`: complete quality, runtime parity, installation, restoration, exact-source release authority and publication gates remain required. Signing requires independently supplied candidate and staging-provenance hashes; legacy three-product invocations without these inputs cannot use the new signing helper.
 
+The next native qualification contract selects the already locked Apple `container` 1.4.1 and external `container-compose` 0.15.1 assets on the designated macOS 27/Xcode 27 host. It requires fresh evidence for all 28 fixtures in all three lanes; this configuration change does not extend the published release's compatibility claims. Hosted source checks keep their own toolchain configuration.
+
 Use `devcontainer diagnostics --output devcontainer-diagnostics.tar.gz` to
 create a bounded, privacy-redacted support archive whose JSON manifest is
 printed before the archive is written.

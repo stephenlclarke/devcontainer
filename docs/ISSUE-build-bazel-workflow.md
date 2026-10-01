@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The legacy parity contract named older runtime releases and an older physical host than the immutable assets and toolchain used for native qualification. Align those recorded pins with the selected released inputs and actual designated host before the next campaign; retain all fixture semantics and require fresh identity-bound evidence. Hosted source validation has a separate toolchain and need not be migrated to change the physical qualification contract.
+
 The public package path still rebuilds three SwiftPM products and lacks authenticated native staging inputs. Add explicit Make entry points for retained four-product staging, six-executable signing/notarization and checkout-free accepted-state finalization. Preserve the original candidate identity, source-pinned legal closure, all release authority gates and failed evidence. These entries are opt-in until the public stable/current workflow consumes the same completed handoff.
 
 The native candidate includes a fourth public frontend and private Node/official CLI files that the legacy package inventory omitted. Native package verification must require their complete closure and exact SPDX metadata without changing historical three-product verification. Legal collection must select the profile lock and reviewed license ledger, retain complete exact-source texts, and fail before admission if source, policy, Git blob bytes or declared licensing differs.

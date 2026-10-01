@@ -2,6 +2,8 @@
 
 ## Status and decision
 
+The next native qualification contract uses the already locked stock Apple `container` 1.4.1 and separately released `container-compose` 0.15.1 assets on the designated macOS 27/Xcode 27 host. Historical stable behavior described below remains tied to its original runtime versions. Updating the campaign pins does not certify the newer combination: all 28 scenarios in all three lanes must retain fresh identity-bound evidence, including Compose lifecycle and actual VS Code sessions.
+
 This document describes the implemented `devcontainer` architecture. The
 project provides unmodified VS Code Dev Containers compatibility by placing a
 Docker Engine API compatibility service in front of Apple-native runtime
