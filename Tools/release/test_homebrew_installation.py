@@ -318,7 +318,7 @@ class HomebrewInstallationTests(unittest.TestCase):
         self.assertEqual(receipt["beforeInventorySHA256"], receipt["afterInventorySHA256"])
         self.assertEqual(tree_sha(self.cellar), self.before)
         self.assertEqual(self.unrelated.read_text(), "keep me")
-        self.assertEqual(self.guard.owner, None)
+        self.assertIsNone(self.guard.owner)
         self.assertFalse(self.scratch.exists())
         self.assertTrue((self.retained / receipt["backupId"] / "manifest.json").is_file())
 

@@ -694,7 +694,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             cli_report = json.loads((output / "comparison.json").read_text())
             vscode_report = json.loads((output / "vscode/comparison.json").read_text())
             self.assertEqual(cli_report["localQualification"]["receiptSHA256"], receipt_digest)
-            self.assertEqual(vscode_report["localQualification"]["executedLocally"], True)
+            self.assertTrue(vscode_report["localQualification"]["executedLocally"])
             self.assertTrue((output / "matrix.md").is_file())
             self.assertTrue((output / "vscode/matrix.md").is_file())
 
