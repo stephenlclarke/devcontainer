@@ -1,4 +1,5 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+import Darwin
 import Foundation
 
 /// Explicit scratch selection for test fixtures on both SwiftPM and Bazel.
@@ -19,13 +20,18 @@ public enum TestStorage {
         let path = environment["TEST_TMPDIR"] ?? environment["TMPDIR"]
             ?? fallback
         guard path.hasPrefix("/") else { return nil }
-        let directory = URL(fileURLWithPath: path, isDirectory: true)
-            .standardizedFileURL.resolvingSymlinksInPath()
+        // Foundation can keep macOS's /var -> /private/var alias here. SQLite's
+        // NOFOLLOW open and the private keychain require a real filesystem path.
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        let directory = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
         if environment["BAZEL_TEST"] == "1" {
             guard let root = environment["DEVCONTAINER_TEST_SCRATCH_ROOT"], root.hasPrefix("/"), root != "/"
             else { return nil }
-            let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
-            let rootPath = rootURL.resolvingSymlinksInPath().path
+            let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+            guard let resolvedRoot = realpath(root, nil) else { return nil }
+            defer { free(resolvedRoot) }
+            let rootPath = String(cString: resolvedRoot)
             guard rootPath == rootURL.path, rootPath != "/",
                   directory.path.hasPrefix(rootPath + "/") else { return nil }
         }

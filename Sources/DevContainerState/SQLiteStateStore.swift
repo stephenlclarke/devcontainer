@@ -34,8 +34,16 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
     public let path: URL
 
     public init(path: URL) throws {
-        self.path = path.standardizedFileURL
-        try Self.prepareParentDirectory(for: self.path)
+        try Self.prepareParentDirectory(for: path)
+        // Foundation can rewrite an existing /private/var database path back
+        // through /var. Resolve only the checked parent: the database leaf
+        // must retain its identity for the output connection's NOFOLLOW guard.
+        guard let resolvedParent = realpath(path.deletingLastPathComponent().path, nil) else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { free(resolvedParent) }
+        self.path = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
+            .appendingPathComponent(path.lastPathComponent)
 
         var handle: OpaquePointer?
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX

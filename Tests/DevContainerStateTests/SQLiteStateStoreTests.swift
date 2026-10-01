@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 import CSQLite
+import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
 import DevContainerState
@@ -37,6 +38,56 @@ struct SQLiteStateStoreTests {
             dockerID: DockerID(rawValue: String(repeating: "a", count: 64)),
             imageID: creation.imageID, spec: creation.spec, createdAt: creation.nativeCreatedAt
         )
+    }
+
+    @Test func `aliased parent stays canonical across reopen without following the database leaf`() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let actualParent = directory.appendingPathComponent("actual/child", isDirectory: true)
+        try FileManager.default.createDirectory(at: actualParent, withIntermediateDirectories: true)
+        let alias = directory.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            at: alias, withDestinationURL: directory.appendingPathComponent("actual", isDirectory: true)
+        )
+        let input = alias.appendingPathComponent("child/state.sqlite")
+        let resolvedParent = try #require(realpath(actualParent.path, nil))
+        defer { free(resolvedParent) }
+        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
+        let expected = canonicalParent.appendingPathComponent("state.sqlite")
+        let store = try SQLiteStateStore(path: input)
+        let storePath = await store.path
+        #expect(storePath.path == expected.path)
+        let metadata = completed(creation())
+        try await store.recordContainerMetadata(metadata)
+
+        let reopened = try SQLiteStateStore(path: input)
+        let reopenedPath = await reopened.path
+        #expect(reopenedPath.path == expected.path)
+        let snapshot = ContainerSnapshot(
+            runtimeID: metadata.runtimeID, dockerID: metadata.dockerID,
+            spec: metadata.spec, state: .created, createdAt: metadata.createdAt
+        )
+        let frame = RuntimeIOFrame(channel: .standardOutput, data: Data("aliased parent".utf8))
+        let journal = try await reopened.beginContainerOutputCapture(snapshot: snapshot)
+        try journal.append(frame)
+        try journal.endSource(.standardOutput)
+        try journal.endSource(.standardError)
+        try journal.finish(complete: true)
+        let history = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
+        var collected: [RuntimeIOFrame] = []
+        for try await saved in history {
+            collected.append(saved)
+        }
+        #expect(collected == [frame])
+
+        let linkedLeaf = actualParent.appendingPathComponent("linked.sqlite")
+        try FileManager.default.createSymbolicLink(at: linkedLeaf, withDestinationURL: expected)
+        let linkedStore = try SQLiteStateStore(path: linkedLeaf)
+        let linkedPath = await linkedStore.path
+        #expect(linkedPath.path == canonicalParent.appendingPathComponent("linked.sqlite").path)
+        await #expect(throws: DevContainerError.self) {
+            try await linkedStore.beginContainerOutputCapture(snapshot: snapshot)
+        }
     }
 
     @Test func `pending creation survives reopen and commits with metadata`() async throws {

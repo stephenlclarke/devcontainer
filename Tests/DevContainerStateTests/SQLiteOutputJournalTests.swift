@@ -1,6 +1,7 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import CSQLite
+import Darwin
 import DevContainerModel
 import DevContainerRuntimeSPI
 import DevContainerState
@@ -272,10 +273,13 @@ struct SQLiteOutputJournalTests {
     func withStore(_ body: (SQLiteStateStore, ContainerSnapshot) async throws -> Void) async throws {
         let environment = ProcessInfo.processInfo.environment
         let root = environment["TEST_TMPDIR"] ?? environment["TMPDIR"] ?? FileManager.default.temporaryDirectory.path
+        let resolved = try #require(realpath(root, nil), "Test scratch must exist")
+        defer { free(resolved) }
+        let canonicalRoot = String(cString: resolved)
         if environment["BAZEL_TEST"] == "1" {
-            try #require(root.hasPrefix("/Volumes/SSD/cf/bazel/"))
+            try #require(canonicalRoot.hasPrefix("/Volumes/SSD/cf/bazel/"))
         }
-        let directory = URL(fileURLWithPath: root).appendingPathComponent("output-journal-\(UUID().uuidString)")
+        let directory = URL(fileURLWithPath: canonicalRoot).appendingPathComponent("output-journal-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
         let snapshot = ContainerSnapshot(
