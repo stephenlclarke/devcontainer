@@ -77,10 +77,11 @@ class @FORMULA_CLASS@ < Formula
     workspace = testpath/"workspace"
     configuration_directory = workspace/".devcontainer"
     configuration_directory.mkpath
-    (configuration_directory/"devcontainer.json").write(JSON.generate(
-      "image" => "fixture.invalid/no-pull:1",
-      "containerEnv" => {"BUNDLE_PROBE" => "packaged"},
-    ))
+    configuration = {
+      "image"        => "fixture.invalid/no-pull:1",
+      "containerEnv" => { "BUNDLE_PROBE" => "packaged" },
+    }
+    (configuration_directory/"devcontainer.json").write(JSON.generate(configuration))
     socket_path = testpath/"engine.sock"
     server = UNIXServer.new(socket_path.to_s)
     requests = []
@@ -97,7 +98,9 @@ class @FORMULA_CLASS@ < Formula
           end
           accepted = path.match?(%r{(?:/v[0-9.]+)?/containers/json\?.*})
           status = accepted ? "200 OK" : "500 Unexpected route"
-          client.write("HTTP/1.1 #{status}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
+          response = "HTTP/1.1 #{status}\r\nContent-Type: application/json\r\n" \
+                     "Content-Length: 2\r\nConnection: close\r\n\r\n[]"
+          client.write(response)
         ensure
           client.close
         end
@@ -107,7 +110,7 @@ class @FORMULA_CLASS@ < Formula
       output = with_env(
         "DEVCONTAINER_SOCKET" => socket_path.to_s,
         "DEVCONTAINER_CONFIG" => (testpath/"devcontainer.toml").to_s,
-        "DEVCONTAINER_STATE" => (testpath/"state.sqlite").to_s,
+        "DEVCONTAINER_STATE"  => (testpath/"state.sqlite").to_s,
       ) do
         shell_output("#{bin}/devcontainer read-configuration --workspace-folder #{workspace} --log-level debug")
       end
@@ -118,7 +121,7 @@ class @FORMULA_CLASS@ < Formula
     end
     result = JSON.parse(output)
     assert_equal "fixture.invalid/no-pull:1", result.fetch("configuration").fetch("image")
-    assert_equal({"BUNDLE_PROBE" => "packaged"}, result.fetch("configuration").fetch("containerEnv"))
+    assert_equal({ "BUNDLE_PROBE" => "packaged" }, result.fetch("configuration").fetch("containerEnv"))
     assert requests.any?
     assert requests.all? { |path| path.match?(%r{(?:/v[0-9.]+)?/containers/json\?.*}) }
   end

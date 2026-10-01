@@ -608,12 +608,14 @@ jobs:
               fi
             done
             brew untap "${test_tap}" >/dev/null 2>&1 || true
+            brew untrust --formula "${test_tap}/${formula}" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
           brew tap-new --no-git "${test_tap}"
           test_tap_root="$(brew --repository "${test_tap}")"
           cp "${formula_path}" "${test_tap_root}/Formula/${formula}.rb"
+          brew trust --formula "${test_tap}/${formula}"
           brew audit --formula --strict --online "${test_tap}/${formula}"
           brew fetch --formula --force "${test_tap}/${formula}"
           brew install --formula "${test_tap}/${formula}"
