@@ -13,7 +13,9 @@ class @FORMULA_CLASS@ < Formula
     bin.install "bin/devcontainer"
     bin.install "bin/devcontainer-engine"
     bin.install "bin/devcontainer-compose"
+    bin.install "bin/devcontainer-docker"
     libexec.install "libexec/container"
+    libexec.install "libexec/devcontainer"
     pkgshare.install "share/devcontainer"
   end
 
@@ -52,9 +54,72 @@ class @FORMULA_CLASS@ < Formula
   end
 
   test do
+    require "json"
+    require "socket"
+
     assert_match "@PRODUCT_VERSION@", shell_output("#{bin}/devcontainer version --short")
     assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
+    assert_match "devcontainer-docker version @PRODUCT_VERSION@",
+                 shell_output("#{bin}/devcontainer-docker --version")
     assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
     assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
+
+    runtime = JSON.parse((libexec/"devcontainer/reference/runtime-lock.json").read)
+    node = libexec/"devcontainer/reference/node"
+    cli = libexec/"devcontainer/reference/cli/devcontainer.js"
+    assert_predicate node, :executable?
+    assert_path_exists libexec/"devcontainer/reference/NODE-LICENSE.txt"
+    assert_path_exists libexec/"devcontainer/reference/cli/LICENSE.txt"
+    assert_path_exists libexec/"devcontainer/reference/cli/ThirdPartyNotices.txt"
+    assert_match "v#{runtime.fetch("node").fetch("version")}", shell_output("#{node} --version")
+    assert_match runtime.fetch("cli").fetch("version"), shell_output("#{node} #{cli} --version")
+
+    workspace = testpath/"workspace"
+    configuration_directory = workspace/".devcontainer"
+    configuration_directory.mkpath
+    (configuration_directory/"devcontainer.json").write(JSON.generate(
+      "image" => "fixture.invalid/no-pull:1",
+      "containerEnv" => {"BUNDLE_PROBE" => "packaged"},
+    ))
+    socket_path = testpath/"engine.sock"
+    server = UNIXServer.new(socket_path.to_s)
+    requests = []
+    server_thread = Thread.new do
+      loop do
+        client = server.accept
+        begin
+          request = client.gets
+          break if request.nil?
+
+          path = request.split[1]
+          requests << path
+          while (header = client.gets) && header != "\r\n"
+          end
+          accepted = path.match?(%r{(?:/v[0-9.]+)?/containers/json\?.*})
+          status = accepted ? "200 OK" : "500 Unexpected route"
+          client.write("HTTP/1.1 #{status}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
+        ensure
+          client.close
+        end
+      end
+    end
+    begin
+      output = with_env(
+        "DEVCONTAINER_SOCKET" => socket_path.to_s,
+        "DEVCONTAINER_CONFIG" => (testpath/"devcontainer.toml").to_s,
+        "DEVCONTAINER_STATE" => (testpath/"state.sqlite").to_s,
+      ) do
+        shell_output("#{bin}/devcontainer read-configuration --workspace-folder #{workspace} --log-level debug")
+      end
+    ensure
+      server_thread.kill
+      server_thread.join
+      server.close
+    end
+    result = JSON.parse(output)
+    assert_equal "fixture.invalid/no-pull:1", result.fetch("configuration").fetch("image")
+    assert_equal({"BUNDLE_PROBE" => "packaged"}, result.fetch("configuration").fetch("containerEnv"))
+    assert requests.any?
+    assert requests.all? { |path| path.match?(%r{(?:/v[0-9.]+)?/containers/json\?.*}) }
   end
 end

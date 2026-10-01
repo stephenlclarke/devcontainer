@@ -10,7 +10,7 @@
 
 `devcontainer` provides Dev Containers compatibility for Apple's stock `container` runtime on Apple-silicon Macs running macOS Tahoe.
 
-The formula installs only this project's `devcontainer`, compatibility-engine, and Compose-dispatch commands. It does not install, remove, replace, relink, start, or stop:
+The next stable formula generated from the native release template installs this project's four public commands (`devcontainer`, `devcontainer-engine`, `devcontainer-compose`, and `devcontainer-docker`) plus the private Node/Dev Containers CLI runtime under `libexec`. The currently installed stable formula remains bound to its original verified archive until a new release is published. The formula does not install, remove, replace, relink, start, or stop:
 
 - Apple's `container` package.
 - A custom `container` runtime.
@@ -147,71 +147,21 @@ Stable and Current tap updates share one non-cancelling concurrency group so the
 
 ## Formula Shape
 
+The installed release URL, version and checksum belong to its immutable release and change only when the tap publication transaction selects a new verified archive. The next native formula keeps the following install layout; the maintained source is [the formula template](../Tools/release/devcontainer.rb.in).
+
 ```ruby
-class Devcontainer < Formula
-  desc "Dev Containers compatibility for Apple's container runtime"
-  homepage "https://github.com/stephenlclarke/devcontainer"
-  url "https://github.com/stephenlclarke/devcontainer/releases/download/1.0.1/devcontainer-release-arm64.tar.gz"
-  sha256 "RELEASE_SHA256"
-  license "Apache-2.0"
-
-  depends_on arch: :arm64
-  depends_on "docker"
-  depends_on "docker-compose"
-  depends_on macos: :tahoe
-
-  def install
-    bin.install "bin/devcontainer"
-    bin.install "bin/devcontainer-engine"
-    bin.install "bin/devcontainer-compose"
-    libexec.install "libexec/container"
-    pkgshare.install "share/devcontainer"
-  end
-
-  service do
-    run [opt_bin/"devcontainer-engine"]
-    keep_alive true
-    process_type :interactive
-    log_path var/"log/devcontainer.log"
-    error_log_path var/"log/devcontainer-error.log"
-  end
-
-  def caveats
-    <<~EOS
-      Install either the stock Apple container package or a compatible
-      container distribution before starting the service.
-
-      Start Apple's stock runtime:
-        /usr/local/bin/container system start
-
-      When macOS requests Local Network access for the selected runtime's
-      container-runtime-linux helper, choose Allow. Stock and custom runtime
-      helpers may appear as separate permission entries.
-
-      Start the compatibility engine:
-        brew services start #{name}
-
-      Use it without changing your default Docker context:
-        eval "$(devcontainer context)"
-
-      Configure VS Code's Dev Containers extension to use:
-        #{opt_bin}/devcontainer-compose
-
-      Register the optional Apple container CLI plug-in explicitly:
-        devcontainer plugin register
-    EOS
-  end
-
-  test do
-    assert_match "1.0.1", shell_output("#{bin}/devcontainer version --short")
-    assert_match "DOCKER_HOST", shell_output("#{bin}/devcontainer context")
-    assert_path_exists libexec/"container/plugins/devcontainer/config.toml"
-    assert_predicate libexec/"container/plugins/devcontainer/bin/devcontainer", :executable?
-  end
+def install
+  bin.install "bin/devcontainer"
+  bin.install "bin/devcontainer-engine"
+  bin.install "bin/devcontainer-compose"
+  bin.install "bin/devcontainer-docker"
+  libexec.install "libexec/container"
+  libexec.install "libexec/devcontainer"
+  pkgshare.install "share/devcontainer"
 end
 ```
 
-The Current template changes the class, formula name, version, URL, and expected lane, and adds `conflicts_with "devcontainer"` while preserving the runtime-neutral install.
+The actual formula test checks all four public executables, reads the private Node and CLI versions from the installed runtime lock, verifies the runtime notices, and reads a deterministic configuration using the installed private CLI and a local Unix-socket inventory stub. Source-repository Homebrew checks render and lint the formula; they do not install it or establish native runtime qualification. The Current template changes the class, formula name, version, URL, and expected lane, and adds `conflicts_with "devcontainer"` while preserving the same complete runtime layout.
 
 ## Tap CI
 
