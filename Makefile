@@ -29,6 +29,23 @@ DEVCONTAINER_CLI_VERSION ?= 0.88.0
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 DEVCONTAINER_SIGNING_REQUIRED ?= 0
+NATIVE_RETAINED_ROOT ?=
+NATIVE_SSD_SCRATCH ?=
+NATIVE_CANDIDATE_INVOCATION ?=
+NATIVE_COMPILED_PROOF ?=
+NATIVE_LEGAL_BUNDLE ?=
+NATIVE_LEGAL_BUNDLE_SHA256 ?=
+NATIVE_STAGE ?=
+NATIVE_PACKAGE_ROOT ?=
+NATIVE_CANDIDATE_RECEIPT ?=
+NATIVE_CANDIDATE_SHA256 ?=
+NATIVE_STAGE_PROVENANCE ?=
+NATIVE_STAGE_PROVENANCE_SHA256 ?=
+NATIVE_NOTARY_EVIDENCE ?=
+NATIVE_NOTARY_STATE ?=
+NATIVE_NOTARY_STATE_SHA256 ?=
+NATIVE_FINAL_OUTPUT ?=
+NATIVE_NOTARY_RESUME ?= 0
 SONAR_SCAN_ATTEMPTS ?= 3
 SONAR_QUALITYGATE_WAIT ?= true
 
@@ -46,6 +63,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
 .PHONY: bazel-coverage-counters
+.PHONY: native-package-stage native-package-sign native-package-finalize
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-activate-runtime
 .PHONY: bazel-parity-report
@@ -114,6 +132,64 @@ bazel-engine-case:
 
 bazel-prepare-candidate:
 	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)" $(if $(filter container-compose,$(CANDIDATE_FAMILY)),--family=container-compose)
+
+# Stage already-compiled native products; this path never invokes a compiler.
+native-package-stage:
+	@test -n "$(NATIVE_RETAINED_ROOT)" || { printf 'Set NATIVE_RETAINED_ROOT to retained workflow evidence.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD scratch.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_INVOCATION)" || { printf 'Set NATIVE_CANDIDATE_INVOCATION to a successful retained candidate invocation.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_COMPILED_PROOF)" || { printf 'Set NATIVE_COMPILED_PROOF to same-head four-product consumer evidence.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_LEGAL_BUNDLE)" || { printf 'Set NATIVE_LEGAL_BUNDLE to the authenticated legal bundle.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_LEGAL_BUNDLE_SHA256)" || { printf 'Set NATIVE_LEGAL_BUNDLE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE)" || { printf 'Set NATIVE_STAGE to a fresh path under NATIVE_SSD_SCRATCH/native-packages.\n' >&2; exit 2; }
+	@test "$(BAZEL_PROFILE)" = stock -o "$(BAZEL_PROFILE)" = enhanced || { printf 'BAZEL_PROFILE must be stock or enhanced.\n' >&2; exit 2; }
+	@test "$(DEVCONTAINER_PACKAGE_LANE)" = development -o "$(DEVCONTAINER_PACKAGE_LANE)" = current -o "$(DEVCONTAINER_PACKAGE_LANE)" = stable || { printf 'DEVCONTAINER_PACKAGE_LANE must be development, current, or stable.\n' >&2; exit 2; }
+	@test "$(DEVCONTAINER_PACKAGE_LANE)" != current -o -n "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" || { printf 'Set DEVCONTAINER_PACKAGE_RUN_NUMBER for the current lane.\n' >&2; exit 2; }
+	$(PYTHON) Tools/release/prepare-native-package.py \
+		--repository "$(CURDIR)" \
+		--retained-root "$(NATIVE_RETAINED_ROOT)" \
+		--ssd-scratch "$(NATIVE_SSD_SCRATCH)" \
+		--candidate-invocation "$(NATIVE_CANDIDATE_INVOCATION)" \
+		--profile "$(BAZEL_PROFILE)" \
+		--compiled-proof "$(NATIVE_COMPILED_PROOF)" \
+		--legal-bundle "$(NATIVE_LEGAL_BUNDLE)" \
+		--legal-bundle-sha256 "$(NATIVE_LEGAL_BUNDLE_SHA256)" \
+		--stage "$(NATIVE_STAGE)" \
+		--lane "$(DEVCONTAINER_PACKAGE_LANE)" \
+		$(if $(filter current,$(DEVCONTAINER_PACKAGE_LANE)),--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)")
+
+# Sign and submit the staged six-executable package using the configured identity.
+native-package-sign:
+	@test "$(NATIVE_NOTARY_RESUME)" = 0 -o "$(NATIVE_NOTARY_RESUME)" = 1 || { printf 'NATIVE_NOTARY_RESUME must be 0 or 1.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PACKAGE_ROOT)" || { printf 'Set NATIVE_PACKAGE_ROOT to the devcontainer-VERSION payload inside NATIVE_STAGE.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_RECEIPT)" || { printf 'Set NATIVE_CANDIDATE_RECEIPT to the admitted candidate receipt.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_SHA256)" || { printf 'Set NATIVE_CANDIDATE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE_PROVENANCE)" || { printf 'Set NATIVE_STAGE_PROVENANCE to native-stage-provenance.json.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE_PROVENANCE_SHA256)" || { printf 'Set NATIVE_STAGE_PROVENANCE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_EVIDENCE)" || { printf 'Set NATIVE_NOTARY_EVIDENCE to a private internal acceptance evidence path.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_STATE)" || { printf 'Set NATIVE_NOTARY_STATE to retained internal notary state.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD signing scratch.\n' >&2; exit 2; }
+	Tools/release/sign-and-notarize.sh "$(NATIVE_PACKAGE_ROOT)" "$(NATIVE_NOTARY_EVIDENCE)" \
+		--candidate-receipt "$(NATIVE_CANDIDATE_RECEIPT)" \
+		--candidate-sha256 "$(NATIVE_CANDIDATE_SHA256)" \
+		--stage-provenance "$(NATIVE_STAGE_PROVENANCE)" \
+		--stage-provenance-sha256 "$(NATIVE_STAGE_PROVENANCE_SHA256)" \
+		--state-directory "$(NATIVE_NOTARY_STATE)" \
+		--scratch-directory "$(NATIVE_SSD_SCRATCH)" \
+		$(if $(filter 1,$(NATIVE_NOTARY_RESUME)),--resume)
+
+# Assemble the verified final archive from an accepted, retained notary state.
+native-package-finalize:
+	@test -n "$(NATIVE_NOTARY_STATE)" || { printf 'Set NATIVE_NOTARY_STATE to accepted retained notary state.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_STATE_SHA256)" || { printf 'Set NATIVE_NOTARY_STATE_SHA256 to the independently trusted terminal state.json SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_FINAL_OUTPUT)" || { printf 'Set NATIVE_FINAL_OUTPUT to a fresh internal retained output directory.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD finalization scratch.\n' >&2; exit 2; }
+	$(PYTHON) Tools/release/finalize-native-package.py \
+		--repository "$(CURDIR)" \
+		--state-directory "$(NATIVE_NOTARY_STATE)" \
+		--trusted-state-sha256 "$(NATIVE_NOTARY_STATE_SHA256)" \
+		--scratch-directory "$(NATIVE_SSD_SCRATCH)" \
+		--output-directory "$(NATIVE_FINAL_OUTPUT)"
 
 bazel-recover-runtime:
 	Tools/bazel/run.sh recover-runtime
