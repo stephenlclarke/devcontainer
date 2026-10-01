@@ -2,6 +2,8 @@
 
 The layered gate exposed a closed-pipe fixture failure, while hosted source tests exposed three further macOS path-identity boundaries: managed host mounts, private lifecycle assets and build staging containment. Their corrections must preserve leaf-symlink rejection, ownership and containment, and retain all original pipe-output/error assertions. A pipe fixture must distinguish closing its own read descriptor from kernel-observed peer closure; a bounded readiness check preserves the original rejected-write assertion without retrying writes. Existing hosted contention/cancellation timing failures remain separately visible; performance optimisation is deferred.
 
+The package Makefile entry point still selected source dependencies, and its test command enabled Swift test interfaces in packaged production executables. Correct it to consume released layers and keep archive smoke checks in the production feature configuration before release qualification.
+
 ## Problem description
 
 Devcontainer also needs the same explicit dependency layering as Container and Compose: publish each compiled dependency group, consume those exact assets in the next group, and keep source-unit testing separate from binary consumption proof. Mutable Bazel report paths must not substitute a later profile's results for the original invocation. The current slice adds six ordered source-test groups, immutable per-invocation XML admission, and stock/enhanced dependency release and consumption checks. Full stable-product qualification and performance optimisation remain separate from this layering slice.

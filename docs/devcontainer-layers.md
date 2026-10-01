@@ -41,6 +41,10 @@ The source check retains all eleven original unit suites in six ordered groups:
 
 Individual `bazel-layer-model`, `bazel-layer-runtime-foundation`, `bazel-layer-core`, `bazel-layer-adapters`, `bazel-layer-host`, and `bazel-layer-cli` Makefile targets expose these source suites. Source tests keep their own build configuration and cache. Each admitted result uses the original retained test XML for its exact invocation, even after another profile has reused Bazel's output paths.
 
+## Package the current products
+
+`make bazel-package BAZEL_PROFILE=stock` or `BAZEL_PROFILE=enhanced` creates and checks an unsigned candidate archive using the released dependency chain. Packaged executables use the production feature configuration, separately from Swift source-unit tests. This archive is an input to further release qualification; its receipt keeps `distributionReady: false`.
+
 ## Updating a dependency
 
 Publish foundation in both profiles first and verify the downloaded assets before committing its two locks. Build Containerization and Engine API as siblings against those committed foundation locks, publish and verify all four assets, then commit their locks together. Finally publish and verify Container SDK in both profiles against the committed sibling layers. The maintained `foundation.py` producer and `layer_release.py` admission/publication commands reject dirty source, changed inputs, incomplete test results, and overwriting an existing release. Keep the current exact locks when their inputs are unchanged.

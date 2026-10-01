@@ -183,7 +183,7 @@ bazel-build-timings:
 	else Tools/bazel/run.sh build-timings "$(INVOCATION)"; fi
 
 bazel-package:
-	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:candidate_archive //Tools/bazel:package_smoke
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release --config=prebuilt-container-sdk --config=package //:candidate_archive //Tools/bazel:package_smoke
 
 bazel-docs:
 	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:documentation_tests
@@ -203,9 +203,9 @@ bazel-checkpoint:
 	Tools/bazel/run.sh test-tools
 	Tools/bazel/run.sh coverage --config=stock //Tools/bazel:coverage_counter_tests
 	Tools/bazel/run.sh coverage --config=stock //:unit //:product
-	Tools/bazel/run.sh test --config=stock --config=release //:candidate_archive //Tools/bazel:package_smoke
+	$(MAKE) bazel-package BAZEL_PROFILE=stock
 	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product
-	Tools/bazel/run.sh test --config=release //:candidate_archive //Tools/bazel:package_smoke
+	$(MAKE) bazel-package BAZEL_PROFILE=enhanced
 	Tools/bazel/run.sh cleanup --apply
 
 all: workflow
