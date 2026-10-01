@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "f7c8df3fcd18fdc18d232e8937fb12a64570c4560ff6fefd90638a3068915634",
+  "archiveSHA256": "b3de89636f3a67e8f5d7a7a4667a082a6deb67122596b265bfe174ba0b769c6b",
   "asset": "container-sdk-enhanced-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "91bc439b13c75ce67813859b5e9d991d069e4afe953a763dcba4a746ab94ad37",
+    "eventsSHA256": "96b3147ff6ece6823ef175c119129d82903b8a2b3860c41c4d746a46bc0d73f6",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftdoc": {
         "sha256": "b47819c1a4ba6c3d2dcc0529963e661b933d7a786927f1d47ec813c066d3570c",
@@ -172,8 +172,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "container-sdk-enhanced-native-evidence.json",
-  "evidenceSHA256": "391b40f2166ec71b0fdfc0da5d8577e096762ae05d374aee3ddd5836136a1b9f",
+  "evidenceAsset": "container-sdk-enhanced-evidence.json",
+  "evidenceSHA256": "9eda60b5edc14c0cf0333ffc8093777d7a4c31c6e231bb73eb6b2ef11c222bb5",
   "group": "container-sdk",
   "lower": {
     "argument-parser": {
@@ -182,22 +182,22 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     },
     "containerization": {
-      "archiveSHA256": "f6dbe835df17f7922366b01464764625e8d9eee15118ce0cefac7243ba5a82bc",
-      "evidenceSHA256": "0515a6ec0f402ab28e573c9490800de01ecd4bf96acf7f10589c7c3000daa2aa",
-      "tag": "layer-containerization-enhanced-f6dbe835df17f7922366"
+      "archiveSHA256": "1bd90190c34d0e9c491443faee649f24a9c303ba80c9f28e14b10169bee70214",
+      "evidenceSHA256": "40518f93d09a35d7a337d9e8d933fe32f8fc3d6a8136b56f546aba87ae2c3c85",
+      "tag": "layer-containerization-enhanced-1bd90190c34d0e9c4914"
     },
     "engine-api": {
-      "archiveSHA256": "861663e4de7d6e7b997fd656bd44fc5177a6ee649fd26b095cefd765479f4b43",
-      "evidenceSHA256": "4c65dd2021335313231419c5aa1f37f1f31a42f3c00a63ee2402e80f03e192ef",
-      "tag": "layer-engine-api-enhanced-861663e4de7d6e7b997f"
+      "archiveSHA256": "c9858a549751517394f6449de2cd449661a4358f765af482330f1fbdd623df53",
+      "evidenceSHA256": "e9e1af1c881b6f78a7ff143e4c459963f3a28ae4d3d29a80b6f6c58ffbc6e383",
+      "tag": "layer-engine-api-enhanced-c9858a549751517394f6"
     },
     "foundation": {
-      "archiveSHA256": "319254d1455e04b7c36837b190cbfc3f76f9ae229589a4443839687cdf915764",
-      "evidenceSHA256": "575ac4858dccecce889db121bd372c2367a68c718f1d7dcfda34bae84e440989",
-      "tag": "layer-foundation-enhanced-319254d1455e04b7c368"
+      "archiveSHA256": "99b5f10537ee6c8c3a1a97e3367f71035e7d70bc9e44e7b983e0d8c0c08deca1",
+      "evidenceSHA256": "cbcc6ed9612238e789fd99f7b59e8fe1bf7cba186a8454bd75963010feb638b7",
+      "tag": "layer-foundation-enhanced-99b5f10537ee6c8c3a1a"
     }
   },
-  "producerCommit": "629ca1948ca493684a53acf9acec933dd06145e3",
+  "producerCommit": "31e83f792e29c6d767b48981fa4aabf3524d4d18",
   "profile": "enhanced",
   "reachedSources": {
     "container": {
@@ -212,7 +212,7 @@
     "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
     "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
     "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
-    "launcher": "8414afcbe61d0df2b2733d2e1b4a8575406d228cdaf7250cb9bd5df56bfd79cd",
+    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
     "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
     "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
     "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
@@ -263,7 +263,7 @@
   "sourcePins": {
     "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
   },
-  "tag": "layer-container-sdk-enhanced-f7c8df3fcd18fdc18d23",
+  "tag": "layer-container-sdk-enhanced-b3de89636f3a67e8f5d7",
   "targetCommit": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
   "toolchain": {
     "bazelVersion": "8.8.0",

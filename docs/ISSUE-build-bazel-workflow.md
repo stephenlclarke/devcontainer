@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The changed launcher recipe has now been addressed with eight newly qualified and published stock/enhanced layer archives. Each archive and qualification sidecar was verified through the maintained downloaded-consumer path before its lock was committed. Final-head product and release gates remain required.
+
 The hosted CLI smoke check selected the new native default and looked for an installed container-compose binary. Explicitly select its intended Docker fixture and disable standalone Compose autodiscovery, which could otherwise bypass that fixture.
 
 Once hosted coverage could proceed, the clean-project Sonar check exposed 137 findings. Correct the real source and test-quality problems without removing assertions or breaking the public test-support API; distinguish actual inherited-helper/protocol-literal false positives through recorded source evidence. A launcher-byte change also requires newly qualified dependency-layer releases under the strict recipe policy, rather than relabeling old assets or weakening their hashes.

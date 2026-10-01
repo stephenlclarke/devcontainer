@@ -150,6 +150,8 @@ advanced mount options.
 
 ## Development
 
+The eight stock/enhanced compiled dependency layers were refreshed through their maintained producers and focused tests. Their published archives and evidence were downloaded and verified in Foundation, Containerization/Engine API, then Container SDK order. The product build consumes these exact released inputs; full package qualification remains a separate gate.
+
 The hosted CLI smoke check explicitly selects the Docker provider and disables standalone Compose autodiscovery so it uses the pinned test fixture. The native provider remains the product default.
 
 Release quality checks retain the original assertions and thresholds. Shared test-fixture helpers and fixed Docker protocol routes are reviewed as analysis false positives, with recorded usage evidence. The exported test-support initializer keeps its existing source interface under a documented compatibility exception. Actual source findings are corrected before a fresh exact-commit scan.

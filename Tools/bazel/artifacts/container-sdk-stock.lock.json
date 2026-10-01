@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "ba4b9d58e0ff21f7ec79c997411f9de078b18a631404ba9ce2aba51b2a0c4dd8",
+  "archiveSHA256": "f75d56b887f6ab382d774f3d9577f72b6b7491a46d047cb7cdd08555c04779f7",
   "asset": "container-sdk-stock-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "2cf98e6553ed14a2ff55b6c88432ef14c7ecba98d560769941fd04297873cd93",
+    "eventsSHA256": "d76df753697bbe118296c4c5efa1ee8ea31d99a4622961070989a59263fcd92f",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftdoc": {
         "sha256": "b4c454c274539f24a02339b2fa8f58c440f962ad2c69294e7a0a1c359b4a23de",
@@ -172,8 +172,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "container-sdk-stock-native-evidence.json",
-  "evidenceSHA256": "14447f4f6ba5744c962f593eaea50085b2c55c0d5b7505a56642884052b54e77",
+  "evidenceAsset": "container-sdk-stock-evidence.json",
+  "evidenceSHA256": "e575d9b947e8ca56e83e2cdc5a8354974aa388e0a18ccb80ed52d04d93682c7b",
   "group": "container-sdk",
   "lower": {
     "argument-parser": {
@@ -182,22 +182,22 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     },
     "containerization": {
-      "archiveSHA256": "470b8b31694e66b5b373469c15014cd9a981388dd18c537a8cbcbc63b2b311e9",
-      "evidenceSHA256": "1062ed5c283b33a0457d28d226b972201f84c8d92f16612a91743fdf901774dd",
-      "tag": "layer-containerization-stock-470b8b31694e66b5b373"
+      "archiveSHA256": "658b080474af4d2f503db689bd0fc19e4231bb2f1c36d4940ec5adcbb85bb049",
+      "evidenceSHA256": "52a34ac2a3ec18f19138a65a9bc9711958bcc0b1c500c643dbb6c0e7e759acf7",
+      "tag": "layer-containerization-stock-658b080474af4d2f503d"
     },
     "engine-api": {
-      "archiveSHA256": "af05a9179e4ee62fbca74091b257af7af87b968f18dbb93938e4df959871c11d",
-      "evidenceSHA256": "a0097a425f7a703a2b394fb9c38a074aa6f816a4df5f22427da2d26872303660",
-      "tag": "layer-engine-api-stock-af05a9179e4ee62fbca7"
+      "archiveSHA256": "ccd9ae9143aefdf50bef448e9508b518b003b5c4d186d52cf71af9799d5e6537",
+      "evidenceSHA256": "3b8a1b553b51c1185d6fdfd41f9afd9c2c6a3aca6282ba54523c806b2e6548e6",
+      "tag": "layer-engine-api-stock-ccd9ae9143aefdf50bef"
     },
     "foundation": {
-      "archiveSHA256": "be7224095bd152e0dcf78f70466f1c835097c87aaed85fa49e2fa836170b3a0e",
-      "evidenceSHA256": "4304952c8002a604c6be38cdf27fb9ef0a22008352dffb4c6aac51eabc3e3fdd",
-      "tag": "layer-foundation-stock-be7224095bd152e0dcf7"
+      "archiveSHA256": "6f58d9f3390f33c9db3fecbc233ef46d62397a8b7223149b7e0555756fc0edc9",
+      "evidenceSHA256": "3de86b1c82180f754950071758fcbc6547216e95ffd11818d89a47f28ad71ec0",
+      "tag": "layer-foundation-stock-6f58d9f3390f33c9db3f"
     }
   },
-  "producerCommit": "629ca1948ca493684a53acf9acec933dd06145e3",
+  "producerCommit": "31e83f792e29c6d767b48981fa4aabf3524d4d18",
   "profile": "stock",
   "reachedSources": {
     "container": {
@@ -212,7 +212,7 @@
     "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
     "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
     "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
-    "launcher": "8414afcbe61d0df2b2733d2e1b4a8575406d228cdaf7250cb9bd5df56bfd79cd",
+    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
     "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
     "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
     "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
@@ -263,7 +263,7 @@
   "sourcePins": {
     "container": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
   },
-  "tag": "layer-container-sdk-stock-ba4b9d58e0ff21f7ec79",
+  "tag": "layer-container-sdk-stock-f75d56b887f6ab382d77",
   "targetCommit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
   "toolchain": {
     "bazelVersion": "8.8.0",
