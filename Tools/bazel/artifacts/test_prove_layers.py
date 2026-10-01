@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import posixpath
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -86,6 +87,32 @@ class CompiledConsumerTests(unittest.TestCase):
         return prove_layers.verify_actions(graph or self.graph, self.manifests,
                                            self.argument, self.ap, self.execroot)
 
+    def add_modulemap(self) -> tuple[str, Path]:
+        repo = "+dependencies+swiftpkg_foundation"
+        name = "CFoundation"
+        path = ("bazel-out/darwin_arm64-opt/bin/external/" + repo + "/" +
+                name + ".rspm_modulemap_modulemap/_/module.modulemap")
+        header = "external/" + repo + "/include/shared.h"
+        relative = posixpath.relpath(header, posixpath.dirname(path))
+        output = self.execroot / path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f'module "{name}" {{\n\n    header "{relative}"\n\n    export *\n}}\n')
+        build = self.execroot / "external" / repo / "BUILD.bazel"
+        build.write_text('generate_modulemap(\n    name = "CFoundation.rspm_modulemap",\n'
+                         '    deps = [],\n    hdrs = ["include/shared.h"],\n'
+                         '    module_name = "CFoundation",\n)\n')
+        files = self.manifests["foundation"]["files"]
+        files["foundation/swiftpkg_foundation/BUILD.bazel"] = file_digest(build)
+        output_id = self.artifact(path)
+        self.graph["targets"].append({"id": 6, "label": "@@" + repo + "//:CFoundation.rspm_modulemap"})
+        self.graph["depSetOfFiles"].append({"id": 3, "directArtifactIds": [output_id]})
+        self.graph["actions"].append({"targetId": 6, "mnemonic": "FileWrite",
+                                      "actionKey": "a" * 64, "outputIds": [output_id],
+                                      "primaryOutputId": output_id})
+        self.graph["actions"].append({"targetId": 1, "mnemonic": "SwiftCompile",
+                                      "inputDepSetIds": [3]})
+        return path, output
+
     def test_all_four_links_use_sealed_archives_modules_and_headers(self) -> None:
         result = self.verify()
         self.assertEqual(set(result["products"]), set(prove_layers.PRODUCTS))
@@ -134,6 +161,74 @@ class CompiledConsumerTests(unittest.TestCase):
         graph["actions"] = [row for row in graph["actions"] if row["targetId"] != 4]
         with self.assertRaisesRegex(ValueError, "four-product closure"):
             self.verify(graph)
+
+    def test_generated_modulemap_matches_owned_action_sealed_build_and_header(self) -> None:
+        path, output = self.add_modulemap()
+        result = self.verify()
+        self.assertEqual(result["generatedModulemaps"][path]["sha256"], file_digest(output))
+        self.assertEqual(result["generatedModulemaps"][path]["actionKey"], "a" * 64)
+        self.assertEqual(len(result["generatedModulemaps"][path]["headers"]), 1)
+
+    def test_generated_modulemap_rejects_other_path_owner_or_action_shape(self) -> None:
+        self.add_modulemap()
+        producer = self.graph["actions"][-2]
+        for field, replacement in (("targetId", 5), ("mnemonic", "SwiftCompile"),
+                                   ("actionKey", "wrong"), ("inputDepSetIds", [2]),
+                                   ("arguments", ["--other"]), ("outputIds", [])):
+            prior = producer.get(field)
+            producer[field] = replacement
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.verify()
+            if prior is None:
+                producer.pop(field)
+            else:
+                producer[field] = prior
+        duplicate = copy.deepcopy(producer)
+        self.graph["actions"].append(duplicate)
+        with self.assertRaisesRegex(ValueError, "one exact producer"):
+            self.verify()
+
+    def test_generated_modulemap_rejects_tree_or_extra_output(self) -> None:
+        self.add_modulemap()
+        output_id = self.graph["actions"][-2]["outputIds"][0]
+        output_artifact = next(row for row in self.graph["artifacts"] if row["id"] == output_id)
+        output_artifact["isTreeArtifact"] = True
+        with self.assertRaisesRegex(ValueError, "invalid owned FileWrite"):
+            self.verify()
+        output_artifact.pop("isTreeArtifact")
+        self.graph["actions"][-2]["outputIds"].append(self.archive_ids[0])
+        with self.assertRaisesRegex(ValueError, "invalid owned FileWrite"):
+            self.verify()
+
+    def test_generated_modulemap_rejects_unsealed_or_changed_inventory(self) -> None:
+        _, output = self.add_modulemap()
+        original = output.read_text()
+        for changed in (original.replace("    export *", "    use Other\n    export *"),
+                        original.replace("include/shared.h", "include/other.h"),
+                        original.replace('module "CFoundation"', 'module "Other"')):
+            output.write_text(changed)
+            with self.assertRaises(ValueError):
+                self.verify()
+        output.write_text(original)
+        build = self.execroot / "external/+dependencies+swiftpkg_foundation/BUILD.bazel"
+        original_build = build.read_text()
+        build.write_text(original_build.replace('"include/shared.h"', '"include/other.h"'))
+        with self.assertRaisesRegex(ValueError, "sealed BUILD bytes"):
+            self.verify()
+        self.manifests["foundation"]["files"]["foundation/swiftpkg_foundation/BUILD.bazel"] = file_digest(build)
+        with self.assertRaisesRegex(ValueError, "headers differ from sealed BUILD"):
+            self.verify()
+
+    def test_generated_modulemap_rejects_changed_header_bytes_and_missing_map(self) -> None:
+        _, output = self.add_modulemap()
+        header = self.execroot / "external/+dependencies+swiftpkg_foundation/include/shared.h"
+        header.write_bytes(b"different header")
+        with self.assertRaisesRegex(ValueError, "different bytes|unsealed header bytes"):
+            self.verify()
+        header.write_bytes(b"foundation/include/shared.h")
+        output.unlink()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            self.verify()
 
 
 class InvocationAdmissionTests(unittest.TestCase):

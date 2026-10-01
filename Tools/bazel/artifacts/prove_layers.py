@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import sys
 
@@ -42,6 +44,10 @@ SEMANTIC_OPTIONS = ("--compilation_mode=", "--host_compilation_mode=", "--macos_
                     "--host_copt=", "--host_conlyopt=", "--host_cxxopt=", "--linkopt=",
                     "--@build_bazel_rules_swift//swift:copt=", "--repo_env=", "--define=",
                     "--action_env=", "--host_action_env=")
+MODULEMAP_PATH = re.compile(
+    r"bazel-out/[^/]+/bin/external/(\+dependencies\+swiftpkg_[^/]+)/"
+    r"([^/]+)\.rspm_modulemap_modulemap/_/module\.modulemap\Z")
+MODULEMAP_HEADER = re.compile(r'    header "([^"\\\r\n]+)"\Z')
 
 
 def action_inputs(graph: dict):
@@ -92,7 +98,126 @@ def action_inputs(graph: dict):
             found.update(visit(identity))
         return found
 
-    return inputs
+    def artifact_path(identity: int) -> str:
+        if identity not in artifacts:
+            raise ValueError("configured action graph has a missing artifact")
+        return path_of(artifacts[identity]["pathFragmentId"])
+
+    return inputs, artifact_path
+
+
+def declared_modulemap_headers(build: bytes, name: str) -> list[str]:
+    """Read only literal generated-modulemap declarations from an admitted BUILD file."""
+    try:
+        tree = ast.parse(build.decode("utf-8"))
+    except (UnicodeDecodeError, SyntaxError) as error:
+        raise ValueError("sealed BUILD has invalid modulemap declarations") from error
+    matches = []
+    for statement in tree.body:
+        if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) and
+                isinstance(statement.value.func, ast.Name) and
+                statement.value.func.id == "generate_modulemap"):
+            continue
+        if any(item.arg is None for item in statement.value.keywords):
+            raise ValueError("sealed BUILD has expanded modulemap fields")
+        fields = {item.arg: item.value for item in statement.value.keywords}
+        if len(fields) != len(statement.value.keywords):
+            raise ValueError("sealed BUILD has duplicate modulemap fields")
+        if set(fields) & {"name", "module_name", "hdrs", "deps"} != {
+                "name", "module_name", "hdrs", "deps"}:
+            raise ValueError("sealed BUILD has incomplete modulemap declaration")
+        try:
+            rule_name = ast.literal_eval(fields["name"])
+        except (ValueError, TypeError, SyntaxError) as error:
+            raise ValueError("sealed BUILD has nonliteral modulemap name") from error
+        if rule_name != name + ".rspm_modulemap":
+            continue
+        try:
+            module = ast.literal_eval(fields["module_name"])
+            headers = ast.literal_eval(fields["hdrs"])
+            deps = ast.literal_eval(fields["deps"])
+        except (ValueError, TypeError, SyntaxError) as error:
+            raise ValueError("sealed BUILD has nonliteral modulemap fields") from error
+        if (module != name or not isinstance(headers, list) or not headers or
+                not all(isinstance(item, str) and item and
+                        item == posixpath.normpath(item) and not item.startswith("/") and
+                        ".." not in PurePosixPath(item).parts for item in headers) or
+                len(headers) != len(set(headers)) or deps != []):
+            raise ValueError("sealed BUILD has unsupported modulemap rule")
+        matches.append(headers)
+    if len(matches) != 1:
+        raise ValueError("sealed BUILD lacks one exact modulemap rule")
+    return matches[0]
+
+
+def generated_modulemap(path: str, graph: dict, targets: dict, inputs_of,
+                        artifact_path, sealed: dict, imported: dict,
+                        execution_root: Path) -> dict:
+    """Admit one owned FileWrite map whose exact headers come from its sealed BUILD."""
+    match = MODULEMAP_PATH.fullmatch(path)
+    if match is None:
+        raise ValueError("configured action used an unsupported imported path: " + path)
+    repository, name = match.groups()
+    if repository not in imported:
+        raise ValueError("generated modulemap has an unadmitted repository: " + path)
+    owner = "@@" + repository + "//:" + name + ".rspm_modulemap"
+    producers = [action for action in graph["actions"]
+                 if path in [artifact_path(identity) for identity in action.get("outputIds", [])]]
+    if len(producers) != 1:
+        raise ValueError("generated modulemap lacks one exact producer: " + path)
+    producer = producers[0]
+    outputs = producer.get("outputIds", [])
+    artifacts = {item["id"]: item for item in graph["artifacts"]}
+    if (targets.get(producer["targetId"]) != owner or producer["mnemonic"] != "FileWrite" or
+            len(outputs) != 1 or producer.get("primaryOutputId") != outputs[0] or
+            artifacts[outputs[0]].get("isTreeArtifact") is True or inputs_of(producer) or
+            producer.get("arguments") or producer.get("environmentVariables") or
+            not re.fullmatch(r"[0-9a-f]{64}", producer.get("actionKey", ""))):
+        raise ValueError("generated modulemap has an invalid owned FileWrite action: " + path)
+    build_path = "external/" + repository + "/BUILD.bazel"
+    build = execution_root / build_path
+    if (build_path not in sealed or not build.is_file() or
+            file_digest(build) != sealed[build_path]["sha256"]):
+        raise ValueError("generated modulemap lacks its sealed BUILD bytes: " + path)
+    declared = declared_modulemap_headers(build.read_bytes(), name)
+    actual = execution_root / path
+    if not actual.is_file() or actual.is_symlink():
+        raise ValueError("generated modulemap output is not a regular file: " + path)
+    try:
+        content = actual.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("generated modulemap has invalid UTF-8: " + path) from error
+    lines = [line for line in content.splitlines() if line]
+    if (not content.endswith("\n") or "\r" in content or
+            lines[:1] != ['module "' + name + '" {'] or lines[-2:] != ["    export *", "}"] or
+            any(line.strip() == "" for line in lines)):
+        raise ValueError("generated modulemap has unsupported content: " + path)
+    headers = []
+    for line in lines[1:-2]:
+        header = MODULEMAP_HEADER.fullmatch(line)
+        if header is None or header.group(1).startswith("/"):
+            raise ValueError("generated modulemap has unsupported header syntax: " + path)
+        normalized = posixpath.normpath(posixpath.join(posixpath.dirname(path), header.group(1)))
+        prefix = "external/" + repository + "/"
+        if not normalized.startswith(prefix):
+            raise ValueError("generated modulemap header escapes its repository: " + path)
+        header_name = normalized[len(prefix):]
+        if header.group(1) != posixpath.relpath(prefix + header_name, posixpath.dirname(path)):
+            raise ValueError("generated modulemap header has a noncanonical path: " + path)
+        headers.append(header_name)
+    if headers != declared:
+        raise ValueError("generated modulemap headers differ from sealed BUILD: " + path)
+    matched = {}
+    for header in headers:
+        key = "external/" + repository + "/" + header
+        file = execution_root / key
+        if (key not in sealed or not file.is_file() or
+                file_digest(file) != sealed[key]["sha256"]):
+            raise ValueError("generated modulemap uses unsealed header bytes: " + key)
+        matched[key] = sealed[key]
+    return {"sha256": file_digest(actual), "actionKey": producer["actionKey"],
+            "owner": owner, "buildSHA256": sealed[build_path]["sha256"],
+            "headers": matched}
 
 
 def sealed_files(manifests: dict[str, dict], argument_manifest: dict,
@@ -134,7 +259,7 @@ def verify_actions(graph: dict, manifests: dict[str, dict], argument_manifest: d
     targets = {row["id"]: row["label"] for row in graph["targets"]}
     sealed, imported = sealed_files(manifests, argument_manifest, argument_selected)
     links: dict[str, set[str]] = {}
-    inputs_of = action_inputs(graph)
+    inputs_of, artifact_path = action_inputs(graph)
     imported_inputs: set[str] = set()
     metadata_actions: dict[str, int] = {}
     for action in graph["actions"]:
@@ -157,10 +282,13 @@ def verify_actions(graph: dict, manifests: dict[str, dict], argument_manifest: d
     if set(links) != set(PRODUCTS):
         raise ValueError("four-product closure lacks exact configured link actions")
     matched: dict[str, dict[str, str]] = {}
+    generated: dict[str, dict] = {}
     for path in imported_inputs:
         parts = PurePosixPath(path).parts
         if any(part in imported for part in parts) and (len(parts) < 3 or parts[0] != "external"):
-            raise ValueError("configured action used an unsupported imported path: " + path)
+            generated[path] = generated_modulemap(path, graph, targets, inputs_of,
+                                                  artifact_path, sealed, imported, execution_root)
+            continue
         if len(parts) < 3 or parts[0] != "external" or parts[1] not in imported:
             continue
         if ".." in parts or path not in sealed:
@@ -181,6 +309,7 @@ def verify_actions(graph: dict, manifests: dict[str, dict], argument_manifest: d
         raise ValueError("four-product links omit a released compiled group")
     return {"products": list(PRODUCTS), "matchedInputs": matched,
             "linkedArchives": archives,
+            "generatedModulemaps": generated,
             "importedMetadataActions": metadata_actions, "configuredActionCount": len(graph["actions"])}
 
 
