@@ -1,6 +1,6 @@
 # Issue: implement the native Bazel workflow
 
-The layered gate exposed a closed-pipe fixture failure, while hosted source tests exposed three further macOS path-identity boundaries: managed host mounts, private lifecycle assets and build staging containment. Their corrections must preserve leaf-symlink rejection, ownership and containment, and retain all original pipe-output/error assertions. Existing hosted contention/cancellation timing failures remain separately visible; performance optimisation is deferred.
+The layered gate exposed a closed-pipe fixture failure, while hosted source tests exposed three further macOS path-identity boundaries: managed host mounts, private lifecycle assets and build staging containment. Their corrections must preserve leaf-symlink rejection, ownership and containment, and retain all original pipe-output/error assertions. A pipe fixture must distinguish closing its own read descriptor from kernel-observed peer closure; a bounded readiness check preserves the original rejected-write assertion without retrying writes. Existing hosted contention/cancellation timing failures remain separately visible; performance optimisation is deferred.
 
 ## Problem description
 

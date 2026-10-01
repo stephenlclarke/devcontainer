@@ -80,6 +80,13 @@ struct DockerExecTests {
         #expect(Data(received) == Data("hello".utf8))
         #expect(Darwin.close(descriptors[0]) == 0)
         descriptors[0] = -1
+        // A concurrent process can briefly retain a reader across spawn. Wait for
+        // the kernel to report no readers before asserting the writer's EPIPE.
+        var item = pollfd(fd: descriptors[1], events: Int16(POLLHUP | POLLERR), revents: 0)
+        let readiness = Darwin.poll(&item, 1, 1000)
+        try #require(readiness == 1)
+        try #require(item.revents & Int16(POLLNVAL) == 0)
+        try #require(item.revents & Int16(POLLHUP | POLLERR) != 0)
         await #expect(throws: POSIXError.self) { try await writer.write(Data("late".utf8)) }
         #expect(throws: POSIXError.self) { try DockerFrontendOutput(descriptor: -1) }
     }
