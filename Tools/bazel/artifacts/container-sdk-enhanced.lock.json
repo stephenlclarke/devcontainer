@@ -1,0 +1,276 @@
+{
+  "archiveSHA256": "f7c8df3fcd18fdc18d232e8937fb12a64570c4560ff6fefd90638a3068915634",
+  "asset": "container-sdk-enhanced-darwin-arm64-opt.tar.gz",
+  "compiledOutputBEP": {
+    "eventsSHA256": "91bc439b13c75ce67813859b5e9d991d069e4afe953a763dcba4a746ab94ad37",
+    "files": {
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftdoc": {
+        "sha256": "b47819c1a4ba6c3d2dcc0529963e661b933d7a786927f1d47ec813c066d3570c",
+        "size": 62252
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftmodule": {
+        "sha256": "491744db7d90c703c545bde90bc85021633511d5b9ccdd4a25be21d22e50db2b",
+        "size": 825064
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerBuild.swiftdoc": {
+        "sha256": "7f791dea97b92af6acb9fe92e34374daa0ee3b8bd44a70491a89d84fa5a1f797",
+        "size": 80412
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerBuild.swiftmodule": {
+        "sha256": "652b8c84545fc043803ef7527dec90e82bfb32fc7ecbe5e58f20445cce50e1a7",
+        "size": 637936
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerImagesServiceClient.swiftdoc": {
+        "sha256": "b7543c6a53bed8c09008a5ff791e7c82cb981f8966df9b6bb34723c3f717b9db",
+        "size": 1304
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerImagesServiceClient.swiftmodule": {
+        "sha256": "c6a30ab0b495cf8bc3715a5d02d6b5a24ba997062c04e37500ac6dcd06933a4e",
+        "size": 75196
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerLog.swiftdoc": {
+        "sha256": "2d18ae3433730799c4daf040a459892513360890582ec1a6cef0a889846c0922",
+        "size": 2972
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerLog.swiftmodule": {
+        "sha256": "92c7692a8b9aed2994d6dcbde09258efd170a86a3b8f98ffedc4c55e880e9187",
+        "size": 104388
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerNetworkClient.swiftdoc": {
+        "sha256": "06b8f9590119d8f96ad578a11aa0b82c86a8b5eb6a5e9abe9b319f3cdb2bafaf",
+        "size": 4364
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerNetworkClient.swiftmodule": {
+        "sha256": "eb5aee56d4ad6585bec391fa349d91d65df8379355abb6b5beaffc1a89c9ce9b",
+        "size": 57128
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerPersistence.swiftdoc": {
+        "sha256": "2407e0d0939bfe293e19f63eef2ea380c9e33f58f2e1016c06b37024a4b86d33",
+        "size": 16240
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerPersistence.swiftmodule": {
+        "sha256": "8598319d49d7ac2eaeaedada9d3171b4babafb8a54f629c022b6689ad372b27f",
+        "size": 263208
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerPlugin.swiftdoc": {
+        "sha256": "39ef974917f141ad81b061e562dda4600afcd35d95aba9e3f88053d604776ae2",
+        "size": 19528
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerPlugin.swiftmodule": {
+        "sha256": "bfcac0b9d2fde17902befe26e95c2daf618f0cc440af61df141e44506e9db7e2",
+        "size": 159120
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerResource.swiftdoc": {
+        "sha256": "12b4fdaa8319d650ca5dc22c306af6fb38e08ae53fcb383a9caf4b3bf919566b",
+        "size": 143068
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerResource.swiftmodule": {
+        "sha256": "8a450693c01748881cfa9ec3b42a2af97405445fab99d8b64c5f04f45dc49b97",
+        "size": 2213272
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerVersion.swiftdoc": {
+        "sha256": "6a6e5e6e2ce6523ca1b14b113660fd0fc4bca0b85040e79d99fcfc8ba5e89b50",
+        "size": 2044
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerVersion.swiftmodule": {
+        "sha256": "40d0fff35a79cb9a42de82178774c704ba970c474dbe4be5f3be4b54e1231bac",
+        "size": 55428
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerXPC.swiftdoc": {
+        "sha256": "337d8d70455bdb48d651664a7e7840b7017365557e02a5e375bc9c009fcbc945",
+        "size": 9336
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerXPC.swiftmodule": {
+        "sha256": "fe75cacc054e873fd051b4b9a0836676d31236c2c2cf175dce616909846cd200",
+        "size": 87848
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/DNSServer.swiftdoc": {
+        "sha256": "252ec1148b62c03b31cb7e11ae6013115e3cb9d81e7589169ab7d263899ada3e",
+        "size": 15148
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/DNSServer.swiftmodule": {
+        "sha256": "a7e1fdcea51d62d4d58e9b1855e5c5cfb7f4f3e64b90eac5398eaddcdc7270ac",
+        "size": 158532
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/SocketForwarder.swiftdoc": {
+        "sha256": "7adcb60d55a56e01b6261af7a2aabdc8c26970d037677e02383320f8168fe9b8",
+        "size": 612
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/SocketForwarder.swiftmodule": {
+        "sha256": "598996e2344b343746dcea3ff29be3c6578092f603aa19fd13deede4dfb2c611",
+        "size": 62640
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/TerminalProgress.swiftdoc": {
+        "sha256": "ba9979d778751acc3247c102701fcb6c1e1d4cc3ccc5fe3f8ba6aa391488551a",
+        "size": 19228
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/TerminalProgress.swiftmodule": {
+        "sha256": "76004ca0b08ba9d9090dfc00f8c0b8df8ce67f7a485e66383715b8ca69ad6c31",
+        "size": 97100
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libCAuditToken.rspm_c.lo": {
+        "sha256": "2185a86084f2139d7de217334c757843faa8efab873273a2b4d7f5d1bf3abc84",
+        "size": 512
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libCVersion.rspm_c.lo": {
+        "sha256": "72b376069082651fefdfd4e6f6235a173491ea41dd9b9f81b3398554d16521e8",
+        "size": 2824
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerAPIClient.rspm.__impl.a": {
+        "sha256": "49c623a27a20dde64b56220a8b5e9ca6f7a522869d9b5e5cad50c682be3c5fdf",
+        "size": 2724232
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerBuild.rspm.__impl.a": {
+        "sha256": "0fce3b8a6485fc3e79b09184be0fba0b5a36f860788631f4ad09130a748b093f",
+        "size": 1776592
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerImagesServiceClient.rspm.__impl.a": {
+        "sha256": "f7a8e3ea636e47cd345516bc2ed3f9f494473f8ea0de87cc068ab96bb5bc7412",
+        "size": 102736
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerLog.rspm.__impl.a": {
+        "sha256": "30ca57b1d7bf8e5c5ce4506eaa0b9a509b09679c54ce9c4b7c7262d871bbc429",
+        "size": 150736
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerNetworkClient.rspm.__impl.a": {
+        "sha256": "ae8fee1ed7849b61fd1817666a046af6f8acf8a5348c4779cbefd146055e9cce",
+        "size": 82192
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerPersistence.rspm.__impl.a": {
+        "sha256": "7c9b337137daec1c5341d1ae228b4ffa6ed6ecc29576064c77bfdd443edad5b6",
+        "size": 936528
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerPlugin.rspm.__impl.a": {
+        "sha256": "193021c8c013c7bc7685396bf965725fa9a7bb8d9db2d02533243b5055466d2f",
+        "size": 464096
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerResource.rspm.__impl.a": {
+        "sha256": "a97456cbff22dd19fb1627dea90074e674dde8c82287829555307f2144390cf0",
+        "size": 8592784
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerVersion.rspm.__impl.a": {
+        "sha256": "c8c2ea6b646ba8d8cf92d331216c14c278f768e38154280b99776703b86048e8",
+        "size": 122264
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerXPC.rspm.__impl.a": {
+        "sha256": "c16198870984a664afa51baeb42b72514a4579a1ba2582a689925f06596b13d7",
+        "size": 312640
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libDNSServer.rspm.__impl.a": {
+        "sha256": "230efb89515901eeb827aa8eadf1dbc1b81db1ac5dbbdf902cf92cfeacfd25ca",
+        "size": 471560
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libSocketForwarder.rspm.__impl.a": {
+        "sha256": "71c4905032704993bed56e5e5e6265bdd8c9c07d2bc983dc94d46ef394bbd3f8",
+        "size": 278688
+      },
+      "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libTerminalProgress.rspm.__impl.a": {
+        "sha256": "5e7199d43b6fea888cce7405463cd4c58cf75dc72bdd1af068220e50b03401b3",
+        "size": 234232
+      }
+    }
+  },
+  "configuredRoot": "//:products",
+  "developmentProof": false,
+  "evidenceAsset": "container-sdk-enhanced-native-evidence.json",
+  "evidenceSHA256": "391b40f2166ec71b0fdfc0da5d8577e096762ae05d374aee3ddd5836136a1b9f",
+  "group": "container-sdk",
+  "lower": {
+    "argument-parser": {
+      "archiveSHA256": "05390252b4cb98ad15e5e14578c2549efc882bfb424bd827080aa11d640cc003",
+      "evidenceSHA256": "6898336341bc81b5b693d3daaf28422089cf742927d3f04ba23d8939d3a58399",
+      "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
+    },
+    "containerization": {
+      "archiveSHA256": "f6dbe835df17f7922366b01464764625e8d9eee15118ce0cefac7243ba5a82bc",
+      "evidenceSHA256": "0515a6ec0f402ab28e573c9490800de01ecd4bf96acf7f10589c7c3000daa2aa",
+      "tag": "layer-containerization-enhanced-f6dbe835df17f7922366"
+    },
+    "engine-api": {
+      "archiveSHA256": "861663e4de7d6e7b997fd656bd44fc5177a6ee649fd26b095cefd765479f4b43",
+      "evidenceSHA256": "4c65dd2021335313231419c5aa1f37f1f31a42f3c00a63ee2402e80f03e192ef",
+      "tag": "layer-engine-api-enhanced-861663e4de7d6e7b997f"
+    },
+    "foundation": {
+      "archiveSHA256": "319254d1455e04b7c36837b190cbfc3f76f9ae229589a4443839687cdf915764",
+      "evidenceSHA256": "575ac4858dccecce889db121bd372c2367a68c718f1d7dcfda34bae84e440989",
+      "tag": "layer-foundation-enhanced-319254d1455e04b7c368"
+    }
+  },
+  "producerCommit": "629ca1948ca493684a53acf9acec933dd06145e3",
+  "profile": "enhanced",
+  "reachedSources": {
+    "container": {
+      "repository": "swiftpkg_container",
+      "sourceCommit": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+      "sourceLocation": "https://github.com/stephenlclarke/container.git"
+    }
+  },
+  "recipeSHA256": {
+    "artifactBuild": "0b135d42637b994c24ce79f9b83c5708bcca1d4f2f415bef2d2e0f200eb8a0c2",
+    "bazelConfiguration": "eaa82a266098e27996a8ba20b3cf53c2360bc45e47e0646a71a9035b2f0b4eec",
+    "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
+    "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
+    "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
+    "launcher": "8414afcbe61d0df2b2733d2e1b4a8575406d228cdaf7250cb9bd5df56bfd79cd",
+    "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
+    "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
+    "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
+    "rootBuild": "f82ba9db41fce5694f865c33aa56e5fcb8cae1305ca5b5be367d1a5f23e562f3",
+    "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
+    "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
+    "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
+    "swiftPackageManifest": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
+    "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
+  },
+  "repository": "stephenlclarke/container",
+  "schema": 1,
+  "selectedTargets": [
+    "@swiftpkg_container//:CAuditToken.rspm_c",
+    "@swiftpkg_container//:CVersion.rspm_c",
+    "@swiftpkg_container//:ContainerAPIClient.rspm.__impl",
+    "@swiftpkg_container//:ContainerBuild.rspm.__impl",
+    "@swiftpkg_container//:ContainerImagesServiceClient.rspm.__impl",
+    "@swiftpkg_container//:ContainerLog.rspm.__impl",
+    "@swiftpkg_container//:ContainerNetworkClient.rspm.__impl",
+    "@swiftpkg_container//:ContainerPersistence.rspm.__impl",
+    "@swiftpkg_container//:ContainerPlugin.rspm.__impl",
+    "@swiftpkg_container//:ContainerResource.rspm.__impl",
+    "@swiftpkg_container//:ContainerVersion.rspm.__impl",
+    "@swiftpkg_container//:ContainerXPC.rspm.__impl",
+    "@swiftpkg_container//:DNSServer.rspm.__impl",
+    "@swiftpkg_container//:SocketForwarder.rspm.__impl",
+    "@swiftpkg_container//:TerminalProgress.rspm.__impl"
+  ],
+  "sourceGraph": {
+    "receipt": {
+      "argumentParserSource": "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+      "devcontainerLockSHA256": "f9ba00f315a3f74a5dd5440c76dd092e98a4ac41bda1339227e9b4967bb9a562",
+      "devcontainerManifestSHA256": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
+      "loadedContainerLockSHA256": "ee4a98bcf264e3ae50a8e73bd5c08514f1d251887b9f8d96c48f9d5770678f5c",
+      "loadedContainerManifestSHA256": "1c2a92302466f91ed316f0fe000f32e3855d9a794a6f118500354416d52b3f39",
+      "profile": "enhanced",
+      "schema": 1,
+      "source": {
+        "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+        "container-engine-api": "40436017e1e93012b8dab7cfc3c79783538065c3",
+        "containerization": "b404e03bb914904107a6a9305ba1f0e44c79a59c"
+      },
+      "stockLockSHA256": "f7186c61b9e1571021ae2b1f58ef05f901043bfa872829e49546f766e41da37d"
+    },
+    "receiptSHA256": "a924aba64e77763f8a2a9ac0fa1efee0bb0e0d2470b1e48b4f92b309efb6cba0"
+  },
+  "sourcePins": {
+    "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
+  },
+  "tag": "layer-container-sdk-enhanced-f7c8df3fcd18fdc18d23",
+  "targetCommit": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+  "toolchain": {
+    "bazelVersion": "8.8.0",
+    "sdkSettingsSHA256": "7b93ad7e534cc4b31c6a4e39d19b5e0288acf2168c2649479a796d1cb51939fb",
+    "sdkVersion": "27.0",
+    "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+    "swiftcSHA256": "cf81104bf554eef05e28a8bb5285c763f1323b4511b944d755d8bdd6cb8db717",
+    "xcodeVersion": "Xcode 27.0\nBuild version 27A266a"
+  }
+}
