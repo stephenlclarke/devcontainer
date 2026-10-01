@@ -125,7 +125,7 @@ public actor AppleContainerRuntime: DevContainerRuntime {
             self.networks = networks
             allocatedNetworks = overrides.allocatedNetworks ?? LiveAppleNetworkAllocationClient()
             images = overrides.images ?? LiveAppleImageIdentityClient()
-            self.creator = overrides.creator ?? LiveAppleContainerCreateClient(client: api)
+            creator = overrides.creator ?? LiveAppleContainerCreateClient(client: api)
             loggingRecords = overrides.logging.records
                 ?? LiveAppleContainerLoggingRecordClient(client: api)
             loggingHandoffClientOverride = overrides.logging.handoff
