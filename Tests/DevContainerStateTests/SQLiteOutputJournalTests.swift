@@ -178,6 +178,22 @@ struct SQLiteOutputJournalTests {
         }
     }
 
+    @Test func `append succeeds when a competing writer releases its lock within the busy deadline`() async throws {
+        try await withStore { store, snapshot in
+            let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
+            let blocker = try await SQLiteOutputLockOwner(pointer: open(store.path))
+            try #require(blocker.beginImmediate())
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .milliseconds(20)) {
+                blocker.rollback()
+            }
+            try journal.append(frame("after lock release"))
+            try #require(await blocker.awaitRollback())
+            try finish(journal)
+            let history = try await store.containerOutputHistory(snapshot: snapshot, context: .init())
+            #expect(try await collect(history) == [frame("after lock release")])
+        }
+    }
+
     @Test func `missing record fails replay instead of returning silent EOF`() async throws {
         try await withStore { store, snapshot in
             let journal = try await store.beginContainerOutputCapture(snapshot: snapshot)
@@ -322,5 +338,39 @@ struct SQLiteOutputJournalTests {
         var database: OpaquePointer?
         try #require(sqlite3_open(path.path, &database) == SQLITE_OK)
         return try #require(database)
+    }
+}
+
+private final class SQLiteOutputLockOwner: @unchecked Sendable {
+    // The queue captures this owner until rollback finishes. Begin precedes
+    // dispatch, and the semaphore acknowledges rollback before result access.
+    private let pointer: OpaquePointer
+    private let released = DispatchSemaphore(value: 0)
+    private var rollbackSucceeded = false
+
+    init(pointer: OpaquePointer) {
+        self.pointer = pointer
+    }
+
+    func beginImmediate() -> Bool {
+        sqlite3_exec(pointer, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK
+    }
+
+    func rollback() {
+        rollbackSucceeded = sqlite3_exec(pointer, "ROLLBACK", nil, nil, nil) == SQLITE_OK
+        released.signal()
+    }
+
+    func awaitRollback() async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let succeeded = self.released.wait(timeout: .now() + .seconds(2)) == .success
+                continuation.resume(returning: succeeded && self.rollbackSucceeded)
+            }
+        }
+    }
+
+    deinit {
+        sqlite3_close(pointer)
     }
 }

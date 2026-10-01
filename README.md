@@ -276,6 +276,8 @@ DEVCONTAINER_VSCODE_LIVE=1 make parity-vscode-docker
 
 Hosted stock tests use the same explicit sequential test runner as `make test`, with one attempt and a five-minute test-execution deadline after compilation. Failures and timeouts retain their logs; a SwiftPM helper signal does not count as success in this job. Blocking socket readiness checks in the async input fixtures run on an OS queue while preserving their existing five-second deadlines.
 
+SQLite output journaling bounds each lock-contention sequence with a monotonic one-second deadline, including the best-effort failure marker. A released competing lock still permits the append; the existing four-second failure assertion and incomplete-history checks remain in place.
+
 Use `devcontainer diagnostics --output devcontainer-diagnostics.tar.gz` to
 create a bounded, privacy-redacted support archive whose JSON manifest is
 printed before the archive is written.

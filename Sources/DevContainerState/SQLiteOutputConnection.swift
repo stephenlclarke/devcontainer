@@ -30,11 +30,15 @@ final class SQLiteOutputConnection: @unchecked Sendable {
             throw Self.failure("Cannot open output database")
         }
         handle = SQLiteOutputHandle(pointer: pointer)
-        try execute("PRAGMA foreign_keys = ON")
-        try execute("PRAGMA synchronous = FULL")
-        guard sqlite3_busy_timeout(pointer, 1000) == SQLITE_OK else {
+        guard sqlite3_busy_handler(pointer, { context, count in
+            guard let context else { return 0 }
+            let budget = Unmanaged<SQLiteOutputBusyBudget>.fromOpaque(context).takeUnretainedValue()
+            return budget.wait(count: count)
+        }, Unmanaged.passUnretained(handle.busyBudget).toOpaque()) == SQLITE_OK else {
             throw Self.failure("Cannot bound output database contention")
         }
+        try execute("PRAGMA foreign_keys = ON")
+        try execute("PRAGMA synchronous = FULL")
     }
 
     func synchronized<T>(_ body: () throws -> T) rethrows -> T {
@@ -101,10 +105,37 @@ final class SQLiteOutputConnection: @unchecked Sendable {
 
 private final class SQLiteOutputHandle {
     let pointer: OpaquePointer
+    /// SQLite invokes this only while using this connection. Published journal
+    /// and cursor operations already hold SQLiteOutputConnection.lock; setup is
+    /// single-owner before the connection escapes its initializer.
+    let busyBudget = SQLiteOutputBusyBudget()
 
     init(pointer: OpaquePointer) {
         self.pointer = pointer
     }
 
-    deinit { sqlite3_close(pointer) }
+    deinit {
+        sqlite3_busy_handler(pointer, nil, nil)
+        sqlite3_close(pointer)
+    }
+}
+
+private final class SQLiteOutputBusyBudget {
+    private var deadline: ContinuousClock.Instant?
+
+    func wait(count: Int32) -> Int32 {
+        // SQLite starts count at zero for each new busy sequence. Separate
+        // statements therefore each retain the original one-second budget.
+        if count == 0 {
+            deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        }
+        guard count >= 0, let deadline else { return 0 }
+        let remaining = ContinuousClock.now.duration(to: deadline)
+        guard remaining > .zero else { return 0 }
+        let microseconds = remaining.components.seconds * 1_000_000 +
+            remaining.components.attoseconds / 1_000_000_000_000
+        _ = usleep(useconds_t(min(10000, max(1, microseconds))))
+        // A delayed wake must not grant SQLite another retry past the bound.
+        return ContinuousClock.now < deadline ? 1 : 0
+    }
 }

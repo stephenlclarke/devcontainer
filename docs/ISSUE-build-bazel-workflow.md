@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+Hosted output-journal contention exceeded the existing four-second assertion. Bound actual elapsed time per SQLite lock event while preserving separate write/failure-marker budgets, reader invalidation and successful writes after a competing lock is released. Keep the original assertions and failed evidence.
+
 Stock hosted tests stalled after readiness failures because their direct SwiftPM path did not use the maintained sequential, bounded runner. Async input fixtures also blocked cooperative executor threads while waiting for their own scheduled writers. Correct these execution paths without increasing existing readiness deadlines or accepting helper failures; retain full failed-test logs for diagnosis.
 
 The layered gate exposed a closed-pipe fixture failure, while hosted source tests exposed three further macOS path-identity boundaries: managed host mounts, private lifecycle assets and build staging containment. Their corrections must preserve leaf-symlink rejection, ownership and containment, and retain all original pipe-output/error assertions. A pipe fixture must distinguish closing its own read descriptor from kernel-observed peer closure; a bounded readiness check preserves the original rejected-write assertion without retrying writes. Existing hosted contention/cancellation timing failures remain separately visible; performance optimisation is deferred.
