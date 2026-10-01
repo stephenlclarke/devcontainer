@@ -280,6 +280,8 @@ SQLite output journaling bounds each lock-contention sequence with a monotonic o
 
 Thread Sanitizer builds identify their instrumented test fixtures explicitly. Normal process cancellation retains its two-second assertion; only a sanitized child executable receives a four-second exit bound for sanitizer finalization, with the original five-second watchdog and cleanup checks. Fixtures retain race reporting and use the absolute system symbolizer when their PATH excludes external clients.
 
+Native package metadata includes the private Node runtime and official Dev Containers CLI as separately pinned SPDX entries, alongside the selected Swift dependency lock. `Tools/release/prepare-native-legal.py` collects complete root license and notice texts from those exact Git revisions into internal retained storage without building dependency checkouts. Stock and enhanced profiles use their own strict selected license ledger. These metadata checks are components of the pending full distribution workflow; signing, runtime parity and release acceptance remain required.
+
 Use `devcontainer diagnostics --output devcontainer-diagnostics.tar.gz` to
 create a bounded, privacy-redacted support archive whose JSON manifest is
 printed before the archive is written.

@@ -1,5 +1,7 @@
 # Issue: implement the native Bazel workflow
 
+The native candidate includes a fourth public frontend and private Node/official CLI files that the legacy package inventory omitted. Native package verification must require their complete closure and exact SPDX metadata without changing historical three-product verification. Legal collection must select the profile lock and reviewed license ledger, retain complete exact-source texts, and fail before admission if source, policy, Git blob bytes or declared licensing differs.
+
 The sanitized Docker frontend emitted symbolizer warnings with its deliberately restricted PATH and spent about two seconds in sanitizer exit finalization. Identify instrumented fixtures through the maintained TSan commands, supply the absolute system symbolizer and distinguish only their child-exit assertion. Preserve production/in-process limits and all race, signal, exit and cleanup checks.
 
 Hosted output-journal contention exceeded the existing four-second assertion. Bound actual elapsed time per SQLite lock event while preserving separate write/failure-marker budgets, reader invalidation and successful writes after a competing lock is released. Keep the original assertions and failed evidence.
