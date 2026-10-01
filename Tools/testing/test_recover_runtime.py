@@ -115,6 +115,34 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 require_recovery_executable(executable, self.retained, self.ssd, owner)
 
+    def test_finalized_package_recovery_reopens_only_sealed_admission_inputs(self):
+        payload = self.retained / "active-runtimes/apple-stock/finalized"
+        executable = payload / "bin/container-apiserver"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("fixture only")
+        inputs = {"directory": "/private/finalized/release", "provenanceSHA256": "b" * 64,
+                  "state": "/private/accepted/state", "sourceCommit": "a" * 40}
+        releases = [{"scope": "finalized-native-package-runtime-input", "archiveSHA256": "c" * 64},
+                    {"root": str(payload), "executables": {"container-apiserver": str(executable)}}]
+        runtime = {"releases": releases, "finalizedPackageInputs": inputs}
+        owner = {"identity": {"runtimeSHA256": digest(canonical(runtime)), "lane": "apple-stock"}}
+        admission = {"runtime": runtime, "releaseLock": "fixture-lock", "finalizedPackageInputs": dict(inputs)}
+        with patch("recover_runtime.verify_case_evidence", return_value={"admission.json": admission}), \
+                patch("released_engine.finalized_runtime", return_value=releases) as admit:
+            require_recovery_executable(executable, self.retained, self.ssd, owner)
+            admit.assert_called_once_with("fixture-lock", "apple-stock", self.retained,
+                                          Path(__file__).resolve().parents[2], inputs)
+            admission["finalizedPackageInputs"]["provenanceSHA256"] = "d" * 64
+            admit.reset_mock()
+            with self.assertRaisesRegex(ValueError, "finalized-package recovery inputs differ"):
+                require_recovery_executable(executable, self.retained, self.ssd, owner)
+            admit.assert_not_called()
+            admission["finalizedPackageInputs"] = dict(inputs)
+            runtime["finalizedPackageInputs"]["sourceCommit"] = "e" * 40
+            with self.assertRaisesRegex(ValueError, "fingerprint differs"):
+                require_recovery_executable(executable, self.retained, self.ssd, owner)
+            admit.assert_not_called()
+
     def test_report_does_not_mutate_then_apply_restores_and_preserves_failed_case(self):
         before = list(self.launchd.mutations)
         report = self.run_recovery(apply=False)

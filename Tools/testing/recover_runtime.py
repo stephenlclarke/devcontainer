@@ -36,7 +36,7 @@ def require_recovery_executable(executable: Path, retained: Path, ssd: Path, own
     if executable.is_relative_to(retained / "active-runtimes"):
         # A fixed pathname is not provenance: reopen the sealed case's exact
         # source and activation before permitting any service/root cleanup.
-        from released_engine import admit_runtime
+        from released_engine import admit_runtime, finalized_runtime
         admission = verify_case_evidence(retained, owner).get("admission.json", {})
         admitted = admission.get("runtime", {})
         if digest(canonical(admitted)) != owner["identity"]["runtimeSHA256"]:
@@ -44,8 +44,15 @@ def require_recovery_executable(executable: Path, retained: Path, ssd: Path, own
         releases = admitted.get("releases", [])
         if len(releases) != 2:
             raise ValueError("Stable runtime recovery inputs are incomplete")
-        selected = admit_runtime(admission["releaseLock"], owner["identity"]["lane"], retained,
-                                 releases[0].get("candidateInvocation"))
+        finalized_inputs = admission.get("finalizedPackageInputs")
+        if finalized_inputs is not None:
+            if admitted.get("finalizedPackageInputs") != finalized_inputs:
+                raise ValueError("Stable finalized-package recovery inputs differ")
+            selected = finalized_runtime(admission["releaseLock"], owner["identity"]["lane"], retained,
+                                         Path(__file__).resolve().parents[2], finalized_inputs)
+        else:
+            selected = admit_runtime(admission["releaseLock"], owner["identity"]["lane"], retained,
+                                     releases[0].get("candidateInvocation"))
         if selected != releases or selected[1]["executables"]["container-apiserver"] != str(executable):
             raise ValueError("Stable runtime recovery inputs changed")
         allowed += (Path(selected[1]["root"]),)

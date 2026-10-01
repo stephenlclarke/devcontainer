@@ -79,6 +79,23 @@ exports_files([
     "Tests/Parity/fixtures/C01-compose-service/probe.sh",
 ])
 
+filegroup(
+    name = "native_release_admission_inputs",
+    srcs = [
+        "Tools/release/prepare_finalized_package.py",
+        "Tools/release/native_signing.py",
+        "Tools/release/finalize-native-package.py",
+        "Tools/release/consume-native-finalized-package.py",
+        "Tools/release/create-reproducible-archive.py",
+        "Tools/release/verify-package.py",
+        "Tools/release/dependency_metadata.py",
+        "Tools/release/reference_runtime_metadata.py",
+        "Tools/release/versioning.py",
+        "//Tools/bazel:package_checks/cli_process.py",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 candidate_archive(
     name = "candidate_archive",
     binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine", ":devcontainer-docker"],

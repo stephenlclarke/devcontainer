@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import signal
+import argparse
 import sqlite3
 import subprocess
 import unittest
@@ -20,12 +21,102 @@ from unittest import mock
 from parity_lib import Fixture, ParityError
 from run_lane import (
     LaneRunner,
+    finalized_selection,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
     run_checked,
     safe_environment,
 )
+
+
+class FinalizedSelectionTests(unittest.TestCase):
+    def test_selection_requires_all_four_explicit_inputs(self) -> None:
+        values = dict(finalized_directory=Path("/final"), finalization_provenance_sha256="a" * 64,
+                      finalization_state=Path("/state"), expected_source_commit="b" * 40)
+        self.assertEqual(finalized_selection(argparse.Namespace(**values)), values)
+        values["finalization_state"] = None
+        with self.assertRaisesRegex(ParityError, "all four"):
+            finalized_selection(argparse.Namespace(**values))
+
+    def test_release_uses_signed_binaries_and_private_reference(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/repository")
+        runner.finalized_selection = {"expected_source_commit": "b" * 40}
+        runner.finalized = {"executables": {"devcontainer": "/signed/devcontainer",
+                                              "devcontainer-engine": "/signed/engine",
+                                              "devcontainer-compose": "/signed/compose"},
+                            "referenceRuntime": {"paths": {"node": "/signed/node",
+                                                           "cli/devcontainer.js": "/signed/cli.js"}}}
+        runner.provider_paths = {"DEVCONTAINER_COMPOSE_BIN": "/qualified/compose"}
+        self.assertEqual(runner.package_executable("devcontainer-engine"), "/signed/engine")
+        self.assertEqual(runner.compose_command("project", Path("/fixture/compose.yml"))[0], "/signed/compose")
+        self.assertEqual(runner.devcontainers_command(), ["/signed/devcontainer"])
+        self.assertEqual(runner.provider_executable("DEVCONTAINER_COMPOSE_BIN", "ambient"), "/qualified/compose")
+        runner.environment = {"PATH": "/usr/bin"}
+        with mock.patch("run_lane.subprocess.run", return_value=mock.Mock(returncode=0)) as invoke:
+            runner.devcontainer(["up", "--workspace-folder", "/fixture"], 10)
+        self.assertEqual(invoke.call_args.args[0], ["/signed/devcontainer", "up", "--workspace-folder", "/fixture"])
+
+    def test_readmission_rejects_changed_signed_identity(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "docker"
+        runner.repository = Path("/repository")
+        runner.finalized_selection = {"finalized_directory": Path("/final"),
+                                     "finalization_provenance_sha256": "a" * 64,
+                                     "finalization_state": Path("/state"),
+                                     "expected_source_commit": "b" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        admission = {"scope": "finalized-native-package-runtime-input", "kind": "signed-notarized-native-package",
+                     "sourceCommit": "b" * 40, "runtimeProfile": "stock", "candidateReceiptSHA256": "c" * 64,
+                     "finalizationProvenanceSHA256": "a" * 64, "trustedStateSHA256": "d" * 64,
+                     "archiveSHA256": "e" * 64, "archiveSize": 1, "preparationSHA256": "f" * 64,
+                     "inventorySHA256": "1" * 64, "productionBinarySHA256": {},
+                     "signatureInventorySHA256": "2" * 64, "referenceRuntime": {"files": {}},
+                     "signatureEvidenceRoot": "/unique/first"}
+        with (mock.patch("run_lane.load_finalized_admitter", return_value=lambda **_: admission),
+              mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64)):
+            runner.readmit_finalized(first=True)
+            admission["signatureEvidenceRoot"] = "/unique/second"
+            runner.readmit_finalized()
+            admission["archiveSHA256"] = "0" * 64
+            with self.assertRaisesRegex(ParityError, "identity changed"):
+                runner.readmit_finalized()
+
+    def test_native_provider_bytes_must_survive_post_run_readmission(self) -> None:
+        with TemporaryDirectory() as temporary:
+            provider = Path(temporary).resolve() / "container"
+            provider.write_bytes(b"qualified provider")
+            provider.chmod(0o755)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.repository = Path("/repository")
+            runner.finalized_selection = {"finalized_directory": Path("/final"),
+                                         "finalization_provenance_sha256": "a" * 64,
+                                         "finalization_state": Path("/state"),
+                                         "expected_source_commit": "b" * 40}
+            runner.provider_paths = {}
+            runner.provider_hashes = {}
+            runner.harness_sha256 = "f" * 64
+            with (
+                mock.patch.dict("run_lane.os.environ", {"DEVCONTAINER_CONTAINER_BIN": str(provider)}),
+                mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+                mock.patch("run_lane.load_finalized_admitter", return_value=lambda **_: {
+                    "scope": "finalized-native-package-runtime-input", "kind": "signed-notarized-native-package",
+                    "sourceCommit": "b" * 40, "runtimeProfile": "stock", "candidateReceiptSHA256": "c" * 64,
+                    "finalizationProvenanceSHA256": "a" * 64, "trustedStateSHA256": "d" * 64,
+                    "archiveSHA256": "e" * 64, "archiveSize": 1, "preparationSHA256": "f" * 64,
+                    "inventorySHA256": "1" * 64, "productionBinarySHA256": {},
+                    "signatureInventorySHA256": "2" * 64, "referenceRuntime": {"files": {}},
+                }),
+            ):
+                runner.admit_finalized()
+                provider.write_bytes(b"changed provider")
+                with self.assertRaisesRegex(ParityError, "qualified provider changed"):
+                    runner.readmit_finalized()
 
 
 class SafeEnvironmentTests(unittest.TestCase):

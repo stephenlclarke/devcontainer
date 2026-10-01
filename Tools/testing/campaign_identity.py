@@ -46,6 +46,11 @@ PREPARATION_HELPERS = (
     "prepare_releases.py", "prepare_candidate.py", "retain_evidence.py", "release_inputs.py",
     "prepare_guest_images.py", "oci_image_layout.py", "prepare_docker_cli.py", "prepare_devcontainers_cli.py",
 )
+RELEASE_HELPERS = (
+    "prepare_finalized_package.py", "native_signing.py", "finalize-native-package.py",
+    "consume-native-finalized-package.py", "create-reproducible-archive.py", "verify-package.py",
+    "dependency_metadata.py", "reference_runtime_metadata.py", "versioning.py",
+)
 RUNTIME_HELPERS = (
     "build_probe.py", "build_images.py", "build_fixture.py", "build_runtime.py",
     "archive_probe.py", "campaign_identity.py", "case_evidence.py", "docker_vm.py", "devcontainer_reference.py", "devcontainer_candidate.py",
@@ -76,7 +81,9 @@ def published_fingerprints(repository: Path) -> dict[str, str]:
     # entry script can retain its runfiles path. Hash the explicit execution
     # closure, not whichever tests/recovery helpers happen to share that folder.
     sources = [*[repository / "Tools/testing" / name for name in RUNTIME_HELPERS],
-               *[repository / "Tools/bazel" / name for name in PREPARATION_HELPERS]]
+               *[repository / "Tools/bazel" / name for name in PREPARATION_HELPERS],
+               *[repository / "Tools/release" / name for name in RELEASE_HELPERS],
+               repository / "Tools/bazel/package_checks/cli_process.py"]
     harness = {path.relative_to(repository).as_posix(): digest(path.read_bytes()) for path in sources}
     releases = {name: digest((repository / name).read_bytes()) for name in RELEASE_INPUTS}
     return {"harnessSHA256": digest(canonical(harness)), "releaseSetSHA256": digest(canonical(releases))}

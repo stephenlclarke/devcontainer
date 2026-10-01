@@ -143,6 +143,16 @@ class ReleasedEngineTests(unittest.TestCase):
         self.assertEqual(prepared.call_count, 2)
         self.assertTrue(all(call.args[2] == self.root / "prepared-releases" for call in prepared.call_args_list))
 
+    def test_finalized_runtime_selects_provider_without_published_frontend_dependency(self):
+        lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
+        lock["assets"] = [asset for asset in lock["assets"]
+                          if asset["repository"] != "stephenlclarke/devcontainer"]
+        selected = released_engine.provider_runtime_selection(lock, "apple-stock")
+        self.assertEqual((selected["repository"], selected["name"]),
+                         ("apple/container", "container-1.4.1-installer-signed.pkg"))
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            released_engine.provider_runtime_selection(lock, "docker")
+
     def test_runtime_admission_requires_selected_stable_payload_without_fallback(self):
         source = {"native": "original"}
         with patch("released_engine.admit", return_value=[{"client": "unchanged"}, source]), \
@@ -183,6 +193,114 @@ class ReleasedEngineTests(unittest.TestCase):
                 released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)
         original = {"unchanged": True}
         self.assertIs(released_engine.fixture_guest_inputs(original, "E01-engine-negotiation", {}, repository), original)
+
+    def finalized_product(self, lane="apple-stock"):
+        reference_names = {"node", "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
+                           "cli/devcontainer-lock.yaml", "cli/package.json"}
+        return {"schemaVersion": 1, "scope": released_engine.FINALIZED_SCOPE,
+                "kind": "signed-notarized-native-package", "distributionReady": False,
+                "providerLane": lane, "sourceCommit": "a" * 40, "runtimeProfile": "stock",
+                "candidateReceiptSHA256": "b" * 64, "finalizationProvenanceSHA256": "c" * 64,
+                "trustedStateSHA256": "d" * 64, "archiveSHA256": "e" * 64, "archiveSize": 100,
+                "preparationSHA256": "f" * 64, "inventorySHA256": "1" * 64,
+                "signatureInventorySHA256": "2" * 64, "root": "/retained/prepared",
+                "signatureEvidenceRoot": "/retained/evidence",
+                "executables": {name: "/retained/bin/" + name for name in
+                                 ("devcontainer", "devcontainer-docker", "devcontainer-compose", "devcontainer-engine")},
+                "pluginExecutable": "/retained/bin/devcontainer-plugin",
+                "referenceRuntime": {"root": "/retained/reference",
+                                     "paths": {name: "/retained/reference/" + name for name in reference_names},
+                                     "files": {name: "3" * 64 for name in reference_names}}}
+
+    def test_finalized_guest_selection_keeps_signed_reference_closure_separate(self):
+        repository = Path(__file__).parents[2]
+        product = self.finalized_product()
+        selected = released_engine.fixture_guest_inputs({"workload": "pin"}, "D01-image-config", product, repository)
+        self.assertEqual(selected["devcontainerCandidate"], product)
+        self.assertEqual(selected["signedReferenceRuntime"], product["referenceRuntime"])
+        self.assertNotIn("reference-node", product["executables"])
+        self.assertNotIn("pluginExecutable", product["executables"])
+        self.assertIn("configuration", selected["devcontainerFixture"])
+        for changed in ({**product, "executables": {}}, {**product, "pluginExecutable": None},
+                        {**product, "referenceRuntime": {"paths": {}, "files": {"node": "3" * 64}}}):
+            with self.assertRaisesRegex(ValueError, "finalized native package"):
+                released_engine.fixture_guest_inputs({}, "D01-image-config", changed, repository)
+
+    def test_finalized_release_set_identity_is_provider_independent_and_content_bound(self):
+        stock = self.finalized_product("apple-stock")
+        compose = {**stock, "providerLane": "container-compose", "root": "/other/prepared",
+                   "signatureEvidenceRoot": "/other/evidence",
+                   "executables": {key: value.replace("/retained", "/other")
+                                   for key, value in stock["executables"].items()}}
+        first = released_engine.release_set_identity({"published": "same"}, None, stock)
+        self.assertEqual(first, released_engine.release_set_identity({"published": "same"}, None, compose))
+        for field in ("finalizationProvenanceSHA256", "archiveSHA256", "sourceCommit",
+                      "signatureInventorySHA256", "preparationSHA256"):
+            changed = {**stock, field: "9" * (40 if field == "sourceCommit" else 64)}
+            self.assertNotEqual(first, released_engine.release_set_identity({"published": "same"}, None, changed))
+
+    def test_finalized_entrypoint_seals_inputs_and_uses_stock_archive_for_both_providers(self):
+        package_dir, state_dir = self.root / "finalized", self.root / "state"
+        package_dir.mkdir()
+        state_dir.mkdir()
+        package = self.finalized_product()
+        runtime = {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}
+        guard = HostGuard(self.root / "admission.json")
+        selected_packages = []
+
+        def selected(_lock, lane, _retained, _repository, inputs):
+            product = {**package, "providerLane": lane}
+            selected_packages.append((lane, inputs, product))
+            return [product, runtime]
+
+        release_sets = []
+        for lane in ("apple-stock", "container-compose"):
+            argv = ["case", "--campaign=finalized", "--lane=" + lane, "--fixture=D01-image-config",
+                    "--finalized-directory=" + str(package_dir), "--finalization-provenance-sha256=" + "c" * 64,
+                    "--finalization-state=" + str(state_dir), "--expected-source-commit=" + "a" * 40]
+            with patch("released_engine.platform.system", return_value="Darwin"), \
+                    patch("released_engine.platform.machine", return_value="arm64"), \
+                    patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
+                    patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
+                    patch("released_engine.finalized_runtime", side_effect=selected), \
+                    patch("released_engine.admit_guest", return_value={"workload": "fixture"}), \
+                    patch("released_engine.version", return_value="fixture"), \
+                    patch("released_engine.CaseStore", return_value=self.store), \
+                    patch("released_engine.HostGuard", return_value=guard), \
+                    patch("released_engine.runtime_lease", side_effect=lambda *_: runtime_lease(self.root / "lock", guard)), \
+                    patch("released_engine.ReleasedCase") as factory, \
+                    patch("released_engine.run_case", return_value={"status": "passed", "durationsNS": {}}), \
+                    patch("sys.stdout", new_callable=io.StringIO), patch("sys.argv", argv):
+                with self.assertRaises(SystemExit) as status:
+                    released_engine.main()
+                self.assertEqual(status.exception.code, 0)
+                admission = factory.call_args.kwargs["admission"]
+                self.assertEqual(admission["scope"], released_engine.FINALIZED_SCOPE)
+                self.assertEqual(admission["finalizedPackageInputs"], {
+                    "directory": str(package_dir), "provenanceSHA256": "c" * 64,
+                    "state": str(state_dir), "sourceCommit": "a" * 40})
+                self.assertEqual(admission["runtime"]["finalizedPackageInputs"], admission["finalizedPackageInputs"])
+                self.assertEqual(factory.call_args.kwargs["guest_inputs"]["devcontainerCandidate"],
+                                 {**package, "providerLane": lane})
+                release_sets.append(factory.call_args.args[1]["releaseSetSHA256"])
+                self.assertEqual(factory.call_args.args[4](), [{**package, "providerLane": lane}, runtime])
+        self.assertEqual([item[0] for item in selected_packages],
+                         ["apple-stock", "apple-stock", "container-compose", "container-compose"])
+        self.assertEqual(selected_packages[0][1], selected_packages[2][1])
+        self.assertEqual(release_sets[0], release_sets[1])
+
+    def test_finalized_cli_requires_complete_mutually_exclusive_input_set(self):
+        cases = [(["--finalized-directory=/final"], "requires directory"),
+                 (["--finalized-directory=/final", "--finalization-provenance-sha256=" + "c" * 64,
+                   "--finalization-state=/state", "--expected-source-commit=" + "a" * 40,
+                   "--candidate-invocation=unsigned"], "mutually exclusive")]
+        for options, message in cases:
+            with self.subTest(options=options), patch("released_engine.platform.system", return_value="Darwin"), \
+                    patch("released_engine.platform.machine", return_value="arm64"), \
+                    patch("sys.argv", ["case", "--campaign=test", "--lane=apple-stock", "--fixture=D01-image-config", *options]), \
+                    patch("released_engine.finalized_runtime", side_effect=AssertionError("must reject before admission")), \
+                    self.assertRaisesRegex(ValueError, message):
+                released_engine.main()
 
     def test_candidate_admission_does_not_substitute_the_published_runtime(self):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
@@ -290,6 +408,15 @@ class ReleasedEngineTests(unittest.TestCase):
                         {**compose, "productFamily": "docker-compose"}, {**compose, "executables": {}}):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "matching native Compose"):
                 released_engine.fixture_guest_inputs({}, "C01-compose-service", candidate, repository, invalid)
+        finalized = self.finalized_product("container-compose")
+        enhanced_compose = {**compose, "runtimeProfile": "enhanced"}
+        selected = released_engine.fixture_guest_inputs({}, "C01-compose-service", finalized,
+                                                        repository, enhanced_compose)
+        self.assertEqual(selected["devcontainerCandidate"], finalized)
+        self.assertEqual(selected["composeCandidate"], enhanced_compose)
+        foreground = released_engine.fixture_guest_inputs({}, "E09-compose-foreground", finalized,
+                                                          repository, enhanced_compose)
+        self.assertEqual(foreground, {"composeCandidate": enhanced_compose})
 
     def test_candidate_evidence_cannot_compare_as_published_release_parity(self):
         published = released_engine.release_set_identity({"lock": "published"}, None, None)

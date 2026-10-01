@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
@@ -41,6 +43,53 @@ from parity_lib import (
 
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
+FINALIZED_SCRATCH = Path("/Volumes/SSD/cf/finalized-admission")
+FINALIZED_RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
+
+
+def finalized_selection(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Require one complete, explicit signed-package selection."""
+
+    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state", "expected_source_commit")
+    values = {field: getattr(args, field, None) for field in fields}
+    if any(value is not None for value in values.values()) and not all(value is not None for value in values.values()):
+        raise ParityError("all four finalized package inputs are required together")
+    return values if all(value is not None for value in values.values()) else None
+
+
+def load_finalized_admitter(repository: Path):
+    """Load the maintained release admission by its selected repository path."""
+
+    path = repository / "Tools/release/prepare_finalized_package.py"
+    spec = importlib.util.spec_from_file_location("parity_finalized_admission", path)
+    if spec is None or spec.loader is None:
+        raise ParityError("finalized package admission helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.admit_finalized_package
+
+
+def file_sha256(path: Path) -> str:
+    """Bind an explicitly selected provider executable to its exact bytes."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def parity_harness_sha256(repository: Path) -> str:
+    """Bind the same C04/V01 runner and comparison sources in every lane."""
+
+    digest = hashlib.sha256()
+    for relative in ("Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+                     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
+                     "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
+                     "Tools/release/prepare_finalized_package.py"):
+        digest.update(relative.encode("utf-8") + b"\0")
+        digest.update(bytes.fromhex(file_sha256(repository / relative)))
+    return digest.hexdigest()
 
 
 def resolver_nameservers(configuration: str) -> list[str]:
@@ -65,7 +114,7 @@ def resolver_nameservers(configuration: str) -> list[str]:
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
-    def __init__(self, lane: str, repository: Path, evidence_root: Path) -> None:
+    def __init__(self, lane: str, repository: Path, evidence_root: Path, selection: dict[str, Any] | None = None) -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -87,7 +136,90 @@ class LaneRunner:
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
+        self.finalized_selection = selection
+        self.finalized: dict[str, Any] | None = None
+        self.finalized_identity: dict[str, Any] | None = None
+        self.provider_paths: dict[str, str] = {}
+        self.provider_hashes: dict[str, str] = {}
+        self.harness_sha256: str | None = None
         self.configure_runtime_path()
+
+    def admit_finalized(self) -> None:
+        """Authenticate the shared stock package before any native runtime starts."""
+
+        if self.finalized_selection is None:
+            return
+        self.harness_sha256 = parity_harness_sha256(self.repository)
+        if self.lane != "docker":
+            names = ("DEVCONTAINER_CONTAINER_BIN", "DEVCONTAINER_COMPOSE_BIN") if self.lane == "container-compose" else ("DEVCONTAINER_CONTAINER_BIN",)
+            for name in names:
+                value = os.environ.get(name)
+                path = Path(value) if value else None
+                if path is None or not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK) or path.resolve() != path:
+                    raise ParityError(f"finalized native lane requires an exact qualified {name}")
+                self.provider_paths[name] = str(path)
+                self.provider_hashes[name] = file_sha256(path)
+        self.readmit_finalized(first=True)
+
+    def readmit_finalized(self, *, first: bool = False) -> None:
+        """Reject changed signed inputs or provider binaries after the fixture."""
+
+        if self.finalized_selection is None:
+            return
+        if self.harness_sha256 != parity_harness_sha256(self.repository):
+            raise ParityError("parity harness changed during finalized package run")
+        for name, expected in self.provider_hashes.items():
+            if os.environ.get(name) != self.provider_paths[name] or file_sha256(Path(self.provider_paths[name])) != expected:
+                raise ParityError(f"qualified provider changed during parity: {name}")
+        selection = self.finalized_selection
+        try:
+            admission = load_finalized_admitter(self.repository)(
+                repository=self.repository.resolve(),
+                finalized=selection["finalized_directory"],
+                trusted_provenance_sha256=selection["finalization_provenance_sha256"],
+                expected_source_commit=selection["expected_source_commit"],
+                provider_lane="apple-stock" if self.lane == "docker" else self.lane,
+                state=selection["finalization_state"],
+                scratch_root=FINALIZED_SCRATCH,
+                retained_root=FINALIZED_RETAINED,
+                evidence_root=FINALIZED_RETAINED / "signature-evidence",
+            )
+        except (OSError, ValueError) as error:
+            raise ParityError(f"finalized package admission failed: {error}") from error
+        if admission.get("scope") != "finalized-native-package-runtime-input" or admission.get("runtimeProfile") != "stock":
+            raise ParityError("finalized package has an unsupported runtime scope")
+        identity = {key: admission[key] for key in (
+            "scope", "kind", "sourceCommit", "runtimeProfile", "candidateReceiptSHA256",
+            "finalizationProvenanceSHA256", "trustedStateSHA256", "archiveSHA256", "archiveSize",
+            "preparationSHA256", "inventorySHA256", "productionBinarySHA256", "signatureInventorySHA256",
+        )}
+        identity["referenceRuntimeFiles"] = admission["referenceRuntime"]["files"]
+        if first:
+            self.finalized = admission
+            self.finalized_identity = identity
+        elif identity != self.finalized_identity:
+            raise ParityError("finalized package identity changed during parity")
+
+    def package_executable(self, name: str) -> str:
+        """Select an admitted signed executable or the development build."""
+
+        if getattr(self, "finalized_selection", None) is not None:
+            if self.finalized is None:
+                raise ParityError("finalized package was not admitted")
+            return self.finalized["executables"][name]
+        return str(self.repository / ".build" / "debug" / name)
+
+    def provider_executable(self, name: str, fallback: str) -> str:
+        """Keep the qualified external provider separate from the package adapter."""
+
+        return self.provider_paths.get(name) or os.environ.get(name) or fallback
+
+    def devcontainers_command(self) -> list[str]:
+        """Use the signed installation-owned Node and pinned CLI in release mode."""
+
+        if getattr(self, "finalized_selection", None) is not None and self.lane != "docker":
+            return [self.package_executable("devcontainer")]
+        return [self.node_package_runner, "--yes", f"@devcontainers/cli@{self.cli_version}"]
 
     def configure_runtime_path(self) -> None:
         """Prefer explicitly selected provider binaries throughout the lane."""
@@ -115,8 +247,10 @@ class LaneRunner:
             raise ParityError(f"unknown lane {self.lane!r}")
         if not self.docker:
             raise ParityError("docker CLI is required")
-        if not self.node_package_runner:
+        if not self.node_package_runner and (self.lane == "docker" or self.finalized_selection is None):
             raise ParityError("npx is required for the pinned @devcontainers/cli")
+
+        self.admit_finalized()
 
         if self.output.exists():
             shutil.rmtree(self.output)
@@ -166,7 +300,10 @@ class LaneRunner:
                 self.stop_builder()
                 self.check_runtime_state_cleanup()
             finally:
-                self.stop_engine()
+                try:
+                    self.stop_engine()
+                finally:
+                    self.readmit_finalized()
 
         success = (
             all(result["status"] == "passed" for result in results)
@@ -179,6 +316,10 @@ class LaneRunner:
             "fixtures": results,
             "cleanupDifferences": self.cleanup_differences,
         }
+        if getattr(self, "finalized_identity", None) is not None:
+            payload["finalizedPackage"] = self.finalized_identity
+            payload["providerBinarySHA256"] = self.provider_hashes
+            payload["parityHarnessSHA256"] = self.harness_sha256
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -191,8 +332,8 @@ class LaneRunner:
     def start_engine(self) -> None:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise ParityError("Apple lanes require an arm64 Mac")
-        engine = self.repository / ".build" / "debug" / "devcontainer-engine"
-        if not engine.is_file():
+        engine = Path(self.package_executable("devcontainer-engine"))
+        if self.finalized_selection is None and not engine.is_file():
             run_checked(
                 ["swift", "build", "--disable-automatic-resolution"],
                 cwd=self.repository,
@@ -205,9 +346,7 @@ class LaneRunner:
         self.socket_root = create_socket_root()
         socket_path = self.socket_root / "docker.sock"
         state_path = self.runtime_root / "state.sqlite"
-        container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
-            "container"
-        )
+        container = self.provider_executable("DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "")
         if not container:
             raise ParityError("Apple container CLI is required")
         self.engine_log = (self.output / "engine.log").open("wb")
@@ -281,7 +420,7 @@ class LaneRunner:
                 raise ParityError(
                     "container-compose Docker client wrapper requires a live engine"
                 )
-            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+            compose = Path(self.package_executable("devcontainer-compose"))
             if not compose.is_file() or not os.access(compose, os.X_OK):
                 raise ParityError(
                     f"container-compose wrapper is not executable at {compose}"
@@ -613,15 +752,10 @@ class LaneRunner:
     def fingerprint(self) -> dict[str, Any]:
         commands: dict[str, Sequence[str]] = {
             "docker": [self.docker, "version", "--format", "{{json .}}"],
-            "devcontainers": [
-                self.node_package_runner,
-                "--yes",
-                f"@devcontainers/cli@{self.cli_version}",
-                "--version",
-            ],
+            "devcontainers": [*self.devcontainers_command(), "--version"],
         }
         if self.lane != "docker":
-            container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or "container"
+            container = self.provider_executable("DEVCONTAINER_CONTAINER_BIN", "container")
             commands["container"] = [
                 container,
                 "system",
@@ -631,7 +765,7 @@ class LaneRunner:
             ]
         if self.lane == "container-compose":
             commands["containerCompose"] = [
-                os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
+                self.provider_executable("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",
                 "--format",
                 "json",
@@ -643,6 +777,10 @@ class LaneRunner:
             "devcontainersReference": self.cli_reference,
             "commands": {},
         }
+        if getattr(self, "finalized_identity", None) is not None:
+            fingerprints["finalizedPackage"] = self.finalized_identity
+            fingerprints["providerBinarySHA256"] = self.provider_hashes
+            fingerprints["parityHarnessSHA256"] = self.harness_sha256
         for name, command in commands.items():
             result = subprocess.run(
                 command,
@@ -679,7 +817,7 @@ class LaneRunner:
             fingerprints["containerDistribution"] = distribution
             if (
                 distribution != "apple"
-                and os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1"
+                and (self.finalized_selection is not None or os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1")
             ):
                 raise ParityError(
                     "apple-stock lane requires Apple's stock distribution; "
@@ -1179,10 +1317,7 @@ class LaneRunner:
         if self.lane != "docker":
             container_inventory = subprocess.run(
                 [
-                    os.environ.get(
-                        "DEVCONTAINER_CONTAINER_BIN",
-                        shutil.which("container") or "container",
-                    ),
+                    self.provider_executable("DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "container"),
                     "list",
                     "--all",
                     "--format",
@@ -1311,9 +1446,8 @@ class LaneRunner:
         environment = dict(self.environment)
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
-            environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
-                "DEVCONTAINER_COMPOSE_BIN",
-                shutil.which("container-compose") or "container-compose",
+            environment["DEVCONTAINER_COMPOSE_BIN"] = self.provider_executable(
+                "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         return environment
 
@@ -1323,9 +1457,7 @@ class LaneRunner:
         if self.lane == "docker":
             command = [self.docker, "compose"]
         else:
-            command = [
-                str(self.repository / ".build" / "debug" / "devcontainer-compose")
-            ]
+            command = [self.package_executable("devcontainer-compose")]
         return [
             *command,
             "--project-name",
@@ -1382,23 +1514,14 @@ class LaneRunner:
         environment = dict(self.environment)
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
-            environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
-                "DEVCONTAINER_COMPOSE_BIN",
-                shutil.which("container-compose") or "container-compose",
+            environment["DEVCONTAINER_COMPOSE_BIN"] = self.provider_executable(
+                "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         command_arguments = list(arguments)
-        if self.lane != "docker" and command_arguments:
-            compose_wrapper = (
-                self.repository / ".build" / "debug" / "devcontainer-compose"
-            )
-            command_arguments += ["--docker-compose-path", str(compose_wrapper)]
+        if self.lane != "docker" and command_arguments and self.finalized_selection is None:
+            command_arguments += ["--docker-compose-path", self.package_executable("devcontainer-compose")]
         return subprocess.run(
-            [
-                self.node_package_runner,
-                "--yes",
-                f"@devcontainers/cli@{self.cli_version}",
-                *command_arguments,
-            ],
+            [*self.devcontainers_command(), *command_arguments],
             cwd=self.repository,
             env=environment,
             capture_output=True,
@@ -1456,14 +1579,7 @@ class LaneRunner:
             if self.lane == "docker":
                 compose_command = [self.docker, "compose"]
             else:
-                compose_command = [
-                    str(
-                        self.repository
-                        / ".build"
-                        / "debug"
-                        / "devcontainer-compose"
-                    )
-                ]
+                compose_command = [self.package_executable("devcontainer-compose")]
             down = subprocess.run(
                 [
                     *compose_command,
@@ -1698,6 +1814,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=LANES)
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--finalized-directory", type=Path)
+    parser.add_argument("--finalization-provenance-sha256")
+    parser.add_argument("--finalization-state", type=Path)
+    parser.add_argument("--expected-source-commit")
     return parser.parse_args()
 
 
@@ -1707,7 +1827,7 @@ def main() -> int:
     evidence = args.evidence.resolve()
     try:
         install_cancellation_handlers()
-        return LaneRunner(args.lane, repository, evidence).run()
+        return LaneRunner(args.lane, repository, evidence, finalized_selection(args)).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

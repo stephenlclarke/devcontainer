@@ -418,6 +418,40 @@ class DockerEntryTests(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertEqual(json.loads(printed.call_args.args[0])["scope"], "released-docker-case-only")
 
+    def test_finalized_input_binds_common_release_set_without_changing_docker_tools(self):
+        import released_engine
+        repository = Path(__file__).resolve().parents[2]
+        self.args.finalized_inputs = {"directory": "/private/finalized/release",
+                                      "provenanceSHA256": "b" * 64,
+                                      "state": "/private/accepted/state", "sourceCommit": "a" * 40}
+        self.args.finalized_repository = repository
+        package = {"scope": released_engine.FINALIZED_SCOPE, "kind": "signed-notarized-native-package",
+                   "distributionReady": False, "providerLane": "apple-stock", "sourceCommit": "a" * 40,
+                   "runtimeProfile": "stock", "candidateReceiptSHA256": "c" * 64,
+                   "finalizationProvenanceSHA256": "b" * 64, "trustedStateSHA256": "d" * 64,
+                   "archiveSHA256": "e" * 64, "archiveSize": 200, "preparationSHA256": "f" * 64,
+                   "inventorySHA256": "1" * 64, "signatureInventorySHA256": "2" * 64}
+        result = {"status": "passed", "durationsNS": {"setup": 1, "operation": 2, "cleanup": 3}, "errors": []}
+        with patch.object(Path, "stat", lambda path, **kw: self.separate_volumes(path, **kw)), \
+                patch.object(released_docker, "admit_docker", return_value={"tools": {"docker": "/docker"}}) as admit, \
+                patch.object(released_engine, "admit_finalized_package", return_value=package) as finalized, \
+                patch.object(released_docker, "DockerCase") as case, \
+                patch.object(released_docker, "run_case", return_value=result), \
+                patch.object(released_docker, "print"), self.assertRaises(SystemExit) as exited:
+            self.invoke()
+        self.assertEqual(exited.exception.code, 0)
+        admit.assert_called_once()
+        finalized.assert_called_once_with(repository, self.args.finalized_inputs, "apple-stock")
+        inputs = case.call_args.args[2]
+        self.assertEqual(inputs["finalizedPackageInputs"], self.args.finalized_inputs)
+        self.assertEqual(inputs["tools"], {"docker": "/docker"})
+        identity = case.call_args.args[1]
+        self.assertEqual(identity["releaseSetSHA256"], released_engine.release_set_identity(
+            released_engine.published_fingerprints(repository), None, package))
+        self.assertEqual(identity["releaseSetSHA256"], released_engine.release_set_identity(
+            released_engine.published_fingerprints(repository), None,
+            {**package, "providerLane": "container-compose", "root": "/other/prepared"}))
+
 
 if __name__ == "__main__":
     unittest.main()

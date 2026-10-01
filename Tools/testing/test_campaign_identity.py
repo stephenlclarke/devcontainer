@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from campaign_identity import PREPARATION_HELPERS, RELEASE_INPUTS, RUNTIME_HELPERS, published_fingerprints
+from campaign_identity import PREPARATION_HELPERS, RELEASE_HELPERS, RELEASE_INPUTS, RUNTIME_HELPERS, published_fingerprints
 from case_evidence import canonical, compare_cases, digest
 
 
@@ -19,7 +19,9 @@ class CampaignIdentityTests(unittest.TestCase):
         self.root = Path(temporary.name)
         (self.root / "Tools/testing").mkdir(parents=True)
         for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/release/" + name for name in RELEASE_HELPERS],
+                     "Tools/bazel/package_checks/cli_process.py"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"{}\n")
@@ -46,7 +48,9 @@ class CampaignIdentityTests(unittest.TestCase):
             self.assertNotEqual(published_fingerprints(self.root)["releaseSetSHA256"], before["releaseSetSHA256"])
             path.write_bytes(b"{}\n")
         for name in (*["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/release/" + name for name in RELEASE_HELPERS],
+                     "Tools/bazel/package_checks/cli_process.py"):
             path = self.root / name
             path.write_bytes(b"# changed\n")
             self.assertNotEqual(published_fingerprints(self.root)["harnessSHA256"], before["harnessSHA256"])
@@ -61,7 +65,9 @@ class CampaignIdentityTests(unittest.TestCase):
     def test_runfiles_and_resolved_workspace_have_identical_execution_closure(self):
         runfiles = self.root / "runfiles"
         for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS]):
+                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/release/" + name for name in RELEASE_HELPERS],
+                     "Tools/bazel/package_checks/cli_process.py"):
             path = runfiles / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.symlink_to(self.root / name)

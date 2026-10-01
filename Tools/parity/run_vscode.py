@@ -33,7 +33,7 @@ from parity_lib import (
     implemented_fixtures,
     load_manifest,
 )
-from run_lane import LaneRunner, write_junit
+from run_lane import LaneRunner, finalized_selection, write_junit
 
 FIXTURE_ID = "V01-vscode-end-to-end"
 DEFAULT_TIMEOUT_SECONDS = 1800
@@ -554,7 +554,7 @@ def no_resources_remain(
 class VSCodeLane:
     """Own one isolated real-VS-Code parity execution and its evidence."""
 
-    def __init__(self, lane: str, repository: Path, evidence_root: Path) -> None:
+    def __init__(self, lane: str, repository: Path, evidence_root: Path, selection: dict[str, Any] | None = None) -> None:
         self.lane = lane
         self.repository = repository
         self.evidence_root = evidence_root
@@ -573,7 +573,7 @@ class VSCodeLane:
             )
         )
         self.vscode_gui = self.vscode_app / "Contents/MacOS/Code"
-        self.runtime = LaneRunner(lane, repository, evidence_root / "runtime")
+        self.runtime = LaneRunner(lane, repository, evidence_root / "runtime", selection)
         self.runtime.output = self.output / "runtime"
         self.runtime.runtime_root = self.output / "runtime-state"
         self.process: subprocess.Popen[bytes] | None = None
@@ -662,6 +662,7 @@ class VSCodeLane:
         """Start or validate the selected Docker-compatible runtime endpoint."""
 
         self.runtime.output.mkdir(parents=True, exist_ok=True)
+        self.runtime.admit_finalized()
         if self.lane == "docker":
             self.runtime.configure_docker_oracle()
         else:
@@ -677,7 +678,7 @@ class VSCodeLane:
             if not compose:
                 raise ParityError("docker-compose executable is required for VS Code parity")
             return compose
-        wrapper = self.repository / ".build" / "debug" / "devcontainer-compose"
+        wrapper = Path(self.runtime.package_executable("devcontainer-compose"))
         if not wrapper.is_file():
             raise ParityError(f"Compose adapter is missing: {wrapper}")
         return str(wrapper)
@@ -685,6 +686,8 @@ class VSCodeLane:
     def devcontainer_docker_path(self) -> str:
         """Return the Docker CLI surface exposed to VS Code."""
 
+        if self.lane != "docker" and isinstance(getattr(self.runtime, "finalized_selection", None), dict):
+            return self.runtime.package_executable("devcontainer-docker")
         value = self.runtime.devcontainer_docker
         if isinstance(value, str):
             return value
@@ -779,9 +782,8 @@ class VSCodeLane:
         )
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
-            environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
-                "DEVCONTAINER_COMPOSE_BIN",
-                shutil.which("container-compose") or "container-compose",
+            environment["DEVCONTAINER_COMPOSE_BIN"] = self.runtime.provider_executable(
+                "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         environment.update(
             {
@@ -958,6 +960,11 @@ class VSCodeLane:
                 encoding="utf-8",
             )
             self.runtime.stop_engine()
+            if getattr(self.runtime, "finalized_identity", None) is not None:
+                try:
+                    self.runtime.readmit_finalized()
+                except (OSError, ParityError, ValueError) as error:
+                    diagnostic = f"{diagnostic}; {error}".strip("; ")
             profile_logs = user_data / "logs"
             if profile_logs.is_dir():
                 shutil.copytree(
@@ -987,7 +994,7 @@ class VSCodeLane:
         differences = assert_contract(runtime_fixture, observations)
         if differences:
             diagnostic = f"{diagnostic}; {'; '.join(differences)}".strip("; ")
-        elif security_passed:
+        elif security_passed and not diagnostic:
             status = "passed"
         result = {
             "diagnostic": diagnostic,
@@ -1003,6 +1010,10 @@ class VSCodeLane:
             "schemaVersion": 1,
             "status": status,
         }
+        if isinstance(getattr(self.runtime, "finalized_identity", None), dict):
+            payload["finalizedPackage"] = self.runtime.finalized_identity
+            payload["providerBinarySHA256"] = self.runtime.provider_hashes
+            payload["parityHarnessSHA256"] = self.runtime.harness_sha256
         atomic_json(self.output / "results.json", payload)
         write_junit(self.output / "junit.xml", self.lane, [result])
         atomic_json(
@@ -1035,6 +1046,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=LANES)
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--finalized-directory", type=Path)
+    parser.add_argument("--finalization-provenance-sha256")
+    parser.add_argument("--finalization-state", type=Path)
+    parser.add_argument("--expected-source-commit")
     return parser.parse_args()
 
 
@@ -1045,7 +1060,7 @@ def main() -> int:
     repository = Path(__file__).resolve().parents[2]
     try:
         install_cancellation_handlers()
-        return VSCodeLane(args.lane, repository, args.evidence.resolve()).run()
+        return VSCodeLane(args.lane, repository, args.evidence.resolve(), finalized_selection(args)).run()
     except (OSError, ParityError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

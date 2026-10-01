@@ -166,10 +166,12 @@ class DockerCase:
 
 def run_docker(args):
     # Import shared evidence/runtime constants lazily to avoid a module cycle.
-    from released_engine import SSD, SSD_VOLUME, RETAINED, write_junit
+    from released_engine import (SSD, SSD_VOLUME, RETAINED, admit_finalized_package,
+                                 release_set_identity, write_junit)
     if args.candidate_invocation:
         raise ValueError("Docker reference uses released binaries, not a product candidate invocation")
-    repository = Path(__file__).parents[2]
+    finalized_inputs = getattr(args, "finalized_inputs", None)
+    repository = getattr(args, "finalized_repository", Path(__file__).resolve().parents[2])
     names = ("docker-oracle.lock.json", "docker-cli.lock.json", "guest-images.lock.json")
     locks = [json.loads((repository / "Tools/bazel" / name).read_text()) for name in names]
     pins = json.loads((repository / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
@@ -188,13 +190,23 @@ def run_docker(args):
         def revalidate():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("Docker oracle SSD identity changed")
-            return admit_docker(locks[0], locks[1], pins, locks[2], SSD, RETAINED,
-                                fixture=args.fixture, repository=repository)
+            admitted = admit_docker(locks[0], locks[1], pins, locks[2], SSD, RETAINED,
+                                    fixture=args.fixture, repository=repository)
+            if finalized_inputs is not None:
+                # This authenticates the common native release identity for comparison;
+                # Docker still runs only its separately admitted reference tools.
+                package = admit_finalized_package(repository, finalized_inputs, "apple-stock")
+                admitted = {**admitted, "finalizedPackageInputs": finalized_inputs,
+                            "finalizedPackageAdmission": package}
+            return admitted
         inputs = revalidate()
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": "docker",
                     "contractSHA256": digest(canonical(expected)), **published_fingerprints(repository),
                     "runtimeSHA256": digest(canonical({"inputs": inputs, "volume": volume,
                                                        "machine": platform.machine(), "os": platform.mac_ver()[0]}))}
+        if finalized_inputs is not None:
+            identity["releaseSetSHA256"] = release_set_identity(
+                published_fingerprints(repository), None, inputs["finalizedPackageAdmission"])
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
         case = DockerCase(store, identity, inputs, parent, revalidate, guard, journal_parent)

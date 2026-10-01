@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := workflow
 
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.1.0
 SWIFT ?= swift
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
@@ -46,6 +46,13 @@ NATIVE_NOTARY_STATE ?=
 NATIVE_NOTARY_STATE_SHA256 ?=
 NATIVE_FINAL_OUTPUT ?=
 NATIVE_NOTARY_RESUME ?= 0
+DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY ?=
+DEVCONTAINER_NATIVE_FINALIZATION_SHA256 ?=
+DEVCONTAINER_NATIVE_NOTARY_STATE ?=
+DEVCONTAINER_NATIVE_SOURCE_COMMIT ?=
+export DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY DEVCONTAINER_NATIVE_FINALIZATION_SHA256
+export DEVCONTAINER_NATIVE_NOTARY_STATE DEVCONTAINER_NATIVE_SOURCE_COMMIT
+export DEVCONTAINER_RUNTIME_STOCK_BIN DEVCONTAINER_RUNTIME_COMPOSE_BIN
 SONAR_SCAN_ATTEMPTS ?= 3
 SONAR_QUALITYGATE_WAIT ?= true
 
@@ -64,6 +71,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
 .PHONY: bazel-coverage-counters
 .PHONY: native-package-stage native-package-sign native-package-finalize
+.PHONY: native-parity-release
 .PHONY: bazel-recover-runtime bazel-recover-runtime-apply
 .PHONY: bazel-activate-runtime
 .PHONY: bazel-parity-report
@@ -128,7 +136,7 @@ bazel-prepare-devcontainers-cli:
 
 bazel-engine-case:
 	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
-	Tools/bazel/run.sh test //Tools/testing:$(if $(filter docker,$(LANE)),released_docker_engine,released_engine_negotiation) --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)") $(if $(COMPOSE_CANDIDATE_INVOCATION),--test_arg="--compose-candidate-invocation=$(COMPOSE_CANDIDATE_INVOCATION)")
+	Tools/bazel/run.sh test //Tools/testing:$(if $(filter docker,$(LANE)),released_docker_engine,released_engine_negotiation) --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)") $(if $(COMPOSE_CANDIDATE_INVOCATION),--test_arg="--compose-candidate-invocation=$(COMPOSE_CANDIDATE_INVOCATION)") $(if $(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY),--test_arg="--finalized-directory=$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" --test_arg="--finalization-provenance-sha256=$(DEVCONTAINER_NATIVE_FINALIZATION_SHA256)" --test_arg="--finalization-state=$(DEVCONTAINER_NATIVE_NOTARY_STATE)" --test_arg="--expected-source-commit=$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)")
 
 bazel-prepare-candidate:
 	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)" $(if $(filter container-compose,$(CANDIDATE_FAMILY)),--family=container-compose)
@@ -574,6 +582,17 @@ parity-vscode-container-compose:
 	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" container-compose
 
 parity-release: parity parity-vscode
+
+# Qualify the same finalized stock package in every lane without rebuilding it.
+native-parity-release:
+	@test -n "$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" || { printf 'Set DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_FINALIZATION_SHA256)" || { printf 'Set trusted DEVCONTAINER_NATIVE_FINALIZATION_SHA256.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_NOTARY_STATE)" || { printf 'Set DEVCONTAINER_NATIVE_NOTARY_STATE.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)" || { printf 'Set exact DEVCONTAINER_NATIVE_SOURCE_COMMIT.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_RUNTIME_STOCK_BIN)" -a -n "$(DEVCONTAINER_RUNTIME_COMPOSE_BIN)" || { printf 'Set both qualified DEVCONTAINER_RUNTIME_STOCK_BIN and DEVCONTAINER_RUNTIME_COMPOSE_BIN.\n' >&2; exit 2; }
+	@test "$$(git rev-parse HEAD)" = "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)"
+	@test -z "$$(git status --porcelain)"
+	DEVCONTAINER_VSCODE_LIVE=1 $(MAKE) parity-release
 	$(PYTHON) Tools/parity/validate_manifest.py --release
 
 runtime-check: test-integration test-asan test-tsan parity-release

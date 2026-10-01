@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +39,9 @@ FIXTURE = "E01-engine-negotiation"
 DEVCONTAINER_FIXTURES = {"D01-image-config", "D02-dockerfile-config", "D03-users-environment",
                        "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 LEGACY_FRONTEND_SCOPE = "published-devcontainer-1.0.1-frontend"
+FINALIZED_SCOPE = "finalized-native-package-runtime-input"
+FINALIZED_SCRATCH = Path("/Volumes/SSD/cf/finalized-admission")
+FINALIZED_RETAINED = Path.home() / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
 
 
 def release_selection(lock: dict, lane: str) -> list[dict]:
@@ -55,6 +60,19 @@ def release_selection(lock: dict, lane: str) -> list[dict]:
     return selected
 
 
+def provider_runtime_selection(lock: dict, lane: str) -> dict:
+    """Select only the provider package when the devcontainer comes from finalization."""
+    if lane not in {"apple-stock", "container-compose"}:
+        raise ValueError("Unsupported native runtime provider lane")
+    runtime = (("apple/container", "container-1.4.1-installer-signed.pkg") if lane == "apple-stock"
+               else ("stephenlclarke/container-compose", "container-release-arm64.tar.gz"))
+    matches = [asset for asset in validate_lock(lock)
+               if (asset["repository"], asset["name"]) == runtime]
+    if len(matches) != 1:
+        raise ValueError("Required released provider runtime is missing or ambiguous")
+    return matches[0]
+
+
 def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
     assets = release_selection(lock, lane)
     local = [admit_candidate(retained, candidate, "stock" if lane == "apple-stock" else "enhanced")] if candidate else []
@@ -66,6 +84,30 @@ def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -
 def admit_runtime(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
     selected = admit(lock, lane, retained, candidate)
     return [selected[0], require_active(selected[1], retained, lane)]
+
+
+def admit_finalized_package(repository: Path, finalized_inputs: dict, lane: str) -> dict:
+    """Re-admit the sealed signed package through the maintained release helper."""
+    source = repository / "Tools/release/prepare_finalized_package.py"
+    spec = importlib.util.spec_from_file_location("prepare_finalized_package_runtime", source)
+    if spec is None or spec.loader is None:
+        raise ValueError("Maintained finalized-package admission helper is unavailable")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper.admit_finalized_package(
+        repository, Path(finalized_inputs["directory"]), finalized_inputs["provenanceSHA256"],
+        finalized_inputs["sourceCommit"], lane, Path(finalized_inputs["state"]),
+        FINALIZED_SCRATCH, FINALIZED_RETAINED, FINALIZED_RETAINED / "signature-evidence")
+
+
+def finalized_runtime(lock: dict, lane: str, retained: Path, repository: Path,
+                      finalized_inputs: dict) -> list[dict]:
+    """Use the stock signed archive with the independently selected provider."""
+    asset = provider_runtime_selection(lock, lane)
+    package = admit_finalized_package(repository, finalized_inputs, lane)
+    active = require_retained(asset, retained / "release-objects" / asset["sha256"],
+                              retained / "prepared-releases", retained / "prepared-receipts")
+    return [package, require_active(active, retained, lane)]
 
 
 def legacy_frontend(lock: dict, lane: str, product: dict, repository: Path, scratch: Path, retained: Path) -> dict:
@@ -90,11 +132,15 @@ def legacy_frontend(lock: dict, lane: str, product: dict, repository: Path, scra
 
 def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository: Path, compose=None, legacy=None) -> dict:
     """Devcontainer cases consume authenticated bundles, never global tools."""
+    compose_profile = candidate.get("runtimeProfile")
+    if candidate.get("scope") == FINALIZED_SCOPE:
+        compose_profile = {"apple-stock": "stock", "container-compose": "enhanced"}.get(
+            candidate.get("providerLane"))
     if fixture in COMPOSE_FOREGROUND_FIXTURES:
         if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
                 compose.get("productFamily") != "container-compose" or
                 compose.get("runtimeProfile") not in {"stock", "enhanced"} or
-                compose.get("runtimeProfile") != candidate.get("runtimeProfile") or
+                compose.get("runtimeProfile") != compose_profile or
                 set(compose.get("executables", {})) != COMPOSE_PRODUCTS):
             raise ValueError("Compose fixture requires an admitted matching native Compose candidate")
         return {**inputs, "composeCandidate": compose}
@@ -109,7 +155,7 @@ def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository
         if (not isinstance(compose, dict) or compose.get("scope") != CANDIDATE_SCOPE or
                 compose.get("productFamily") != "container-compose" or
                 compose.get("runtimeProfile") not in {"stock", "enhanced"} or
-                compose.get("runtimeProfile") != candidate.get("runtimeProfile") or
+                compose.get("runtimeProfile") != compose_profile or
                 set(compose.get("executables", {})) != COMPOSE_PRODUCTS):
             raise ValueError("Compose fixture requires an admitted matching native Compose candidate")
         inputs = {**inputs, "composeCandidate": compose}
@@ -133,6 +179,22 @@ def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository
                 legacy.get("scope") != LEGACY_FRONTEND_SCOPE or legacy.get("release") != candidate):
             raise ValueError("Legacy frontend differs from the admitted published product")
         return {**inputs, "legacyFrontend": legacy, "devcontainerFixture": fixture_inputs(repository)}
+    if candidate.get("scope") == FINALIZED_SCOPE:
+        reference = candidate.get("referenceRuntime")
+        if (candidate.get("kind") != "signed-notarized-native-package"
+                or candidate.get("runtimeProfile") != "stock"
+                or candidate.get("providerLane") not in {"apple-stock", "container-compose"}
+                or candidate.get("distributionReady") is not False
+                or set(candidate.get("executables", {})) != {
+                    "devcontainer", "devcontainer-docker", "devcontainer-compose", "devcontainer-engine"}
+                or not isinstance(candidate.get("pluginExecutable"), str)
+                or not isinstance(reference, dict)
+                or not isinstance(reference.get("paths"), dict)
+                or not isinstance(reference.get("files"), dict)
+                or set(reference["paths"]) != set(reference["files"])):
+            raise ValueError("Devcontainer fixture requires a complete admitted finalized native package")
+        return {**inputs, "devcontainerCandidate": candidate,
+                "signedReferenceRuntime": reference, "devcontainerFixture": fixture_inputs(repository)}
     if candidate.get("scope") != CANDIDATE_SCOPE or set(candidate.get("executables", {})) != required:
         raise ValueError("Devcontainer fixture requires an admitted private-runtime candidate archive")
     return {**inputs, "devcontainerCandidate": candidate, "devcontainerFixture": fixture_inputs(repository)}
@@ -150,7 +212,14 @@ def release_set_identity(lock: dict, guest_locks, candidate: dict | None) -> str
     published = [lock, guest_locks] if guest_locks else lock
     # Comparison intentionally ignores per-lane runtime fingerprints. Bind the
     # development-only scope here so it cannot mix with a published campaign.
-    inputs = {"scope": CANDIDATE_SCOPE, "publishedInputs": published, "candidate": candidate} if candidate else published
+    if candidate and candidate.get("scope") == FINALIZED_SCOPE:
+        stable = {key: candidate[key] for key in (
+            "kind", "sourceCommit", "runtimeProfile", "candidateReceiptSHA256",
+            "finalizationProvenanceSHA256", "trustedStateSHA256", "archiveSHA256", "archiveSize",
+            "preparationSHA256", "inventorySHA256", "signatureInventorySHA256", "distributionReady")}
+        inputs = {"scope": FINALIZED_SCOPE, "publishedInputs": published, "finalizedPackage": stable}
+    else:
+        inputs = {"scope": CANDIDATE_SCOPE, "publishedInputs": published, "candidate": candidate} if candidate else published
     return digest(canonical(inputs))
 
 
@@ -295,23 +364,51 @@ def main():
     parser.add_argument("--lane", required=True, choices=["docker", "apple-stock", "container-compose"])
     parser.add_argument("--fixture", choices=[FIXTURE, *sorted(FIXTURES)], default=FIXTURE)
     parser.add_argument("--candidate-invocation", help="prepared local candidate; NOT published-release qualification")
+    parser.add_argument("--finalized-directory", type=Path,
+                        help="privately retained accepted native package; admission never rebuilds it")
+    parser.add_argument("--finalization-provenance-sha256", help="independently trusted finalization proof SHA256")
+    parser.add_argument("--finalization-state", type=Path, help="operator-authenticated private accepted-state directory")
+    parser.add_argument("--expected-source-commit", help="independently supplied exact source commit SHA")
     parser.add_argument("--compose-candidate-invocation", help="prepared matching native Compose candidate for C01/C02/C03/E09/E10/E11/E12/E13/E14")
     args = parser.parse_args()
     os.umask(0o077)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Released Engine cases require Apple silicon macOS")
     compose_fixtures = {"C01-compose-service", "C02-compose-dependencies", "C03-compose-resources", *COMPOSE_FOREGROUND_FIXTURES}
+    finalized_values = (args.finalized_directory, args.finalization_provenance_sha256,
+                        args.finalization_state, args.expected_source_commit)
+    finalized_requested = any(value is not None for value in finalized_values)
+    if finalized_requested and not all(value is not None for value in finalized_values):
+        raise ValueError("Finalized package admission requires directory, trusted proof SHA, state directory and expected source commit")
+    if finalized_requested and args.candidate_invocation:
+        raise ValueError("Finalized package and unsigned candidate inputs are mutually exclusive")
+    if finalized_requested and (not isinstance(args.expected_source_commit, str) or
+                                re.fullmatch(r"[0-9a-f]{40}", args.expected_source_commit) is None):
+        raise ValueError("Expected source commit must be an exact lowercase Git SHA")
     if args.compose_candidate_invocation and (args.fixture not in compose_fixtures or args.lane == "docker"):
         raise ValueError("Native Compose candidate is only valid for native C01/C02/C03/E09/E10/E11/E12/E13/E14")
+    repository = Path(__file__).resolve().parents[2]
+    finalized_inputs = None
+    if finalized_requested:
+        finalized_path = args.finalized_directory
+        state_path = args.finalization_state
+        if (not finalized_path.is_absolute() or finalized_path.resolve(strict=True) != finalized_path or
+                not state_path.is_absolute() or state_path.resolve(strict=True) != state_path):
+            raise ValueError("Finalized package and accepted-state paths must be canonical absolute paths")
+        finalized_inputs = {"directory": str(finalized_path),
+                            "provenanceSHA256": args.finalization_provenance_sha256,
+                            "state": str(state_path), "sourceCommit": args.expected_source_commit}
+    args.finalized_inputs = finalized_inputs
+    args.finalized_repository = repository
     if args.lane == "docker":
         from released_docker import run_docker
         run_docker(args)
         return
     if args.fixture in compose_fixtures and not args.compose_candidate_invocation:
         raise ValueError("Compose fixture requires a prepared native Compose candidate; no runtime changes made")
-    if args.fixture in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service"} and not args.candidate_invocation:
+    if (args.fixture in {"C03-compose-resources", "C02-compose-dependencies", "C01-compose-service"}
+            and not args.candidate_invocation and finalized_inputs is None):
         raise ValueError("Devcontainer fixture requires a verified private-runtime candidate; no runtime changes made")
-    repository = Path(__file__).parents[2]
     lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
     guest_locks = None
     builder_lock = None
@@ -337,7 +434,12 @@ def main():
     # payload/temp directory. Keeping the same inode serializes both workflows.
     guard = HostGuard(RETAINED / "runtime-admission.json")
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
-        releases = admit_runtime(lock, args.lane, RETAINED, args.candidate_invocation)
+        def selected_runtime():
+            if finalized_inputs is not None:
+                return finalized_runtime(lock, args.lane, RETAINED, repository, finalized_inputs)
+            return admit_runtime(lock, args.lane, RETAINED, args.candidate_invocation)
+
+        releases = selected_runtime()
         def selected_compose():
             if not args.compose_candidate_invocation:
                 return None
@@ -345,7 +447,7 @@ def main():
                                    "stock" if args.lane == "apple-stock" else "enhanced", "container-compose")
         compose = selected_compose()
         def selected_frontend():
-            if args.candidate_invocation or args.fixture not in DEVCONTAINER_FIXTURES:
+            if args.candidate_invocation or finalized_inputs is not None or args.fixture not in DEVCONTAINER_FIXTURES:
                 return None
             return legacy_frontend(lock, args.lane, releases[0], repository, SSD, RETAINED)
 
@@ -360,14 +462,17 @@ def main():
                    "apiProgram": str(api_server), "serviceSelection": "released-private-root-v1",
                    "versions": [version(Path(releases[0]["executables"]["devcontainer"])),
                                 version(Path(releases[1]["executables"]["container"]))]}
+        if finalized_inputs is not None:
+            runtime["finalizedPackageInputs"] = finalized_inputs
         if guest_inputs is not None:
             runtime["guestInputs"] = guest_inputs
             runtime["guestAPIVersion"] = GUEST_API_VERSION
         identity = {"campaign": args.campaign, "fixture": args.fixture, "lane": args.lane,
                     "contractSHA256": digest(canonical(expected)), **fingerprints,
                     "runtimeSHA256": digest(canonical(runtime))}
-        if args.candidate_invocation:
-            candidates = {"devcontainer": releases[0], "compose": compose} if compose else releases[0]
+        if args.candidate_invocation or finalized_inputs is not None:
+            candidates = releases[0] if finalized_inputs is not None else (
+                {"devcontainer": releases[0], "compose": compose} if compose else releases[0])
             identity["releaseSetSHA256"] = release_set_identity(fingerprints, None, candidates)
         validate_identity(identity)
         store = CaseStore(RETAINED / "runtime-cases.sqlite")
@@ -379,18 +484,26 @@ def main():
                 if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose(),
                                         selected_frontend()) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")
-            return admit_runtime(lock, args.lane, RETAINED, args.candidate_invocation)
+            return selected_runtime()
 
         def runtime_factory(root, owner):
             journal_parent = RETAINED / "private-runtime"
             journal_parent.mkdir(mode=0o700, exist_ok=True)
             return ControlledRuntime(root, owner, api_server, journal_parent)
 
-        scope = CANDIDATE_SCOPE if args.candidate_invocation else "released-engine-case-only"
-        if not args.candidate_invocation and args.fixture in DEVCONTAINER_FIXTURES:
+        scope = FINALIZED_SCOPE if finalized_inputs is not None else (
+            CANDIDATE_SCOPE if args.candidate_invocation else "released-engine-case-only")
+        if finalized_inputs is not None:
+            finalized_admission = releases[0]
+        else:
+            finalized_admission = None
+        if not args.candidate_invocation and finalized_inputs is None and args.fixture in DEVCONTAINER_FIXTURES:
             scope = "released-devcontainer-case-only"
         admission = {"scope": scope, "releaseLock": lock, "guestLocks": guest_locks,
                      "builderLock": builder_lock, "runtime": runtime}
+        if finalized_inputs is not None:
+            admission["finalizedPackageInputs"] = finalized_inputs
+            admission["finalizedPackage"] = finalized_admission
         case = ReleasedCase(store, identity, releases, parent, revalidate, guard, runtime_factory=runtime_factory,
                             guest_inputs=guest_inputs, admission=admission)
         result = run_case(store, identity, expected, case.setup, case.operation, case.cleanup)
