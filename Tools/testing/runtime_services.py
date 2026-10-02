@@ -1,25 +1,98 @@
-"""Released API service lifecycle under the caller's lease and durable host guard.
+"""Own released-provider services and private credential HOME for qualification.
 
-Only the metadata/Engine negotiation case uses this adapter initially. It does
-not install kernels, pull images, start guest workloads or modify provider keys.
+This adapter journals and restores provider service definitions and their
+process-scoped environment. Callers own guest workloads and provider resources.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
 import re
 import stat
 import subprocess
+import tempfile
 import time
+from typing import Callable, Mapping
 
 from host_runtime import deadline, require_api_service
 from private_keychain import require_keychain_stopped
 from runtime_probe import probe_api, probe_diagnostics, require_probe_stopped
 from service_journal import ServiceJournal, digest
-from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, snapshot
+from service_switch import API, BASE_SERVICES, Launchd, ServiceSwitch, canonical_file, snapshot
+
+
+PROVIDER_HELPER_LAYOUT = {
+    "com.apple.container.container-core-images": (
+        "container-core-images",
+        "container-core-images",
+        "com.apple.container.core.container-core-images",
+    ),
+    "com.apple.container.machine-apiserver": (
+        "machine-apiserver",
+        "machine-apiserver",
+        "com.apple.container.core.machine-apiserver",
+    ),
+}
+PROVIDER_HELPER_ENVIRONMENT = frozenset(
+    {"CONTAINER_APP_ROOT", "CONTAINER_INSTALL_ROOT", "CONTAINER_LOG_ROOT"}
+)
+PROVIDER_HELPER_QUIESCENCE = {
+    "status": "running",
+    "containerCount": 0,
+    "resourceCount": 0,
+    "guestCount": 0,
+    "clientCount": 0,
+}
+
+
+def _require_canonical_owned_parent(path: Path, root: Path) -> None:
+    """Reject symlinked helper paths and parents below the transaction root."""
+    if (not root.is_absolute() or root.resolve() != root or root.is_symlink()
+            or not root.is_dir() or not path.is_absolute() or not path.is_relative_to(root)
+            or path.resolve() != path):
+        raise ValueError("Generated provider helper path is not canonical under its owner")
+    current = root
+    for component in path.relative_to(root).parts[:-1]:
+        current = current / component
+        if current.is_symlink() or not current.is_dir() or current.resolve() != current:
+            raise ValueError("Generated provider helper parent is unsafe")
+    info = path.parent.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError("Generated provider helper parent is not privately owned")
+
+
+def _validate_provider_helper_definition(definition: dict, label: str, path: Path,
+                                        program: Path, provider_root: Path,
+                                        runtime_root: Path) -> None:
+    """Validate exact generated helper identity and its only admitted roots."""
+    environment = definition.get("EnvironmentVariables")
+    arguments = definition.get("ProgramArguments")
+    directory = PROVIDER_HELPER_LAYOUT[label][0]
+    mach_service = PROVIDER_HELPER_LAYOUT[label][2]
+    if (definition.get("Label") != label
+            or set(definition) != {"Label", "EnvironmentVariables", "LimitLoadToSessionType",
+                                   "MachServices", "ProgramArguments", "RunAtLoad"}
+            or not isinstance(arguments, list) or not arguments
+            or arguments[0] != str(program)
+            or definition.get("Program") is not None
+            or not isinstance(environment, dict)
+            or set(environment) != PROVIDER_HELPER_ENVIRONMENT
+            or environment != {
+                "CONTAINER_APP_ROOT": str(runtime_root / "container") + "/",
+                "CONTAINER_INSTALL_ROOT": str(provider_root) + "/",
+                "CONTAINER_LOG_ROOT": str(runtime_root / "container-logs"),
+            }
+            or definition.get("RunAtLoad") is not False
+            or definition.get("LimitLoadToSessionType") != ["Aqua", "Background", "System"]
+            or definition.get("MachServices") != {mach_service: True}
+            or path.parts[-3:-1] != ("plugin-state", directory)
+            or not path.name == "service.plist"):
+        raise ValueError("Generated provider helper definition is not the admitted contract")
 
 
 class ProcessSurvivors(ValueError):
@@ -72,6 +145,58 @@ def process_inventory() -> dict[int, dict]:
 
 def process_programs() -> list[str]:
     return [item["program"] for item in process_inventory().values()]
+
+
+def sha256_file(path: Path) -> str:
+    """Hash an admitted immutable executable without retaining its contents."""
+    digest_value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_value.update(block)
+    return digest_value.hexdigest()
+
+
+def atomic_replace_private_file(path: Path, expected: bytes, replacement: bytes,
+                                *, mode: int, owner: int) -> None:
+    """Replace one checked file atomically inside its existing owned directory."""
+    if (path.is_symlink() or path.resolve() != path or not path.parent.is_dir()
+            or path.parent.is_symlink() or path.parent.resolve() != path.parent):
+        raise ValueError("Generated service definition path is not canonical")
+    current = canonical_file(path)
+    if current != expected:
+        raise ValueError("Generated service definition changed before replacement")
+    info = path.lstat()
+    parent_info = path.parent.stat()
+    if (info.st_uid != owner or parent_info.st_uid != owner
+            or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or parent_info.st_mode & 0o022):
+        raise ValueError("Generated service definition ownership changed")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".service-definition-", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(replacement)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if temporary.is_symlink() or temporary.resolve() != temporary:
+            raise ValueError("Temporary service definition path changed")
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def capture_owned_processes(launchd, prior: list[dict]) -> list[dict]:
@@ -176,9 +301,29 @@ class ControlledRuntime:
         self.journal = None
         self.service = None
         self.original_processes = []
+        self.original_api_file_metadata = None
+        self.system_start_api_capture = None
+        self.provider_helper_originals = None
+        self.provider_helper_selected = None
 
     def start(self, *, prepare_home=None):
         prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
+        api_original = next(item for item in prior if item["label"] == API)
+        api_path = Path(api_original["path"])
+        api_info = api_path.lstat()
+        if (api_path.is_symlink() or api_path.resolve() != api_path
+                or not stat.S_ISREG(api_info.st_mode) or api_info.st_uid != os.getuid()
+                or api_info.st_nlink != 1):
+            raise ValueError("Original API service definition metadata is unsafe")
+        self.original_api_file_metadata = {
+            "path": str(api_path),
+            "mode": stat.S_IMODE(api_info.st_mode),
+            "uid": api_info.st_uid,
+            "atimeNS": api_info.st_atime_ns,
+            "mtimeNS": api_info.st_mtime_ns,
+            "device": api_info.st_dev,
+            "inode": api_info.st_ino,
+        }
         self.original_processes = capture_owned_processes(self.launchd, prior)
         self.require_idle_before_selection(prior)
         definition = selected_definition(self.root, self.executable)
@@ -186,6 +331,8 @@ class ControlledRuntime:
         self.journal = ServiceJournal(path, self.owner, create=True)
         self.journal.put("runtime-context.json", json.dumps(
             {"apiExecutable": str(self.executable)}, sort_keys=True).encode())
+        self.journal.put("original-api-file-meta.json", json.dumps(
+            self.original_api_file_metadata, sort_keys=True).encode())
         self.journal.put("original-processes.plist", plistlib.dumps(self.original_processes))
         self.switch = ServiceSwitch(self.launchd, prior, self.root, self.journal.put)
         self.require_idle_before_selection(prior)
@@ -214,6 +361,304 @@ class ControlledRuntime:
         self.journal.put("service-started.plist", plistlib.dumps(self.service))
         probe_api(self.root, self.executable.parent / "container", self.journal, self.verify)
         self.journal.put("service-ready.plist", plistlib.dumps(self.service))
+
+    def propagate_provider_helper_home(
+        self,
+        provider_root: Path,
+        expected_programs: Mapping[str, Mapping[str, str | Path]],
+        require_quiescent: Callable[[], Mapping[str, object]],
+    ) -> dict:
+        """Restart only authenticated provider helpers with the case HOME."""
+        if (self.journal is None or self.switch is None or self.service is None
+                or self.provider_helper_originals is not None):
+            raise ValueError("Provider helper HOME propagation is not ready")
+        if (not provider_root.is_absolute() or provider_root.resolve() != provider_root
+                or provider_root.is_symlink() or not provider_root.is_dir()):
+            raise ValueError("Provider install root is not canonical")
+        if set(expected_programs) != set(PROVIDER_HELPER_LAYOUT):
+            raise ValueError("Trusted helper executable inventory is incomplete")
+
+        selected = []
+        original_payloads = {}
+        selected_payloads = {}
+        for label, (directory, executable_name, _mach_service) in PROVIDER_HELPER_LAYOUT.items():
+            trusted = expected_programs[label]
+            if set(trusted) != {"program", "sha256"}:
+                raise ValueError("Trusted helper executable identity is malformed")
+            program = Path(trusted["program"])
+            expected_program = (
+                provider_root / "libexec/container/plugins" / directory
+                / "bin" / executable_name
+            )
+            if (program != expected_program or not program.is_absolute()
+                    or program.resolve() != program or program.is_symlink()
+                    or not program.is_file() or not os.access(program, os.X_OK)
+                    or re.fullmatch(r"[0-9a-f]{64}", str(trusted["sha256"])) is None
+                    or sha256_file(program) != trusted["sha256"]):
+                raise ValueError("Provider helper executable differs from its admitted package")
+            service_path = self.root / "container/plugin-state" / directory / "service.plist"
+            _require_canonical_owned_parent(service_path, self.root)
+            job = self.launchd.inspect(label)
+            expected_job = {"label": label, "path": str(service_path), "program": str(program)}
+            if job != expected_job:
+                raise ValueError("Generated provider helper registration differs from its owned package")
+            payload = canonical_file(service_path)
+            definition = plistlib.loads(payload)
+            _validate_provider_helper_definition(
+                definition, label, service_path, program, provider_root, self.root
+            )
+            arguments = definition["ProgramArguments"]
+            expected_arguments = [str(program), "start"]
+            if label.endswith("machine-apiserver"):
+                expected_arguments.extend([
+                    "--resources",
+                    str(provider_root / "libexec/container/plugins/machine-apiserver/resources"),
+                ])
+            if arguments != expected_arguments:
+                raise ValueError("Generated provider helper arguments are not admitted")
+            selected_definition = dict(definition)
+            environment = dict(definition["EnvironmentVariables"])
+            environment.update({"HOME": str(self.root), "TMPDIR": str(self.root),
+                                "TMP": str(self.root), "TEMP": str(self.root)})
+            selected_definition["EnvironmentVariables"] = environment
+            selected_payload = plistlib.dumps(selected_definition)
+            original_payloads[label] = payload
+            selected_payloads[label] = selected_payload
+            selected.append({
+                "label": label,
+                "path": str(service_path),
+                "program": str(program),
+                "payload": payload,
+                "selectedPayload": selected_payload,
+                "mode": stat.S_IMODE(service_path.stat().st_mode),
+                "pid": self.launchd.process_id(label),
+            })
+
+        proof = require_quiescent()
+        if (not isinstance(proof, Mapping)
+                or set(proof) != set(PROVIDER_HELPER_QUIESCENCE)
+                or proof.get("status") != "running"
+                or any(type(proof.get(key)) is not int or proof[key] != 0
+                       for key in ("containerCount", "resourceCount", "guestCount", "clientCount"))):
+            raise ValueError("Provider helpers may change HOME only while the provider is empty")
+        proof_payload = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+        self.journal.put("provider-home-quiescence.json", proof_payload)
+        manifest = [{key: entry[key] for key in ("label", "path", "program", "mode")}
+                    for entry in selected]
+        self.journal.put("provider-helper-originals.plist", plistlib.dumps(manifest))
+        for index, entry in enumerate(selected):
+            self.journal.put(f"provider-helper-original-{index:04d}.plist", entry["payload"])
+            self.journal.put(f"provider-helper-selected-{index:04d}.plist", entry["selectedPayload"])
+
+        captured = capture_owned_processes(self.launchd, selected)
+        self.provider_helper_originals = selected
+        self.provider_helper_selected = selected_payloads
+        for entry in selected:
+            current = self.launchd.inspect(entry["label"])
+            expected_job = {key: entry[key] for key in ("label", "path", "program")}
+            if current != expected_job or canonical_file(Path(entry["path"])) != entry["payload"]:
+                raise ValueError("Generated provider helper changed before restart")
+            self.switch.record("bootout-provider-helper", entry["label"])
+            self.launchd.bootout(entry["label"])
+            if self.launchd.inspect(entry["label"]) is not None:
+                raise ValueError("Provider helper remained registered after stop")
+        wait_stopped(lambda: require_captured_processes_stopped(
+            self.launchd, selected, captured
+        ))
+        for entry in selected:
+            service_path = Path(entry["path"])
+            atomic_replace_private_file(
+                service_path, entry["payload"], entry["selectedPayload"],
+                mode=entry["mode"], owner=os.getuid(),
+            )
+        for entry in selected:
+            service_path = Path(entry["path"])
+            self.switch.record("bootstrap-provider-helper", entry["label"])
+            self.launchd.bootstrap(service_path)
+            current = self.launchd.inspect(entry["label"])
+            expected_job = {key: entry[key] for key in ("label", "path", "program")}
+            payload = canonical_file(service_path)
+            definition = plistlib.loads(payload)
+            if (current != expected_job or payload != entry["selectedPayload"]
+                    or definition.get("EnvironmentVariables", {}).get("HOME") != str(self.root)
+                    or definition.get("EnvironmentVariables", {}).get("TMPDIR") != str(self.root)
+                    or definition.get("EnvironmentVariables", {}).get("TMP") != str(self.root)
+                    or definition.get("EnvironmentVariables", {}).get("TEMP") != str(self.root)):
+                raise ValueError("Provider helper private HOME registration did not verify")
+        return {"status": "private-home-ready", "helpers": len(selected)}
+
+    def restore_provider_helper_definitions(self) -> dict:
+        """Restore exact generated helper bytes before the selected runtime is removed."""
+        if self.provider_helper_originals is None:
+            return {"status": "not-needed", "helpers": 0}
+        selected = self.provider_helper_originals
+        still_registered = [entry for entry in selected
+                            if self.launchd.inspect(entry["label"]) is not None]
+        captured = capture_owned_processes(self.launchd, still_registered)
+        for entry in selected:
+            service_path = Path(entry["path"])
+            current = self.launchd.inspect(entry["label"])
+            if current is not None:
+                expected_job = {key: entry[key] for key in ("label", "path", "program")}
+                if (current != expected_job
+                        or canonical_file(service_path) not in {
+                            entry["payload"], entry["selectedPayload"]
+                        }):
+                    raise ValueError("Foreign provider helper prevents private HOME restoration")
+                self.switch.record("bootout-provider-helper-selected", entry["label"])
+                self.launchd.bootout(entry["label"])
+                if self.launchd.inspect(entry["label"]) is not None:
+                    raise ValueError("Private HOME provider helper remained registered")
+        wait_stopped(lambda: require_captured_processes_stopped(
+            self.launchd, selected, captured
+        ))
+        for entry in selected:
+            service_path = Path(entry["path"])
+            current_payload = canonical_file(service_path)
+            if current_payload == entry["payload"]:
+                continue
+            if current_payload != entry["selectedPayload"]:
+                raise ValueError("Generated provider helper definition changed before restoration")
+            self.switch.record("restore-provider-helper-definition", entry["label"])
+            atomic_replace_private_file(
+                service_path, entry["selectedPayload"], entry["payload"],
+                mode=entry["mode"], owner=os.getuid(),
+            )
+            if canonical_file(service_path) != entry["payload"]:
+                raise ValueError("Generated provider helper definition restoration differs")
+        self.provider_helper_originals = None
+        self.provider_helper_selected = None
+        return {"status": "restored", "helpers": len(selected)}
+
+    def capture_system_start_api_definition(
+        self, provider_root: Path, started_at: float, finished_at: float
+    ) -> dict:
+        """Seal SystemStart's narrowly expected inactive global API plist write."""
+        if (self.journal is None or self.switch is None or self.service is None
+                or self.original_api_file_metadata is None or self.system_start_api_capture is not None):
+            raise ValueError("SystemStart API definition capture is not ready")
+        if (not provider_root.is_absolute() or provider_root.resolve() != provider_root
+                or provider_root.is_symlink() or not provider_root.is_dir()
+                or type(started_at) not in (int, float) or type(finished_at) not in (int, float)
+                or not math.isfinite(started_at) or not math.isfinite(finished_at)
+                or started_at > finished_at or finished_at - started_at > 180):
+            raise ValueError("SystemStart API definition capture bounds are invalid")
+        prior = next(item for item in self.switch.prior if item["label"] == API)
+        path = Path(prior["path"])
+        expected_path = (
+            self.home / "Library/Application Support/com.apple.container"
+            / "apiserver/apiserver.plist"
+        )
+        expected_fields = {"Label", "EnvironmentVariables", "LimitLoadToSessionType",
+                           "MachServices", "ProgramArguments", "RunAtLoad"}
+        if (str(path) != self.original_api_file_metadata["path"]
+                or path != expected_path
+                or self.launchd.inspect(API) != {"label": API, "path": str(self.root / "selected-apiserver.plist"),
+                                                "program": str(self.executable)}):
+            raise ValueError("The global API plist is not inactive under the selected runtime")
+        original = plistlib.loads(prior["payload"])
+        payload = canonical_file(path)
+        if payload == prior["payload"]:
+            unchanged_info = path.lstat()
+            if (unchanged_info.st_dev != self.original_api_file_metadata["device"]
+                    or unchanged_info.st_ino != self.original_api_file_metadata["inode"]
+                    or unchanged_info.st_mtime_ns != self.original_api_file_metadata["mtimeNS"]
+                    or stat.S_IMODE(unchanged_info.st_mode)
+                       != self.original_api_file_metadata["mode"]):
+                raise ValueError("Unchanged global API bytes have unexpected file metadata")
+            self.system_start_api_capture = {"unchanged": True}
+            self.switch.record("system-start-api-plist-unchanged", API)
+            return {"status": "unchanged", "originalSHA256": prior["sha256"]}
+        generated = plistlib.loads(payload)
+        info = path.lstat()
+        if (info.st_uid != os.getuid() or info.st_nlink != 1 or not stat.S_ISREG(info.st_mode)
+                or path.is_symlink() or info.st_dev != self.original_api_file_metadata["device"]
+                or stat.S_IMODE(info.st_mode) != self.original_api_file_metadata["mode"]
+                or info.st_mtime < started_at or info.st_mtime > finished_at):
+            raise ValueError("SystemStart API plist write is outside the owned call interval")
+        if set(generated) != expected_fields:
+            raise ValueError("SystemStart API plist has an unsupported schema")
+        if set(original) != expected_fields or generated["Label"] != API:
+            raise ValueError("SystemStart API plist identity differs from its original")
+        if (not isinstance(original.get("EnvironmentVariables"), dict)
+                or not isinstance(generated.get("EnvironmentVariables"), dict)
+                or not isinstance(generated.get("ProgramArguments"), list)):
+            raise ValueError("SystemStart API plist fields are malformed")
+        for key in set(original) - {"EnvironmentVariables", "ProgramArguments"}:
+            if generated[key] != original[key]:
+                raise ValueError("SystemStart changed an unrelated API plist field")
+        expected_environment = dict(original["EnvironmentVariables"])
+        expected_environment.pop("CONTAINER_SERVICE_NAMESPACE", None)
+        expected_environment.update({
+            "CONTAINER_INSTALLATION_ROOT": str(provider_root),
+            "CONTAINER_INSTALL_ROOT": str(provider_root),
+            "CONTAINER_LOG_ROOT": str(self.root / "container-logs"),
+        })
+        if (set(generated["EnvironmentVariables"]) != {
+                    "CONTAINER_APP_ROOT", "CONTAINER_INSTALLATION_ROOT",
+                    "CONTAINER_INSTALL_ROOT", "CONTAINER_LOG_ROOT",
+                }
+                or generated["ProgramArguments"] != [str(self.executable), "start"]
+                or generated["EnvironmentVariables"] != expected_environment
+                or generated["EnvironmentVariables"].get("CONTAINER_APP_ROOT")
+                   != original["EnvironmentVariables"].get("CONTAINER_APP_ROOT")):
+            raise ValueError("SystemStart API plist changes exceed the selected package contract")
+        metadata = {
+            "path": str(path),
+            "uid": info.st_uid,
+            "mode": stat.S_IMODE(info.st_mode),
+            "nlink": info.st_nlink,
+            "device": info.st_dev,
+            "inode": info.st_ino,
+            "mtimeNS": info.st_mtime_ns,
+            "atimeNS": info.st_atime_ns,
+            "startedAt": float(started_at),
+            "finishedAt": float(finished_at),
+            "originalSHA256": prior["sha256"],
+            "generatedSHA256": hashlib.sha256(payload).hexdigest(),
+        }
+        self.journal.put("system-start-api-generated.plist", payload)
+        self.journal.put("system-start-api-meta.json", json.dumps(metadata, sort_keys=True).encode())
+        self.switch.record("capture-system-start-api-plist", API)
+        self.system_start_api_capture = {"metadata": metadata, "payload": payload,
+                                         "original": prior["payload"]}
+        return {"status": "captured", "generatedSHA256": metadata["generatedSHA256"]}
+
+    def restore_system_start_api_definition(self) -> dict:
+        """Restore the privately journalled original inactive API plist bytes."""
+        if self.system_start_api_capture is None:
+            return {"status": "not-captured"}
+        capture = self.system_start_api_capture
+        if capture.get("unchanged") is True:
+            return {"status": "unchanged"}
+        metadata = capture["metadata"]
+        path = Path(metadata["path"])
+        if self.launchd.inspect(API) != {"label": API, "path": str(self.root / "selected-apiserver.plist"),
+                                        "program": str(self.executable)}:
+            raise ValueError("Selected API changed before inactive global plist restoration")
+        info = path.lstat()
+        current = canonical_file(path)
+        if (path.is_symlink() or current != capture["payload"]
+                or hashlib.sha256(current).hexdigest() != metadata["generatedSHA256"]
+                or info.st_uid != metadata["uid"] or info.st_mode & 0o022
+                or not stat.S_ISREG(info.st_mode) or info.st_nlink != metadata["nlink"]
+                or info.st_dev != metadata["device"] or info.st_ino != metadata["inode"]
+                or info.st_mtime_ns != metadata["mtimeNS"]):
+            raise ValueError("Inactive global API plist changed after SystemStart capture")
+        self.switch.record("restore-system-start-api-plist", API)
+        atomic_replace_private_file(
+            path, capture["payload"], capture["original"],
+            mode=self.original_api_file_metadata["mode"], owner=os.getuid(),
+        )
+        os.utime(path, ns=(self.original_api_file_metadata["atimeNS"],
+                           self.original_api_file_metadata["mtimeNS"]))
+        restored_info = path.lstat()
+        if (canonical_file(path) != capture["original"]
+                or stat.S_IMODE(restored_info.st_mode) != self.original_api_file_metadata["mode"]
+                or restored_info.st_mtime_ns != self.original_api_file_metadata["mtimeNS"]):
+            raise ValueError("Original inactive global API plist bytes were not restored")
+        self.system_start_api_capture = {"unchanged": True}
+        return {"status": "restored", "originalSHA256": metadata["originalSHA256"]}
 
     def require_idle_before_selection(self, prior):
         # Homebrew's registered one-shot `container system start` is itself an

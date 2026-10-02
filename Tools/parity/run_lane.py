@@ -40,6 +40,10 @@ from parity_lib import (
     load_manifest,
     parse_observations,
 )
+from engine_fixture_routes import (
+    ENGINE_FIXTURE_ROUTES,
+    validate_engine_fixture_routes,
+)
 
 
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
@@ -80,14 +84,49 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+PARITY_HARNESS = (
+    "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
+    "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
+    "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
+    "Tools/parity/vscode-driver-extension/extension.js",
+    "Tools/parity/vscode-driver-extension/package.json",
+    "Tools/release/prepare_finalized_package.py",
+    "Tools/testing/guest_runtime.py", "Tools/testing/guest_fixture.py",
+    "Tools/testing/released_engine.py",
+    "Tools/testing/service_journal.py", "Tools/testing/service_switch.py",
+    "Tools/testing/case_evidence.py", "Tools/testing/host_runtime.py",
+    "Tools/testing/lifecycle_probe.py", "Tools/testing/exec_probe.py",
+    "Tools/testing/archive_probe.py", "Tools/testing/network_volume_probe.py",
+    "Tools/testing/build_fixture.py", "Tools/testing/build_runtime.py",
+    "Tools/testing/fault_probe.py", "Tools/testing/attachment_probe.py",
+    "Tools/testing/foreground_probe.py", "Tools/testing/initial_terminal_probe.py",
+    "Tools/testing/compose_foreground_probe.py", "Tools/testing/compose_terminal_probe.py",
+    "Tools/testing/json_file_oracle.py", "Tools/testing/private_keychain.py",
+    "Tools/testing/engine_probe.py", "Tools/bazel/prepare_guest_images.py",
+    "Tools/bazel/prepare_releases.py", "Tools/bazel/release_inputs.py",
+    "Tools/bazel/oci_image_layout.py", "Tools/testing/build_images.py",
+    "Tools/testing/build_probe.py", "Tools/testing/runtime_services.py",
+    "Tools/testing/runtime_probe.py", "Tools/testing/background_items.py",
+    "Tools/testing/devcontainer_candidate.py",
+    "Tools/testing/devcontainer_build_reference.py",
+    "Tools/testing/devcontainer_compose_reference.py",
+    "Tools/testing/devcontainer_dependencies_reference.py",
+    "Tools/testing/devcontainer_features_reference.py",
+    "Tools/testing/devcontainer_lifecycle_reference.py",
+    "Tools/testing/devcontainer_ports_reference.py",
+    "Tools/testing/devcontainer_reference.py",
+    "Tools/testing/devcontainer_resources_reference.py",
+    "Tools/testing/devcontainer_reuse_reference.py",
+    "Tools/testing/devcontainer_users_reference.py",
+)
+
+
 def parity_harness_sha256(repository: Path) -> str:
     """Bind the same C04/V01 runner and comparison sources in every lane."""
 
     digest = hashlib.sha256()
-    for relative in ("Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
-                     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
-                     "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
-                     "Tools/release/prepare_finalized_package.py"):
+    for relative in PARITY_HARNESS:
         digest.update(relative.encode("utf-8") + b"\0")
         digest.update(bytes.fromhex(file_sha256(repository / relative)))
     return digest.hexdigest()
@@ -246,16 +285,15 @@ class LaneRunner:
     def run(self) -> int:
         if self.lane not in LANES:
             raise ParityError(f"unknown lane {self.lane!r}")
+        try:
+            validate_engine_fixture_routes(self.manifest)
+        except ValueError as error:
+            raise ParityError(f"engine fixture route preflight failed: {error}") from error
         if not self.docker:
             raise ParityError("docker CLI is required")
         if not self.node_package_runner and (self.lane == "docker" or self.finalized_selection is None):
             raise ParityError("npx is required for the pinned @devcontainers/cli")
 
-        self.admit_finalized()
-
-        if self.output.exists():
-            shutil.rmtree(self.output)
-        self.output.mkdir(parents=True)
         fixtures = implemented_fixtures(self.repository, self.manifest)
         fixtures = [
             fixture
@@ -283,10 +321,34 @@ class LaneRunner:
                 for fixture in fixtures
                 if fixture.identifier in selected
             ]
+
+        self.admit_finalized()
+        owned_fixtures = [fixture for fixture in fixtures
+                          if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"]
+        if owned_fixtures:
+            from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
+
+            retained = _retained_root(self)
+            self._owned_guest_inputs = admit_guest_inputs(self.repository, self.lane, retained)
+            self._owned_guest_runner = OwnedGuestFixtureRunner(
+                self, owned_fixtures, admitted_inputs=self._owned_guest_inputs)
+        if self.output.exists():
+            shutil.rmtree(self.output)
+        self.output.mkdir(parents=True)
         if self.lane != "docker":
             self.start_engine()
         else:
             self.configure_docker_oracle()
+
+        if owned_fixtures:
+            try:
+                self._owned_guest_runner.attach_endpoint()
+                self._owned_guest_runner.prepare()
+            except (OSError, ValueError, RuntimeError, ParityError,
+                    subprocess.SubprocessError, TimeoutError) as error:
+                self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
+                self._preserve_engine_on_uncertain_guest_cleanup = True
+                self._owned_guest_runner.preparation_error = str(error)
 
         results: list[dict[str, Any]] = []
         try:
@@ -298,11 +360,19 @@ class LaneRunner:
                 results.append(self.run_fixture(fixture))
         finally:
             try:
+                if getattr(self, "_owned_guest_runner", None) is not None:
+                    try:
+                        self._owned_guest_runner.cleanup()
+                    except (OSError, ValueError, RuntimeError, ParityError,
+                            subprocess.SubprocessError, TimeoutError) as error:
+                        self.cleanup_differences.append(f"owned guest lane cleanup failed: {error}")
+                        self._preserve_engine_on_uncertain_guest_cleanup = True
                 self.stop_builder()
                 self.check_runtime_state_cleanup()
             finally:
                 try:
-                    self.stop_engine()
+                    if not getattr(self, "_preserve_engine_on_uncertain_guest_cleanup", False):
+                        self.stop_engine()
                 finally:
                     self.readmit_finalized()
 
@@ -1468,6 +1538,11 @@ class LaneRunner:
         ]
 
     def run_engine_fixture(self, fixture: Any, raw: Path) -> dict[str, Any]:
+        if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest":
+            guest_runner = getattr(self, "_owned_guest_runner", None)
+            if guest_runner is None:
+                raise ParityError("owned guest fixture reached execution without admitted lane inputs")
+            return guest_runner.run(fixture, raw)
         started = time.monotonic()
         status = "failed"
         observations: dict[str, str] = {}
@@ -1670,7 +1745,10 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "DEVCONTAINER_COMPOSE_BIN",
         "DEVCONTAINER_CONTAINER_BIN",
         "DEVCONTAINER_DOCKER_BIN",
+        "DEVCONTAINER_DOCKER_COMPOSE_BIN",
         "DEVCONTAINER_DOCKER_ORACLE_HOST",
+        "DEVCONTAINER_PARITY_RETAINED_ROOT",
+        "DEVCONTAINER_PARITY_GUARD",
         "DEVCONTAINER_PARITY_FIXTURES",
         "DEVCONTAINER_TRACE_PROCESS",
         "DOCKER_CERT_PATH",

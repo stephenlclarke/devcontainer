@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -17,10 +18,30 @@ import tempfile
 import unittest
 from unittest import mock
 
+REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
+
 import qualify_finalized_package as qualify
 
 
 class SuiteLifecycleTests(unittest.TestCase):
+    def test_success_sealer_reads_the_durable_host_cleanup_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            host_payload = {"schemaVersion": 1, "status": "restored",
+                            "initialColima": "stopped", "finalColima": "stopped",
+                            "hostGuardCleared": True}
+            (evidence / "host-cleanup.json").write_text(json.dumps(host_payload))
+            expected = (evidence / "qualification", "a" * 64)
+            with mock.patch.object(qualify, "seal_qualification", return_value=expected) as seal:
+                actual = qualify.seal_after_host_cleanup(
+                    argparse.Namespace(), evidence, {"docker": {"status": "restored"}},
+                    {"cli": {"status": "passed"}}, {"docker": {}}, {"archiveSHA256": "b" * 64})
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(seal.call_args.args[3], host_payload)
+
     def test_nonzero_cli_with_complete_cleanup_still_runs_vscode(self) -> None:
         calls = []
         cli = subprocess.CompletedProcess(["cli"], 1, "", "fixture failed")
@@ -84,6 +105,200 @@ class SuiteLifecycleTests(unittest.TestCase):
         cleanup["apple-stock"]["status"] = "restored"
         self.assertFalse(qualify.host_can_clear_guard(cleanup, "stopped", "running", "same", "same"))
         self.assertFalse(qualify.host_can_clear_guard(cleanup, "stopped", "stopped", "before", "after"))
+
+    def test_host_observation_failure_writes_failure_receipts_and_retains_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+            guard = mock.Mock()
+            errors = []
+            with (mock.patch.object(qualify, "colima_state", return_value=("stopped", "still stopped")),
+                  mock.patch.object(qualify, "host_service_digest",
+                                    side_effect=RuntimeError("injected observation fault"))):
+                guard_cleared = qualify._finalize_host_cleanup(
+                    evidence, argparse.Namespace(colima_bin=Path("colima")), {}, cleanup,
+                    "stopped", "initial Colima status", "1" * 64, 8, guard,
+                    {"identity": "owner"}, errors, interrupted=True)
+
+            self.assertFalse(guard_cleared)
+            guard.clear.assert_not_called()
+            host = json.loads((evidence / "host-cleanup.json").read_text())
+            state = json.loads((evidence / "cleanup-state.json").read_text())
+            failure = json.loads((evidence / "controller-failure.json").read_text())
+            self.assertEqual(host["status"], "uncertain")
+            self.assertIsNone(host["finalServiceSetSHA256"])
+            self.assertIsNone(host["finalServiceCount"])
+            self.assertTrue(any("host service final observation failed" in item for item in failure["errors"]))
+            self.assertEqual(state["guardCleared"], False)
+            self.assertEqual(host["restoration"]["docker"], "not-started")
+            self.assertTrue(any("host service final observation failed" in item for item in errors))
+
+    def test_provider_quiescence_accepts_native_default_network_id_and_name(self) -> None:
+        from service_switch import API
+
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": "/runtime/" + label,
+                        "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
+                                     executable=Path("/provider/container-apiserver"))
+        for default_row in ({"id": "default"}, {"name": "default"},
+                            {"configuration": {"name": "default"}}):
+            with self.subTest(default_row=default_row):
+                outputs = [json.dumps({"status": "running"}), "[]", "[]", json.dumps([default_row])]
+                with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                        subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+                      mock.patch("runtime_services.process_inventory", return_value={
+                          101: {"program": "/provider/container-apiserver"},
+                          200: {"program": "/provider/core"},
+                          201: {"program": "/provider/machine"}})):
+                    proof = qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
+                self.assertEqual(proof["resourceCount"], 0)
+
+    def test_provider_quiescence_counts_unowned_engine_and_foreign_network(self) -> None:
+        from service_switch import API
+
+        provider = Path("/provider/container")
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": "/runtime/" + label, "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(
+            service={"pid": 101}, launchd=Launchd(),
+            root=Path("/runtime"), executable=Path("/provider/container-apiserver"))
+        outputs = [
+            json.dumps({"status": "running"}),
+            "[]", "[]", json.dumps([{"id": "default"}]),
+        ]
+        process_map = {101: {"program": "/provider/container-apiserver"},
+                       200: {"program": "/provider/core"},
+                       201: {"program": "/provider/machine"},
+                       999: {"program": "/runtime/foreign/devcontainer-engine"}}
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value=process_map)):
+            proof = qualify.provider_quiescence(runtime, provider, {}, helper_programs)
+
+        self.assertEqual(proof, {"status": "running", "containerCount": 0, "resourceCount": 0,
+                                 "guestCount": 0, "clientCount": 1})
+
+    def test_provider_quiescence_counts_nondefault_provider_resources(self) -> None:
+        from service_switch import API
+
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": "/runtime/" + label, "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
+                                     executable=Path("/provider/container-apiserver"))
+        outputs = [json.dumps({"status": "running"}), "[]", '[{"configuration":{"name":"project-vol"}}]',
+                   json.dumps([{"name": "default"},
+                               {"id": "default", "configuration": {"name": "project-net"}}])]
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value={
+                  101: {"program": "/provider/container-apiserver"},
+                  200: {"program": "/provider/core"}, 201: {"program": "/provider/machine"}})):
+            proof = qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
+
+        self.assertEqual(proof["resourceCount"], 2)
+        self.assertEqual(proof["clientCount"], 0)
+
+    def test_provider_quiescence_counts_docker_bridge_as_custom_native_network(self) -> None:
+        from service_switch import API
+
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": "/runtime/" + label,
+                        "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
+                                     executable=Path("/provider/container-apiserver"))
+        outputs = [json.dumps({"status": "running"}), "[]", "[]",
+                   json.dumps([{"configuration": {"name": "bridge"}}])]
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value={
+                  101: {"program": "/provider/container-apiserver"},
+                  200: {"program": "/provider/core"}, 201: {"program": "/provider/machine"}})):
+            proof = qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
+
+        self.assertEqual(proof["resourceCount"], 1)
+
+    def test_provider_quiescence_rejects_network_without_native_identity(self) -> None:
+        from service_switch import API
+
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": "/runtime/" + label,
+                        "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
+                                     executable=Path("/provider/container-apiserver"))
+        outputs = [json.dumps({"status": "running"}), "[]", "[]", json.dumps([{}])]
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value={
+                  101: {"program": "/provider/container-apiserver"},
+                  200: {"program": "/provider/core"}, 201: {"program": "/provider/machine"}})):
+            with self.assertRaisesRegex(RuntimeError, "omits network identity"):
+                qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
 
 
 class TimeoutOwnershipTests(unittest.TestCase):
@@ -182,6 +397,137 @@ class TimeoutOwnershipTests(unittest.TestCase):
 
 
 class AdmissionBoundaryTests(unittest.TestCase):
+    def test_provider_helper_hashes_come_from_validated_locked_receipt(self) -> None:
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
+        import prepare_releases
+        import released_engine
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            retained = base / "workflow"
+            for relative in ("release-objects", "prepared-releases", "prepared-receipts"):
+                (retained / relative).mkdir(parents=True, mode=0o700)
+            prepared_root = retained / "prepared-releases/key"
+            provider_root = prepared_root / "Payload"
+            core = provider_root / "libexec/container/plugins/container-core-images/bin/container-core-images"
+            machine = provider_root / "libexec/container/plugins/machine-apiserver/bin/machine-apiserver"
+            for path, data in ((core, b"locked core helper"), (machine, b"locked API helper")):
+                path.parent.mkdir(parents=True, mode=0o700)
+                path.write_bytes(data)
+                path.chmod(0o755)
+            container = provider_root / "bin/container"
+            container.parent.mkdir(mode=0o700)
+            container.write_bytes(b"provider CLI")
+            container.chmod(0o755)
+            preparation_sha = "d" * 64
+            receipt_path = retained / "prepared-receipts" / f"{preparation_sha}.json"
+            receipt_path.write_text("{}")
+            asset = {"sha256": "c" * 64}
+            specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
+                             "layout": {"format": "pkg"}}
+            inventory = {
+                "Payload/libexec/container/plugins/container-core-images/bin/container-core-images": {
+                    "kind": "file", "mode": 0o755, "sha256": hashlib.sha256(core.read_bytes()).hexdigest()},
+                "Payload/libexec/container/plugins/machine-apiserver/bin/machine-apiserver": {
+                    "kind": "file", "mode": 0o755, "sha256": hashlib.sha256(machine.read_bytes()).hexdigest()},
+            }
+            arguments = argparse.Namespace(_guest_retained_root=retained, stock_container_bin=container)
+            with (mock.patch.object(released_engine, "provider_runtime_selection", return_value=asset),
+                  mock.patch.object(prepare_releases, "layout", return_value=specification["layout"]),
+                  mock.patch.object(prepare_releases, "require_retained", return_value={
+                      "root": str(prepared_root), "preparationSHA256": preparation_sha,
+                      "inventorySHA256": "e" * 64}),
+                  mock.patch.object(prepare_releases, "validate_prepared", return_value={"inventory": inventory})):
+                with mock.patch.object(qualify, "REPOSITORY", REPOSITORY):
+                    helpers = qualify.admit_provider_helper_programs("apple-stock", arguments)
+
+            self.assertEqual(helpers["com.apple.container.container-core-images"],
+                             {"program": core, "sha256": inventory[
+                                 "Payload/libexec/container/plugins/container-core-images/bin/container-core-images"]["sha256"]})
+            self.assertEqual(arguments._provider_helper_evidence["apple-stock"], {
+                "assetSHA256": asset["sha256"], "preparationSHA256": preparation_sha,
+                "preparedReceiptSHA256": qualify.sha256(receipt_path),
+                "inventorySHA256": "e" * 64,
+                "helperExecutables": {
+                    "container-core-images": {
+                        "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                        "sha256": inventory[
+                            "Payload/libexec/container/plugins/container-core-images/bin/container-core-images"]["sha256"]},
+                    "machine-apiserver": {
+                        "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                        "sha256": inventory[
+                            "Payload/libexec/container/plugins/machine-apiserver/bin/machine-apiserver"]["sha256"]},
+                },
+            })
+            core.write_bytes(b"changed helper bytes")
+            with (mock.patch.object(released_engine, "provider_runtime_selection", return_value=asset),
+                  mock.patch.object(prepare_releases, "layout", return_value=specification["layout"]),
+                  mock.patch.object(prepare_releases, "require_retained", return_value={
+                      "root": str(prepared_root), "preparationSHA256": preparation_sha}),
+                  mock.patch.object(prepare_releases, "validate_prepared", return_value={"inventory": inventory}),
+                  self.assertRaisesRegex(ValueError, "differ from the locked prepared package")):
+                with mock.patch.object(qualify, "REPOSITORY", REPOSITORY):
+                    qualify.admit_provider_helper_programs("apple-stock", arguments)
+
+    def test_guest_assets_use_workflow_retained_not_finalized_retained(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            workflow_retained = root / "retained/workflow"
+            workflow_retained.mkdir(parents=True)
+            finalized_retained = root / "retained/devcontainer"
+            finalized_retained.mkdir()
+            compose = root / "devcontainer-compose"
+            compose.write_bytes(b"admitted package compose")
+            digest = qualify.sha256(compose)
+            arguments = argparse.Namespace(
+                _guest_retained_root=workflow_retained,
+                retained_root=finalized_retained,
+                finalized_directory=root / "finalized",
+                provenance_sha256="a" * 64,
+                source_commit="b" * 40,
+                accepted_state=root / "state",
+            )
+            admission = {
+                "scope": "finalized-native-package-runtime-input",
+                "kind": "signed-notarized-native-package",
+                "distributionReady": False,
+                "sourceCommit": "b" * 40,
+                "runtimeProfile": "stock",
+                "providerLane": "apple-stock",
+                "archiveSHA256": "c" * 64,
+                "finalizationProvenanceSHA256": "a" * 64,
+                "signatureInventorySHA256": "d" * 64,
+                "executables": {"devcontainer-compose": str(compose)},
+                "productionBinarySHA256": {"bin/devcontainer-compose": digest},
+            }
+            calls = []
+            lane_loader = mock.Mock()
+            lane_loader.load_finalized_admitter.return_value = (
+                lambda **kwargs: {**admission, "providerLane": kwargs["provider_lane"]})
+            with (mock.patch("owned_guest_fixture.preflight_guest_inputs",
+                             side_effect=lambda _repo, lane, retained: (
+                                 calls.append((lane, retained)), {"workload": "admitted"})[1]),
+                  mock.patch.object(qualify, "load_run_lane", return_value=lane_loader),
+                  mock.patch.object(qualify, "sha256", return_value=digest),
+                  mock.patch.object(qualify, "admit_provider_helper_programs",
+                                    return_value={"locked": "helper identities"})):
+                result = qualify.admit_package_before_runtime(arguments)
+
+            self.assertEqual([lane for lane, _root in calls],
+                             ["docker", "apple-stock", "container-compose"])
+            self.assertTrue(all(path == workflow_retained for _lane, path in calls))
+            self.assertEqual(set(result), {"apple-stock", "container-compose"})
+
+    def test_guest_asset_root_must_be_private_internal_and_canonical(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "workflow"
+            root.mkdir(mode=0o700)
+            self.assertEqual(qualify.validate_guest_asset_retained_root(root), root)
+            root.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, "private internal workflow storage"):
+                qualify.validate_guest_asset_retained_root(root)
+
     def test_package_admission_failure_happens_before_evidence_or_runtime_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -244,7 +590,21 @@ class ProviderPinTests(unittest.TestCase):
                       "composeProvider": "5" * 64, "colima": "6" * 64,
                       "vscode": "7" * 64}
             args = argparse.Namespace(_manifest=manifest, _provider_hashes=hashes,
-                                      colima_bin=Path("/pinned/colima"))
+                                      colima_bin=Path("/pinned/colima"),
+                                      _provider_helper_evidence={
+                                          lane: {"assetSHA256": "8" * 64,
+                                                 "preparationSHA256": "9" * 64,
+                                                 "preparedReceiptSHA256": "a" * 64,
+                                                 "inventorySHA256": "b" * 64,
+                                                 "helperExecutables": {
+                                                     "container-core-images": {
+                                                         "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                                                         "sha256": "c" * 64},
+                                                     "machine-apiserver": {
+                                                         "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                                                         "sha256": "d" * 64},
+                                                 }}
+                                          for lane in ("apple-stock", "container-compose")})
             colima = subprocess.CompletedProcess(["colima", "--version"], 0, "colima 0.10.3\n", "")
             with mock.patch.object(qualify, "run", return_value=colima):
                 providers = qualify.make_provider_tools(args, evidence)

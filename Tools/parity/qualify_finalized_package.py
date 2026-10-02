@@ -36,8 +36,38 @@ LANES = ("docker", "apple-stock", "container-compose")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
+    "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
     "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
+    "Tools/parity/vscode-driver-extension/extension.js",
+    "Tools/parity/vscode-driver-extension/package.json",
     "Tools/release/prepare_finalized_package.py",
+    "Tools/testing/guest_runtime.py", "Tools/testing/guest_fixture.py",
+    "Tools/testing/released_engine.py",
+    "Tools/testing/service_journal.py", "Tools/testing/service_switch.py",
+    "Tools/testing/case_evidence.py", "Tools/testing/host_runtime.py",
+    "Tools/testing/lifecycle_probe.py", "Tools/testing/exec_probe.py",
+    "Tools/testing/archive_probe.py", "Tools/testing/network_volume_probe.py",
+    "Tools/testing/build_fixture.py", "Tools/testing/build_runtime.py",
+    "Tools/testing/fault_probe.py", "Tools/testing/attachment_probe.py",
+    "Tools/testing/foreground_probe.py", "Tools/testing/initial_terminal_probe.py",
+    "Tools/testing/compose_foreground_probe.py", "Tools/testing/compose_terminal_probe.py",
+    "Tools/testing/json_file_oracle.py", "Tools/testing/private_keychain.py",
+    "Tools/testing/engine_probe.py", "Tools/bazel/prepare_guest_images.py",
+    "Tools/bazel/prepare_releases.py", "Tools/bazel/release_inputs.py",
+    "Tools/bazel/oci_image_layout.py",
+    "Tools/testing/build_images.py", "Tools/testing/build_probe.py",
+    "Tools/testing/runtime_services.py", "Tools/testing/runtime_probe.py",
+    "Tools/testing/background_items.py", "Tools/testing/devcontainer_candidate.py",
+    "Tools/testing/devcontainer_build_reference.py",
+    "Tools/testing/devcontainer_compose_reference.py",
+    "Tools/testing/devcontainer_dependencies_reference.py",
+    "Tools/testing/devcontainer_features_reference.py",
+    "Tools/testing/devcontainer_lifecycle_reference.py",
+    "Tools/testing/devcontainer_ports_reference.py",
+    "Tools/testing/devcontainer_reference.py",
+    "Tools/testing/devcontainer_resources_reference.py",
+    "Tools/testing/devcontainer_reuse_reference.py",
+    "Tools/testing/devcontainer_users_reference.py",
 )
 CONTROLLER = Path(__file__).resolve()
 
@@ -68,6 +98,15 @@ def verify_enrolled_ssd(args: argparse.Namespace) -> None:
     consumer.validate_ssd_identity(expected_uuid, result.stdout)
     if not args.ssd_root.is_relative_to(Path("/Volumes/SSD")):
         raise ValueError("SSD evidence root must remain beneath the enrolled /Volumes/SSD mount")
+
+
+def validate_guest_asset_retained_root(root: Path) -> Path:
+    """Keep immutable guest archives separate from finalized-package receipts."""
+    if (not root.is_absolute() or root.resolve(strict=True) != root or not root.is_dir()
+            or root.stat().st_dev != ACCOUNT_HOME.stat().st_dev or root.stat().st_uid != os.getuid()
+            or root.stat().st_mode & 0o777 != 0o700):
+        raise ValueError("guest image and kernel inputs must use private internal workflow storage")
+    return root
 
 
 def load_run_lane(repository: Path):
@@ -510,12 +549,14 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
     write_json(evidence / "providers" / "appleStock.json", {
         "schemaVersion": 1, "lane": "apple-stock", "providerVersion": apple["version"],
         "providerCommit": apple["commit"], "containerSHA256": apple["containerSHA256"],
-        "apiServerSHA256": apple["apiServerSHA256"]})
+        "apiServerSHA256": apple["apiServerSHA256"],
+        "preparedProvider": args._provider_helper_evidence["apple-stock"]})
     write_json(evidence / "providers" / "containerCompose.json", {
         "schemaVersion": 1, "lane": "container-compose", "providerVersion": compose["version"],
         "providerCommit": compose["commit"], "containerSHA256": compose["containerSHA256"],
         "composeVersion": compose["version"], "composeSHA256": compose["composeSHA256"],
-        "apiServerSHA256": compose["apiServerSHA256"]})
+        "apiServerSHA256": compose["apiServerSHA256"],
+        "preparedProvider": args._provider_helper_evidence["container-compose"]})
     write_json(evidence / "providers" / "docker.json", {
         "schemaVersion": 1, "source": "docker-oracle", "clientVersion": docker_observed["clientVersion"],
         "dockerCLISHA256": args._provider_hashes["docker"],
@@ -530,6 +571,18 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
             "appleStock": apple, "containerCompose": compose,
             "colima": {"version": colima_version, "sha256": args._provider_hashes["colima"]},
             "vscode": vscode_row}
+
+
+def seal_after_host_cleanup(args: argparse.Namespace, evidence: Path, cleanup: dict,
+                            comparisons: dict, provider_tools: dict,
+                            package_proof: dict) -> tuple[Path, str]:
+    """Seal only from the durable host-cleanup receipt written by finalization."""
+    host_path = evidence / "host-cleanup.json"
+    host_payload = json.loads(host_path.read_text())
+    if not isinstance(host_payload, dict):
+        raise ValueError("host cleanup receipt is not an object")
+    return seal_qualification(args, evidence, cleanup, host_payload,
+                              comparisons, provider_tools, package_proof)
 
 
 def process_group_exists(process_group: int) -> bool:
@@ -619,6 +672,8 @@ def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[
            str(evidence), *finalized_args(args)]
     vscode = [sys.executable, str(REPOSITORY / "Tools/parity/run_vscode.py"), lane,
               str(evidence / "vscode"), *finalized_args(args)]
+    if lane == "docker":
+        vscode += ["--colima-bin", str(args.colima_bin), "--colima-sha256", args.colima_sha256]
     return cli, vscode
 
 
@@ -632,6 +687,12 @@ def controller_capture_directory(evidence: Path, lane: str, suite: str) -> Path:
 def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
     manifest_path = args.repository / "Tests/Parity/manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    from engine_fixture_routes import validate_engine_fixture_routes
+
+    try:
+        validate_engine_fixture_routes(manifest)
+    except ValueError as error:
+        raise ValueError(f"engine fixture route preflight failed: {error}") from error
     pins = manifest.get("referencePins", {})
     expected = {
         "docker": sha256(args.docker_bin),
@@ -694,6 +755,7 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
             or args.qualification_directory.stat().st_uid != os.getuid()
             or args.qualification_directory.stat().st_mode & 0o777 != 0o700):
         raise ValueError("qualification retained root must be user-owned internal storage with mode 0700")
+    args._guest_retained_root = validate_guest_asset_retained_root(DEFAULT_WORKFLOW_RETAINED)
     if not args.evidence.is_relative_to(args.ssd_root):
         raise ValueError("raw runtime evidence must remain beneath SSD scratch")
     if len(args.source_commit) != 40 or any(c not in "0123456789abcdef" for c in args.source_commit):
@@ -706,6 +768,10 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("accepted notary state differs from its independently trusted SHA-256")
     if expected["dockerCompose"] != "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3":
         raise ValueError("docker-compose reference binary is not the admitted 5.3.1 bottle")
+    compose_version = run([str(args.docker_compose_bin), "version", "--short"],
+                          env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, timeout=20, capture=True)
+    if compose_version.stdout.strip() != docker_pins.get("composeVersion"):
+        raise ValueError("Docker Compose version differs from the checked-in parity pins")
     admit_docker_buildx(args.docker_buildx_bin, docker_pins)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=args.repository, text=True).strip()
     status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=args.repository, text=True)
@@ -729,11 +795,19 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
 
 def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
     """Use the maintained admission API before changing any runtime state."""
+    from owned_guest_fixture import preflight_guest_inputs
+
+    guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
+    args._guest_input_admissions = {
+        lane: preflight_guest_inputs(REPOSITORY, lane, guest_retained)
+        for lane in ("docker", "apple-stock", "container-compose")
+    }
     admit = load_run_lane(REPOSITORY).load_finalized_admitter(REPOSITORY)
     retained = RETAINED / "finalized-admissions"
     scratch = SSD / "finalized-admission"
     evidence = retained / "signature-evidence"
     results = {}
+    helper_programs = {}
     for lane in ("apple-stock", "container-compose"):
         admission = admit(
             repository=REPOSITORY.resolve(),
@@ -754,6 +828,11 @@ def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
                 or admission.get("finalizationProvenanceSHA256") != args.provenance_sha256
                 or admission.get("providerLane") != lane):
             raise ValueError(f"maintained admission returned an unsupported {lane} package identity")
+        compose_path = Path(admission["executables"]["devcontainer-compose"])
+        if (not compose_path.is_absolute() or compose_path.resolve(strict=True) != compose_path
+                or sha256(compose_path) != admission["productionBinarySHA256"].get("bin/devcontainer-compose")):
+            raise ValueError(f"{lane} signed Compose frontend differs from its package inventory")
+        helper_programs[lane] = admit_provider_helper_programs(lane, args)
         results[lane] = {
             "scope": admission["scope"],
             "kind": admission["kind"],
@@ -767,7 +846,217 @@ def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
         }
     if results["apple-stock"]["archiveSHA256"] != results["container-compose"]["archiveSHA256"]:
         raise ValueError("provider lanes did not admit the same finalized archive")
+    args._provider_helper_programs = helper_programs
     return results
+
+
+def provider_quiescence(runtime, container: Path, environment: dict[str, str], expected_programs: dict) -> dict:
+    """Prove the selected provider has no workload before changing helper HOME."""
+
+    from runtime_services import PROVIDER_HELPER_LAYOUT, process_inventory
+    from service_switch import API
+
+    status_result = run([str(container), "system", "status", "--format", "json"],
+                        env=environment, timeout=30, capture=True)
+    status = json.loads(status_result.stdout)
+    if not isinstance(status, dict) or status.get("status") != "running":
+        raise RuntimeError("selected provider is not running during helper quiescence check")
+
+    def records(arguments: list[str], name: str) -> list[dict]:
+        result = run([str(container), *arguments], env=environment, timeout=30, capture=True)
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise RuntimeError(f"provider {name} inventory has an unsupported shape")
+        return rows
+
+    containers = records(["list", "--all", "--format", "json"], "container")
+    volumes = records(["volume", "list", "--format", "json"], "volume")
+    networks = records(["network", "list", "--format", "json"], "network")
+    custom_networks = []
+    for network in networks:
+        configuration = network.get("configuration", {})
+        if configuration is None:
+            configuration = {}
+        if not isinstance(configuration, dict):
+            raise RuntimeError("provider network inventory has an unsupported configuration")
+        name = configuration.get("name", network.get("name"))
+        identifier = network.get("id")
+        identities = [value for value in (name, identifier) if value is not None]
+        if (not identities or any(not isinstance(value, str) or not value for value in identities)):
+            raise RuntimeError("provider network inventory omits network identity")
+        if any(value != "default" for value in identities):
+            custom_networks.append(network)
+
+    allowed_pids = {runtime.service.get("pid")}
+    if runtime.launchd.inspect(API) != {
+            "label": API, "path": str(runtime.root / "selected-apiserver.plist"),
+            "program": str(runtime.executable)}:
+        raise RuntimeError("selected API service identity changed before helper restart")
+    for label in PROVIDER_HELPER_LAYOUT:
+        expected = expected_programs[label]
+        job = runtime.launchd.inspect(label)
+        if (not isinstance(job, dict) or job.get("label") != label
+                or job.get("program") != str(expected["program"])):
+            raise RuntimeError("provider helper identity differs from the locked package")
+        pid = runtime.launchd.process_id(label)
+        if not isinstance(pid, int) or pid <= 0:
+            raise RuntimeError("provider helper is not running before private HOME propagation")
+        allowed_pids.add(pid)
+
+    clients = []
+    guests = []
+    busy_names = {"Runner.Worker", "container", "compose", "docker", "docker-compose",
+                  "colima", "container-compose", "devcontainer", "devcontainer-compose",
+                  "devcontainer-engine"}
+    guest_names = {"container-runtime-linux", "com.apple.Virtualization.VirtualMachine"}
+    for pid, process in process_inventory().items():
+        name = Path(process["program"]).name
+        if name in guest_names:
+            guests.append(pid)
+        if name in busy_names and pid not in allowed_pids:
+            clients.append(pid)
+    resource_count = len(volumes) + len(custom_networks)
+    return {
+        "status": "running",
+        "containerCount": len(containers),
+        "resourceCount": resource_count,
+        "guestCount": len(guests),
+        "clientCount": len(clients),
+    }
+
+
+def _finalize_host_cleanup(evidence: Path, args: argparse.Namespace, base_env: dict[str, str],
+                           cleanup: dict[str, dict], initial_colima: str, initial_colima_detail: str,
+                           initial_services: str, initial_service_count: int, guard, transaction_owner: dict,
+                           errors: list[str], *, interrupted: bool) -> bool:
+    """Record independent final observations; retain the guard on any unknown state."""
+
+    observation_errors = []
+    final_colima = None
+    final_colima_detail = None
+    try:
+        final_colima, final_colima_detail = colima_state(args.colima_bin, base_env)
+    except BaseException as error:
+        observation_errors.append(f"Colima final observation failed: {type(error).__name__}: {error}")
+    final_services = None
+    final_service_count = None
+    try:
+        final_services, final_service_count = host_service_digest()
+    except BaseException as error:
+        observation_errors.append(f"host service final observation failed: {type(error).__name__}: {error}")
+    errors.extend(item for item in observation_errors if item not in errors)
+    host_restorable = (not observation_errors and final_colima is not None and final_services is not None
+                       and host_can_clear_guard(cleanup, initial_colima, final_colima,
+                                                initial_services, final_services))
+    guard_cleared = False
+    if host_restorable:
+        try:
+            guard.clear(transaction_owner)
+            guard_cleared = True
+        except BaseException as error:
+            errors.append(f"runtime guard clear failed: {type(error).__name__}: {error}")
+    if not guard_cleared:
+        errors.append("host runtime state is uncertain; durable runtime guard retained")
+
+    for lane in LANES:
+        row = cleanup[lane]
+        payload = {"schemaVersion": 1, "lane": lane,
+                   "status": row.get("status", "uncertain"),
+                   "cliCleanupComplete": row.get("cliCleanupComplete") is True,
+                   "vscodeCleanupComplete": row.get("vscodeCleanupComplete") is True}
+        if lane == "docker":
+            payload["colima"] = row.get("colima", {"initial": initial_colima,
+                                                   "final": final_colima,
+                                                   "restored": final_colima == initial_colima})
+        else:
+            payload.update({"initialColima": initial_colima, "finalColima": final_colima,
+                            "providerStopped": row.get("providerStopped") is True,
+                            "serviceRestored": row.get("serviceRestored") is True,
+                            "serviceJournalReceiptSHA256": row.get("serviceJournalReceiptSHA256")})
+        write_json(evidence / f"{lane}-cleanup.json", payload)
+    host_payload = {"schemaVersion": 1, "status": "restored" if guard_cleared else "uncertain",
+                    "initialColima": initial_colima, "finalColima": final_colima,
+                    "initialServiceSetSHA256": initial_services,
+                    "finalServiceSetSHA256": final_services,
+                    "initialServiceCount": initial_service_count,
+                    "finalServiceCount": final_service_count,
+                    "hostGuardCleared": guard_cleared,
+                    "restoration": {lane: cleanup[lane].get("status") for lane in LANES}}
+    write_json(evidence / "host-cleanup.json", host_payload)
+    write_json(evidence / "cleanup-state.json", {
+        "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
+        "finalColima": final_colima, "finalColimaDetail": final_colima_detail,
+        "initialServiceSetSHA256": initial_services, "finalServiceSetSHA256": final_services,
+        "initialServiceCount": initial_service_count, "finalServiceCount": final_service_count,
+        "guardCleared": guard_cleared, "lanes": cleanup, "errors": errors,
+    })
+    if errors or interrupted or not guard_cleared:
+        write_json(evidence / "controller-failure.json", {"status": "failed", "errors": errors})
+    return guard_cleared
+
+
+def admit_provider_helper_programs(lane: str, args: argparse.Namespace) -> dict:
+    """Bind launchd helper hashes to the complete retained provider package."""
+
+    if lane not in {"apple-stock", "container-compose"}:
+        raise ValueError("unknown native provider lane for helper admission")
+    retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
+    sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+    sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
+    prepare_releases = importlib.import_module("prepare_releases")
+    released_engine = importlib.import_module("released_engine")
+    if (Path(prepare_releases.__file__).resolve() !=
+            (REPOSITORY / "Tools/bazel/prepare_releases.py").resolve(strict=True)
+            or Path(released_engine.__file__).resolve() !=
+            (REPOSITORY / "Tools/testing/released_engine.py").resolve(strict=True)):
+        raise ValueError("provider release helpers resolved outside the selected source checkout")
+
+    lock = json.loads((REPOSITORY / "Tools/bazel/releases.lock.json").read_bytes())
+    asset = released_engine.provider_runtime_selection(lock, lane)
+    prepared = prepare_releases.require_retained(
+        asset, retained / "release-objects" / asset["sha256"],
+        retained / "prepared-releases", retained / "prepared-receipts")
+    package_root = Path(prepared["root"])
+    specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
+                     "layout": prepare_releases.layout(asset)}
+    receipt_path = retained / "prepared-receipts" / (prepared["preparationSHA256"] + ".json")
+    receipt = json.loads(receipt_path.read_bytes())
+    verified = prepare_releases.validate_prepared(package_root, specification, receipt)
+    provider_root = provider_install_root(lane, args)
+    prefix = package_root / ("Payload" if specification["layout"]["format"] == "pkg" else "")
+    if (provider_root != prefix or provider_root.is_symlink()
+            or provider_root.resolve(strict=True) != provider_root):
+        raise ValueError(f"{lane} selected provider root differs from the retained locked package")
+
+    helpers = {
+        "com.apple.container.container-core-images":
+            "libexec/container/plugins/container-core-images/bin/container-core-images",
+        "com.apple.container.machine-apiserver":
+            "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+    }
+    admitted = {}
+    helper_evidence = {}
+    for label, relative in helpers.items():
+        inventory_relative = (Path("Payload") / relative if specification["layout"]["format"] == "pkg"
+                              else Path(relative)).as_posix()
+        item = verified["inventory"].get(inventory_relative, {})
+        program = provider_root / relative
+        if (item.get("kind") != "file" or not item.get("mode", 0) & 0o111
+                or not program.is_file() or program.is_symlink()
+                or sha256(program) != item.get("sha256")):
+            raise ValueError(f"{lane} helper bytes differ from the locked prepared package")
+        admitted[label] = {"program": program, "sha256": item["sha256"]}
+        helper_evidence[label.rsplit(".", 1)[-1]] = {
+            "path": relative, "sha256": item["sha256"]}
+    args._provider_helper_evidence = getattr(args, "_provider_helper_evidence", {})
+    args._provider_helper_evidence[lane] = {
+        "assetSHA256": asset["sha256"],
+        "preparationSHA256": prepared["preparationSHA256"],
+        "preparedReceiptSHA256": sha256(receipt_path),
+        "inventorySHA256": prepared["inventorySHA256"],
+        "helperExecutables": helper_evidence,
+    }
+    return admitted
 
 
 def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
@@ -787,6 +1076,7 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     runtime = ControlledRuntime(root, owner, api, JOURNAL_PARENT, home=ACCOUNT_HOME)
     cleanup[lane] = {"status": "active"}
     restored = keychain_created = provider_started = provider_stopped = False
+    api_definition_capture = None
     lane_env = dict(base_env)
     # API service and clients share the transaction-owned HOME. Admission
     # anchors retained authority to the real account through pwd.
@@ -800,7 +1090,8 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     lane_env.update({"CONTAINER_APP_ROOT": str(root / "container"),
                      "CONTAINER_INSTALL_ROOT": provider_root,
                      "CONTAINER_INSTALLATION_ROOT": provider_root,
-                     "CONTAINER_LOG_ROOT": str(root / "container-logs")})
+                     "CONTAINER_LOG_ROOT": str(root / "container-logs"),
+                     "DEVCONTAINER_PARITY_GUARD": str(GUARD_PATH)})
 
     def prepare_private_home(journal):
         nonlocal keychain_created
@@ -809,21 +1100,39 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
 
     primary_error = None
     suites_started = False
+    provider_root_path = Path(provider_root)
     try:
         runtime.start(prepare_home=prepare_private_home)
-        runtime_started = run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "start",
-                               "--enable-kernel-install", "--timeout", "120"],
-                              env=lane_env, timeout=150, capture=True, check=False)
+        system_start_started = time.time()
+        try:
+            runtime_started = run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "start",
+                                   "--enable-kernel-install", "--timeout", "120"],
+                                  env=lane_env, timeout=150, capture=True, check=False)
+        finally:
+            api_definition_capture = runtime.capture_system_start_api_definition(
+                provider_root_path, system_start_started, time.time())
+        if runtime_started.returncode != 0:
+            raise RuntimeError(f"{lane} provider SystemStart exited {runtime_started.returncode}")
         runtime_status = json.loads(run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "status",
                                          "--format", "json"], env=lane_env, timeout=30,
                                         capture=True).stdout)
         provider_started = runtime_status.get("status") == "running"
+        expected_helpers = args._provider_helper_programs[lane]
+        helper_home = None
+        if provider_started:
+            helper_home = runtime.propagate_provider_helper_home(
+                provider_root_path, expected_helpers,
+                lambda: provider_quiescence(runtime, Path(lane_env["DEVCONTAINER_CONTAINER_BIN"]),
+                                            lane_env, expected_helpers))
         (evidence / f"{lane}-runtime-initialization.json").write_text(json.dumps(
             {"commandExitCode": runtime_started.returncode,
              "commandStdout": runtime_started.stdout[-4000:],
              "commandStderr": runtime_started.stderr[-4000:], "status": runtime_status,
              "containerBinarySHA256": sha256(Path(lane_env["DEVCONTAINER_CONTAINER_BIN"])),
              "apiServerSHA256": sha256(api),
+             "providerHelperSHA256": {label: value["sha256"] for label, value in expected_helpers.items()},
+             "apiDefinitionCapture": api_definition_capture,
+             "providerHelperHome": helper_home,
              "kernelInstall": "maintained system start under private HOME"}, sort_keys=True, indent=2) + "\n")
         if not provider_started:
             raise RuntimeError(f"{lane} provider did not reach running status")
@@ -852,7 +1161,12 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     complete = lane_cleanup_is_complete(evidence, lane)
     if provider_started and suites_started and not complete:
         cleanup_error = RuntimeError(f"{lane} fixture cleanup is incomplete; preserving active provider and quarantine")
-    if provider_started and (complete or not suites_started):
+    if runtime.switch is not None and api_definition_capture is not None:
+        try:
+            runtime.restore_system_start_api_definition()
+        except BaseException as error:
+            cleanup_error = error
+    if provider_started and (complete or not suites_started) and cleanup_error is None:
         try:
             stopped = run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "stop"],
                           env=lane_env, timeout=120, capture=True)
@@ -862,8 +1176,9 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             provider_stopped = True
         except BaseException as error:
             cleanup_error = error
-    if runtime.switch is not None and (not provider_started or provider_stopped):
+    if runtime.switch is not None and (not provider_started or provider_stopped) and cleanup_error is None:
         try:
+            runtime.restore_provider_helper_definitions()
             runtime.restore()
             restored = True
         except BaseException as error:
@@ -1151,6 +1466,7 @@ def main() -> int:
                      "TMPDIR": str(SSD), "TEMP": str(SSD), "TMP": str(SSD),
                      "DEVCONTAINER_DOCKER_BIN": str(args.docker_bin),
                      "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(args.docker_compose_bin),
+                     "DEVCONTAINER_PARITY_RETAINED_ROOT": str(args._guest_retained_root),
                      "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                      "DEVCONTAINER_VSCODE_APP": str(args.vscode_app),
                      "DEVCONTAINER_VSCODE_LIVE": "1"})
@@ -1168,6 +1484,7 @@ def main() -> int:
         "trustedStateSHA256": args.state_sha256,
         "archiveSHA256": package_proof["archiveSHA256"],
         "packageAdmissions": package_admissions, "providerSHA256": binaries,
+        "guestInputAdmissions": args._guest_input_admissions,
         "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
         "initialServiceSetSHA256": initial_services, "initialServiceCount": initial_service_count,
     })
@@ -1224,48 +1541,13 @@ def main() -> int:
             interrupted = isinstance(sys.exc_info()[1], KeyboardInterrupt)
             if interrupted:
                 errors.append("qualification interrupted; child groups were terminated and cleanup was attempted")
-            final_colima, final_colima_detail = colima_state(args.colima_bin, base_env)
-            final_services, final_service_count = host_service_digest()
-            host_restorable = host_can_clear_guard(
-                cleanup, initial_colima, final_colima, initial_services, final_services)
-            if host_restorable:
-                guard.clear(transaction_owner)
-                guard_cleared = True
-            else:
-                errors.append("host runtime state is uncertain; durable runtime guard retained")
-            for lane in LANES:
-                row = cleanup[lane]
-                payload = {"schemaVersion": 1, "lane": lane,
-                           "status": row.get("status", "uncertain"),
-                           "cliCleanupComplete": row.get("cliCleanupComplete") is True,
-                           "vscodeCleanupComplete": row.get("vscodeCleanupComplete") is True}
-                if lane == "docker":
-                    payload["colima"] = row.get("colima", {"initial": initial_colima,
-                                                             "final": final_colima,
-                                                             "restored": final_colima == initial_colima})
-                else:
-                    payload.update({"initialColima": initial_colima, "finalColima": final_colima,
-                                    "providerStopped": row.get("providerStopped") is True,
-                                    "serviceRestored": row.get("serviceRestored") is True,
-                                    "serviceJournalReceiptSHA256": row.get("serviceJournalReceiptSHA256")})
-                write_json(args.evidence / f"{lane}-cleanup.json", payload)
-            host_payload = {"schemaVersion": 1, "status": "restored" if host_restorable else "uncertain",
-                            "initialColima": initial_colima, "finalColima": final_colima,
-                            "initialServiceSetSHA256": initial_services,
-                            "finalServiceSetSHA256": final_services,
-                            "initialServiceCount": initial_service_count,
-                            "finalServiceCount": final_service_count,
-                            "hostGuardCleared": guard_cleared,
-                            "restoration": {lane: cleanup[lane].get("status") for lane in LANES}}
-            write_json(args.evidence / "host-cleanup.json", host_payload)
-            write_json(args.evidence / "cleanup-state.json", {
-                "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
-                "finalColima": final_colima, "finalColimaDetail": final_colima_detail,
-                "initialServiceSetSHA256": initial_services, "finalServiceSetSHA256": final_services,
-                "guardCleared": guard_cleared, "lanes": cleanup, "errors": errors})
-            if interrupted:
-                write_json(args.evidence / "controller-failure.json", {
-                    "status": "failed", "errors": errors})
+            active_error = sys.exc_info()[1]
+            if active_error is not None and not interrupted:
+                errors.append(f"qualification aborted: {type(active_error).__name__}")
+            guard_cleared = _finalize_host_cleanup(
+                args.evidence, args, base_env, cleanup, initial_colima, initial_colima_detail,
+                initial_services, initial_service_count, guard, transaction_owner, errors,
+                interrupted=interrupted)
 
     if (subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True).strip() != args.source_commit
             or subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"],
@@ -1294,9 +1576,9 @@ def main() -> int:
                 or sha256(args.stock_container_bin.parent / "container-apiserver") != binaries["stockAPIServer"]
                 or sha256(args.compose_container_bin.parent / "container-apiserver") != binaries["composeAPIServer"]):
             raise ValueError("provider or API bytes changed during the qualification")
-        final, receipt_sha = seal_qualification(args, args.evidence, cleanup, host_payload,
-                                                comparison_status,
-                                                provider_tools, package_proof)
+        final, receipt_sha = seal_after_host_cleanup(args, args.evidence, cleanup,
+                                                    comparison_status, provider_tools,
+                                                    package_proof)
     except (OSError, ValueError, RuntimeError, KeyError) as error:
         write_json(args.evidence / "controller-failure.json", {"status": "failed", "errors": [str(error)]})
         print(f"qualification evidence was not sealed: {error}", file=sys.stderr)

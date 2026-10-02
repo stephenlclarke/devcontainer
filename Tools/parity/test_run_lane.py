@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import signal
 import argparse
+import copy
+import json
 import sqlite3
 import subprocess
 import unittest
@@ -21,6 +23,7 @@ from unittest import mock
 from parity_lib import Fixture, ParityError
 from run_lane import (
     LaneRunner,
+    PARITY_HARNESS,
     finalized_selection,
     create_socket_root,
     install_cancellation_handlers,
@@ -141,7 +144,6 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "SONAR_TOKEN": "must-not-leak",
             }
         )
-
         self.assertEqual(
             environment,
             {
@@ -158,6 +160,111 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "RUNNER_TRACKING_ID": "github_fixture",
             },
         )
+
+
+class EngineRoutePreflightTests(unittest.TestCase):
+    def test_unknown_engine_route_fails_before_output_or_runtime_admission(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "docker"
+            output.mkdir()
+            sentinel = output / "keep.json"
+            sentinel.write_text("unchanged")
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+            manifest = copy.deepcopy(manifest)
+            manifest["fixtures"].append({"id": "E99-unrouted", "status": "implemented",
+                                         "runner": "engine", "backends": ["docker"]})
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.manifest = manifest
+            runner.docker = "/pinned/docker"
+            runner.node_package_runner = "/pinned/node"
+            runner.output = output
+            with mock.patch.object(runner, "admit_finalized") as admit:
+                with self.assertRaisesRegex(ParityError, "route preflight"):
+                    runner.run()
+            self.assertEqual(sentinel.read_text(), "unchanged")
+            admit.assert_not_called()
+
+    def test_owned_guest_fixture_dispatch_uses_the_lane_scoped_adapter(self) -> None:
+        from types import SimpleNamespace
+
+        runner = LaneRunner.__new__(LaneRunner)
+        adapter = mock.Mock()
+        expected = {"id": "E07-init-attachment", "status": "passed"}
+        adapter.run.return_value = expected
+        runner._owned_guest_runner = adapter
+        fixture = SimpleNamespace(identifier="E07-init-attachment")
+        raw = Path("/tmp/evidence/raw/E07-init-attachment")
+
+        self.assertIs(runner.run_engine_fixture(fixture, raw), expected)
+        adapter.run.assert_called_once_with(fixture, raw)
+
+    def test_runtime_error_during_guest_provisioning_retains_failed_rows_and_engine(self) -> None:
+        import qualify_finalized_package as qualifier
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "apple-stock"
+            fixture = SimpleNamespace(identifier="E07-init-attachment", runner="engine",
+                                      backends=("apple-stock",))
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+
+            class FailingBridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def attach_endpoint(self):
+                    # Endpoint attachment succeeds before this test's provisioning failure.
+                    pass
+
+                def prepare(self):
+                    raise RuntimeError("guest provision command failed")
+
+                def run(self, row, _raw):
+                    return {"id": row.identifier, "status": "failed", "observations": {},
+                            "durationSeconds": 0.0, "differences": [],
+                            "diagnostic": self.preparation_error}
+
+                def cleanup(self):
+                    raise ParityError("owned guest preparation is incomplete")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = "apple-stock", Path(__file__).resolve().parents[2], manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = evidence, None
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            with (mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
+                  mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
+                  mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
+                  mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", FailingBridge),
+                  mock.patch.object(runner, "admit_finalized"),
+                  mock.patch.object(runner, "start_engine"),
+                  mock.patch.object(runner, "configure_devcontainer_client"),
+                  mock.patch.object(runner, "fingerprint", return_value={}),
+                  mock.patch.object(runner, "stop_builder"),
+                  mock.patch.object(runner, "check_runtime_state_cleanup"),
+                  mock.patch.object(runner, "readmit_finalized"),
+                  mock.patch.object(runner, "stop_engine") as stop_engine):
+                result = runner.run()
+
+            payload = json.loads((evidence / "results.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["fixtures"][0]["status"], "failed")
+            self.assertTrue(any("guest input preparation failed" in row
+                                for row in payload["cleanupDifferences"]))
+            self.assertTrue(runner._preserve_engine_on_uncertain_guest_cleanup)
+            stop_engine.assert_not_called()
+            self.assertFalse(qualifier.cli_cleanup_is_complete(root, "apple-stock"))
+
+    def test_qualifier_and_lane_runner_hash_the_same_harness_closure(self) -> None:
+        import qualify_finalized_package as qualifier
+
+        self.assertEqual(tuple(qualifier.PARITY_HARNESS), PARITY_HARNESS)
 
 
 class RuntimePathTests(unittest.TestCase):

@@ -1,14 +1,17 @@
 """Service adapter tests use real private files but never touch host launchd."""
 
 from contextlib import nullcontext
+import hashlib
 import os
 from pathlib import Path
 import plistlib
 from types import SimpleNamespace
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
+import runtime_services
 from runtime_services import (ControlledRuntime, ProcessSurvivors, authorised_roots, capture_owned_processes, process_inventory,
                               process_programs, require_idle, selected_definition, wait_stopped)
 from runtime_services import require_owned_volume
@@ -48,8 +51,26 @@ class RuntimeServicesTests(unittest.TestCase):
         patch("runtime_services.wait_stopped", side_effect=lambda probe: probe()).start()
 
     def register(self, directory, label):
-        path = directory / (label + ".plist")
-        path.write_bytes(plistlib.dumps({"Label": label, "ProgramArguments": ["/original/" + label]}))
+        if label == API:
+            path = directory / "apiserver/apiserver.plist"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            definition = {
+                "Label": label,
+                "EnvironmentVariables": {
+                    "CONTAINER_APP_ROOT": "/original/container/",
+                    "CONTAINER_INSTALL_ROOT": "/original/install/",
+                    "CONTAINER_LOG_ROOT": "/original/logs",
+                    "CONTAINER_SERVICE_NAMESPACE": "com.example.original",
+                },
+                "LimitLoadToSessionType": ["Aqua", "Background", "System"],
+                "MachServices": {API: True},
+                "ProgramArguments": ["/original/" + label, "start"],
+                "RunAtLoad": True,
+            }
+        else:
+            path = directory / (label + ".plist")
+            definition = {"Label": label, "ProgramArguments": ["/original/" + label]}
+        path.write_bytes(plistlib.dumps(definition))
         self.launchd.bootstrap(path)
 
     def runtime(self):
@@ -58,6 +79,46 @@ class RuntimeServicesTests(unittest.TestCase):
         with patch("runtime_services.Path.stat", side_effect=[SimpleNamespace(st_dev=1), SimpleNamespace(st_dev=2)]):
             return ControlledRuntime(self.owned, self.owner, self.executable, self.private,
                                      launchd=self.launchd, home=self.home)
+
+    def generated_provider_helpers(self, runtime):
+        provider = self.root / "provider"
+        helpers = {}
+        for label, dirname, executable in (
+            ("com.apple.container.container-core-images", "container-core-images", "container-core-images"),
+            ("com.apple.container.machine-apiserver", "machine-apiserver", "machine-apiserver"),
+        ):
+            program = provider / "libexec/container/plugins" / dirname / "bin" / executable
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_bytes((label + " trusted fixture").encode())
+            program.chmod(0o700)
+            environment = {
+                "CONTAINER_APP_ROOT": str(runtime.root / "container") + "/",
+                "CONTAINER_INSTALL_ROOT": str(provider) + "/",
+                "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
+            }
+            arguments = [str(program), "start"]
+            mach_service = "com.apple.container.core." + dirname
+            if dirname == "machine-apiserver":
+                arguments.extend([
+                    "--resources",
+                    str(provider / "libexec/container/plugins/machine-apiserver/resources"),
+                ])
+            definition = {
+                "Label": label,
+                "EnvironmentVariables": environment,
+                "LimitLoadToSessionType": ["Aqua", "Background", "System"],
+                "MachServices": {mach_service: True},
+                "ProgramArguments": arguments,
+                "RunAtLoad": False,
+            }
+            path = runtime.root / "container/plugin-state" / dirname / "service.plist"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(plistlib.dumps(definition))
+            path.chmod(0o644)
+            self.launchd.bootstrap(path)
+            helpers[label] = {"program": program,
+                             "sha256": hashlib.sha256(program.read_bytes()).hexdigest()}
+        return provider.resolve(), helpers
 
     def test_start_verify_and_restore_keep_original_bytes_and_private_receipt(self):
         runtime = self.runtime()
@@ -194,6 +255,288 @@ class RuntimeServicesTests(unittest.TestCase):
         self.probe.assert_not_called()
         runtime.restore()
         self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_provider_helpers_receive_private_home_and_restore_exact_generated_bytes(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider, trusted = self.generated_provider_helpers(runtime)
+        originals = {
+            label: Path(self.launchd.inspect(label)["path"]).read_bytes()
+            for label in trusted
+        }
+        paths = {
+            label: Path(self.launchd.inspect(label)["path"])
+            for label in trusted
+        }
+        quiescent = {
+            "status": "running", "containerCount": 0, "resourceCount": 0,
+            "guestCount": 0, "clientCount": 0,
+        }
+        result = runtime.propagate_provider_helper_home(
+            provider, trusted, Mock(return_value=quiescent)
+        )
+        self.assertEqual(result, {"status": "private-home-ready", "helpers": 2})
+        for label in trusted:
+            job = self.launchd.inspect(label)
+            definition = plistlib.loads(Path(job["path"]).read_bytes())
+            environment = definition["EnvironmentVariables"]
+            for key in ("HOME", "TMPDIR", "TMP", "TEMP"):
+                self.assertEqual(environment[key], str(self.owned))
+        runtime.restore_provider_helper_definitions()
+        for label in trusted:
+            self.assertEqual(paths[label].read_bytes(), originals[label])
+            self.assertIsNone(self.launchd.inspect(label))
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_provider_helper_home_refuses_unowned_path_and_extra_environment(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider, trusted = self.generated_provider_helpers(runtime)
+        label = "com.apple.container.container-core-images"
+        path = Path(self.launchd.inspect(label)["path"])
+        outside = self.root / "foreign-service.plist"
+        outside.write_bytes(path.read_bytes())
+        self.launchd.jobs[label] = {
+            "label": label, "path": str(outside),
+            "program": str(trusted[label]["program"]),
+        }
+        before = list(self.launchd.mutations)
+        self.assertRaisesRegex(
+            ValueError,
+            "registration differs",
+            runtime.propagate_provider_helper_home,
+            provider,
+            trusted,
+            Mock(return_value={
+                "status": "running", "containerCount": 0, "resourceCount": 0,
+                "guestCount": 0, "clientCount": 0,
+            }),
+        )
+        self.assertEqual(self.launchd.mutations, before)
+        self.launchd.jobs[label] = {
+            "label": label, "path": str(path),
+            "program": str(trusted[label]["program"]),
+        }
+        alias_target = path.with_name("service-private-copy.plist")
+        path.rename(alias_target)
+        path.symlink_to(alias_target.name)
+        before = list(self.launchd.mutations)
+        self.assertRaisesRegex(
+            ValueError,
+            "not canonical under its owner",
+            runtime.propagate_provider_helper_home,
+            provider,
+            trusted,
+            Mock(return_value={
+                "status": "running", "containerCount": 0, "resourceCount": 0,
+                "guestCount": 0, "clientCount": 0,
+            }),
+        )
+        self.assertEqual(self.launchd.mutations, before)
+        path.unlink()
+        alias_target.rename(path)
+        definition = plistlib.loads(path.read_bytes())
+        definition["EnvironmentVariables"]["PATH"] = "/untrusted"
+        path.write_bytes(plistlib.dumps(definition))
+        before = list(self.launchd.mutations)
+        self.assertRaisesRegex(
+            ValueError,
+            "not the admitted contract",
+            runtime.propagate_provider_helper_home,
+            provider,
+            trusted,
+            Mock(return_value={
+                "status": "running", "containerCount": 0, "resourceCount": 0,
+                "guestCount": 0, "clientCount": 0,
+            }),
+        )
+        self.assertEqual(self.launchd.mutations, before)
+        runtime.restore()
+
+    def test_provider_helper_home_refuses_untrusted_binary_and_nonempty_provider(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider, trusted = self.generated_provider_helpers(runtime)
+        bad_hash = {label: dict(identity) for label, identity in trusted.items()}
+        bad_hash["com.apple.container.container-core-images"]["sha256"] = "0" * 64
+        before = list(self.launchd.mutations)
+        empty = Mock(return_value={
+            "status": "running", "containerCount": 0, "resourceCount": 0,
+            "guestCount": 0, "clientCount": 0,
+        })
+        self.assertRaisesRegex(
+            ValueError,
+            "differs from its admitted package",
+            runtime.propagate_provider_helper_home,
+            provider,
+            bad_hash,
+            empty,
+        )
+        empty.assert_not_called()
+        self.assertEqual(self.launchd.mutations, before)
+        nonempty = Mock(return_value={
+            "status": "running", "containerCount": 1, "resourceCount": 1,
+            "guestCount": 0, "clientCount": 0,
+        })
+        self.assertRaisesRegex(
+            ValueError,
+            "provider is empty",
+            runtime.propagate_provider_helper_home,
+            provider,
+            trusted,
+            nonempty,
+        )
+        self.assertEqual(self.launchd.mutations, before)
+        runtime.restore()
+
+    def test_provider_helper_partial_bootout_write_and_bootstrap_failures_restore(self):
+        for failure in ("bootout", "write", "bootstrap"):
+            with self.subTest(failure=failure):
+                self.owned = self.root / ("case-" + failure)
+                self.owned.mkdir(mode=0o700)
+                self.owner = {"root": str(self.owned), "identity": {"fixture": failure}}
+                runtime = self.runtime()
+                runtime.start()
+                provider, trusted = self.generated_provider_helpers(runtime)
+                originals = {
+                    label: Path(self.launchd.inspect(label)["path"]).read_bytes()
+                    for label in trusted
+                }
+                if failure == "bootout":
+                    self.launchd.fail = (
+                        "bootout", "com.apple.container.machine-apiserver"
+                    )
+                elif failure == "bootstrap":
+                    self.launchd.fail = (
+                        "bootstrap-after", "com.apple.container.machine-apiserver"
+                    )
+                proof = Mock(return_value={
+                    "status": "running", "containerCount": 0, "resourceCount": 0,
+                    "guestCount": 0, "clientCount": 0,
+                })
+                if failure == "write":
+                    original_replace = runtime_services.atomic_replace_private_file
+                    replacements = 0
+
+                    def injected_replace(*args, **kwargs):
+                        nonlocal replacements
+                        replacements += 1
+                        if replacements == 2:
+                            raise OSError("injected atomic replace failure")
+                        original_replace(*args, **kwargs)
+
+                    replace_patch = patch(
+                        "runtime_services.atomic_replace_private_file",
+                        side_effect=injected_replace,
+                    )
+                else:
+                    replace_patch = patch(
+                        "runtime_services.atomic_replace_private_file",
+                        wraps=runtime_services.atomic_replace_private_file,
+                    )
+                with replace_patch:
+                    expected_error = OSError if failure == "write" else RuntimeError
+                    with self.assertRaises(expected_error):
+                        runtime.propagate_provider_helper_home(provider, trusted, proof)
+                self.launchd.fail = None
+                helper_paths = {
+                    label: Path(self.launchd.inspect(label)["path"])
+                    for label in trusted if self.launchd.inspect(label) is not None
+                }
+                helper_paths.update({
+                    label: runtime.root / "container/plugin-state" / (
+                        "container-core-images" if label.endswith("container-core-images")
+                        else "machine-apiserver"
+                    ) / "service.plist"
+                    for label in trusted
+                })
+                self.assertEqual(
+                    runtime.restore_provider_helper_definitions()["status"], "restored"
+                )
+                for label, payload in originals.items():
+                    self.assertEqual(helper_paths[label].read_bytes(), payload)
+                runtime.restore()
+                self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_system_start_global_api_plist_capture_and_restore_is_exact(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider = self.root / "provider"
+        provider.mkdir()
+        prior = next(item for item in runtime.switch.prior if item["label"] == API)
+        path = Path(prior["path"])
+        original = plistlib.loads(prior["payload"])
+        generated = dict(original)
+        environment = dict(original["EnvironmentVariables"])
+        environment.pop("CONTAINER_SERVICE_NAMESPACE")
+        environment.update({
+            "CONTAINER_INSTALLATION_ROOT": str(provider),
+            "CONTAINER_INSTALL_ROOT": str(provider),
+            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
+        })
+        generated["EnvironmentVariables"] = environment
+        generated["ProgramArguments"] = [str(runtime.executable), "start"]
+        path.write_bytes(plistlib.dumps(generated))
+        finished = time.time()
+        started = finished - 1
+        capture = runtime.capture_system_start_api_definition(provider, started, finished)
+        self.assertEqual(capture["status"], "captured")
+        runtime.restore_system_start_api_definition()
+        self.assertEqual(path.read_bytes(), prior["payload"])
+        self.assertEqual(path.stat().st_mtime_ns, runtime.original_api_file_metadata["mtimeNS"])
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_system_start_global_api_plist_unchanged_is_an_idempotent_noop(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider = self.root / "provider"
+        provider.mkdir()
+        now = time.time()
+        capture = runtime.capture_system_start_api_definition(provider, now - 1, now)
+        self.assertEqual(capture["status"], "unchanged")
+        runtime.restore_system_start_api_definition()
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_system_start_global_api_plist_refuses_change_after_capture(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider = self.root / "provider"
+        provider.mkdir()
+        prior = next(item for item in runtime.switch.prior if item["label"] == API)
+        path = Path(prior["path"])
+        original = plistlib.loads(prior["payload"])
+        generated = dict(original)
+        environment = dict(original["EnvironmentVariables"])
+        environment.pop("CONTAINER_SERVICE_NAMESPACE")
+        environment.update({
+            "CONTAINER_INSTALLATION_ROOT": str(provider),
+            "CONTAINER_INSTALL_ROOT": str(provider),
+            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
+        })
+        generated["EnvironmentVariables"] = environment
+        generated["ProgramArguments"] = [str(runtime.executable), "start"]
+        path.write_bytes(plistlib.dumps(generated))
+        finished = time.time()
+        runtime.capture_system_start_api_definition(provider, finished - 1, finished)
+        captured_payload = path.read_bytes()
+        captured_info = path.stat()
+        tampered = dict(generated)
+        tampered["RunAtLoad"] = False
+        path.write_bytes(plistlib.dumps(tampered))
+        os.utime(path, ns=(captured_info.st_atime_ns, captured_info.st_mtime_ns))
+        self.assertRaisesRegex(
+            ValueError,
+            "changed after SystemStart capture",
+            runtime.restore_system_start_api_definition,
+        )
+        path.write_bytes(captured_payload)
+        os.utime(path, ns=(captured_info.st_atime_ns, captured_info.st_mtime_ns))
+        runtime.restore_system_start_api_definition()
+        self.assertEqual(path.read_bytes(), prior["payload"])
+        runtime.restore()
 
     def test_uncertain_private_keychain_helper_prevents_runtime_restore(self):
         runtime = self.runtime()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import re
 import os
@@ -502,8 +503,66 @@ def authenticate_finalization(repository: Path, finalized_directory: Path,
         require(receipt.get(field) == value, f"qualification {field} differs from finalized package")
 
 
-def authenticate_provider_evidence(receipt: dict[str, Any],
-                                  inventory: dict[str, bytes]) -> None:
+def provider_helper_identity(repository: Path, lane: str) -> dict[str, Any]:
+    """Re-admit provider helper hashes from the checked-in lock and retained inventory."""
+
+    testing = repository / "Tools/testing"
+    bazel = repository / "Tools/bazel"
+    sys.path.insert(0, str(bazel))
+    sys.path.insert(0, str(testing))
+    prepare_releases = importlib.import_module("prepare_releases")
+    released_engine = importlib.import_module("released_engine")
+    require(Path(prepare_releases.__file__).resolve() == (bazel / "prepare_releases.py").resolve(strict=True)
+            and Path(released_engine.__file__).resolve() == (testing / "released_engine.py").resolve(strict=True),
+            "provider inventory helpers resolved outside the checked-in source")
+    lock = load_json(bazel / "releases.lock.json", "checked-in provider release lock")
+    try:
+        asset = released_engine.provider_runtime_selection(lock, lane)
+        retained = ACCOUNT_HOME / "Library/Application Support/ContainerFamily/retained/workflow"
+        prepared = prepare_releases.require_retained(
+            asset, retained / "release-objects" / asset["sha256"],
+            retained / "prepared-releases", retained / "prepared-receipts")
+        specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
+                         "layout": prepare_releases.layout(asset)}
+        preparation = prepared["preparationSHA256"]
+        receipt_path = retained / "prepared-receipts" / f"{preparation}.json"
+        info = receipt_path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                and info.st_nlink == 1 and info.st_mode & 0o777 == 0o600
+                and info.st_dev == retained.stat().st_dev and info.st_size <= MAX_INVENTORY_SIZE,
+                f"{lane} retained provider receipt is not a private standalone file")
+        prepared_receipt = load_json(receipt_path, f"{lane} retained provider receipt")
+        require(prepared_receipt.get("specification") == specification
+                and isinstance(prepared_receipt.get("inventory"), dict),
+                f"{lane} retained provider receipt does not match the checked-in asset")
+        helpers = {
+            "container-core-images": "libexec/container/plugins/container-core-images/bin/container-core-images",
+            "machine-apiserver": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+        }
+        helper_evidence = {}
+        for name, relative in helpers.items():
+            inventory_path = (Path("Payload") / relative if specification["layout"]["format"] == "pkg"
+                              else Path(relative)).as_posix()
+            item = prepared_receipt["inventory"].get(inventory_path)
+            require(isinstance(item, dict) and item.get("kind") == "file"
+                    and isinstance(item.get("mode"), int) and item["mode"] & 0o111
+                    and isinstance(item.get("sha256"), str)
+                    and SHA256.fullmatch(item["sha256"]) is not None,
+                    f"{lane} retained inventory omits an executable provider helper")
+            helper_evidence[name] = {"path": relative, "sha256": item["sha256"]}
+        return {
+            "assetSHA256": asset["sha256"],
+            "preparationSHA256": preparation,
+            "preparedReceiptSHA256": digest_file(receipt_path),
+            "inventorySHA256": prepared["inventorySHA256"],
+            "helperExecutables": helper_evidence,
+        }
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise QualificationError(f"{lane} locked provider helper inventory could not be admitted") from error
+
+
+def authenticate_provider_evidence(receipt: dict[str, Any], inventory: dict[str, bytes],
+                                   repository: Path) -> None:
     """Bind sanitized provider/API observations to manifest pins and exact frontends."""
 
     tools = receipt["providerTools"]
@@ -539,6 +598,7 @@ def authenticate_provider_evidence(receipt: dict[str, Any],
             "providerCommit": provider["commit"],
             "containerSHA256": provider["containerSHA256"],
             "apiServerSHA256": provider["apiServerSHA256"],
+            "preparedProvider": provider_helper_identity(repository, lane),
         }
         if lane == "container-compose":
             expected.update(composeVersion=provider["version"],
@@ -829,7 +889,7 @@ def verify_local_qualification(repository: Path, qualification_directory: Path,
     require(receipt_bytes == canonical_bytes, "qualification receipt is not canonical JSON")
     cli_ids, vscode_ids = validate_receipt(receipt, repository, expected_source_commit)
     inventory = inventory_files(qualification_directory, receipt)
-    authenticate_provider_evidence(receipt, inventory)
+    authenticate_provider_evidence(receipt, inventory, repository)
     authenticate_finalization(repository, finalized_directory,
                              finalization_provenance_sha256, accepted_state,
                              expected_source_commit, receipt)

@@ -37,6 +37,11 @@ from run_lane import LaneRunner, finalized_selection, write_junit
 
 FIXTURE_ID = "V01-vscode-end-to-end"
 DEFAULT_TIMEOUT_SECONDS = 1800
+DRIVER_PHASE_TIMEOUT_SECONDS = 60
+INTERACTIVE_DRIVER_PHASES = frozenset({"attaching", "rebuilding", "reopening"})
+VALID_DRIVER_PHASES = frozenset(
+    {"local-open", "attaching", "rebuilding", "reopening", "failed", "ready-for-cleanup"}
+)
 SENSITIVE_ENVIRONMENT_NAME = re.compile(
     r"\b[A-Z][A-Z0-9_]*(?:ACCESS_KEY|API_KEY|APP_PASSWORD|"
     r"PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*\b"
@@ -84,10 +89,125 @@ class VSCodePins:
         )
 
 
+@dataclass
+class DriverPhaseDeadline:
+    """Track interactive driver phases in the persistent host process."""
+
+    phase: str | None = None
+    started_at: float | None = None
+
+    def observe(self, phase: str, now: float) -> None:
+        """Start a monotonic deadline when entering a new interactive phase."""
+
+        if phase != self.phase:
+            self.phase = phase
+            self.started_at = now if phase in INTERACTIVE_DRIVER_PHASES else None
+            return
+        if self.started_at is None:
+            return
+        elapsed = now - self.started_at
+        if elapsed >= DRIVER_PHASE_TIMEOUT_SECONDS:
+            raise ParityError(
+                f"VS Code driver phase {phase} timed out after "
+                f"{elapsed:.1f} seconds"
+            )
+
+
 def sha256_bytes(value: bytes) -> str:
     """Return the lowercase SHA-256 digest for reference artifacts."""
 
     return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    """Return a SHA-256 digest without loading the complete file into memory."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_guest_workspace(
+    colima_bin: Path,
+    expected_colima_sha256: str,
+    workspace: Path,
+    environment: Mapping[str, str],
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Require the exact V01 bind source and lifecycle bytes in Colima's VM."""
+
+    if (
+        not colima_bin.is_absolute()
+        or not colima_bin.is_file()
+        or colima_bin.resolve(strict=True) != colima_bin
+        or not os.access(colima_bin, os.X_OK)
+    ):
+        raise ParityError("the admitted Colima executable path is noncanonical or unusable")
+    if sha256_file(colima_bin) != expected_colima_sha256:
+        raise ParityError("the Colima executable changed before workspace admission")
+    if not workspace.is_absolute() or workspace.resolve(strict=True) != workspace:
+        raise ParityError("the V01 workspace path is not canonical")
+
+    devcontainer_directory = workspace / ".devcontainer"
+    if devcontainer_directory.is_symlink() or not devcontainer_directory.is_dir():
+        raise ParityError("the V01 devcontainer directory is missing or unsafe")
+    expected_files = (
+        devcontainer_directory / "devcontainer.json",
+        devcontainer_directory / "lifecycle.sh",
+    )
+    for host_path in expected_files:
+        if host_path.is_symlink() or not host_path.is_file():
+            raise ParityError(f"the V01 workspace input is missing or unsafe: {host_path.name}")
+        host_digest = sha256_file(host_path)
+        result = run(
+            [
+                str(colima_bin),
+                "--profile",
+                "default",
+                "ssh",
+                "--",
+                "test",
+                "-r",
+                str(host_path),
+            ],
+            capture_output=True,
+            check=False,
+            env=environment,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise ParityError(
+                f"Colima guest cannot read the V01 workspace input: {host_path.name}"
+            )
+        result = run(
+            [
+                str(colima_bin),
+                "--profile",
+                "default",
+                "ssh",
+                "--",
+                "sha256sum",
+                "--",
+                str(host_path),
+            ],
+            capture_output=True,
+            check=False,
+            env=environment,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise ParityError(
+                f"Colima guest could not hash the V01 workspace input: {host_path.name}"
+            )
+        guest_digest = result.stdout.split(maxsplit=1)[0] if result.stdout.split() else ""
+        if guest_digest != host_digest:
+            raise ParityError(
+                f"the V01 workspace input bytes differ in the Colima guest: {host_path.name}"
+            )
 
 
 def parse_code_version(output: str) -> tuple[str, str, str]:
@@ -533,16 +653,26 @@ def no_resources_remain(
                 )
             )
     logs: list[str] = []
-    passed = True
-    for name, command in commands:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            check=False,
-            env=environment,
-            text=True,
-            timeout=30,
+    passed = bool(project)
+    if not project:
+        logs.append(
+            "resource proof incomplete: Compose project identity is unavailable; "
+            "networks and volumes cannot be scoped safely"
         )
+    for name, command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            logs.append(f"$ {' '.join(command)}\nERROR: {error}")
+            passed = False
+            continue
         logs.append(
             f"$ {' '.join(command)}\n"
             f"exit={result.returncode}\n{result.stdout}{result.stderr}"
@@ -554,7 +684,15 @@ def no_resources_remain(
 class VSCodeLane:
     """Own one isolated real-VS-Code parity execution and its evidence."""
 
-    def __init__(self, lane: str, repository: Path, evidence_root: Path, selection: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        lane: str,
+        repository: Path,
+        evidence_root: Path,
+        selection: dict[str, Any] | None = None,
+        colima_bin: Path | None = None,
+        colima_sha256: str | None = None,
+    ) -> None:
         self.lane = lane
         self.repository = repository
         self.evidence_root = evidence_root
@@ -577,6 +715,8 @@ class VSCodeLane:
         self.runtime.output = self.output / "runtime"
         self.runtime.runtime_root = self.output / "runtime-state"
         self.process: subprocess.Popen[bytes] | None = None
+        self.colima_bin = colima_bin
+        self.colima_sha256 = colima_sha256
 
     def fixture(self) -> Any:
         """Return the checked-in V01 fixture contract."""
@@ -669,6 +809,22 @@ class VSCodeLane:
             self.runtime.start_engine()
         self.runtime.configure_devcontainer_client()
         return self.runtime.fingerprint()
+
+    def require_guest_workspace(self, workspace: Path) -> None:
+        """Admit the exact fixture bind source before starting VS Code."""
+
+        if self.lane != "docker":
+            return
+        if self.colima_bin is None or self.colima_sha256 is None:
+            raise ParityError(
+                "Docker VS Code parity requires the admitted Colima executable and digest"
+            )
+        verify_guest_workspace(
+            self.colima_bin,
+            self.colima_sha256,
+            workspace,
+            self.runtime.environment,
+        )
 
     def compose_path(self) -> str:
         """Select the same separately installed Compose adapter as CLI parity."""
@@ -817,9 +973,22 @@ class VSCodeLane:
                 start_new_session=True,
             )
             deadline = time.monotonic() + DEFAULT_TIMEOUT_SECONDS
+            phase_deadline = DriverPhaseDeadline()
             while time.monotonic() < deadline:
                 if driver_result.is_file():
                     return
+                try:
+                    state = json.loads(driver_state.read_text(encoding="utf-8"))
+                    if not isinstance(state, dict):
+                        raise ParityError("VS Code driver state is not an object")
+                    phase = state.get("phase")
+                except (OSError, ValueError) as error:
+                    raise ParityError(
+                        f"cannot observe VS Code driver state: {error}"
+                    ) from error
+                if not isinstance(phase, str) or phase not in VALID_DRIVER_PHASES:
+                    raise ParityError("VS Code driver state has no valid phase")
+                phase_deadline.observe(phase, time.monotonic())
                 if self.process.poll() is not None:
                     stderr.flush()
                     detail = (self.output / "code.stderr.log").read_text(
@@ -859,8 +1028,7 @@ class VSCodeLane:
         self.output.mkdir(parents=True)
         started = time.monotonic()
         fixture = self.fixture()
-        workspace = self.output / "workspace"
-        shutil.copytree(fixture.directory, workspace)
+        workspace_root, workspace = self.runtime.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
         driver_state = self.output / "driver-state.json"
         driver_result = self.output / "driver-result.json"
@@ -896,6 +1064,7 @@ class VSCodeLane:
         cleanup_log = ""
         project = ""
         runtime_ready = False
+        workspace_cleanup = ""
         security_passed = True
         try:
             reference = self.require_reference()
@@ -903,6 +1072,7 @@ class VSCodeLane:
             fingerprint = self.prepare_runtime()
             runtime_ready = True
             atomic_json(self.output / "fingerprint.json", fingerprint)
+            self.require_guest_workspace(workspace)
             compose = self.compose_path()
             settings = vscode_settings(self.devcontainer_docker_path(), compose)
             atomic_json(user_data / "User/settings.json", settings)
@@ -934,62 +1104,130 @@ class VSCodeLane:
         ) as error:
             diagnostic = str(error)
         finally:
-            terminate_isolated_vscode(user_data)
-            if runtime_ready:
-                if not project:
-                    project = discover_compose_project(
-                        self.runtime.docker,
-                        workspace,
-                        self.runtime.environment,
-                    )
-                cleanup_log = self.runtime.cleanup_fixture(runtime_fixture)
-                clean, proof = no_resources_remain(
-                    self.runtime.docker,
-                    workspace,
-                    project,
-                    self.runtime.environment,
-                )
-                cleanup_log += proof
-                observations["cleanup"] = "true" if clean else "false"
-                if cleanup_log.startswith("ERROR:") or not clean:
-                    diagnostic = (
-                        f"{diagnostic}; runtime cleanup did not complete"
-                    ).strip("; ")
-            (self.output / "cleanup.log").write_text(
-                cleanup_log or "runtime did not start\n",
-                encoding="utf-8",
-            )
-            self.runtime.stop_engine()
-            if getattr(self.runtime, "finalized_identity", None) is not None:
+            gui_closed = True
+            try:
                 try:
-                    self.runtime.readmit_finalized()
+                    terminate_isolated_vscode(user_data)
+                except (OSError, subprocess.SubprocessError, ParityError) as error:
+                    gui_closed = False
+                    diagnostic = f"{diagnostic}; VS Code process cleanup failed: {error}".strip("; ")
+                    cleanup_log += (
+                        "ERROR: owned VS Code process closure is uncertain; "
+                        "resource cleanup cannot be certified\n"
+                    )
+                if runtime_ready and gui_closed:
+                    if not project:
+                        try:
+                            project = discover_compose_project(
+                                self.runtime.docker,
+                                workspace,
+                                self.runtime.environment,
+                            )
+                        except (OSError, subprocess.SubprocessError, ParityError) as error:
+                            cleanup_log += f"ERROR: Compose project discovery failed: {error}\n"
+                    try:
+                        cleanup_log += self.runtime.cleanup_fixture(runtime_fixture)
+                    except (OSError, subprocess.SubprocessError, ParityError, ValueError) as error:
+                        cleanup_log += f"ERROR: fixture cleanup failed: {error}\n"
+                    try:
+                        clean, proof = no_resources_remain(
+                            self.runtime.docker,
+                            workspace,
+                            project,
+                            self.runtime.environment,
+                        )
+                    except (OSError, subprocess.SubprocessError, ParityError, ValueError) as error:
+                        clean, proof = False, f"ERROR: resource verification failed: {error}\n"
+                    cleanup_log += proof
+                    clean = clean and bool(project) and not cleanup_log.startswith("ERROR:")
+                    if clean:
+                        try:
+                            workspace_cleanup = self.runtime.cleanup_fixture_workspace(
+                                workspace_root
+                            )
+                        except (OSError, ParityError, ValueError) as error:
+                            workspace_cleanup = f"ERROR: workspace cleanup failed: {error}"
+                        if workspace_cleanup:
+                            diagnostic = f"{diagnostic}; {workspace_cleanup}".strip("; ")
+                        else:
+                            cleanup_log += "\nfixture workspace removed\n"
+                    else:
+                        workspace_cleanup = (
+                            "ERROR: resource cleanup could not be proven; "
+                            "fixture workspace preserved"
+                        )
+                        diagnostic = f"{diagnostic}; {workspace_cleanup}".strip("; ")
+                    clean = clean and not workspace_cleanup
+                    observations["cleanup"] = "true" if clean else "false"
+                elif runtime_ready:
+                    workspace_cleanup = (
+                        "ERROR: owned VS Code process closure is uncertain; "
+                        "fixture workspace preserved"
+                    )
+                    observations["cleanup"] = "false"
+                    diagnostic = f"{diagnostic}; {workspace_cleanup}".strip("; ")
+                else:
+                    workspace_cleanup = (
+                        "ERROR: runtime admission incomplete; workspace preserved"
+                    )
+                    diagnostic = f"{diagnostic}; {workspace_cleanup}".strip("; ")
+                if not gui_closed:
+                    cleanup_log += (
+                        f"\nVS Code profile preserved because owned process exit "
+                        f"could not be confirmed: {profile_root}\n"
+                    )
+                if workspace_cleanup:
+                    cleanup_log = f"{cleanup_log}\n{workspace_cleanup}\n"
+            finally:
+                try:
+                    (self.output / "cleanup.log").write_text(
+                        cleanup_log or "runtime did not start\n",
+                        encoding="utf-8",
+                    )
+                except OSError as error:
+                    diagnostic = f"{diagnostic}; cleanup evidence write failed: {error}".strip("; ")
+                try:
+                    self.runtime.stop_engine()
+                except (OSError, subprocess.SubprocessError, ParityError) as error:
+                    diagnostic = f"{diagnostic}; engine shutdown failed: {error}".strip("; ")
+                try:
+                    if getattr(self.runtime, "finalized_identity", None) is not None:
+                        self.runtime.readmit_finalized()
                 except (OSError, ParityError, ValueError) as error:
                     diagnostic = f"{diagnostic}; {error}".strip("; ")
-            profile_logs = user_data / "logs"
-            if profile_logs.is_dir():
-                shutil.copytree(
-                    profile_logs,
-                    self.output / "vscode-logs",
-                    dirs_exist_ok=True,
-                )
-            shutil.rmtree(profile_root, ignore_errors=True)
-            sensitive_names, removed_files = scrub_sensitive_evidence(
-                self.output
-            )
-            security_passed = not sensitive_names
-            atomic_json(
-                self.output / "security-scan.json",
-                {
-                    "detectedNames": sensitive_names,
-                    "removedFiles": removed_files,
-                    "status": "passed" if security_passed else "failed",
-                },
-            )
-            if not security_passed:
-                diagnostic = (
-                    f"{diagnostic}; sensitive environment names were detected "
-                    "and their evidence files were removed"
-                ).strip("; ")
+                try:
+                    profile_logs = user_data / "logs"
+                    if profile_logs.is_dir():
+                        shutil.copytree(
+                            profile_logs,
+                            self.output / "vscode-logs",
+                            dirs_exist_ok=True,
+                        )
+                except OSError as error:
+                    diagnostic = f"{diagnostic}; VS Code log preservation failed: {error}".strip("; ")
+                if gui_closed:
+                    shutil.rmtree(profile_root, ignore_errors=True)
+                try:
+                    sensitive_names, removed_files = scrub_sensitive_evidence(
+                        self.output
+                    )
+                    security_passed = not sensitive_names
+                    atomic_json(
+                        self.output / "security-scan.json",
+                        {
+                            "detectedNames": sensitive_names,
+                            "removedFiles": removed_files,
+                            "status": "passed" if security_passed else "failed",
+                        },
+                    )
+                    if not security_passed:
+                        diagnostic = (
+                            f"{diagnostic}; sensitive environment names were detected "
+                            "and their evidence files were removed"
+                        ).strip("; ")
+                except (OSError, ValueError) as error:
+                    security_passed = False
+                    diagnostic = f"{diagnostic}; security evidence failed: {error}".strip("; ")
 
         differences = assert_contract(runtime_fixture, observations)
         if differences:
@@ -1050,6 +1288,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--finalization-provenance-sha256")
     parser.add_argument("--finalization-state", type=Path)
     parser.add_argument("--expected-source-commit")
+    parser.add_argument("--colima-bin", type=Path)
+    parser.add_argument("--colima-sha256")
     return parser.parse_args()
 
 
@@ -1059,8 +1299,23 @@ def main() -> int:
     args = parse_args()
     repository = Path(__file__).resolve().parents[2]
     try:
+        if args.lane == "docker" and (
+            args.colima_bin is None
+            or not args.colima_sha256
+            or not re.fullmatch(r"[0-9a-f]{64}", args.colima_sha256)
+        ):
+            raise ParityError(
+                "Docker VS Code parity requires the admitted Colima executable and SHA-256"
+            )
         install_cancellation_handlers()
-        return VSCodeLane(args.lane, repository, args.evidence.resolve(), finalized_selection(args)).run()
+        return VSCodeLane(
+            args.lane,
+            repository,
+            args.evidence.resolve(),
+            finalized_selection(args),
+            args.colima_bin,
+            args.colima_sha256,
+        ).run()
     except (OSError, ParityError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

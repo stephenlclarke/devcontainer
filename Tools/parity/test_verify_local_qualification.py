@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -337,6 +339,32 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         compose = tools["dockerCompose"]
         apple = tools["appleStock"]
         container_compose = tools["containerCompose"]
+        helper_evidence = {
+            "apple-stock": {
+                "assetSHA256": "1" * 64, "preparationSHA256": "2" * 64,
+                "preparedReceiptSHA256": "3" * 64, "inventorySHA256": "4" * 64,
+                "helperExecutables": {
+                    "container-core-images": {
+                        "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                        "sha256": "5" * 64},
+                    "machine-apiserver": {
+                        "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                        "sha256": "6" * 64},
+                },
+            },
+            "container-compose": {
+                "assetSHA256": "7" * 64, "preparationSHA256": "8" * 64,
+                "preparedReceiptSHA256": "9" * 64, "inventorySHA256": "a" * 64,
+                "helperExecutables": {
+                    "container-core-images": {
+                        "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                        "sha256": "b" * 64},
+                    "machine-apiserver": {
+                        "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                        "sha256": "c" * 64},
+                },
+            },
+        }
         documents = {
             docker["engineEvidence"]["path"]: {
                 "schemaVersion": 1, "source": "docker-oracle",
@@ -353,6 +381,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "providerVersion": apple["version"], "providerCommit": apple["commit"],
                 "containerSHA256": apple["containerSHA256"],
                 "apiServerSHA256": apple["apiServerSHA256"],
+                "preparedProvider": helper_evidence["apple-stock"],
             },
             container_compose["apiServerEvidence"]["path"]: {
                 "schemaVersion": 1, "lane": "container-compose",
@@ -362,20 +391,149 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "apiServerSHA256": container_compose["apiServerSHA256"],
                 "composeVersion": container_compose["version"],
                 "composeSHA256": container_compose["composeSHA256"],
+                "preparedProvider": helper_evidence["container-compose"],
             },
         }
         inventory = {path: json.dumps(value).encode() for path, value in documents.items()}
-        authenticate_provider_evidence(self.receipt, inventory)
+        with patch("verify_local_qualification.provider_helper_identity",
+                   side_effect=lambda _repository, lane: helper_evidence[lane]):
+            authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
         docker_document = documents[docker["engineEvidence"]["path"]]
         tampered_inventory = dict(inventory)
         docker_document = dict(docker_document, buildxSHA256="0" * 64)
         tampered_inventory[docker["engineEvidence"]["path"]] = json.dumps(
             docker_document).encode()
         with self.assertRaisesRegex(QualificationError, "Docker engine evidence"):
-            authenticate_provider_evidence(self.receipt, tampered_inventory)
+            with patch("verify_local_qualification.provider_helper_identity",
+                       side_effect=lambda _repository, lane: helper_evidence[lane]):
+                authenticate_provider_evidence(self.receipt, tampered_inventory, REPOSITORY)
         apple["apiServerSHA256"] = "0" * 64
         with self.assertRaisesRegex(QualificationError, "apple-stock provider/API"):
-            authenticate_provider_evidence(self.receipt, inventory)
+            with patch("verify_local_qualification.provider_helper_identity",
+                       side_effect=lambda _repository, lane: helper_evidence[lane]):
+                authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
+
+    def test_provider_helper_identity_uses_locked_asset_and_internal_receipt(self) -> None:
+        sys_path = [str(REPOSITORY / "Tools/bazel"), str(REPOSITORY / "Tools/testing")]
+        for entry in sys_path:
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+        prepare_releases = importlib.import_module("prepare_releases")
+        released_engine = importlib.import_module("released_engine")
+        lock = json.loads((REPOSITORY / "Tools/bazel/releases.lock.json").read_text())
+        asset = released_engine.provider_runtime_selection(lock, "apple-stock")
+        specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
+                         "layout": prepare_releases.layout(asset)}
+        helpers = {
+            "container-core-images": "libexec/container/plugins/container-core-images/bin/container-core-images",
+            "machine-apiserver": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+        }
+        prefix = "Payload/" if specification["layout"]["format"] == "pkg" else ""
+        inventory = {prefix + path: {"kind": "file", "mode": 0o755, "size": 64,
+                                     "sha256": str(index) * 64}
+                     for index, path in enumerate(helpers.values(), start=1)}
+        with tempfile.TemporaryDirectory() as temporary:
+            account = Path(temporary).resolve()
+            retained = account / "Library/Application Support/ContainerFamily/retained/workflow"
+            receipts = retained / "prepared-receipts"
+            receipts.mkdir(parents=True, mode=0o700)
+            preparation = "a" * 64
+            receipt_path = receipts / f"{preparation}.json"
+            receipt_bytes = json.dumps({"specification": specification, "inventory": inventory},
+                                      sort_keys=True, separators=(",", ":")).encode()
+            receipt_path.write_bytes(receipt_bytes)
+            receipt_path.chmod(0o600)
+            retained_object = {
+                "assetSHA256": asset["sha256"], "preparationSHA256": preparation,
+                "inventorySHA256": "b" * 64,
+            }
+            with (patch("verify_local_qualification.ACCOUNT_HOME", account),
+                  patch.object(prepare_releases, "require_retained", return_value=retained_object)):
+                observed = __import__("verify_local_qualification").provider_helper_identity(
+                    REPOSITORY, "apple-stock")
+
+        self.assertEqual(observed, {
+            "assetSHA256": asset["sha256"], "preparationSHA256": preparation,
+            "preparedReceiptSHA256": sha(receipt_bytes), "inventorySHA256": "b" * 64,
+            "helperExecutables": {
+                name: {"path": path, "sha256": str(index) * 64}
+                for index, (name, path) in enumerate(helpers.items(), start=1)
+            },
+        })
+
+    def test_provider_evidence_rejects_missing_or_tampered_helper_identity(self) -> None:
+        tools = self.receipt["providerTools"]
+        expected = {
+            "assetSHA256": "1" * 64, "preparationSHA256": "2" * 64,
+            "preparedReceiptSHA256": "3" * 64, "inventorySHA256": "4" * 64,
+            "helperExecutables": {
+                "container-core-images": {
+                    "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                    "sha256": "5" * 64},
+                "machine-apiserver": {
+                    "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                    "sha256": "6" * 64},
+            },
+        }
+        rows = {
+            "apple-stock": {
+                "schemaVersion": 1, "lane": "apple-stock",
+                "providerVersion": tools["appleStock"]["version"],
+                "providerCommit": tools["appleStock"]["commit"],
+                "containerSHA256": tools["appleStock"]["containerSHA256"],
+                "apiServerSHA256": tools["appleStock"]["apiServerSHA256"],
+                "preparedProvider": expected,
+            },
+            "container-compose": {
+                "schemaVersion": 1, "lane": "container-compose",
+                "providerVersion": tools["containerCompose"]["version"],
+                "providerCommit": tools["containerCompose"]["commit"],
+                "containerSHA256": tools["containerCompose"]["containerSHA256"],
+                "apiServerSHA256": tools["containerCompose"]["apiServerSHA256"],
+                "composeVersion": tools["containerCompose"]["version"],
+                "composeSHA256": tools["containerCompose"]["composeSHA256"],
+                "preparedProvider": expected,
+            },
+        }
+        docker = tools["docker"]
+        inventory = {docker["engineEvidence"]["path"]: json.dumps({
+            "schemaVersion": 1, "source": "docker-oracle",
+            "clientVersion": docker["version"], "dockerCLISHA256": docker["sha256"],
+            "engineVersion": docker["engineVersion"], "engineCommit": docker["engineCommit"],
+            "engineApiVersion": docker["engineApiVersion"], "engineSHA256": docker["engineSHA256"],
+            "buildxVersion": docker["buildxVersion"], "buildxSHA256": docker["buildxSHA256"],
+            "composeVersion": tools["dockerCompose"]["version"],
+            "composeSHA256": tools["dockerCompose"]["sha256"],
+            "bottleSHA256": tools["dockerCompose"]["bottleSHA256"],
+        }).encode()}
+        inventory.update({tools[name]["apiServerEvidence"]["path"]: json.dumps(row).encode()
+                     for lane, name in (("apple-stock", "appleStock"),
+                                        ("container-compose", "containerCompose"))
+                     for row in (dict(rows[lane]),)})
+        with patch("verify_local_qualification.provider_helper_identity",
+                   return_value=expected):
+            authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
+            for field in ("assetSHA256", "preparationSHA256", "preparedReceiptSHA256", "inventorySHA256"):
+                changed = dict(expected, **{field: "0" * 64})
+                tampered = dict(rows["apple-stock"], preparedProvider=changed)
+                modified = dict(inventory)
+                modified[tools["appleStock"]["apiServerEvidence"]["path"]] = json.dumps(tampered).encode()
+                with self.subTest(field=field), self.assertRaisesRegex(
+                        QualificationError, "apple-stock provider/API evidence"):
+                    authenticate_provider_evidence(self.receipt, modified, REPOSITORY)
+            changed_helpers = json.loads(json.dumps(expected))
+            changed_helpers["helperExecutables"]["machine-apiserver"]["sha256"] = "0" * 64
+            modified = dict(inventory)
+            modified[tools["appleStock"]["apiServerEvidence"]["path"]] = json.dumps(
+                dict(rows["apple-stock"], preparedProvider=changed_helpers)).encode()
+            with self.assertRaisesRegex(QualificationError, "apple-stock provider/API evidence"):
+                authenticate_provider_evidence(self.receipt, modified, REPOSITORY)
+            missing = dict(rows["apple-stock"])
+            del missing["preparedProvider"]
+            modified = dict(inventory)
+            modified[tools["appleStock"]["apiServerEvidence"]["path"]] = json.dumps(missing).encode()
+            with self.assertRaisesRegex(QualificationError, "apple-stock provider/API evidence"):
+                authenticate_provider_evidence(self.receipt, modified, REPOSITORY)
 
     def test_provider_frontend_digests_match_their_exact_lane_maps(self) -> None:
         tools = self.receipt["providerTools"]
@@ -526,6 +684,23 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                     "DEVCONTAINER_COMPOSE_BIN": provider_hashes["composeProvider"],
                 },
             }
+            helper_admissions = {
+                lane: {
+                    "assetSHA256": str(index) * 64,
+                    "preparationSHA256": str(index + 2) * 64,
+                    "preparedReceiptSHA256": str(index + 4) * 64,
+                    "inventorySHA256": str(index + 6) * 64,
+                    "helperExecutables": {
+                        "container-core-images": {
+                            "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
+                            "sha256": str(index + 8) * 64},
+                        "machine-apiserver": {
+                            "path": "libexec/container/plugins/machine-apiserver/bin/machine-apiserver",
+                            "sha256": str(index + 1) * 64},
+                    },
+                }
+                for index, lane in enumerate(("apple-stock", "container-compose"), start=1)
+            }
             for lane in LANES:
                 for suite, ids, base in (
                     ("cli", expected_cli, evidence / lane),
@@ -659,6 +834,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "providerCommit": tools["appleStock"]["commit"],
                 "containerSHA256": tools["appleStock"]["containerSHA256"],
                 "apiServerSHA256": tools["appleStock"]["apiServerSHA256"],
+                "preparedProvider": helper_admissions["apple-stock"],
             })
             write_json(evidence / "providers/containerCompose.json", {
                 "schemaVersion": 1, "lane": "container-compose",
@@ -668,6 +844,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "apiServerSHA256": tools["containerCompose"]["apiServerSHA256"],
                 "composeVersion": tools["containerCompose"]["version"],
                 "composeSHA256": tools["containerCompose"]["composeSHA256"],
+                "preparedProvider": helper_admissions["container-compose"],
             })
             provider_tools = {
                 "docker": {
@@ -714,6 +891,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                       retained / "qualifications"),
                 patch("verify_local_qualification.subprocess.run", side_effect=self._mock_git),
                 patch("verify_local_qualification.authenticate_finalization") as admit_package,
+                patch("verify_local_qualification.provider_helper_identity",
+                      side_effect=lambda _repository, lane: helper_admissions[lane]),
                 patch.dict(os.environ, {"HOME": str(root / "untrusted-home")}),
             ):
                 verify_local_qualification(
