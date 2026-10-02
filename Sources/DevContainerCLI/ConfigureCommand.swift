@@ -51,10 +51,11 @@ struct ConfigureCommand: ParsableCommand {
 
     func run() throws {
         let url = URL(fileURLWithPath: config)
-        var value = try DevContainerConfigurationStore.load(
+        let loaded = try DevContainerConfigurationStore.loadResult(
             from: url,
             defaultSocket: CLIPaths.socket
         )
+        var value = loaded.configuration
         if let backend {
             guard let parsed = BackendProvider(rawValue: backend) else {
                 throw ValidationError("backend must be stock or container-compose")
@@ -66,6 +67,8 @@ struct ConfigureCommand: ParsableCommand {
                 throw ValidationError("compose provider must be docker or container-compose")
             }
             value.composeProvider = parsed
+        } else if !loaded.composeProviderWasExplicit {
+            value.composeProvider = DevContainerConfiguration.defaultComposeProvider(for: value.backend)
         }
         if let socket {
             value.socket = socket

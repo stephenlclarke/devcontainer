@@ -25,7 +25,7 @@ reach the container VM.
 
 ## Configure stock mode
 
-The unreleased candidate preserves stored settings when their `configure` options are omitted. Use `--strict` or `--no-strict` to change strict compatibility explicitly. Newly created configurations are strict and default to the separately installed `container-compose` frontend; explicit saved Docker choices remain unchanged. The native frontend receives the resolved socket and Container executable for discovery, mutation and cleanup probes, overriding ambient Compose-specific runtime settings. Backend and frontend choices are independent. The following explicit Docker example describes the legacy path, not the candidate default.
+The unreleased candidate preserves stored settings when their `configure` options are omitted. Use `--strict` or `--no-strict` to change strict compatibility explicitly. New configurations default to Docker Compose for the stock backend and the separately installed `container-compose` frontend for the matched backend. A configuration without an explicit frontend follows its selected backend; explicitly saved frontend choices remain unchanged. The native frontend receives the resolved socket and Container executable for discovery, mutation and cleanup probes, overriding ambient Compose-specific runtime settings. Backend and frontend remain independently overrideable. The Docker example below shows the stock route and can also be used to override the selection.
 
 ```console
 devcontainer configure \
@@ -76,7 +76,7 @@ Then run **Dev Containers: Reopen in Container**.
 
 ## Runtime boundary
 
-Published 1.0.1 defaults to upstream Docker Compose over the compatibility socket; unreleased source requires explicit Docker selection for that path.
+Published 1.0.1 defaults to upstream Docker Compose over the compatibility socket; unreleased source selects that path for the stock backend and the native frontend for the matched backend.
 Apple does not supply a Compose plug-in. The separately installed
 `container-compose` provider is optional, independently maintained, and uses
 its exact matched custom runtime stack.

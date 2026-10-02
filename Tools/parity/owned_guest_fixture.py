@@ -233,6 +233,8 @@ class OwnedGuestFixtureRunner:
         if self.lane != "docker" and not self.container:
             raise ParityError("owned guest route requires the admitted native container provider")
         self.compose_provider: Path | None = None
+        self.docker_cli: Path | None = None
+        self.docker_compose: Path | None = None
         self.compose = self._admit_compose() if any(
             fixture.identifier in COMPOSE_FIXTURES for fixture in fixtures) else None
         self.preparation: tuple[Path, Any, LaneRuntimeView, dict] | None = None
@@ -282,8 +284,42 @@ class OwnedGuestFixtureRunner:
         expected = self.runner.finalized["productionBinarySHA256"]["bin/devcontainer-compose"]
         if not executable.is_absolute() or executable.resolve(strict=True) != executable or sha256(executable) != expected:
             raise ParityError("native Compose frontend differs from the signed package inventory")
-        self.compose_provider = self._admit_external_compose_provider()
+        if self.lane == "apple-stock":
+            self.docker_cli, self.docker_compose = self._admit_stock_compose_tools()
+        elif self.lane == "container-compose":
+            self.compose_provider = self._admit_external_compose_provider()
+        else:
+            raise ParityError("native guest Compose lane has no supported frontend")
         return executable
+
+    def _admit_stock_compose_tools(self) -> tuple[Path, Path]:
+        """Authenticate Docker and standalone Compose against the checked-in lock."""
+        environment = self.runner.environment
+        pins = self.runner.manifest["referencePins"]["docker"]
+
+        def executable_from_env(name: str, expected_sha: str) -> Path:
+            value = environment.get(name)
+            if not value:
+                raise ParityError(f"stock Compose requires the explicitly admitted {name} executable")
+            path = Path(value)
+            if (not path.is_absolute() or path.resolve(strict=True) != path or path.is_symlink()
+                    or not path.is_file() or not os.access(path, os.X_OK) or sha256(path) != expected_sha):
+                raise ParityError(f"stock Compose {name} differs from its manifest-pinned bytes")
+            return path
+
+        docker = executable_from_env("DEVCONTAINER_DOCKER_BIN", pins["cliSHA256"])
+        compose = executable_from_env("DEVCONTAINER_DOCKER_COMPOSE_BIN", pins["composeSHA256"])
+        docker_version = subprocess.run([str(docker), "--version"], cwd=self.repository, env=environment,
+                                        capture_output=True, text=True, timeout=20, check=False)
+        if (docker_version.returncode != 0
+                or not docker_version.stdout.strip().startswith(f"Docker version {pins['cliVersion']},")):
+            raise ParityError("stock Docker CLI differs from its manifest-pinned version")
+        compose_version = subprocess.run([str(compose), "version", "--short"], cwd=self.repository,
+                                         env=environment, capture_output=True, text=True,
+                                         timeout=20, check=False)
+        if compose_version.returncode != 0 or compose_version.stdout.strip() != pins["composeVersion"]:
+            raise ParityError("stock Docker Compose differs from its manifest-pinned version")
+        return docker, compose
 
     def _admit_external_compose_provider(self) -> Path:
         """Authenticate the separate container-compose provider before runtime use."""
@@ -319,7 +355,7 @@ class OwnedGuestFixtureRunner:
             return None
         if self.lane not in {"apple-stock", "container-compose"} or self.socket is None:
             raise ParityError("native Compose wrapper has no admitted lane endpoint")
-        if self.compose is None or self.compose_provider is None or not self.container:
+        if self.compose is None or not self.container:
             raise ParityError("native Compose wrapper has no admitted provider executables")
         state_value = self.runner.environment.get("DEVCONTAINER_STATE")
         if not state_value:
@@ -328,27 +364,46 @@ class OwnedGuestFixtureRunner:
         if (not state.is_absolute() or state.resolve(strict=True) != state or not state.is_file()
                 or state.is_symlink()):
             raise ParityError("native Compose wrapper state is not the selected canonical database")
-        expected_provider_sha = self.runner.environment.get("DEVCONTAINER_COMPOSE_PROVIDER_SHA256")
         container = Path(self.container)
         if (not container.is_absolute() or container.resolve(strict=True) != container
-                or container.is_symlink() or not container.is_file()):
+                or container.is_symlink() or not container.is_file() or not os.access(container, os.X_OK)):
             raise ParityError("native Compose wrapper container is not the admitted executable")
         if (not self.compose.is_absolute() or self.compose.resolve(strict=True) != self.compose
-                or self.compose.is_symlink() or not self.compose.is_file()):
+                or self.compose.is_symlink() or not self.compose.is_file() or not os.access(self.compose, os.X_OK)):
             raise ParityError("native Compose wrapper frontend is not the admitted executable")
-        if (self.compose_provider is None or not expected_provider_sha
-                or self.compose_provider.resolve(strict=True) != self.compose_provider
-                or self.compose_provider.is_symlink() or not self.compose_provider.is_file()
-                or sha256(self.compose_provider) != expected_provider_sha):
-            raise ParityError("external container-compose provider changed after admission")
-        return {
+        selection = {
             "DEVCONTAINER_BACKEND": "stock" if self.lane == "apple-stock" else "container-compose",
-            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
-            "DEVCONTAINER_COMPOSE_BIN": str(self.compose_provider),
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker" if self.lane == "apple-stock" else "container-compose",
             "DEVCONTAINER_CONTAINER_BIN": str(container),
             "DEVCONTAINER_SOCKET": str(self.socket),
             "DEVCONTAINER_STATE": str(state),
         }
+        if self.lane == "apple-stock":
+            pins = self.runner.manifest["referencePins"]["docker"]
+            docker = self.runner.environment.get("DEVCONTAINER_DOCKER_BIN")
+            compose = self.runner.environment.get("DEVCONTAINER_DOCKER_COMPOSE_BIN")
+            if (self.docker_cli is None or self.docker_compose is None
+                    or docker != str(self.docker_cli) or compose != str(self.docker_compose)
+                    or self.docker_cli.resolve(strict=True) != self.docker_cli or self.docker_cli.is_symlink()
+                    or not self.docker_cli.is_file() or not os.access(self.docker_cli, os.X_OK)
+                    or self.docker_compose.resolve(strict=True) != self.docker_compose
+                    or self.docker_compose.is_symlink() or not self.docker_compose.is_file()
+                    or not os.access(self.docker_compose, os.X_OK)
+                    or sha256(self.docker_cli) != pins["cliSHA256"]
+                    or sha256(self.docker_compose) != pins["composeSHA256"]):
+                raise ParityError("stock Compose tools changed after manifest-pinned admission")
+            selection.update({"DEVCONTAINER_DOCKER_BIN": str(self.docker_cli),
+                              "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(self.docker_compose)})
+        else:
+            expected_provider_sha = self.runner.environment.get("DEVCONTAINER_COMPOSE_PROVIDER_SHA256")
+            if (self.compose_provider is None or not expected_provider_sha
+                    or self.compose_provider.resolve(strict=True) != self.compose_provider
+                    or self.compose_provider.is_symlink() or not self.compose_provider.is_file()
+                    or not os.access(self.compose_provider, os.X_OK)
+                    or sha256(self.compose_provider) != expected_provider_sha):
+                raise ParityError("external container-compose provider changed after admission")
+            selection.update({"DEVCONTAINER_COMPOSE_BIN": str(self.compose_provider)})
+        return selection
 
     def _case_paths(self, fixture: Any) -> tuple[Path, Path, dict]:
         base = self.runner.output.parent / "owned-guest-runtime" / self.lane

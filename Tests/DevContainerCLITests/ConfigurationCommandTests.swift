@@ -62,7 +62,39 @@ struct ConfigurationCommandTests {
         let command = try ConfigureCommand.parse(["--config", fixture.configuration.path])
         try command.run()
         #expect(try fixture.load().strictCompatibility)
-        #expect(try fixture.load().composeProvider == .containerCompose)
+        #expect(try fixture.load().composeProvider == .docker)
+    }
+
+    @Test
+    func `new configuration selects the frontend default for an explicit backend`() throws {
+        let fixture = try ConfigurationFixture()
+        let command = try ConfigureCommand.parse([
+            "--config", fixture.configuration.path, "--backend", "container-compose"
+        ])
+        try command.run()
+        let configured = try fixture.load()
+        #expect(configured.backend == .containerCompose)
+        #expect(configured.composeProvider == .containerCompose)
+    }
+
+    @Test
+    func `configure preserves an explicitly saved frontend when backend changes`() throws {
+        let fixture = try ConfigurationFixture()
+        try DevContainerConfigurationStore.save(
+            DevContainerConfiguration(
+                backend: .stock,
+                composeProvider: .docker,
+                socket: fixture.socket.path
+            ),
+            to: fixture.configuration
+        )
+        let command = try ConfigureCommand.parse([
+            "--config", fixture.configuration.path, "--backend", "container-compose"
+        ])
+        try command.run()
+        let configured = try fixture.load()
+        #expect(configured.backend == .containerCompose)
+        #expect(configured.composeProvider == .docker)
     }
 
     @Test(arguments: ["--backend", "--compose-provider"])

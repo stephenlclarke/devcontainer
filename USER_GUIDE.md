@@ -229,7 +229,7 @@ Reference it from `.devcontainer/devcontainer.json`:
 }
 ```
 
-In published 1.0.1, the default `devcontainer-compose` wrapper launches upstream Docker Compose against the compatibility socket. In unreleased source this path requires an explicit Docker selection:
+In published 1.0.1, the default `devcontainer-compose` wrapper launches upstream Docker Compose against the compatibility socket. In unreleased source, a configuration without an explicit Compose provider follows its selected backend: stock uses Docker Compose over the compatibility socket, while the matched backend uses the separately installed `container-compose` provider. Explicit saved and command-line provider choices remain unchanged. The example below selects the stock route explicitly:
 
 ```console
 devcontainer configure \

@@ -633,6 +633,25 @@ def validate_provider_result(path: Path, lane: str, expected: dict[str, str]) ->
         raise RuntimeError(f"{lane} provider bytes in results.json differ from selected executables")
 
 
+def native_compose_frontend_environment(args: argparse.Namespace, lane: str) -> dict[str, str]:
+    """Select the signed wrapper's separately admitted Compose frontend per native lane."""
+    if lane == "apple-stock":
+        return {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+            "DEVCONTAINER_DOCKER_BIN": str(args.docker_bin),
+            "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(args.docker_compose_bin),
+        }
+    if lane == "container-compose":
+        return {
+            "DEVCONTAINER_BACKEND": "container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": str(args.compose_provider_bin),
+            "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": args.compose_provider_sha256,
+        }
+    raise ValueError(f"unsupported native Compose lane: {lane}")
+
+
 def host_service_digest() -> tuple[str, int]:
     """Hash only public-safe service metadata, never retained plist payloads."""
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
@@ -1283,8 +1302,7 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                      "TEMP": str(SSD), "TMP": str(SSD)})
     lane_env["DEVCONTAINER_CONTAINER_BIN"] = str(
         args.stock_container_bin if lane == "apple-stock" else args.compose_container_bin)
-    lane_env["DEVCONTAINER_COMPOSE_BIN"] = str(args.compose_provider_bin)
-    lane_env["DEVCONTAINER_COMPOSE_PROVIDER_SHA256"] = args.compose_provider_sha256
+    lane_env.update(native_compose_frontend_environment(args, lane))
     provider_root = str(provider_install_root(lane, args))
     lane_env.update({"CONTAINER_APP_ROOT": str(root / "container"),
                      "CONTAINER_INSTALL_ROOT": provider_root,

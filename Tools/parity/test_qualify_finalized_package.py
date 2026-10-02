@@ -25,6 +25,44 @@ sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
 import qualify_finalized_package as qualify
 
 
+class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
+    def test_stock_wrapper_uses_pinned_docker_cli_and_compose(self) -> None:
+        args = argparse.Namespace(
+            docker_bin=Path("/pinned/docker"),
+            docker_compose_bin=Path("/pinned/docker-compose"),
+            compose_provider_bin=Path("/pinned/container-compose"),
+            compose_provider_sha256="a" * 64,
+        )
+        self.assertEqual(qualify.native_compose_frontend_environment(args, "apple-stock"), {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+            "DEVCONTAINER_DOCKER_BIN": "/pinned/docker",
+            "DEVCONTAINER_DOCKER_COMPOSE_BIN": "/pinned/docker-compose",
+        })
+
+    def test_fork_wrapper_uses_only_admitted_external_compose_provider(self) -> None:
+        args = argparse.Namespace(
+            docker_bin=Path("/pinned/docker"),
+            docker_compose_bin=Path("/pinned/docker-compose"),
+            compose_provider_bin=Path("/pinned/container-compose"),
+            compose_provider_sha256="a" * 64,
+        )
+        self.assertEqual(qualify.native_compose_frontend_environment(args, "container-compose"), {
+            "DEVCONTAINER_BACKEND": "container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": "/pinned/container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
+        })
+
+    def test_compose_frontend_selection_rejects_non_native_lane(self) -> None:
+        args = argparse.Namespace(docker_bin=Path("/pinned/docker"),
+                                  docker_compose_bin=Path("/pinned/docker-compose"),
+                                  compose_provider_bin=Path("/pinned/container-compose"),
+                                  compose_provider_sha256="a" * 64)
+        with self.assertRaisesRegex(ValueError, "unsupported native Compose lane"):
+            qualify.native_compose_frontend_environment(args, "docker")
+
+
 class SuiteLifecycleTests(unittest.TestCase):
     def test_explicit_component_runs_cli_only_and_selects_exact_fixture(self) -> None:
         calls = []

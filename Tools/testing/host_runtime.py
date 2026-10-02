@@ -157,23 +157,33 @@ class OwnedProcess:
                                       runtime_socket: Path | None,
                                       selection: dict[str, str]) -> None:
         """Require the native Compose wrapper's complete, admitted path contract."""
-        expected = {
+        common = {
             "DEVCONTAINER_BACKEND",
-            "DEVCONTAINER_COMPOSE_BIN",
             "DEVCONTAINER_COMPOSE_PROVIDER",
             "DEVCONTAINER_CONFIG",
             "DEVCONTAINER_CONTAINER_BIN",
             "DEVCONTAINER_SOCKET",
             "DEVCONTAINER_STATE",
         }
+        provider = selection.get("DEVCONTAINER_COMPOSE_PROVIDER")
+        if provider == "docker":
+            expected = common | {"DEVCONTAINER_DOCKER_BIN", "DEVCONTAINER_DOCKER_COMPOSE_BIN"}
+        elif provider == "container-compose":
+            expected = common | {"DEVCONTAINER_COMPOSE_BIN"}
+        else:
+            raise ValueError("Native Compose wrapper provider is invalid")
         if set(selection) != expected or provider_install is None or runtime_socket is None:
             raise ValueError("Native Compose wrapper selection is incomplete")
         if any(not isinstance(value, str) or not value for value in selection.values()):
             raise ValueError("Native Compose wrapper selection contains an invalid value")
         if selection["DEVCONTAINER_BACKEND"] not in {"stock", "container-compose"}:
             raise ValueError("Native Compose wrapper backend is invalid")
-        if selection["DEVCONTAINER_COMPOSE_PROVIDER"] != "container-compose":
-            raise ValueError("Native Compose wrapper provider is invalid")
+        if ((provider == "docker" and (selection["DEVCONTAINER_BACKEND"] != "stock"
+                                       or selection["DEVCONTAINER_COMPOSE_PROVIDER"] != "docker"))
+                or (provider == "container-compose"
+                    and (selection["DEVCONTAINER_BACKEND"] != "container-compose"
+                         or selection["DEVCONTAINER_COMPOSE_PROVIDER"] != "container-compose"))):
+            raise ValueError("Native Compose wrapper backend/provider combination is invalid")
 
         config = Path(selection["DEVCONTAINER_CONFIG"])
         if config != root / "devcontainer-config.toml" or config.resolve(strict=True) != config:
@@ -195,7 +205,11 @@ class OwnedProcess:
             return selected
 
         container = require_executable("DEVCONTAINER_CONTAINER_BIN")
-        require_executable("DEVCONTAINER_COMPOSE_BIN")
+        if provider == "docker":
+            require_executable("DEVCONTAINER_DOCKER_BIN")
+            require_executable("DEVCONTAINER_DOCKER_COMPOSE_BIN")
+        else:
+            require_executable("DEVCONTAINER_COMPOSE_BIN")
         if (not provider_install.is_absolute() or provider_install.resolve(strict=True) != provider_install
                 or container != provider_install / "bin/container"):
             raise ValueError("Native Compose container executable differs from the admitted provider root")

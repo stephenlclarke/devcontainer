@@ -239,6 +239,47 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertNotEqual(environment["DEVCONTAINER_CONFIG"], "/operator/config.toml")
         self.assertEqual(environment["DEVCONTAINER_BACKEND"], "container-compose")
 
+    def test_stock_native_cli_selects_docker_compose_and_pinned_docker_cli(self):
+        provider_root = self.root / "provider"
+        binary_dir = provider_root / "bin"
+        binary_dir.mkdir(parents=True, mode=0o700)
+        container = binary_dir / "container"
+        wrapper = self.root / "devcontainer-compose-wrapper"
+        docker = self.root / "docker"
+        docker_compose = self.root / "docker-compose"
+        for executable in (container, wrapper, docker, docker_compose):
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+        state = self.root / "state.sqlite"
+        state.touch(mode=0o600)
+        self.fixture.provider_install = provider_root
+        self.fixture.executable = str(wrapper)
+        self.fixture.wrapper_selection = {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_DOCKER_BIN": str(docker),
+            "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(docker_compose),
+            "DEVCONTAINER_STATE": str(state),
+            "DEVCONTAINER_SOCKET": str(self.socket),
+        }
+        arguments = self.fixture.prepare()
+        config = self.root / "devcontainer-config.toml"
+        self.assertEqual(config.read_bytes(), b"")
+        self.assertEqual(arguments[0], str(wrapper))
+        self.assertNotIn("DEVCONTAINER_COMPOSE_BIN", self.fixture.wrapper_environment)
+        self.assertEqual(self.fixture.wrapper_environment["DEVCONTAINER_COMPOSE_PROVIDER"], "docker")
+
+        process = OwnedProcess()
+        with patch("host_runtime.subprocess.Popen") as spawn:
+            process.start(arguments, self.root, Mock(), stdin=subprocess.PIPE,
+                          runtime_socket=self.socket, provider_install=provider_root,
+                          wrapper_environment=self.fixture.wrapper_environment)
+        environment = spawn.call_args.kwargs["env"]
+        self.assertEqual(environment["DEVCONTAINER_DOCKER_BIN"], str(docker))
+        self.assertEqual(environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"], str(docker_compose))
+        self.assertEqual(environment["DEVCONTAINER_BACKEND"], "stock")
+
 
 class ComposeSignalTests(unittest.TestCase):
     stop = helpers.GuestFixtureTests.stop

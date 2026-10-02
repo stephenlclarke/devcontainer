@@ -25,22 +25,37 @@ import Testing
 @Suite(.serialized)
 struct CoreBehaviorTests {
     @Test
-    func `omitted Compose provider selects native without replacing explicit choices`() throws {
+    func `omitted Compose provider follows its selected backend unless explicitly configured`() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("config.toml")
-        #expect(DevContainerConfiguration(socket: "/test.sock").composeProvider == .containerCompose)
+        #expect(DevContainerConfiguration(socket: "/test.sock").composeProvider == .docker)
+        #expect(DevContainerConfiguration(
+            backend: .containerCompose,
+            socket: "/test.sock"
+        ).composeProvider == .containerCompose)
         #expect(try DevContainerRuntimeSelectionResolver.resolve(
             environment: [:], configuration: path.path
+        ).composeProvider == .docker)
+        #expect(try DevContainerRuntimeSelectionResolver.resolve(
+            environment: ["DEVCONTAINER_BACKEND": "container-compose"], configuration: path.path
         ).composeProvider == .containerCompose)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         try Data("backend = \"stock\"\n".utf8).write(to: path)
         #expect(try DevContainerRuntimeSelectionResolver.resolve(
             environment: [:], configuration: path.path
+        ).composeProvider == .docker)
+        #expect(try DevContainerRuntimeSelectionResolver.resolve(
+            environment: ["DEVCONTAINER_BACKEND": "container-compose"], configuration: path.path
+        ).composeProvider == .containerCompose)
+        try Data("backend = \"container-compose\"\n".utf8).write(to: path)
+        #expect(try DevContainerConfigurationStore.load(
+            from: path,
+            defaultSocket: "/test.sock"
         ).composeProvider == .containerCompose)
         try Data("[compose]\nprovider = \"docker\"\n".utf8).write(to: path)
         #expect(try DevContainerRuntimeSelectionResolver.resolve(
-            environment: [:], configuration: path.path
+            environment: ["DEVCONTAINER_BACKEND": "container-compose"], configuration: path.path
         ).composeProvider == .docker)
     }
 
@@ -82,6 +97,7 @@ struct CoreBehaviorTests {
             defaultSocket: "default.sock"
         )
         #expect(defaults == DevContainerConfiguration(socket: "default.sock"))
+        #expect(defaults.composeProvider == .docker)
 
         try FileManager.default.createDirectory(
             at: directory,

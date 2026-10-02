@@ -246,7 +246,7 @@ class HostRuntimeTests(unittest.TestCase):
         config.touch(mode=0o600)
         config.chmod(0o600)
         selection = {
-            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_BACKEND": "container-compose",
             "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
             "DEVCONTAINER_COMPOSE_BIN": str(compose),
             "DEVCONTAINER_CONTAINER_BIN": str(container),
@@ -288,6 +288,53 @@ class HostRuntimeTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "empty private owned file"):
             rejected.start([str(compose)], self.root, None, provider_install=provider,
                            runtime_socket=socket_path, wrapper_environment=selection)
+        rejected_spawn.assert_not_called()
+
+    def test_stock_compose_child_uses_only_pinned_docker_frontends(self):
+        provider = self.root / "provider"
+        binary_dir = provider / "bin"
+        binary_dir.mkdir(parents=True, mode=0o700)
+        container = binary_dir / "container"
+        wrapper = self.root / "devcontainer-compose"
+        docker = self.root / "docker"
+        docker_compose = self.root / "docker-compose"
+        for executable in (container, wrapper, docker, docker_compose):
+            executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+        state = self.root / "state.sqlite"
+        state.touch(mode=0o600)
+        socket_path = self.root / "docker.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.bind(str(socket_path))
+        config = self.root / "devcontainer-config.toml"
+        config.touch(mode=0o600)
+        config.chmod(0o600)
+        selection = {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_DOCKER_BIN": str(docker),
+            "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(docker_compose),
+            "DEVCONTAINER_CONFIG": str(config),
+            "DEVCONTAINER_STATE": str(state),
+            "DEVCONTAINER_SOCKET": str(socket_path),
+        }
+        process = OwnedProcess()
+        with patch("host_runtime.subprocess.Popen") as spawn:
+            process.start([str(wrapper), "run"], self.root, None, provider_install=provider,
+                          runtime_socket=socket_path, wrapper_environment=selection)
+        launched_environment = spawn.call_args.kwargs["env"]
+        for key, value in selection.items():
+            self.assertEqual(launched_environment[key], value)
+        self.assertNotIn("DEVCONTAINER_COMPOSE_BIN", launched_environment)
+
+        invalid = {**selection, "DEVCONTAINER_BACKEND": "container-compose"}
+        rejected = OwnedProcess()
+        with patch("host_runtime.subprocess.Popen") as rejected_spawn, self.assertRaisesRegex(
+                ValueError, "backend/provider combination"):
+            rejected.start([str(wrapper), "run"], self.root, None, provider_install=provider,
+                           runtime_socket=socket_path, wrapper_environment=invalid)
         rejected_spawn.assert_not_called()
 
     def test_interrupted_spawn_is_not_mistaken_for_no_child(self):

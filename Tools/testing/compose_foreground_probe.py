@@ -85,7 +85,9 @@ class ComposeForegroundFixture(GuestFixture):
             # `run` selects the terminal independently of the service default.
             configuration["services"]["app"]["tty"] = True
         if self.wrapper_selection is not None:
-            if self.wrapper_selection.get("DEVCONTAINER_COMPOSE_BIN") == self.executable:
+            selected_provider = (self.wrapper_selection.get("DEVCONTAINER_COMPOSE_BIN")
+                                 or self.wrapper_selection.get("DEVCONTAINER_DOCKER_COMPOSE_BIN"))
+            if not selected_provider or selected_provider == self.executable:
                 raise ValueError("Native Compose wrapper and external provider must remain distinct")
             config_path = self.root / "devcontainer-config.toml"
             descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
