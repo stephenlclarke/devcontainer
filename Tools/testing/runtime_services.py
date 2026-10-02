@@ -531,9 +531,9 @@ class ControlledRuntime:
         return {"status": "restored", "helpers": len(selected)}
 
     def capture_system_start_api_definition(
-        self, provider_root: Path, started_at: float, finished_at: float
+        self, provider_root: Path, started_at: float, finished_at: float, *, provider_lane: str
     ) -> dict:
-        """Seal SystemStart's narrowly expected inactive global API plist write."""
+        """Seal the lane-specific inactive global API plist write from SystemStart."""
         if (self.journal is None or self.switch is None or self.service is None
                 or self.original_api_file_metadata is None or self.system_start_api_capture is not None):
             raise ValueError("SystemStart API definition capture is not ready")
@@ -543,6 +543,8 @@ class ControlledRuntime:
                 or not math.isfinite(started_at) or not math.isfinite(finished_at)
                 or started_at > finished_at or finished_at - started_at > 180):
             raise ValueError("SystemStart API definition capture bounds are invalid")
+        if provider_lane not in {"apple-stock", "container-compose"}:
+            raise ValueError("SystemStart API definition needs an admitted native provider lane")
         prior = next(item for item in self.switch.prior if item["label"] == API)
         path = Path(prior["path"])
         expected_path = (
@@ -588,16 +590,23 @@ class ControlledRuntime:
             if generated[key] != original[key]:
                 raise ValueError("SystemStart changed an unrelated API plist field")
         expected_environment = dict(original["EnvironmentVariables"])
-        expected_environment.pop("CONTAINER_SERVICE_NAMESPACE", None)
+        expected_keys = {
+            "CONTAINER_APP_ROOT", "CONTAINER_INSTALLATION_ROOT",
+            "CONTAINER_INSTALL_ROOT", "CONTAINER_LOG_ROOT",
+        }
+        if provider_lane == "apple-stock":
+            expected_environment.pop("CONTAINER_SERVICE_NAMESPACE", None)
+        else:
+            namespace = expected_environment.get("CONTAINER_SERVICE_NAMESPACE")
+            if not isinstance(namespace, str) or not namespace:
+                raise ValueError("Fork SystemStart has no admitted service namespace to preserve")
+            expected_keys.add("CONTAINER_SERVICE_NAMESPACE")
         expected_environment.update({
             "CONTAINER_INSTALLATION_ROOT": str(provider_root),
             "CONTAINER_INSTALL_ROOT": str(provider_root),
             "CONTAINER_LOG_ROOT": str(self.root / "container-logs"),
         })
-        if (set(generated["EnvironmentVariables"]) != {
-                    "CONTAINER_APP_ROOT", "CONTAINER_INSTALLATION_ROOT",
-                    "CONTAINER_INSTALL_ROOT", "CONTAINER_LOG_ROOT",
-                }
+        if (set(generated["EnvironmentVariables"]) != expected_keys
                 or generated["ProgramArguments"] != [str(self.executable), "start"]
                 or generated["EnvironmentVariables"] != expected_environment
                 or generated["EnvironmentVariables"].get("CONTAINER_APP_ROOT")
@@ -614,6 +623,7 @@ class ControlledRuntime:
             "atimeNS": info.st_atime_ns,
             "startedAt": float(started_at),
             "finishedAt": float(finished_at),
+            "providerLane": provider_lane,
             "originalSHA256": prior["sha256"],
             "generatedSHA256": hashlib.sha256(payload).hexdigest(),
         }

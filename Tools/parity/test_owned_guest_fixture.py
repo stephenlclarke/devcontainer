@@ -301,9 +301,10 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             wrapper = root / "devcontainer-compose-wrapper"
             provider = root / "container-compose-provider"
             docker = root / "docker"
+            docker_adapter = root / "docker-no-buildx"
             docker_compose = root / "docker-compose"
             state = root / "state.sqlite"
-            for executable in (container, wrapper, provider, docker, docker_compose):
+            for executable in (container, wrapper, provider, docker, docker_adapter, docker_compose):
                 executable.write_bytes(b"#!/bin/sh\nexit 0\n")
                 executable.chmod(0o755)
             state.touch(mode=0o600)
@@ -316,7 +317,8 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             bridge.docker_cli, bridge.docker_compose = docker, docker_compose
             bridge.runner = SimpleNamespace(environment={
                 "DEVCONTAINER_STATE": str(state),
-                "DEVCONTAINER_DOCKER_BIN": str(docker),
+                # LaneRunner intentionally installs this adapter before fixtures run.
+                "DEVCONTAINER_DOCKER_BIN": str(docker_adapter),
                 "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(docker_compose),
             }, manifest={"referencePins": pins})
             def locked_stock_digest(path):

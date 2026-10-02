@@ -1327,7 +1327,7 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                                   env=lane_env, timeout=150, capture=True, check=False)
         finally:
             api_definition_capture = runtime.capture_system_start_api_definition(
-                provider_root_path, system_start_started, time.time())
+                provider_root_path, system_start_started, time.time(), provider_lane=lane)
         if runtime_started.returncode != 0:
             raise RuntimeError(f"{lane} provider SystemStart exited {runtime_started.returncode}")
         runtime_status = json.loads(run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "status",

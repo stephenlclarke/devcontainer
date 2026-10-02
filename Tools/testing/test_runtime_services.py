@@ -73,11 +73,14 @@ class RuntimeServicesTests(unittest.TestCase):
         path.write_bytes(plistlib.dumps(definition))
         self.launchd.bootstrap(path)
 
-    def runtime(self):
+    def runtime(self, owned=None):
         # Production requires separate internal and SSD devices. Tests stay
         # entirely on SSD; only this constructor's device comparison is faked.
+        owned = owned or self.owned
+        owned.mkdir(mode=0o700, exist_ok=True)
+        owner = {**self.owner, "root": str(owned)}
         with patch("runtime_services.Path.stat", side_effect=[SimpleNamespace(st_dev=1), SimpleNamespace(st_dev=2)]):
-            return ControlledRuntime(self.owned, self.owner, self.executable, self.private,
+            return ControlledRuntime(owned, owner, self.executable, self.private,
                                      launchd=self.launchd, home=self.home)
 
     def generated_provider_helpers(self, runtime):
@@ -480,7 +483,8 @@ class RuntimeServicesTests(unittest.TestCase):
         path.write_bytes(plistlib.dumps(generated))
         finished = time.time()
         started = finished - 1
-        capture = runtime.capture_system_start_api_definition(provider, started, finished)
+        capture = runtime.capture_system_start_api_definition(
+            provider, started, finished, provider_lane="apple-stock")
         self.assertEqual(capture["status"], "captured")
         runtime.restore_system_start_api_definition()
         self.assertEqual(path.read_bytes(), prior["payload"])
@@ -488,13 +492,78 @@ class RuntimeServicesTests(unittest.TestCase):
         runtime.restore()
         self.assertEqual(self.launchd.jobs, self.original_jobs)
 
+    def test_fork_system_start_preserves_exact_admitted_service_namespace(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider = self.root / "provider"
+        provider.mkdir()
+        prior = next(item for item in runtime.switch.prior if item["label"] == API)
+        path = Path(prior["path"])
+        original = plistlib.loads(prior["payload"])
+        generated = dict(original)
+        environment = dict(original["EnvironmentVariables"])
+        environment.update({
+            "CONTAINER_INSTALLATION_ROOT": str(provider),
+            "CONTAINER_INSTALL_ROOT": str(provider),
+            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
+        })
+        generated["EnvironmentVariables"] = environment
+        generated["ProgramArguments"] = [str(runtime.executable), "start"]
+        path.write_bytes(plistlib.dumps(generated))
+        finished = time.time()
+
+        capture = runtime.capture_system_start_api_definition(
+            provider, finished - 1, finished, provider_lane="container-compose")
+
+        self.assertEqual(capture["status"], "captured")
+        self.assertEqual(runtime.system_start_api_capture["metadata"]["providerLane"], "container-compose")
+        runtime.restore_system_start_api_definition()
+        self.assertEqual(path.read_bytes(), prior["payload"])
+        runtime.restore()
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_fork_system_start_rejects_foreign_namespace_and_extra_environment(self):
+        for mutation in ("namespace", "extra"):
+            with self.subTest(mutation=mutation):
+                runtime = self.runtime(self.root / f"case-{mutation}")
+                runtime.start()
+                provider = self.root / f"provider-{mutation}"
+                provider.mkdir()
+                prior = next(item for item in runtime.switch.prior if item["label"] == API)
+                path = Path(prior["path"])
+                original = plistlib.loads(prior["payload"])
+                generated = dict(original)
+                environment = dict(original["EnvironmentVariables"])
+                environment.update({
+                    "CONTAINER_INSTALLATION_ROOT": str(provider),
+                    "CONTAINER_INSTALL_ROOT": str(provider),
+                    "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
+                })
+                if mutation == "namespace":
+                    environment["CONTAINER_SERVICE_NAMESPACE"] = "com.foreign.container"
+                else:
+                    environment["UNEXPECTED_SERVICE_SETTING"] = "value"
+                generated["EnvironmentVariables"] = environment
+                generated["ProgramArguments"] = [str(runtime.executable), "start"]
+                path.write_bytes(plistlib.dumps(generated))
+                finished = time.time()
+
+                with self.assertRaisesRegex(ValueError, "changes exceed the selected package contract"):
+                    runtime.capture_system_start_api_definition(
+                        provider, finished - 1, finished, provider_lane="container-compose")
+
+                path.write_bytes(prior["payload"])
+                runtime.restore()
+                self.assertEqual(self.launchd.jobs, self.original_jobs)
+
     def test_system_start_global_api_plist_unchanged_is_an_idempotent_noop(self):
         runtime = self.runtime()
         runtime.start()
         provider = self.root / "provider"
         provider.mkdir()
         now = time.time()
-        capture = runtime.capture_system_start_api_definition(provider, now - 1, now)
+        capture = runtime.capture_system_start_api_definition(
+            provider, now - 1, now, provider_lane="apple-stock")
         self.assertEqual(capture["status"], "unchanged")
         runtime.restore_system_start_api_definition()
         runtime.restore()
@@ -520,7 +589,8 @@ class RuntimeServicesTests(unittest.TestCase):
         generated["ProgramArguments"] = [str(runtime.executable), "start"]
         path.write_bytes(plistlib.dumps(generated))
         finished = time.time()
-        runtime.capture_system_start_api_definition(provider, finished - 1, finished)
+        runtime.capture_system_start_api_definition(
+            provider, finished - 1, finished, provider_lane="apple-stock")
         captured_payload = path.read_bytes()
         captured_info = path.stat()
         tampered = dict(generated)

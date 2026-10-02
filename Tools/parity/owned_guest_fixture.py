@@ -380,10 +380,9 @@ class OwnedGuestFixtureRunner:
         }
         if self.lane == "apple-stock":
             pins = self.runner.manifest["referencePins"]["docker"]
-            docker = self.runner.environment.get("DEVCONTAINER_DOCKER_BIN")
             compose = self.runner.environment.get("DEVCONTAINER_DOCKER_COMPOSE_BIN")
             if (self.docker_cli is None or self.docker_compose is None
-                    or docker != str(self.docker_cli) or compose != str(self.docker_compose)
+                    or compose != str(self.docker_compose)
                     or self.docker_cli.resolve(strict=True) != self.docker_cli or self.docker_cli.is_symlink()
                     or not self.docker_cli.is_file() or not os.access(self.docker_cli, os.X_OK)
                     or self.docker_compose.resolve(strict=True) != self.docker_compose
