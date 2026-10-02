@@ -29,6 +29,7 @@ from verify_local_qualification import (
     inventory_files,
     expected_provider_hashes,
     public_comparison,
+    compare_and_publish,
     validate_retained_location,
     validate_receipt,
     verify_local_qualification,
@@ -403,14 +404,14 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         docker_document = dict(docker_document, buildxSHA256="0" * 64)
         tampered_inventory[docker["engineEvidence"]["path"]] = json.dumps(
             docker_document).encode()
-        with self.assertRaisesRegex(QualificationError, "Docker engine evidence"):
-            with patch("verify_local_qualification.provider_helper_identity",
-                       side_effect=lambda _repository, lane: helper_evidence[lane]):
+        with patch("verify_local_qualification.provider_helper_identity",
+                   side_effect=lambda _repository, lane: helper_evidence[lane]):
+            with self.assertRaisesRegex(QualificationError, "Docker engine evidence"):
                 authenticate_provider_evidence(self.receipt, tampered_inventory, REPOSITORY)
         apple["apiServerSHA256"] = "0" * 64
-        with self.assertRaisesRegex(QualificationError, "apple-stock provider/API"):
-            with patch("verify_local_qualification.provider_helper_identity",
-                       side_effect=lambda _repository, lane: helper_evidence[lane]):
+        with patch("verify_local_qualification.provider_helper_identity",
+                   side_effect=lambda _repository, lane: helper_evidence[lane]):
+            with self.assertRaisesRegex(QualificationError, "apple-stock provider/API"):
                 authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
 
     def test_provider_helper_identity_uses_locked_asset_and_internal_receipt(self) -> None:
@@ -719,6 +720,15 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                         "parityHarnessSHA256": harness,
                         "providerBinarySHA256": provider_map,
                     }
+                    if suite == "cli" and "E13-compose-signals" in ids:
+                        raw_signal_stdout = b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n"
+                        row = next(item for item in result["fixtures"]
+                                   if item["id"] == "E13-compose-signals")
+                        row["signalStream"] = {
+                            "stdoutSHA256": hashlib.sha256(raw_signal_stdout).hexdigest(),
+                            "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
+                            "counts": {"SIGUSR1": 2, "SIGTERM": 1},
+                        }
                     if suite == "cli":
                         result["cleanupDifferences"] = []
                     fingerprint = {
@@ -910,6 +920,34 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             self.assertTrue(vscode_report["localQualification"]["executedLocally"])
             self.assertTrue((output / "matrix.md").is_file())
             self.assertTrue((output / "vscode/matrix.md").is_file())
+
+            receipt_bytes = (qualification_directory / "qualification.json").read_bytes()
+            sealed_receipt = json.loads(receipt_bytes)
+            authenticated_inventory = {
+                item["path"]: (qualification_directory / item["path"]).read_bytes()
+                for item in sealed_receipt["inputFiles"]
+            }
+            for index, stream in enumerate((None, {
+                    "stdoutSHA256": hashlib.sha256(
+                        b"compose-stdout\nsignal:USR1\nsignal:TERM\n").hexdigest(),
+                    "signals": ["SIGUSR1", "SIGTERM"],
+                    "counts": {"SIGUSR1": 1, "SIGTERM": 1},
+            })):
+                replay = dict(authenticated_inventory)
+                lane_path = sealed_receipt["laneResults"]["container-compose"]["cli"]["results"]["path"]
+                lane = json.loads(replay[lane_path])
+                row = next(item for item in lane["fixtures"] if item["id"] == "E13-compose-signals")
+                if stream is None:
+                    row.pop("signalStream")
+                else:
+                    row["signalStream"] = stream
+                replay[lane_path] = (json.dumps(lane, sort_keys=True, indent=2) + "\n").encode()
+                with self.subTest(importer_replay=index), self.assertRaisesRegex(
+                        QualificationError, "replayed cli parity comparison did not pass"):
+                    compare_and_publish(
+                        REPOSITORY, receipt_bytes, sealed_receipt, replay,
+                        root / f"negative-replay-{index}", expected_cli, expected_vscode,
+                    )
 
 
 if __name__ == "__main__":

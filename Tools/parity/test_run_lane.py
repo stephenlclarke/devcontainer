@@ -10,6 +10,8 @@ import signal
 import argparse
 import copy
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import unittest
@@ -346,16 +348,15 @@ class BoundedCommandTests(unittest.TestCase):
         self.assertIs(result, completed)
         self.assertEqual(run.call_args.kwargs["timeout"], 1800)
 
-    def test_compatibility_socket_stays_within_darwin_limit(self) -> None:
-        with mock.patch(
-            "run_lane.tempfile.mkdtemp",
-            return_value="/tmp/dc-sock-fixture",
-        ) as make_directory:
-            root = create_socket_root()
-
-        self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
-        self.assertLess(len(str(root / "docker.sock").encode()), 104)
-        make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
+    def test_compatibility_socket_is_canonical_and_within_darwin_limit(self) -> None:
+        root = create_socket_root()
+        try:
+            self.assertEqual(root, Path("/tmp").resolve(strict=True) / root.name)
+            self.assertEqual(root.resolve(strict=True), root)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+            self.assertLess(len(os.fsencode(root / "docker.sock")), 104)
+        finally:
+            shutil.rmtree(root)
 
 
 class FingerprintTests(unittest.TestCase):

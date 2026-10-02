@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,55 @@ from parity_lib import ParityError, parse_observations
 
 
 class ParityLibraryTests(unittest.TestCase):
+    def test_e13_compares_closed_signal_stream_measurement_across_all_lanes(self) -> None:
+        raw = b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n"
+        stream = {"stdoutSHA256": hashlib.sha256(raw).hexdigest(),
+                  "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
+                  "counts": {"SIGUSR1": 2, "SIGTERM": 1}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for lane in ("docker", "apple-stock", "container-compose"):
+                directory = root / lane
+                directory.mkdir()
+                (directory / "results.json").write_text(json.dumps({
+                    "backend": lane, "status": "passed", "fixtures": [{
+                        "id": "E13-compose-signals", "status": "passed", "durationSeconds": 1,
+                        "observations": {"usr1_forwarded": "true"}, "signalStream": stream,
+                    }],
+                }), encoding="utf-8")
+            result, _ = compare(root, {"E13-compose-signals"})
+            self.assertEqual(result["status"], "passed")
+
+            for mutation, message in (
+                (lambda row: row.pop("signalStream"), "missing or invalid"),
+                (lambda row: row["signalStream"].update(counts={"SIGUSR1": 1, "SIGTERM": 1}), "missing or invalid"),
+                (lambda row: row["signalStream"].update(extra=True), "missing or invalid"),
+                (lambda row: row["signalStream"].update(counts={"SIGUSR1": True, "SIGTERM": 1}), "missing or invalid"),
+                (lambda row: row["signalStream"].update(counts={"SIGUSR1": 10**100, "SIGTERM": 1}), "missing or invalid"),
+            ):
+                candidate = root / "container-compose" / "results.json"
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+                mutation(payload["fixtures"][0])
+                candidate.write_text(json.dumps(payload), encoding="utf-8")
+                result, _ = compare(root, {"E13-compose-signals"})
+                self.assertEqual(result["status"], "failed")
+                self.assertTrue(any(message in value for value in result["fixtures"][0]["functionalDifferences"]))
+                payload["fixtures"][0]["signalStream"] = stream
+                candidate.write_text(json.dumps(payload), encoding="utf-8")
+
+            candidate = root / "container-compose" / "results.json"
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            payload["fixtures"][0]["signalStream"] = {
+                "stdoutSHA256": hashlib.sha256(
+                    b"compose-stdout\nsignal:USR1\nsignal:TERM\n").hexdigest(),
+                "signals": ["SIGUSR1", "SIGTERM"],
+                "counts": {"SIGUSR1": 1, "SIGTERM": 1},
+            }
+            candidate.write_text(json.dumps(payload), encoding="utf-8")
+            result, _ = compare(root, {"E13-compose-signals"})
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("signal stream differs", result["fixtures"][0]["functionalDifferences"][-1])
+
     def test_finalized_comparison_requires_same_stock_package_and_fingerprints(self) -> None:
         identity = {"scope": "finalized-native-package-runtime-input",
                     "kind": "signed-notarized-native-package", "sourceCommit": "a" * 40,

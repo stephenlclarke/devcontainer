@@ -129,7 +129,7 @@ class SuiteLifecycleTests(unittest.TestCase):
             self.assertIsNone(host["finalServiceSetSHA256"])
             self.assertIsNone(host["finalServiceCount"])
             self.assertTrue(any("host service final observation failed" in item for item in failure["errors"]))
-            self.assertEqual(state["guardCleared"], False)
+            self.assertFalse(state["guardCleared"])
             self.assertEqual(host["restoration"]["docker"], "not-started")
             self.assertTrue(any("host service final observation failed" in item for item in errors))
 
@@ -465,10 +465,10 @@ class AdmissionBoundaryTests(unittest.TestCase):
                   mock.patch.object(prepare_releases, "layout", return_value=specification["layout"]),
                   mock.patch.object(prepare_releases, "require_retained", return_value={
                       "root": str(prepared_root), "preparationSHA256": preparation_sha}),
-                  mock.patch.object(prepare_releases, "validate_prepared", return_value={"inventory": inventory}),
-                  self.assertRaisesRegex(ValueError, "differ from the locked prepared package")):
+                  mock.patch.object(prepare_releases, "validate_prepared", return_value={"inventory": inventory})):
                 with mock.patch.object(qualify, "REPOSITORY", REPOSITORY):
-                    qualify.admit_provider_helper_programs("apple-stock", arguments)
+                    with self.assertRaisesRegex(ValueError, "differ from the locked prepared package"):
+                        qualify.admit_provider_helper_programs("apple-stock", arguments)
 
     def test_guest_assets_use_workflow_retained_not_finalized_retained(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

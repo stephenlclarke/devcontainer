@@ -1,6 +1,7 @@
 """Real piped child IO and Unix inspection, with a simulated Compose backend."""
 
 import json
+import hashlib
 from pathlib import Path
 import signal
 import subprocess
@@ -10,7 +11,9 @@ from unittest.mock import Mock, patch
 from case_evidence import canonical, contract_observations
 from compose_foreground_probe import (COMMAND, FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE,
                                       TTY_INPUT_FIXTURE, SIGNAL_FIXTURE, PROCESS, STDERR, STDOUT,
-                                      ComposeForegroundFixture, ComposeTerminalInputFixture, ComposeSignalFixture)
+                                      USR1_OUTPUT, TERM_OUTPUT, ComposeForegroundFixture,
+                                      ComposeTerminalInputFixture, ComposeSignalFixture,
+                                      signal_stream_summary)
 from foreground_probe import ForegroundFixture
 from guest_runtime import guest_diagnostic_plan, require_guest_cleanup, require_guest_commands_stopped
 from host_runtime import OwnedProcess
@@ -233,6 +236,37 @@ class ComposeSignalTests(unittest.TestCase):
             self.assertEqual(json.loads(records[PROCESS + "-" + name.lower() + "-intent.json"])["signal"], name)
         self.assertEqual(require_guest_commands_stopped(records), [PROCESS])
         self.assertEqual(records[PROCESS + ".log"], STDOUT + b"signal:USR1\nsignal:TERM\n")
+        self.assertEqual(signal_stream_summary(records[PROCESS + ".log"]), {
+            "stdoutSHA256": hashlib.sha256(STDOUT + USR1_OUTPUT + TERM_OUTPUT).hexdigest(),
+            "signals": ["SIGUSR1", "SIGTERM"],
+            "counts": {"SIGUSR1": 1, "SIGTERM": 1},
+        })
+
+    def test_duplicate_usr1_bytes_are_preserved_as_a_measurement(self):
+        script = self.fixture.command[2].replace(
+            "trap 'printf \"signal:USR1\\n\"' USR1",
+            "trap 'printf \"signal:USR1\\n\"; printf \"signal:USR1\\n\"' USR1",
+        )
+        self.run_cli(script)
+        output = self.fixture.snapshot(self.fixture.output)
+        self.assertEqual(output, STDOUT + USR1_OUTPUT * 2 + TERM_OUTPUT)
+        self.assertEqual(signal_stream_summary(output), {
+            "stdoutSHA256": hashlib.sha256(output).hexdigest(),
+            "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
+            "counts": {"SIGUSR1": 2, "SIGTERM": 1},
+        })
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_signal_stream_rejects_missing_extra_or_reordered_bytes(self):
+        for output in (
+            STDOUT + TERM_OUTPUT,
+            STDOUT + USR1_OUTPUT,
+            STDOUT + TERM_OUTPUT + USR1_OUTPUT,
+            STDOUT + USR1_OUTPUT + TERM_OUTPUT + TERM_OUTPUT,
+            STDOUT + USR1_OUTPUT + b"noise\n" + TERM_OUTPUT,
+        ):
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                signal_stream_summary(output)
 
     def test_configuration_contains_exact_traps_not_original_stdin_fixture(self):
         self.fixture.prepare()
@@ -270,8 +304,8 @@ class ComposeSignalTests(unittest.TestCase):
     def test_changed_guest_cannot_receive_followup_signal(self):
         original = self.fixture.require_signal_output
 
-        def change_guest(expected, end):
-            original(expected, end)
+        def change_guest(end):
+            original(end)
             self.server.guest["State"]["Status"] = "exited"
 
         with patch.object(self.fixture, "require_signal_output", side_effect=change_guest):
@@ -283,9 +317,9 @@ class ComposeSignalTests(unittest.TestCase):
     def test_missing_signal_is_bounded_and_cleanup_remains_owned(self):
         original = self.fixture.require_signal_output
 
-        def expire_signal_wait(expected, end):
+        def expire_signal_wait(end):
             with patch("compose_foreground_probe.remaining", side_effect=TimeoutError("signal deadline")):
-                original(expected, end)
+                original(end)
 
         with patch.object(self.fixture, "require_signal_output", side_effect=expire_signal_wait):
             changed_command = self.fixture.command[2].replace('printf "signal:USR1\\n"', ":")

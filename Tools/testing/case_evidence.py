@@ -177,6 +177,8 @@ def compare_cases(records: list[dict], expected: dict[str, str]) -> dict:
         identity, result = record["identity"], record["result"]
         validate_identity(identity)
         validate_result(result)
+        if identity["fixture"] == "E13-compose-signals":
+            raise ValueError("E13 standalone case comparison lacks measured signal-stream evidence")
         common = {key: value for key, value in identity.items() if key not in {"lane", "runtimeSHA256"}}
         if reference_identity is not None and common != reference_identity:
             raise ValueError("Cannot mix campaigns, fixture contracts, harnesses or release sets")

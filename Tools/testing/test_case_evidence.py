@@ -158,6 +158,15 @@ class CaseEvidenceTests(unittest.TestCase):
         self.assertEqual(compared["operationRatios"]["apple-stock"], 5)
         self.assertFalse(compared["timingQualified"])
 
+    def test_e13_standalone_comparison_fails_closed_without_signal_streams(self):
+        records = self.records()
+        for record in records:
+            record["identity"]["fixture"] = "E13-compose-signals"
+        with self.assertRaisesRegex(ValueError, "lacks measured signal-stream evidence"):
+            compare_cases(records, {"usr1_forwarded": "true", "guest_continues": "true",
+                                    "term_forwarded": "true", "exact_exit": "true",
+                                    "auto_remove": "true"})
+
     def test_mismatched_contract_or_failed_lane_is_not_parity(self):
         for change in [{"status": "failed"}, {"observations": {"ping": "false"}},
                        {"observations": {"ping": "true", "unexpected": "value"}}]:

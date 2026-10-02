@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -33,6 +34,32 @@ FINALIZED_REFERENCE = {
     "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
     "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt",
 }
+SIGNAL_STREAM_PREFIX = b"compose-stdout\n"
+SIGNAL_STREAM_USR1 = b"signal:USR1\n"
+SIGNAL_STREAM_TERM = b"signal:TERM\n"
+
+
+def valid_signal_stream(value: Any) -> bool:
+    """Validate the closed, lossless E13 signal-stream measurement."""
+    if not isinstance(value, dict) or set(value) != {"stdoutSHA256", "signals", "counts"}:
+        return False
+    digest = value["stdoutSHA256"]
+    signals = value["signals"]
+    counts = value["counts"]
+    if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or not isinstance(signals, list) or len(signals) < 2
+            or not isinstance(counts, dict) or set(counts) != {"SIGUSR1", "SIGTERM"}
+            or type(counts["SIGUSR1"]) is not int or counts["SIGUSR1"] < 1
+            or type(counts["SIGTERM"]) is not int or counts["SIGTERM"] != 1):
+        return False
+    usr1_count = counts["SIGUSR1"]
+    if usr1_count != len(signals) - 1:
+        return False
+    expected_signals = ["SIGUSR1"] * usr1_count + ["SIGTERM"]
+    if signals != expected_signals:
+        return False
+    expected_stdout = SIGNAL_STREAM_PREFIX + SIGNAL_STREAM_USR1 * usr1_count + SIGNAL_STREAM_TERM
+    return hashlib.sha256(expected_stdout).hexdigest() == digest
 
 
 def compare_finalized_inputs(root: Path, lanes: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -188,6 +215,8 @@ def compare(
                 )
                 continue
             by_id[identifier] = result
+            if identifier != "E13-compose-signals" and "signalStream" in result:
+                evidence_errors.append(f"{lane} {identifier} has unexpected signal-stream evidence")
         actual = set(by_id)
         missing = sorted(expected_fixture_ids - actual)
         unexpected = sorted(actual - expected_fixture_ids)
@@ -250,6 +279,18 @@ def compare(
         candidate_ratios: dict[str, float] = {}
         if missing:
             functional_differences.append(f"missing lanes: {', '.join(missing)}")
+        signal_streams: dict[str, Any] = {}
+        if fixture_id == "E13-compose-signals":
+            for lane, result in by_lane.items():
+                stream = result.get("signalStream") if result is not None else None
+                if not valid_signal_stream(stream):
+                    functional_differences.append(f"{lane} E13 signal-stream evidence is missing or invalid")
+                else:
+                    signal_streams[lane] = stream
+            if "docker" in signal_streams:
+                for lane in ("apple-stock", "container-compose"):
+                    if lane in signal_streams and signal_streams[lane] != signal_streams["docker"]:
+                        functional_differences.append(f"{lane} E13 signal stream differs from docker")
         invalid_timings = [
             lane
             for lane, result in by_lane.items()

@@ -80,14 +80,14 @@ extension AppleContainerRuntime {
             Dictionary(
                 uniqueKeysWithValues: attachments.compactMap { attachment in
                     attachment.ipv4Address.map {
-                        (attachment.network, $0.address.description)
+                        (attachment.network, $0.description)
                     }
                 }
             )
         #else
             Dictionary(
                 uniqueKeysWithValues: attachments.map { attachment in
-                    (attachment.network, attachment.ipv4Address.address.description)
+                    (attachment.network, attachment.ipv4Address.description)
                 }
             )
         #endif

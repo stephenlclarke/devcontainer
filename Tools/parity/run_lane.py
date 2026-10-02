@@ -1788,7 +1788,11 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
 def create_socket_root() -> Path:
     """Create a private root whose Docker socket fits Darwin's path limit."""
 
-    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
+    socket_parent = Path("/tmp").resolve(strict=True)
+    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir=str(socket_parent)))
+    if root.resolve(strict=True) != root:
+        shutil.rmtree(root)
+        raise ParityError("compatibility socket root is not canonical")
     socket_path = root / "docker.sock"
     if len(os.fsencode(socket_path)) >= 104:
         shutil.rmtree(root)

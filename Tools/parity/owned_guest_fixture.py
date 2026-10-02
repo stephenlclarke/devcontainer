@@ -442,6 +442,7 @@ class OwnedGuestFixtureRunner:
         differences: list[str] = []
         diagnostic = ""
         status = "failed"
+        signal_stream: dict[str, Any] | None = None
         root = journal = runtime = owner = None
         guest = None
         events: list[dict] = []
@@ -476,6 +477,16 @@ class OwnedGuestFixtureRunner:
                         cleanup = guest.cleanup()
                         if cleanup.get("status") != "passed" or cleanup.get("remainingOwnedResources"):
                             raise ParityError("owned guest fixture cleanup is incomplete")
+                        if fixture.identifier == "E13-compose-signals":
+                            try:
+                                from compose_foreground_probe import signal_stream_summary
+
+                                signal_stream = signal_stream_summary(
+                                    journal.records().get("guest-compose-foreground.log")
+                                )
+                            except (TypeError, ValueError) as error:
+                                status = "failed"
+                                diagnostic = f"{diagnostic}; E13 stream evidence: {error}".strip("; ")
                     journal.put("probe-events.json", json.dumps(events, sort_keys=True,
                                                                   separators=(",", ":")).encode())
                     journal_receipt = journal.receipt()
@@ -505,7 +516,7 @@ class OwnedGuestFixtureRunner:
                         self.runner._preserve_engine_on_uncertain_guest_cleanup = True
             elif status != "passed":
                 status = "failed"
-        return {
+        result = {
             "id": fixture.identifier,
             "status": status,
             "durationSeconds": round(time.monotonic() - started, 3),
@@ -513,6 +524,9 @@ class OwnedGuestFixtureRunner:
             "differences": differences,
             "diagnostic": diagnostic,
         }
+        if signal_stream is not None:
+            result["signalStream"] = signal_stream
+        return result
 
     def cleanup(self) -> None:
         if self.preparation_error is not None:

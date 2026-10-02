@@ -52,7 +52,7 @@ class OwnedGuestFailureTests(unittest.TestCase):
             root.mkdir(mode=0o700)
             raw.mkdir(mode=0o700)
             owner = {"identity": {"campaign": "campaign", "lane": "apple-stock",
-                                  "fixture": "E07-init-attachment", "sourceCommit": "a" * 40,
+                                  "fixture": "E13-compose-signals", "sourceCommit": "a" * 40,
                                   "archiveSHA256": "b" * 64, "endpointSHA256": "c" * 64},
                      "root": str(root)}
             marker = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -67,13 +67,16 @@ class OwnedGuestFailureTests(unittest.TestCase):
                         raise ValueError("immutable journal entry changed")
                     self.entries[name] = payload
 
+                def records(self):
+                    return dict(self.entries)
+
                 def receipt(self):
                     return {"status": "restored"}
 
             class Runtime:
-                def __init__(self, *_args, **_kwargs):
+                def __init__(self, *args, **_kwargs):
                     # This test isolates guest ownership from the runtime constructor.
-                    pass
+                    self.journal = args[1] if len(args) > 1 else args[0]
 
                 def verify(self):
                     # Host endpoint validation is outside this deterministic cleanup test.
@@ -83,16 +86,24 @@ class OwnedGuestFailureTests(unittest.TestCase):
             class Guest:
                 def __init__(self, *_args, **_kwargs):
                     instances.append(self)
+                    self.runtime = _args[4]
+                    self.fixture = _args[1]
 
                 def operation(self):
                     self.operated = True
-                    return {"attached": "true"}
+                    return {"usr1_forwarded": "true", "guest_continues": "true",
+                            "term_forwarded": "true", "exact_exit": "true", "auto_remove": "true"}
 
                 def cleanup(self):
                     self.cleaned = True
+                    if self.fixture == "E13-compose-signals":
+                        self.runtime.journal.put(
+                            "guest-compose-foreground.log",
+                            b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n",
+                        )
                     return {"status": "passed", "remainingOwnedResources": []}
 
-            fixture = SimpleNamespace(identifier="E07-init-attachment", expected={})
+            fixture = SimpleNamespace(identifier="E13-compose-signals", expected={})
             runner = SimpleNamespace(lane="apple-stock", cleanup_differences=[],
                                      _preserve_engine_on_uncertain_guest_cleanup=False,
                                      finalized_identity={"sourceCommit": "a" * 40})
@@ -100,7 +111,9 @@ class OwnedGuestFailureTests(unittest.TestCase):
             bridge.runner, bridge.repository, bridge.lane = runner, REPOSITORY, runner.lane
             bridge.fixtures, bridge.retained, bridge.inputs = [fixture], base, {"workload": {"image": {}}}
             bridge.socket, bridge.compose, bridge.container = base / "docker.sock", None, "/provider/container"
-            bridge.preparation_error, bridge.preparation = None, (root, Journal(owner), Runtime(), owner)
+            journal = Journal(owner)
+            runtime = Runtime(journal)
+            bridge.preparation_error, bridge.preparation = None, (root, journal, runtime, owner)
             bridge._case_paths = mock.Mock(return_value=(root, bridge.preparation[1], owner))
             bridge._provision_event_sequence = 0
             receipt_path = raw / "owned-guest-journal-receipt.json"
@@ -119,6 +132,7 @@ class OwnedGuestFailureTests(unittest.TestCase):
             self.assertEqual(result["status"], "passed")
             self.assertEqual(len(instances), 1)
             self.assertTrue(instances[0].operated and instances[0].cleaned)
+            self.assertEqual(result["signalStream"]["counts"], {"SIGUSR1": 2, "SIGTERM": 1})
             self.assertTrue(receipt_path.is_file())
             self.assertFalse(root.exists())
 

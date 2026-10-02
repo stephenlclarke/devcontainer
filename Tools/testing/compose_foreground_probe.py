@@ -1,5 +1,6 @@
 """Actual Compose CLI foreground, quiet and redirected-terminal contracts."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,9 @@ FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNA
 PROCESS = "guest-compose-foreground"
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
+USR1_OUTPUT = b"signal:USR1\n"
+TERM_OUTPUT = b"signal:TERM\n"
+SIGNAL_QUIET_WINDOW = 0.2
 COMMAND = ("sh", "-c", "printf 'compose-stdout\\n'; printf 'compose-stderr\\n' >&2; "
            "IFS= read -r line || exit 19; printf 'seen:%s\\n' \"$line\"; exit 17")
 
@@ -191,12 +195,22 @@ class ComposeSignalFixture(ComposeForegroundFixture):
         # its group: the contract is CLI forwarding, not harness guest control.
         os.kill(self.child.process.pid, number)
 
-    def require_signal_output(self, expected, end):
+    def require_signal_output(self, end):
+        previous = None
+        stable_since = None
         while True:
             output = self.snapshot(self.output)
-            if output == expected:
+            state = usr1_prefix_state(output)
+            if state is None:
+                raise ValueError("Compose CLI did not forward the signal to its guest")
+            count, partial = state
+            now = time.monotonic()
+            if output != previous:
+                previous = output
+                stable_since = now
+            if count > 0 and not partial and now - stable_since >= SIGNAL_QUIET_WINDOW:
                 return
-            if not expected.startswith(output) or self.child.process.poll() is not None:
+            if self.child.process.poll() is not None:
                 raise ValueError("Compose CLI did not forward the signal to its guest")
             time.sleep(min(remaining(end), 0.01))
 
@@ -212,7 +226,7 @@ class ComposeSignalFixture(ComposeForegroundFixture):
             try:
                 self.ready(end)
                 self.send_signal("SIGUSR1", signal.SIGUSR1)
-                self.require_signal_output(STDOUT + b"signal:USR1\n", end)
+                self.require_signal_output(end)
                 current = self.inspect(self.identifier)
                 if (current is None or self.owned(current) != self.identifier or
                         current.get("State", {}).get("Status") != "running"):
@@ -226,14 +240,52 @@ class ComposeSignalFixture(ComposeForegroundFixture):
                     raise ValueError("Compose signal exit differs from the guest trap status")
             finally:
                 self.child.process.stdin.close()
-        expected = STDOUT + b"signal:USR1\nsignal:TERM\n"
         actual_output, actual_errors = self.snapshot(self.output), self.snapshot(self.errors)
-        if (actual_output != expected or actual_errors.count(STDERR) != 1 or
-                STDOUT in actual_errors or b"signal:" in actual_errors):
+        try:
+            signal_stream_summary(actual_output)
+        except ValueError:
+            raise ValueError("Compose signal output differs from exact guest streams") from None
+        if (actual_errors.count(STDERR) != 1 or STDOUT in actual_errors or b"signal:" in actual_errors):
             raise ValueError("Compose signal output differs from exact guest streams")
         ForegroundFixture.require_auto_removed(self)
         self.runtime.verify()
         return {key: "true" for key in ("usr1_forwarded", "guest_continues", "term_forwarded", "exact_exit", "auto_remove")}
+
+
+def usr1_prefix_state(output: bytes) -> tuple[int, bool] | None:
+    """Return complete USR1 lines and whether the last line is still arriving."""
+    if not isinstance(output, bytes):
+        return None
+    if len(output) <= len(STDOUT):
+        return (0, False) if STDOUT.startswith(output) else None
+    if not output.startswith(STDOUT):
+        return None
+    tail = output[len(STDOUT):]
+    count, _ = divmod(len(tail), len(USR1_OUTPUT))
+    remainder = tail[count * len(USR1_OUTPUT):]
+    if tail[:count * len(USR1_OUTPUT)] != USR1_OUTPUT * count or not USR1_OUTPUT.startswith(remainder):
+        return None
+    return count, bool(remainder)
+
+
+def signal_stream_summary(stdout: bytes) -> dict:
+    """Describe exact guest stdout only when it has the E13 signal grammar."""
+    if not isinstance(stdout, bytes) or not stdout.startswith(STDOUT):
+        raise ValueError("Compose signal stream has an invalid stdout prefix")
+    tail = stdout[len(STDOUT):]
+    if not tail.endswith(TERM_OUTPUT):
+        raise ValueError("Compose signal stream must end with one TERM trap")
+    usr1_bytes = tail[:-len(TERM_OUTPUT)]
+    if (not usr1_bytes or len(usr1_bytes) % len(USR1_OUTPUT) != 0 or
+            usr1_bytes != USR1_OUTPUT * (len(usr1_bytes) // len(USR1_OUTPUT))):
+        raise ValueError("Compose signal stream must contain only ordered USR1 traps before TERM")
+    usr1_count = len(usr1_bytes) // len(USR1_OUTPUT)
+    signals = ["SIGUSR1"] * usr1_count + ["SIGTERM"]
+    return {
+        "stdoutSHA256": hashlib.sha256(stdout).hexdigest(),
+        "signals": signals,
+        "counts": {"SIGUSR1": usr1_count, "SIGTERM": 1},
+    }
 
 
 class ComposeTerminalInputFixture(ComposeForegroundFixture):
