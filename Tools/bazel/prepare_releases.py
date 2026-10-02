@@ -7,13 +7,15 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import stat
 import subprocess
 import tarfile
 import tempfile
+import zipfile
 
-from release_inputs import acquire, canonical, sha256, verify_object
+from release_inputs import acquire, canonical, sha256, validate_lock, verify_object
 
 
 RECEIPT = ".prepared-release.json"
@@ -70,6 +72,30 @@ def layout(asset: dict) -> dict:
         if name == "container-release-arm64.tar.gz":
             return {"format": "tar", "executables": {key: "bin/" + key for key in
                     ("container", "container-engine", "container-apiserver")}}
+        if name == "container-compose-signed-arm64.zip":
+            return {"format": "zip", "executables": {
+                "compose": "compose/bin/compose",
+                "compose-normalizer": "compose/resources/compose-normalizer",
+                "compose-volume-initializer-linux-amd64":
+                    "compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
+                "compose-volume-initializer-linux-arm64":
+                    "compose/resources/volume-initializer/compose-volume-initializer-linux-arm64"}}
+        if name == "qualified-compose-release.json":
+            return {"format": "json", "executables": {},
+                    "files": {"provenance": "qualified-compose-release.json"}}
+    if repository == "stephenlclarke/container" and name == "container-homebrew-arm64.tar.gz":
+        return {"format": "tar", "executables": {key: "bin/" + key for key in
+                ("container", "container-engine", "container-apiserver")}}
+    if repository == "stephenlclarke/container" and name == "qualified-container-assets.json":
+        return {"format": "json", "executables": {},
+                "files": {"provenance": "qualified-container-assets.json"}}
+    if ((repository, name) in {
+            ("stephenlclarke/containerization", "guest.oci.tar"),
+            ("stephenlclarke/container-builder-shim", "builder.oci.tar")}):
+        # Q publishes these OCI archives as independent lower-layer assets.
+        # Preserve their bytes as data; image admission is delegated to the
+        # existing OCI archive verifier, never inferred from this layout.
+        return {"format": "raw-data", "executables": {}, "files": {"archive": name}}
     if repository == "apple/container" and name == f"container-{asset['tag']}-installer-signed.pkg":
         return {"format": "pkg", "executables": {"container": "Payload/bin/container",
                 "container-apiserver": "Payload/bin/container-apiserver"}}
@@ -142,7 +168,7 @@ def copy_raw(source: Path, destination: Path, specification: dict) -> None:
     if len(paths) != 1:
         raise ValueError("Raw release layout requires exactly one destination")
     target = destination / member_path(next(iter(paths.values())))
-    target.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     target.chmod(0o755 if executable else 0o600)
 
@@ -175,6 +201,49 @@ def unpack_selected_tar(source: Path, destination: Path, specification: dict) ->
             found.add(path.as_posix())
     if found != selected:
         raise ValueError("Selected release payload is incomplete")
+
+
+def unpack_zip(source: Path, destination: Path) -> None:
+    """Extract the reviewed Compose ZIP without honoring archive paths or links."""
+    seen = set()
+    total_size = 0
+    with zipfile.ZipFile(source) as archive:
+        for entry in archive.infolist():
+            member = entry.filename.rstrip("/") if entry.is_dir() else entry.filename
+            path = member_path(member)
+            if path == Path(".") or path in seen or len(seen) >= MAX_FILES:
+                raise ValueError("Duplicate or excessive signed ZIP members")
+            if path.parts[0] != "compose":
+                raise ValueError("Signed Compose ZIP contains a path outside compose/")
+            seen.add(path)
+            mode = (entry.external_attr >> 16) & 0xFFFF
+            kind = stat.S_IFMT(mode)
+            expected_kind = stat.S_IFDIR if entry.is_dir() else stat.S_IFREG
+            if kind not in (0, expected_kind) or mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+                raise ValueError("Signed Compose ZIP contains a link or special file")
+            if entry.file_size < 0:
+                raise ValueError("Signed Compose ZIP member has an invalid size")
+            total_size += entry.file_size
+            if total_size > MAX_BYTES:
+                raise ValueError("Expanded signed Compose ZIP exceeds size limit")
+            target = destination / path
+            if entry.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                target.chmod(0o755)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry, "r") as incoming, target.open("xb") as output:
+                copied = 0
+                while block := incoming.read(1024 * 1024):
+                    copied += len(block)
+                    if copied > entry.file_size:
+                        raise ValueError("Signed Compose ZIP member exceeded its declared size")
+                    output.write(block)
+            if copied != entry.file_size:
+                raise ValueError("Signed Compose ZIP member was truncated")
+            target.chmod(0o755 if mode & 0o111 else 0o644)
+    if not {Path("compose"), Path("compose/bin"), Path("compose/resources")} <= seen:
+        raise ValueError("Signed Compose ZIP is missing its reviewed root directories")
 
 
 def expand_package(source: Path, destination: Path) -> None:
@@ -245,6 +314,438 @@ def validate_prepared(root: Path, specification: dict, retained_receipt: dict) -
     return receipt
 
 
+def validate_compose_signed_tree(provenance: dict, compose_root: Path) -> dict:
+    """Require the extracted ZIP tree to match the signed tree in its provenance."""
+    signed_tree = provenance.get("signedTree")
+    if (not isinstance(signed_tree, dict) or not signed_tree
+            or any(not isinstance(path, str) or not isinstance(digest, str)
+                   or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                   for path, digest in signed_tree.items())):
+        raise ValueError("Compose provenance has no valid signed tree inventory")
+    expected = {"compose/" + member_path(path).as_posix(): digest for path, digest in signed_tree.items()}
+    actual = {}
+    for directory, _, files in os.walk(compose_root, followlinks=False):
+        for name in files:
+            path = Path(directory) / name
+            relative = path.relative_to(compose_root).as_posix()
+            if relative == RECEIPT or name.startswith("._"):
+                continue
+            actual[relative] = sha256(path)
+    if actual != expected:
+        raise ValueError("Extracted Compose ZIP differs from its provenance signed tree")
+    return actual
+
+
+def validate_q_runtime_provenance(bundle: dict, runtime_asset: dict,
+                                  guest_asset: dict, builder_asset: dict,
+                                  prepared_runtime_root: Path) -> dict:
+    """Bind the selected Q sidecar and its declared runtime files to the prepared archive."""
+    if (bundle.get("schema") != 1 or bundle.get("kind") != "container-qualified-runtime-assets"
+            or bundle.get("qualified_container_source") != runtime_asset.get("commit")
+            or bundle.get("qualification") != {"target": "bazel-qualify", "passed": True}):
+        raise ValueError("Q runtime provenance has the wrong source or qualification state")
+    assets = bundle.get("assets")
+    if not isinstance(assets, dict) or set(assets) != {"runtime", "guest", "builder"}:
+        raise ValueError("Q runtime provenance asset inventory is incomplete")
+    runtime_record = assets["runtime"]
+    if (not isinstance(runtime_record, dict)
+            or runtime_record.get("name") != runtime_asset.get("name")
+            or runtime_record.get("sha256") != runtime_asset.get("sha256")
+            or runtime_record.get("source") != runtime_asset.get("commit")):
+        raise ValueError("Q runtime provenance does not bind the selected runtime archive")
+    selected_images = {"guest": guest_asset, "builder": builder_asset}
+    for name, selected in selected_images.items():
+        item = assets[name]
+        if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+                or not isinstance(item.get("source"), str)
+                or re.fullmatch(r"[0-9a-f]{40}", item["source"]) is None
+                or re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", "")) is None
+                or item.get("name") != selected.get("name")
+                or item.get("sha256") != selected.get("sha256")
+                or item.get("source") != selected.get("commit")
+                or selected.get("repository") != {
+                    "guest": "stephenlclarke/containerization",
+                    "builder": "stephenlclarke/container-builder-shim"}[name]):
+            raise ValueError(f"Q runtime provenance {name} asset identity is malformed")
+    runtime = bundle.get("runtime")
+    payload = runtime.get("payload") if isinstance(runtime, dict) else None
+    guest, builder = bundle.get("guest"), bundle.get("builder")
+    if (not isinstance(runtime, dict) or not isinstance(guest, dict) or not isinstance(builder, dict)
+            or guest.get("source") != assets["guest"].get("source")
+            or builder.get("source") != assets["builder"].get("source")
+            or guest.get("reference") != assets["guest"].get("reference")
+            or builder.get("reference") != assets["builder"].get("reference")
+            or runtime.get("init_archive_sha256") != assets["guest"]["sha256"]
+            or runtime.get("builder_archive_sha256") != assets["builder"]["sha256"]
+            or runtime.get("init_image") != assets["guest"].get("reference")
+            or runtime.get("builder_image") != assets["builder"].get("reference")
+            or not isinstance(runtime.get("workload_image"), str)
+            or not runtime["workload_image"].startswith("docker.io/library/alpine@sha256:")
+            or not isinstance(runtime.get("notary"), dict)
+            or runtime["notary"].get("status") != "Accepted"
+            or not runtime["notary"].get("id")):
+        raise ValueError("Q runtime provenance guest, builder or notarization identity differs")
+    if not isinstance(payload, dict) or len(payload) != 25:
+        raise ValueError("Q runtime provenance has no runtime binary inventory")
+    for relative, digest in payload.items():
+        if not isinstance(relative, str) or not isinstance(digest, str):
+            raise ValueError("Q runtime binary inventory contains an invalid path or digest")
+        path = member_path(relative)
+        if (path.as_posix() != relative or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or path.is_absolute()):
+            raise ValueError("Q runtime binary inventory contains an invalid path or digest")
+        actual = prepared_runtime_root / path
+        if actual.is_symlink() or not actual.is_file() or sha256(actual) != digest:
+            raise ValueError("Q runtime binary inventory differs from the selected archive")
+    chain = bundle.get("native_compiled_chain")
+    if not isinstance(chain, dict):
+        raise ValueError("Q runtime provenance omits its native compiled source chain")
+    chain_bytes = (json.dumps(chain, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
+    chain_sha = hashlib.sha256(chain_bytes).hexdigest()
+    if (chain.get("schema") != 1 or chain.get("source") != runtime_asset.get("commit")
+            or bundle.get("native_compiled_chain_sha256") != chain_sha):
+        raise ValueError("Q runtime provenance has an invalid native compiled source chain")
+    return {"sha256": runtime_asset.get("sha256"), "commit": runtime_asset.get("commit"),
+            "runtimePayloadSHA256": hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            "nativeCompiledChainSHA256": chain_sha}
+
+
+def validate_compose_runtime_association(selection: dict, provenance: dict,
+                                         runtime_provenance: dict,
+                                         prepared_runtime_root: Path) -> dict:
+    """Bind the signed Compose release to the exact independently locked Q runtime."""
+    compose_asset = selection["composeArchive"]
+    provenance_asset = selection["composeProvenance"]
+    runtime_asset = selection["containerRuntime"]
+    runtime_provenance_asset = selection["containerRuntimeProvenance"]
+    guest_asset = selection["guestImage"]
+    builder_asset = selection["builderImage"]
+    if (compose_asset.get("repository") != "stephenlclarke/container-compose"
+            or compose_asset.get("name") != "container-compose-signed-arm64.zip"
+            or provenance_asset.get("repository") != compose_asset.get("repository")
+            or provenance_asset.get("tag") != compose_asset.get("tag")
+            or provenance_asset.get("commit") != compose_asset.get("commit")
+            or provenance_asset.get("name") != "qualified-compose-release.json"):
+        raise ValueError("Compose archive and provenance release identities differ")
+    compose_commit = compose_asset.get("commit")
+    runtime_commit = runtime_asset.get("commit")
+    if (not isinstance(compose_commit, str) or re.fullmatch(r"[0-9a-f]{40}", compose_commit) is None
+            or not isinstance(runtime_commit, str) or re.fullmatch(r"[0-9a-f]{40}", runtime_commit) is None):
+        raise ValueError("Compose and runtime source commits must be full Git identities")
+    notary = provenance.get("notary")
+    if (provenance.get("source") != compose_commit
+            or provenance.get("signedArchiveSHA256") != compose_asset.get("sha256")
+            or provenance.get("signedAndNotarized") is not True
+            or not isinstance(notary, dict) or notary.get("status") != "Accepted"):
+        raise ValueError("Compose provenance does not authenticate the signed release archive")
+    if type(provenance.get("signedDistributionReady")) is not bool:
+        raise ValueError("Compose provenance omits its distribution-readiness status")
+    chain = provenance.get("compiledSdkChain")
+    lower_assets = provenance.get("lowerReleasedAssets")
+    if not isinstance(chain, dict) or not isinstance(lower_assets, dict):
+        raise ValueError("Compose provenance omits its SDK or lower-runtime chain")
+    locks = chain.get("locks")
+    if set(lower_assets) != {"runtime", "provenance", "guest", "builder"}:
+        raise ValueError("Compose provenance must name the complete Q runtime/OCI release closure")
+    lower_runtime = lower_assets.get("runtime")
+    lower_runtime_provenance = lower_assets.get("provenance")
+    lower_guest = lower_assets.get("guest")
+    lower_builder = lower_assets.get("builder")
+    if (not isinstance(locks, dict) or any(not isinstance(item, dict) for item in
+            (lower_runtime, lower_runtime_provenance, lower_guest, lower_builder))):
+        raise ValueError("Compose provenance has an incomplete runtime dependency chain")
+    sdk = locks.get("container-sdk")
+    runtime_release = lower_runtime.get("release")
+    runtime_provenance_release = lower_runtime_provenance.get("release")
+    if (not isinstance(sdk, dict) or not isinstance(runtime_release, dict)
+            or not isinstance(runtime_provenance_release, dict)
+            or re.fullmatch(r"[0-9a-f]{64}", lower_runtime_provenance.get("sha256", "")) is None):
+        raise ValueError("Compose provenance has an invalid runtime dependency identity")
+    if (provenance.get("qualifiedContainer") != runtime_commit
+            or chain.get("schema") != 1 or chain.get("profile") != "enhanced"
+            or chain.get("selected_config") != "prebuilt-container-sdk"
+            or chain.get("source") != compose_commit
+            or sdk.get("repository") != "stephenlclarke/container"
+            or sdk.get("target_commit") != runtime_commit
+            or lower_runtime.get("sha256") != runtime_asset.get("sha256")
+            or runtime_release.get("repository") != runtime_asset.get("repository")
+            or runtime_release.get("tag") != runtime_asset.get("tag")
+            or runtime_release.get("target_commit") != runtime_commit
+            or runtime_provenance_release.get("repository") != runtime_asset.get("repository")
+            or runtime_provenance_release.get("tag") != runtime_asset.get("tag")
+            or runtime_provenance_release.get("target_commit") != runtime_commit
+            or lower_runtime_provenance.get("sha256") != runtime_provenance_asset.get("sha256")
+            or runtime_provenance_asset.get("repository") != runtime_asset.get("repository")
+            or runtime_provenance_asset.get("name") != "qualified-container-assets.json"
+            or runtime_provenance_asset.get("tag") != runtime_asset.get("tag")
+            or runtime_provenance_asset.get("commit") != runtime_commit
+            or runtime_provenance_release.get("repository") != runtime_provenance_asset.get("repository")
+            or runtime_provenance_release.get("tag") != runtime_provenance_asset.get("tag")
+            or runtime_provenance_release.get("target_commit") != runtime_provenance_asset.get("commit")
+            or runtime_asset.get("repository") != "stephenlclarke/container"
+            or runtime_asset.get("name") != "container-homebrew-arm64.tar.gz"):
+        raise ValueError("Compose provenance is not associated with the selected Q runtime release")
+    for name, lower, selected in (("guest", lower_guest, guest_asset),
+                                  ("builder", lower_builder, builder_asset)):
+        release = lower.get("release")
+        if (not isinstance(release, dict) or lower.get("sha256") != selected.get("sha256")
+                or (release.get("repository"), release.get("tag"), release.get("target_commit")) !=
+                   (selected.get("repository"), selected.get("tag"), selected.get("commit"))):
+            raise ValueError(f"Compose provenance {name} identity differs from the locked Q OCI asset")
+    q_identity = validate_q_runtime_provenance(runtime_provenance, runtime_asset,
+                                               guest_asset, builder_asset,
+                                               prepared_runtime_root)
+    return {
+        "containerCompose": {"repository": compose_asset["repository"],
+                             "version": None, "commit": compose_commit,
+                             "archiveSHA256": compose_asset["sha256"]},
+        "containerRuntime": {"repository": runtime_asset["repository"],
+                             "commit": runtime_commit,
+                             "archiveSHA256": runtime_asset["sha256"]},
+        "signedAndNotarized": True,
+        "distributionReady": provenance["signedDistributionReady"],
+        "qRuntimeProvenance": q_identity,
+    }
+
+
+def admit_compose_runtime_inputs(selection: dict, retained_objects: Path,
+                                 prepared: dict) -> dict:
+    """Authenticate archive, provenance, signed tree and distinct source identities."""
+    selected = (("composeArchive", "composeArchive"), ("composeProvenance", "composeProvenance"),
+                ("containerRuntime", "containerRuntime"),
+                ("containerRuntimeProvenance", "containerRuntimeProvenance"),
+                ("guestImage", "guestImage"), ("builderImage", "builderImage"))
+    for asset_key, prepared_key in selected:
+        asset = selection[asset_key]
+        verify_object(retained_objects / asset["sha256"], asset)
+        if prepared_key not in prepared:
+            raise ValueError("Selected Compose/Q release is missing retained preparation")
+    provenance_asset = selection["composeProvenance"]
+    runtime_provenance_asset = selection["containerRuntimeProvenance"]
+    provenance_path = Path(prepared["composeProvenance"]["files"]["provenance"])
+    runtime_provenance_path = Path(prepared["containerRuntimeProvenance"]["files"]["provenance"])
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    runtime_provenance = json.loads(runtime_provenance_path.read_text(encoding="utf-8"))
+    identity = validate_compose_runtime_association(
+        selection, provenance, runtime_provenance, Path(prepared["containerRuntime"]["root"]))
+    validate_compose_signed_tree(provenance, Path(prepared["composeArchive"]["root"]))
+    build_info_path = Path(prepared["composeArchive"]["root"]) / "compose/resources/build-info.json"
+    build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    if (build_info.get("source") != identity["containerCompose"]["repository"]
+            or build_info.get("commit") != identity["containerCompose"]["commit"]
+            or build_info.get("containerSource") != identity["containerRuntime"]["repository"]
+            or build_info.get("containerRef") != identity["containerRuntime"]["commit"]
+            or not isinstance(build_info.get("version"), str) or not build_info["version"]):
+        raise ValueError("Compose build metadata conflates or changes its runtime identity")
+    identity["containerCompose"]["version"] = build_info["version"]
+    return identity
+
+
+def select_compose_runtime_assets(lock: dict) -> dict:
+    """Select the new signed pair and Q runtime, or the exact currently locked legacy pair."""
+    assets = validate_lock(lock)
+
+    def matches(repository: str, name: str) -> list[dict]:
+        return [asset for asset in assets
+                if asset["repository"] == repository and asset["name"] == name]
+
+    signed = matches("stephenlclarke/container-compose", "container-compose-signed-arm64.zip")
+    provenance = matches("stephenlclarke/container-compose", "qualified-compose-release.json")
+    if signed or provenance:
+        runtime = matches("stephenlclarke/container", "container-homebrew-arm64.tar.gz")
+        runtime_provenance = matches("stephenlclarke/container", "qualified-container-assets.json")
+        guest = matches("stephenlclarke/containerization", "guest.oci.tar")
+        builder = matches("stephenlclarke/container-builder-shim", "builder.oci.tar")
+        if (len(signed) != 1 or len(provenance) != 1 or len(runtime) != 1
+                or len(runtime_provenance) != 1 or len(guest) != 1 or len(builder) != 1):
+            raise ValueError("signed Compose release requires locked Q runtime, provenance, guest and builder assets")
+        archive, proof = signed[0], provenance[0]
+        if any(archive[key] != proof[key] for key in ("tag", "tagObject", "releaseID", "commit", "publisher")):
+            raise ValueError("signed Compose ZIP and provenance are not from one locked release")
+        if any(runtime[0][key] != runtime_provenance[0][key]
+               for key in ("repository", "tag", "tagObject", "releaseID", "commit", "publisher")):
+            raise ValueError("Q runtime archive and provenance are not from one locked release")
+        return {"format": "signed-compose-q-runtime", "composeArchive": archive,
+                "composeProvenance": proof, "containerRuntime": runtime[0],
+                "containerRuntimeProvenance": runtime_provenance[0],
+                "guestImage": guest[0], "builderImage": builder[0]}
+
+    legacy_compose = matches("stephenlclarke/container-compose", "container-compose-plugin-release-arm64.tar.gz")
+    legacy_runtime = matches("stephenlclarke/container-compose", "container-release-arm64.tar.gz")
+    if len(legacy_compose) != 1 or len(legacy_runtime) != 1:
+        raise ValueError("locked Compose/runtime release inputs are missing or ambiguous")
+    compose, runtime = legacy_compose[0], legacy_runtime[0]
+    if any(compose[key] != runtime[key] for key in ("tag", "tagObject", "releaseID", "commit", "publisher")):
+        raise ValueError("legacy Compose and runtime assets are not from one locked release")
+    return {"format": "legacy-compose-bundle", "composeArchive": compose,
+            "containerRuntime": runtime}
+
+
+def admit_locked_compose_runtime(lock: dict, retained_objects: Path,
+                                prepared_root: Path, prepared_receipts: Path) -> dict:
+    """Read-only admit the lock-selected provider archives and exact executable paths."""
+    selection = select_compose_runtime_assets(lock)
+
+    def require_asset(asset: dict) -> dict:
+        source = retained_objects / asset["sha256"]
+        return require_retained(asset, source, prepared_root, prepared_receipts)
+
+    compose_prepared = require_asset(selection["composeArchive"])
+    runtime_prepared = require_asset(selection["containerRuntime"])
+    if selection["format"] == "signed-compose-q-runtime":
+        provenance_prepared = require_asset(selection["composeProvenance"])
+        runtime_provenance_prepared = require_asset(selection["containerRuntimeProvenance"])
+        guest_prepared = require_asset(selection["guestImage"])
+        builder_prepared = require_asset(selection["builderImage"])
+        identity = admit_compose_runtime_inputs(selection, retained_objects, {
+            "composeArchive": compose_prepared,
+            "composeProvenance": provenance_prepared,
+            "containerRuntime": runtime_prepared,
+            "containerRuntimeProvenance": runtime_provenance_prepared,
+            "guestImage": guest_prepared,
+            "builderImage": builder_prepared,
+        })
+        identity.update({
+            "format": selection["format"],
+            "containerCompose": {**identity["containerCompose"],
+                                 "preparationSHA256": compose_prepared["preparationSHA256"],
+                                 "inventorySHA256": compose_prepared["inventorySHA256"]},
+            "containerRuntime": {**identity["containerRuntime"],
+                                 "releaseTag": selection["containerRuntime"]["tag"],
+                                 "containerSHA256": sha256(Path(runtime_prepared["executables"]["container"])),
+                                 "apiServerSHA256": sha256(Path(runtime_prepared["executables"]["container-apiserver"])),
+                                 "preparationSHA256": runtime_prepared["preparationSHA256"],
+                                 "inventorySHA256": runtime_prepared["inventorySHA256"]},
+            "composeProviderSHA256": sha256(Path(compose_prepared["executables"]["compose"])),
+            "composeProvenanceSHA256": selection["composeProvenance"]["sha256"],
+            "composeProvenancePreparationSHA256": provenance_prepared["preparationSHA256"],
+            "composeProvenance": json.loads(
+                Path(provenance_prepared["files"]["provenance"]).read_text(encoding="utf-8")),
+            "containerRuntimeProvenanceSHA256": selection["containerRuntimeProvenance"]["sha256"],
+            "containerRuntimeProvenancePreparationSHA256":
+                runtime_provenance_prepared["preparationSHA256"],
+            "containerRuntimeProvenance": json.loads(
+                Path(runtime_provenance_prepared["files"]["provenance"]).read_text(encoding="utf-8")),
+        })
+        q_proof = identity["containerRuntimeProvenance"]
+        identity["qOciInputs"] = {
+            role: _q_oci_input(selection[asset_key], prepared,
+                               q_proof["assets"][role])
+            for role, asset_key, prepared in (
+                ("guest", "guestImage", guest_prepared),
+                ("builder", "builderImage", builder_prepared))}
+        identity["guestArchive"] = identity["qOciInputs"]["guest"]["path"]
+        identity["builderArchive"] = identity["qOciInputs"]["builder"]["path"]
+    else:
+        identity = {
+            "format": selection["format"],
+            "containerCompose": {"repository": selection["composeArchive"]["repository"],
+                                 "commit": selection["composeArchive"]["commit"],
+                                 "releaseTag": selection["composeArchive"]["tag"],
+                                 "archiveSHA256": selection["composeArchive"]["sha256"],
+                                 "preparationSHA256": compose_prepared["preparationSHA256"],
+                                 "inventorySHA256": compose_prepared["inventorySHA256"]},
+            "containerRuntime": {"repository": selection["containerRuntime"]["repository"],
+                                 "commit": selection["containerRuntime"]["commit"],
+                                 "releaseTag": selection["containerRuntime"]["tag"],
+                                 "archiveSHA256": selection["containerRuntime"]["sha256"],
+                                 "containerSHA256": sha256(Path(runtime_prepared["executables"]["container"])),
+                                 "apiServerSHA256": sha256(Path(runtime_prepared["executables"]["container-apiserver"])),
+                                 "preparationSHA256": runtime_prepared["preparationSHA256"],
+                                 "inventorySHA256": runtime_prepared["inventorySHA256"]},
+            "composeProviderSHA256": sha256(Path(compose_prepared["executables"]["compose"])),
+        }
+    identity["executables"] = {
+        "container": runtime_prepared["executables"]["container"],
+        "container-apiserver": runtime_prepared["executables"]["container-apiserver"],
+        "compose": compose_prepared["executables"]["compose"],
+    }
+    return identity
+
+
+def _q_oci_input(asset: dict, prepared: dict, provenance_row: dict) -> dict:
+    """Project the authenticated Q OCI archive identity and its retained path."""
+    reference = provenance_row.get("reference")
+    if (not isinstance(reference, str) or not reference.startswith("ghcr.io/")
+            or provenance_row.get("name") != asset.get("name")
+            or provenance_row.get("sha256") != asset.get("sha256")
+            or provenance_row.get("source") != asset.get("commit")):
+        raise ValueError("Q OCI provenance differs from the selected retained archive")
+    return {"repository": asset["repository"], "tag": asset["tag"], "source": asset["commit"],
+            "name": asset["name"], "archiveSHA256": asset["sha256"], "reference": reference,
+            "path": prepared["files"]["archive"],
+            "preparationSHA256": prepared["preparationSHA256"],
+            "inventorySHA256": prepared["inventorySHA256"]}
+
+
+def prepare_q_guest_builder_images(identity: dict, guest_lock: dict, builder_lock: dict,
+                                   scratch: Path, retained_images: Path) -> dict:
+    """Import lock-selected Q OCI bytes through the maintained guest-image verifier.
+
+    Caller holds the reference-store lease and has already authenticated the
+    release lock/provenance with ``admit_locked_compose_runtime``. This helper
+    only connects those retained asset paths to the existing exact OCI import
+    and image-cache receipt APIs.
+    """
+    if identity.get("format") != "signed-compose-q-runtime":
+        return {}
+    q_inputs = identity.get("qOciInputs")
+    if not isinstance(q_inputs, dict) or set(q_inputs) != {"guest", "builder"}:
+        raise ValueError("Q runtime admission did not retain its guest/builder OCI pair")
+    from prepare_guest_images import prepare as prepare_image, validate_image
+
+    specifications = (("guest", guest_lock, "enhanced-vminit"),
+                      ("builder", builder_lock, "enhanced-builder"))
+    imports = []
+    for role, image_lock, selected_name in specifications:
+        rows = image_lock.get("images") if isinstance(image_lock, dict) else None
+        matches = [item for item in rows if isinstance(item, dict) and item.get("name") == selected_name] \
+            if isinstance(rows, list) else []
+        selected = q_inputs[role]
+        if len(matches) != 1:
+            raise ValueError(f"Q {role} import requires one checked-in selected image row")
+        image = matches[0]
+        validate_image(image)
+        if (image.get("reference") != selected["reference"]
+                or image.get("archiveSHA256") != selected["archiveSHA256"]):
+            raise ValueError(f"checked-in Q {role} image lock differs from retained provenance")
+        imports.append((role, image, Path(selected["path"])))
+    prepared = {}
+    for role, image, source in imports:
+        prepared[role] = prepare_image(image, scratch, retained_images,
+                                      source_archive=source)
+    return prepared
+
+
+def prepare_locked_q_guest_builder_images(lock: dict, retained: Path, scratch: Path,
+                                          prepared_root: Path, receipts: Path) -> dict:
+    """Import Q OCI pairs only when the selected release lock contains all six assets."""
+    assets = validate_lock(lock)
+    compose_names = {"container-compose-signed-arm64.zip", "qualified-compose-release.json",
+                     "container-compose-plugin-release-arm64.tar.gz", "container-release-arm64.tar.gz"}
+    if not any(asset["repository"] == "stephenlclarke/container-compose"
+               and asset["name"] in compose_names for asset in assets):
+        return {}
+    selection = select_compose_runtime_assets(lock)
+    if selection["format"] != "signed-compose-q-runtime":
+        return {}
+    identity = admit_locked_compose_runtime(
+        lock, retained / "release-objects", prepared_root, receipts)
+    bazel = Path(__file__).resolve().parent
+    guest_lock = json.loads((bazel / "guest-images.lock.json").read_text(encoding="utf-8"))
+    builder_lock = json.loads((bazel / "builder-images.lock.json").read_text(encoding="utf-8"))
+    scratch_images = scratch / "tmp"
+    scratch_images.mkdir(mode=0o700, parents=True, exist_ok=True)
+    retained_images = retained / "guest-images"
+    retained_images.mkdir(mode=0o700, exist_ok=True)
+    if (scratch_images.resolve() != scratch_images or retained_images.resolve() != retained_images
+            or stat.S_IMODE(retained_images.stat().st_mode) != 0o700):
+        raise ValueError("Q guest-image storage is not canonical and private")
+    return prepare_q_guest_builder_images(identity, guest_lock, builder_lock,
+                                          scratch_images, retained_images)
+
+
 def retain_receipt(path: Path, receipt: dict) -> None:
     """Publish the inventory internally before the disposable SSD tree appears."""
     if path.is_symlink():
@@ -295,11 +796,13 @@ def prepare(asset: dict, source: Path, root: Path, receipts: Path, *, expand=exp
                 staged.mkdir()
                 if kind == "tar":
                     unpack_tar(source, staged, specification["layout"].get("omittedLinks"))
+                elif kind == "zip":
+                    unpack_zip(source, staged)
                 elif kind == "selected-tar":
                     unpack_selected_tar(source, staged, specification["layout"])
                 elif kind == "kernel-zstd":
                     unpack_kernel(source, staged)
-                elif kind in ("raw", "raw-data"):
+                elif kind in ("raw", "raw-data", "json"):
                     copy_raw(source, staged, specification["layout"])
                 else:
                     raise ValueError("Unsupported release preparation format")
@@ -454,7 +957,8 @@ def main() -> None:
     scratch = Path("/Volumes/SSD/cf/bazel")
     executables = retained / "prepared-releases"
     executables.mkdir(mode=0o700, exist_ok=True)
-    acquired = acquire(json.loads(args.lock.read_text()), retained, scratch / "tmp", offline=args.offline)
+    source_lock = json.loads(args.lock.read_text())
+    acquired = acquire(source_lock, retained, scratch / "tmp", offline=args.offline)
     result = {"schemaVersion": 1, "scope": "prepared-release-assets-only", "runtimeReady": False,
               "lockSHA256": acquired["lockSHA256"], "assets": []}
     for asset in acquired["assets"]:
@@ -466,6 +970,10 @@ def main() -> None:
         else:
             prepare(asset, source, scratch / "prepared-releases", receipts)
             result["assets"].append(retain_prepared(asset, source, scratch / "prepared-releases", executables, receipts))
+    q_images = prepare_locked_q_guest_builder_images(
+        source_lock, retained, scratch, executables, receipts)
+    if q_images:
+        result["qGuestBuilderImages"] = q_images
     print(json.dumps(result, sort_keys=True, indent=2))
 
 

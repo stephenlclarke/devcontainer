@@ -153,6 +153,54 @@ class ReleasedEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             released_engine.provider_runtime_selection(lock, "docker")
 
+    def test_finalized_runtime_selects_the_separately_locked_q_runtime(self):
+        source = "a" * 40
+        entries = []
+        for index, (repository, name, commit) in enumerate((
+                ("stephenlclarke/container-compose", "container-compose-signed-arm64.zip", source),
+                ("stephenlclarke/container-compose", "qualified-compose-release.json", source),
+                ("stephenlclarke/container", "container-homebrew-arm64.tar.gz", "b" * 40),
+                ("stephenlclarke/container", "qualified-container-assets.json", "b" * 40),
+                ("stephenlclarke/containerization", "guest.oci.tar", "6db16197bbad8196a78132f86529daa89125aafb"),
+                ("stephenlclarke/container-builder-shim", "builder.oci.tar", "016040197215684db474181b444767eb58797cfa"))):
+            tag = "compose-release" if index < 2 else "q-runtime" if index < 4 else f"fixture-{index}"
+            # Compose ZIP and its provenance share their release; Q runtime and
+            # its sidecar share a different release. OCI releases are separate.
+            release = (1 if index < 2 else 2 if index < 4 else index)
+            tuple_commit = source if index < 2 else "b" * 40 if index < 4 else commit
+            entries.append({"repository": repository, "tag": tag, "name": name,
+                            "commit": tuple_commit, "tagObject": tuple_commit,
+                            "publisher": "github-actions[bot]", "prerelease": False,
+                            "releaseID": release, "assetID": index + 1, "size": 10,
+                            "architecture": "arm64", "sha256": f"{index + 1:064x}"})
+        lock = {"schemaVersion": 1, "assets": entries}
+        selected = released_engine.provider_runtime_selection(lock, "container-compose")
+        self.assertEqual((selected["repository"], selected["name"], selected["commit"]),
+                         ("stephenlclarke/container", "container-homebrew-arm64.tar.gz", "b" * 40))
+        admitted_images = {
+            "guest": {"reference": "ghcr.io/stephenlclarke/containerization/vminit:guest",
+                      "archiveSHA256": "a" * 64, "source": "6db16197bbad8196a78132f86529daa89125aafb",
+                      "path": "/retained/guest.tar", "preparationSHA256": "1" * 64,
+                      "inventorySHA256": "2" * 64},
+            "builder": {"reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:builder",
+                        "archiveSHA256": "b" * 64, "source": "016040197215684db474181b444767eb58797cfa",
+                        "path": "/retained/builder.tar", "preparationSHA256": "3" * 64,
+                        "inventorySHA256": "4" * 64},
+        }
+        with patch("prepare_releases.admit_locked_compose_runtime",
+                   return_value={"qOciInputs": admitted_images}) as admit_q:
+            provider_images = released_engine.provider_image_references(lock, "container-compose", self.root)
+        self.assertEqual(provider_images, {role: {key: value[key] for key in
+                                                ("reference", "archiveSHA256", "source")}
+                                           for role, value in admitted_images.items()})
+        admit_q.assert_called_once_with(lock, self.root / "release-objects",
+                                        self.root / "prepared-releases", self.root / "prepared-receipts")
+        lock["assets"] = [asset for asset in entries if asset["name"] != "builder.oci.tar"]
+        with self.assertRaisesRegex(ValueError, "requires locked Q runtime"):
+            released_engine.provider_runtime_selection(lock, "container-compose")
+        with self.assertRaisesRegex(ValueError, "requires locked Q runtime"):
+            released_engine.provider_image_references(lock, "container-compose", self.root)
+
     def test_runtime_admission_requires_selected_stable_payload_without_fallback(self):
         source = {"native": "original"}
         with patch("released_engine.admit", return_value=[{"client": "unchanged"}, source]), \

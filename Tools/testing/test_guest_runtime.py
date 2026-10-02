@@ -348,6 +348,42 @@ class GuestRuntimeTests(unittest.TestCase):
         self.assertEqual([call.args[0]["name"] for call in selected.call_args_list],
                          ["enhanced-vminit", "alpine-workload"])
 
+    def test_q_provider_image_identity_selects_exact_archive_pinned_guest(self):
+        kernel, images = self.locks()
+        image = next(item for item in images["images"] if item["name"] == "enhanced-vminit")
+        source = "6db16197bbad8196a78132f86529daa89125aafb"
+        archive_sha = "c" * 64
+        reference = "ghcr.io/stephenlclarke/containerization/vminit:" + source
+        image.update(reference=reference, archiveSHA256=archive_sha)
+        provider_images = {
+            "guest": {"reference": reference, "archiveSHA256": archive_sha, "source": source},
+            "builder": {"reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-"
+                                     + "016040197215684db474181b444767eb58797cfa",
+                        "archiveSHA256": "d" * 64,
+                        "source": "016040197215684db474181b444767eb58797cfa"},
+        }
+        with patch("guest_runtime.require_retained", return_value={}), \
+                patch("guest_runtime.require_image", side_effect=lambda selected, _: {"image": selected}):
+            result = admit_guest(kernel, images, "container-compose", self.root,
+                                 provider_image_references=provider_images)
+        self.assertEqual(result["initialization"]["image"], image)
+
+        changed = copy.deepcopy(provider_images)
+        changed["guest"]["archiveSHA256"] = "e" * 64
+        with patch("guest_runtime.require_retained") as retain, \
+                self.assertRaisesRegex(ValueError, "archive differs"):
+            admit_guest(kernel, images, "container-compose", self.root,
+                        provider_image_references=changed)
+        retain.assert_not_called()
+
+    def test_q_provider_identity_is_rejected_for_stock_or_incomplete_pairs(self):
+        kernel, images = self.locks()
+        provider_images = {"guest": {"reference": "ghcr.io/x/y:z", "archiveSHA256": "a" * 64,
+                                      "source": "b" * 40}}
+        with self.assertRaisesRegex(ValueError, "selected locked pair"):
+            admit_guest(kernel, images, "apple-stock", self.root,
+                        provider_image_references=provider_images)
+
     def test_d05_admission_selects_ubuntu_without_changing_other_fixtures(self):
         kernel, images = self.locks()
         with patch("guest_runtime.require_retained", return_value={"kernel": "verified"}), \

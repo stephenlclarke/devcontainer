@@ -5,10 +5,10 @@
     {
       "name": "enhanced-vminit",
       "repository": "ghcr.io/stephenlclarke/containerization/vminit",
-      "reference": "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567",
-      "manifest": "sha256:3ca52a360d90f94ac86462e16c7e4edf7c63409b1956c297250f49000f6aeb17",
-      "config": "sha256:21fedd0994f906876e82fbc8a47ce614ce5d421fb7b61d6e44610eefd5f292e9",
-      "archiveSHA256": "9e18071a3c508d4376bd734fa0a22c61326907edd4ec35a74d84edce17062596"
+      "reference": "ghcr.io/stephenlclarke/containerization/vminit:6db16197bbad8196a78132f86529daa89125aafb",
+      "manifest": "sha256:29dd09551b3eb18a16df7a32c4e35b559551be6cb8328762bbf7f96f1122bc12",
+      "config": "sha256:2d715cb803032c9031733dc1654bf5c8593e0c6107f41d39babe633ae05a7c95",
+      "archiveSHA256": "abc81c13cb053119e30df3d46e0414c74a5a7ef7f96a5de4940c2b6cdfd21b18"
     },
     {
       "name": "python-workload",

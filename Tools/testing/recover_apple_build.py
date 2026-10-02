@@ -13,7 +13,7 @@ from guest_runtime import (GUEST_API_VERSION, ReleasedGuest, admit_guest,
                            require_diagnostic, require_guest_commands_stopped)
 from host_runtime import deadline
 from recover_runtime import private_json, verify_case_evidence
-from released_engine import admit, admit_runtime
+from released_engine import admit, admit_runtime, provider_image_references
 from runtime_services import ControlledRuntime, process_inventory
 from service_journal import ServiceJournal
 
@@ -28,8 +28,11 @@ def admit_original(retained, owner, artifacts):
     candidate = releases[0].get("candidateInvocation") if releases else None
     selector = admit_runtime if len(releases) == 2 and "activation" in releases[1] else admit
     selected = selector(admission["releaseLock"], owner["identity"]["lane"], retained, candidate)
-    inputs = admit_guest(*admission["guestLocks"], owner["identity"]["lane"], retained,
-                        builder_lock=admission["builderLock"])
+    lane = owner["identity"]["lane"]
+    provider_images = provider_image_references(admission["releaseLock"], lane, retained)
+    inputs = admit_guest(*admission["guestLocks"], lane, retained,
+                         builder_lock=admission["builderLock"],
+                         provider_image_references=provider_images)
     if selected != releases or inputs != runtime.get("guestInputs"):
         raise ValueError("Original Apple build inputs changed")
     return selected, inputs

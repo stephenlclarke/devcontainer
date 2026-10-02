@@ -12,9 +12,10 @@
     {
       "name": "enhanced-builder",
       "repository": "ghcr.io/stephenlclarke/container-builder-shim/builder",
-      "manifest": "sha256:1ae61d79ea5808de443ea6ad20b8aac28b602c155562111c34f4b41668a5f023",
-      "config": "sha256:adc2f0d84972b408eb9072acc174caf5ad837089c99d0f1676750e1e8c34c33b",
-      "reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:current-34334330512-5373d9b4363c"
+      "manifest": "sha256:34cddb8928699ea8269887c925c7d5b9fe785c250656a50cbc15fb8c689a1417",
+      "config": "sha256:01cc0b8de2d7c72a2babeeb2bb66fc937e39bcd78cfa828f82e01caf21c7b1f9",
+      "reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-016040197215684db474181b444767eb58797cfa",
+      "archiveSHA256": "602d4e19907d172ce706d624b35f90008c04ac3f0964dbe4072c81ed674172b6"
     }
   ]
 }

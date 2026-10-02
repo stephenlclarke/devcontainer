@@ -86,7 +86,7 @@ def host_build_dns(path=Path("/etc/resolv.conf")):
     return arguments
 
 
-def admit_builder(lock, lane, retained):
+def admit_builder(lock, lane, retained, *, provider_image=None):
     expected = {
         "apple-stock": ("stock-builder", "ghcr.io/apple/container-builder-shim/builder:0.13.1"),
         "container-compose": ("enhanced-builder", "ghcr.io/stephenlclarke/container-builder-shim/builder:current-34334330512-5373d9b4363c"),
@@ -97,7 +97,18 @@ def admit_builder(lock, lane, retained):
         validate_image(image)
     images = {image["name"]: image for image in lock["images"]}
     name, reference = expected[lane]
-    if len(images) != len(lock["images"]) or name not in images or images[name]["reference"] != reference:
+    if provider_image is not None:
+        if (lane != "container-compose" or not isinstance(provider_image, dict)
+                or set(provider_image) != {"reference", "archiveSHA256", "source"}
+                or not isinstance(provider_image.get("reference"), str)
+                or re.fullmatch(r"ghcr\.io/[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+", provider_image["reference"]) is None
+                or re.fullmatch(r"[0-9a-f]{64}", str(provider_image.get("archiveSHA256", ""))) is None
+                or re.fullmatch(r"[0-9a-f]{40}", str(provider_image.get("source", ""))) is None):
+            raise ValueError("Q builder identity is not a locked admitted image")
+        reference = provider_image["reference"]
+    if (len(images) != len(lock["images"]) or name not in images
+            or images[name]["reference"] != reference
+            or (provider_image is not None and images[name].get("archiveSHA256") != provider_image["archiveSHA256"])):
         raise ValueError("Builder differs from the selected published provider")
     return dict(require_image(images[name], retained / "guest-images"), dnsArguments=host_build_dns())
 

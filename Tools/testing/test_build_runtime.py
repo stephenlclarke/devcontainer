@@ -78,6 +78,25 @@ class BuildRuntimeTests(unittest.TestCase):
                 self.assertEqual(admit_builder(self.lock, lane, self.root), {'image': image, 'dnsArguments': []})
             self.assertEqual(require.call_count, 2)
 
+    def test_q_builder_admission_requires_matching_locked_archive_identity(self):
+        image = next(item for item in self.lock["images"] if item["name"] == "enhanced-builder")
+        source = "016040197215684db474181b444767eb58797cfa"
+        reference = "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-" + source
+        archive_sha = "e" * 64
+        image.update(reference=reference, archiveSHA256=archive_sha)
+        provider_image = {"reference": reference, "archiveSHA256": archive_sha, "source": source}
+        with patch("build_runtime.require_image", return_value={"image": image}) as require:
+            result = admit_builder(self.lock, "container-compose", self.root,
+                                   provider_image=provider_image)
+        self.assertEqual(result, {"image": image, "dnsArguments": []})
+        require.assert_called_once_with(image, self.root / "guest-images")
+
+        changed = dict(provider_image, archiveSHA256="f" * 64)
+        with patch("build_runtime.require_image") as require, \
+                self.assertRaisesRegex(ValueError, "selected published provider"):
+            admit_builder(self.lock, "container-compose", self.root, provider_image=changed)
+        require.assert_not_called()
+
     def test_builder_uses_exact_loaded_local_reference_without_digest_alias_assumption(self):
         # Stock ClientImage.get matches stored reference/name, not the digest
         # descriptor. A tagged archive is not a second digest-named record.

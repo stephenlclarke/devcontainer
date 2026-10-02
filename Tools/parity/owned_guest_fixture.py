@@ -74,9 +74,14 @@ def admit_guest_inputs(repository: Path, lane: str, retained: Path) -> dict[str,
             inputs = {"workload": workload}
         else:
             from guest_runtime import admit_guest
+            from released_engine import provider_image_references
 
             kernel_lock = json.loads((repository / "Tools/bazel/guest-kernel.lock.json").read_text())
-            inputs = admit_guest(kernel_lock, images_lock, lane, retained, fixture="E07-init-attachment")
+            release_lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
+            provider_images = provider_image_references(release_lock, lane, retained)
+            inputs = admit_guest(kernel_lock, images_lock, lane, retained,
+                                 fixture="E07-init-attachment",
+                                 provider_image_references=provider_images)
         return inputs
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ParityError(f"pinned guest input admission failed ({type(error).__name__})") from None

@@ -32,6 +32,46 @@ def helper_service_path(root: Path, label: str) -> str:
 
 
 class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
+    def test_signed_compose_and_q_runtime_have_independent_source_pins(self) -> None:
+        manifest = {"referencePins": {
+            "containerRuntime": {"repository": "stephenlclarke/container", "stableCommit": "b" * 40},
+            "containerCompose": {"source": "stephenlclarke/container-compose",
+                                 "stableVersion": "0.16.0", "stableCommit": "a" * 40},
+        }}
+        identity = {"format": "signed-compose-q-runtime",
+                    "containerRuntime": {"repository": "stephenlclarke/container", "commit": "b" * 40},
+                    "containerCompose": {"repository": "stephenlclarke/container-compose",
+                                         "version": "0.16.0", "commit": "a" * 40}}
+        qualify.validate_native_provider_manifest_identity(manifest, identity)
+        manifest["referencePins"]["containerRuntime"]["stableCommit"] = "a" * 40
+        with self.assertRaisesRegex(ValueError, "distinct Compose and Container"):
+            qualify.validate_native_provider_manifest_identity(manifest, identity)
+
+    def test_fork_fingerprint_binds_container_output_to_runtime_not_compose(self) -> None:
+        identity = {"format": "signed-compose-q-runtime",
+                    "containerRuntime": {"commit": "b" * 40},
+                    "containerCompose": {"version": "0.16.0", "commit": "a" * 40}}
+        expected = {"stockContainer": "1" * 64, "composeContainer": "2" * 64,
+                    "composeProvider": "3" * 64}
+        manifest = {"referencePins": {"containerCompose": {
+            "stableVersion": "0.16.0", "stableCommit": "a" * 40}}}
+        with tempfile.TemporaryDirectory() as temporary:
+            fingerprint = Path(temporary) / "fingerprint.json"
+            value = {"providerBinarySHA256": {
+                "DEVCONTAINER_CONTAINER_BIN": expected["composeContainer"],
+                "DEVCONTAINER_COMPOSE_BIN": expected["composeProvider"]},
+                "commands": {"container": {"stdout": json.dumps({"commit": "b" * 40})},
+                             "containerCompose": {"stdout": json.dumps({
+                                 "version": "0.16.0", "commit": "a" * 40})}}}
+            fingerprint.write_text(json.dumps(value))
+            qualify.validate_provider_fingerprint(
+                fingerprint, "container-compose", expected, manifest, identity)
+            value["commands"]["container"]["stdout"] = json.dumps({"commit": "a" * 40})
+            fingerprint.write_text(json.dumps(value))
+            with self.assertRaisesRegex(RuntimeError, "checked-in version and commit"):
+                qualify.validate_provider_fingerprint(
+                    fingerprint, "container-compose", expected, manifest, identity)
+
     def test_stock_wrapper_uses_pinned_docker_cli_and_compose(self) -> None:
         args = argparse.Namespace(
             docker_bin=Path("/pinned/docker"),

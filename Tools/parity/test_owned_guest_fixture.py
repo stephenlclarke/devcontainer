@@ -364,6 +364,24 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             require.assert_called_once_with(alpine, image_store)
             self.assertEqual(actual, {"workload": admitted})
 
+    def test_native_guest_admission_threads_only_lock_admitted_provider_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            retained = Path(temporary).resolve()
+            provider_images = {"guest": {"reference": "fixture", "archiveSHA256": "a" * 64,
+                                          "source": "b" * 40},
+                              "builder": {"reference": "fixture-builder", "archiveSHA256": "c" * 64,
+                                          "source": "d" * 40}}
+            if str(REPOSITORY / "Tools/bazel") not in sys.path:
+                sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
+            guest_runtime = importlib.import_module("guest_runtime")
+            with mock.patch("released_engine.provider_image_references", return_value=provider_images) as refs, \
+                    mock.patch.object(guest_runtime, "admit_guest", return_value={"admitted": True}) as admit:
+                actual = admit_guest_inputs(REPOSITORY, "container-compose", retained)
+            self.assertEqual(actual, {"admitted": True})
+            refs.assert_called_once()
+            self.assertEqual(refs.call_args.args[1:], ("container-compose", retained))
+            self.assertEqual(admit.call_args.kwargs["provider_image_references"], provider_images)
+
     def test_docker_compose_requires_the_exact_manifest_hash_and_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

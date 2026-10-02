@@ -1,15 +1,18 @@
 """Release preparation never installs, compiles, overwrites or trusts SSD residue."""
 
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import prepare_releases as preparation
 from release_inputs import sha256
@@ -61,6 +64,361 @@ class PrepareReleasesTests(unittest.TestCase):
             self.assertEqual(len(value["executables"]), count)
         with self.assertRaisesRegex(ValueError, "reviewed layout"):
             preparation.layout({"repository": "unknown/repo", "name": "tool", "tag": "1"})
+
+    def test_signed_compose_and_published_q_runtime_layouts_are_distinct(self):
+        compose = preparation.layout({"repository": "stephenlclarke/container-compose",
+                                      "tag": "0.16.0", "name": "container-compose-signed-arm64.zip"})
+        provenance = preparation.layout({"repository": "stephenlclarke/container-compose",
+                                         "tag": "0.16.0", "name": "qualified-compose-release.json"})
+        runtime = preparation.layout({"repository": "stephenlclarke/container",
+                                      "tag": "layer-runtime-a1effeeaf8c7", "name": "container-homebrew-arm64.tar.gz"})
+        self.assertEqual(compose["format"], "zip")
+        self.assertEqual(compose["executables"]["compose"], "compose/bin/compose")
+        self.assertEqual(provenance["format"], "json")
+        self.assertFalse(provenance["executables"])
+        self.assertEqual(runtime["executables"]["container"], "bin/container")
+
+    def compose_release_fixture(self):
+        compose_commit, runtime_commit = "a" * 40, "b" * 40
+        runtime_source = self.root / "runtime.tar.gz"
+        guest_source = self.root / "guest.oci.tar"
+        builder_source = self.root / "builder.oci.tar"
+        guest_source.write_bytes(b"authenticated q guest OCI fixture")
+        builder_source.write_bytes(b"authenticated q builder OCI fixture")
+        guest_asset = {"repository": "stephenlclarke/containerization", "tag": "guest-fixture",
+                       "commit": "6db16197bbad8196a78132f86529daa89125aafb", "name": "guest.oci.tar",
+                       "size": guest_source.stat().st_size, "sha256": sha256(guest_source)}
+        builder_asset = {"repository": "stephenlclarke/container-builder-shim", "tag": "builder-fixture",
+                         "commit": "016040197215684db474181b444767eb58797cfa", "name": "builder.oci.tar",
+                         "size": builder_source.stat().st_size, "sha256": sha256(builder_source)}
+        guest_reference = "ghcr.io/stephenlclarke/containerization/vminit:6db16197bbad8196a78132f86529daa89125aafb"
+        builder_reference = "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-016040197215684db474181b444767eb58797cfa"
+        runtime_payload = {"bin/container": b"container", "bin/container-engine": b"engine",
+                           "bin/container-apiserver": b"api"}
+        for index in range(22):
+            runtime_payload[f"libexec/container/payload-{index:02d}"] = f"payload-{index}".encode()
+        with tarfile.open(runtime_source, "w:gz") as archive:
+            for name, payload in runtime_payload.items():
+                entry = tarfile.TarInfo(name)
+                entry.mode = 0o755
+                entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload))
+        files = {
+            "compose/bin/compose": b"signed compose executable",
+            "compose/resources/compose-normalizer": b"signed normalizer",
+            "compose/resources/volume-initializer/compose-volume-initializer-linux-amd64": b"amd64 init",
+            "compose/resources/volume-initializer/compose-volume-initializer-linux-arm64": b"arm64 init",
+            "compose/resources/build-info.json": json.dumps({
+                "source": "stephenlclarke/container-compose", "commit": compose_commit,
+                "version": "0.16.0", "containerSource": "stephenlclarke/container",
+                "containerRef": runtime_commit,
+            }, sort_keys=True).encode(),
+        }
+        with zipfile.ZipFile(self.source, "w") as archive:
+            for directory in ("compose/", "compose/bin/", "compose/resources/",
+                              "compose/resources/volume-initializer/"):
+                entry = zipfile.ZipInfo(directory)
+                entry.external_attr = (stat.S_IFDIR | 0o755) << 16
+                archive.writestr(entry, b"")
+            for name, content in files.items():
+                entry = zipfile.ZipInfo(name)
+                mode = 0o755 if name in {
+                    "compose/bin/compose", "compose/resources/compose-normalizer",
+                    "compose/resources/volume-initializer/compose-volume-initializer-linux-amd64",
+                    "compose/resources/volume-initializer/compose-volume-initializer-linux-arm64",
+                } else 0o644
+                entry.external_attr = (stat.S_IFREG | mode) << 16
+                archive.writestr(entry, content)
+            # AppleDouble metadata is authenticated by the ZIP bytes but is not part of signedTree.
+            archive.writestr("compose/._bin", b"metadata")
+        compose_asset = {"repository": "stephenlclarke/container-compose", "tag": "0.16.0",
+                         "commit": compose_commit, "name": "container-compose-signed-arm64.zip",
+                         "size": self.source.stat().st_size, "sha256": sha256(self.source)}
+        runtime_asset = {"repository": "stephenlclarke/container", "tag": "layer-runtime-" + runtime_commit[:12],
+                         "commit": runtime_commit, "name": "container-homebrew-arm64.tar.gz",
+                         "size": runtime_source.stat().st_size, "sha256": sha256(runtime_source)}
+        runtime_provenance = {
+            "schema": 1, "kind": "container-qualified-runtime-assets",
+            "qualified_container_source": runtime_commit,
+            "qualification": {"target": "bazel-qualify", "passed": True},
+            "assets": {
+                "runtime": {"name": runtime_asset["name"], "sha256": runtime_asset["sha256"],
+                            "source": runtime_commit},
+                "guest": {"name": "guest.oci.tar", "sha256": guest_asset["sha256"],
+                          "source": guest_asset["commit"], "reference": guest_reference},
+                "builder": {"name": "builder.oci.tar", "sha256": builder_asset["sha256"],
+                            "source": builder_asset["commit"], "reference": builder_reference},
+            },
+            "guest": {"source": guest_asset["commit"], "reference": guest_reference},
+            "builder": {"source": builder_asset["commit"], "reference": builder_reference},
+            "runtime": {"payload": {path: hashlib.sha256(content).hexdigest()
+                                      for path, content in runtime_payload.items()},
+                        "init_archive_sha256": guest_asset["sha256"],
+                        "builder_archive_sha256": builder_asset["sha256"],
+                        "init_image": guest_reference, "builder_image": builder_reference,
+                        "workload_image": "docker.io/library/alpine@sha256:" + "e" * 64,
+                        "notary": {"status": "Accepted", "id": "notary-fixture"}},
+            "native_compiled_chain": {"schema": 1, "source": runtime_commit},
+        }
+        runtime_provenance["native_compiled_chain_sha256"] = hashlib.sha256(
+            (json.dumps(runtime_provenance["native_compiled_chain"], sort_keys=True, indent=2) + "\n")
+            .encode()).hexdigest()
+        runtime_provenance_path = self.root / "qualified-container-assets.json"
+        runtime_provenance_path.write_text(json.dumps(runtime_provenance, sort_keys=True), encoding="utf-8")
+        runtime_provenance_asset = {"repository": runtime_asset["repository"], "tag": runtime_asset["tag"],
+                                    "commit": runtime_asset["commit"],
+                                    "name": "qualified-container-assets.json",
+                                    "size": runtime_provenance_path.stat().st_size,
+                                    "sha256": sha256(runtime_provenance_path)}
+        provenance = {
+            "source": compose_commit, "signedArchiveSHA256": compose_asset["sha256"],
+            "signedAndNotarized": True, "signedDistributionReady": False,
+            "notary": {"status": "Accepted"}, "qualifiedContainer": runtime_commit,
+            "signedTree": {path.removeprefix("compose/"): hashlib.sha256(content).hexdigest()
+                           for path, content in files.items()},
+            "compiledSdkChain": {"schema": 1, "profile": "enhanced",
+                                 "selected_config": "prebuilt-container-sdk", "source": compose_commit,
+                                 "locks": {"container-sdk": {"repository": "stephenlclarke/container",
+                                                               "target_commit": runtime_commit}}},
+            "lowerReleasedAssets": {
+                "runtime": {"sha256": runtime_asset["sha256"],
+                            "release": {"repository": runtime_asset["repository"],
+                                        "tag": runtime_asset["tag"],
+                                        "target_commit": runtime_commit}},
+                "guest": {"sha256": guest_asset["sha256"],
+                          "release": {"repository": guest_asset["repository"],
+                                      "tag": guest_asset["tag"],
+                                      "target_commit": guest_asset["commit"]}},
+                "builder": {"sha256": builder_asset["sha256"],
+                            "release": {"repository": builder_asset["repository"],
+                                        "tag": builder_asset["tag"],
+                                        "target_commit": builder_asset["commit"]}},
+                "provenance": {"sha256": runtime_provenance_asset["sha256"],
+                               "release": {"repository": runtime_asset["repository"],
+                                           "tag": runtime_asset["tag"],
+                                           "target_commit": runtime_commit}},
+            },
+        }
+        provenance_path = self.root / "qualified-compose-release.json"
+        provenance_path.write_text(json.dumps(provenance, sort_keys=True), encoding="utf-8")
+        provenance_asset = {"repository": compose_asset["repository"], "tag": compose_asset["tag"],
+                            "commit": compose_asset["commit"], "name": "qualified-compose-release.json",
+                            "size": provenance_path.stat().st_size, "sha256": sha256(provenance_path)}
+        prepared = preparation.prepare(compose_asset, self.source, self.prepared, self.receipts)
+        runtime_prepared = preparation.prepare(runtime_asset, runtime_source, self.prepared, self.receipts)
+        guest_prepared = preparation.prepare(guest_asset, guest_source, self.prepared, self.receipts)
+        builder_prepared = preparation.prepare(builder_asset, builder_source, self.prepared, self.receipts)
+        return (compose_asset, provenance_asset, runtime_asset, runtime_provenance_asset,
+                provenance_path, runtime_provenance_path, provenance, runtime_provenance,
+                Path(prepared["root"]), Path(runtime_prepared["root"]), runtime_source,
+                guest_asset, builder_asset, Path(guest_prepared["root"]),
+                Path(builder_prepared["root"]), guest_source, builder_source)
+
+    @staticmethod
+    def locked_asset(asset, *, release_id, asset_id, tag_object):
+        return {**asset, "releaseID": release_id, "assetID": asset_id,
+                "tagObject": tag_object, "publisher": "github-actions[bot]",
+                "prerelease": False, "architecture": "arm64"}
+
+    def test_signed_compose_provenance_binds_distinct_full_source_commits(self):
+        (compose_asset, provenance_asset, runtime_asset, runtime_provenance_asset,
+         provenance_path, runtime_provenance_path, provenance, runtime_provenance,
+         compose_root, runtime_root, _, guest_asset, builder_asset, _, _,
+         guest_source, builder_source) = self.compose_release_fixture()
+        selection = {"composeArchive": compose_asset, "composeProvenance": provenance_asset,
+                    "containerRuntime": runtime_asset,
+                    "containerRuntimeProvenance": runtime_provenance_asset,
+                    "guestImage": guest_asset, "builderImage": builder_asset}
+        identity = preparation.validate_compose_runtime_association(
+            selection, provenance, runtime_provenance, runtime_root)
+        self.assertEqual(identity["containerCompose"]["commit"], "a" * 40)
+        self.assertEqual(identity["containerRuntime"]["commit"], "b" * 40)
+        self.assertEqual(identity["containerRuntime"]["archiveSHA256"], runtime_asset["sha256"])
+        self.assertTrue(identity["signedAndNotarized"])
+        self.assertFalse(identity["distributionReady"])
+
+        for field, value in (("qualifiedContainer", "d" * 40),
+                             ("signedArchiveSHA256", "e" * 64)):
+            changed = dict(provenance)
+            changed[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "Compose provenance"):
+                preparation.validate_compose_runtime_association(
+                    selection, changed, runtime_provenance, runtime_root)
+        q_changed = json.loads(json.dumps(runtime_provenance))
+        q_changed["assets"]["runtime"]["sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "does not bind the selected runtime archive"):
+            preparation.validate_q_runtime_provenance(
+                q_changed, runtime_asset, guest_asset, builder_asset, runtime_root)
+        q_changed = json.loads(json.dumps(runtime_provenance))
+        q_changed["runtime"]["payload"]["bin/container"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "binary inventory differs"):
+            preparation.validate_q_runtime_provenance(
+                q_changed, runtime_asset, guest_asset, builder_asset, runtime_root)
+
+    def test_locked_adapter_requires_retained_zip_provenance_and_q_tar(self):
+        (compose_asset, provenance_asset, runtime_asset, runtime_provenance_asset,
+         provenance_path, runtime_provenance_path, _, _, _, _, runtime_source,
+         guest_asset, builder_asset, guest_root, builder_root, guest_source,
+         builder_source) = self.compose_release_fixture()
+        tag_object = "d" * 40
+        compose_asset = self.locked_asset(compose_asset, release_id=1, asset_id=2, tag_object=tag_object)
+        provenance_asset = self.locked_asset(provenance_asset, release_id=1, asset_id=3, tag_object=tag_object)
+        runtime_asset = self.locked_asset(runtime_asset, release_id=4, asset_id=5,
+                                          tag_object="e" * 40)
+        runtime_provenance_asset = self.locked_asset(runtime_provenance_asset, release_id=4, asset_id=6,
+                                                     tag_object="e" * 40)
+        guest_asset = self.locked_asset(guest_asset, release_id=7, asset_id=8,
+                                        tag_object="f" * 40)
+        builder_asset = self.locked_asset(builder_asset, release_id=9, asset_id=10,
+                                          tag_object="1" * 40)
+        objects = self.root / "release-objects"
+        objects.mkdir(mode=0o700)
+        for asset, source in ((compose_asset, self.source), (provenance_asset, provenance_path),
+                              (runtime_asset, runtime_source),
+                              (runtime_provenance_asset, runtime_provenance_path),
+                              (guest_asset, guest_source), (builder_asset, builder_source)):
+            shutil.copyfile(source, objects / asset["sha256"])
+            preparation.prepare(asset, objects / asset["sha256"], self.prepared, self.receipts)
+        lock = {"schemaVersion": 1, "assets": [compose_asset, provenance_asset, runtime_asset,
+                                                runtime_provenance_asset, guest_asset, builder_asset]}
+        without_q_provenance = {"schemaVersion": 1,
+                                "assets": [compose_asset, provenance_asset, runtime_asset,
+                                           guest_asset, builder_asset]}
+        with self.assertRaisesRegex(ValueError, "requires locked Q runtime, provenance"):
+            preparation.select_compose_runtime_assets(without_q_provenance)
+        admitted = preparation.admit_locked_compose_runtime(
+            lock, objects, self.prepared, self.receipts)
+        self.assertEqual(admitted["format"], "signed-compose-q-runtime")
+        self.assertEqual(admitted["containerRuntime"]["commit"], "b" * 40)
+        self.assertEqual(admitted["containerCompose"]["commit"], "a" * 40)
+        self.assertNotEqual(admitted["containerRuntime"]["commit"],
+                            admitted["containerCompose"]["commit"])
+        self.assertEqual(Path(admitted["executables"]["container"]).read_bytes(), b"container")
+        self.assertEqual(Path(admitted["executables"]["compose"]).read_bytes(), b"signed compose executable")
+        self.assertEqual(Path(admitted["guestArchive"]).read_bytes(), guest_source.read_bytes())
+        self.assertEqual(Path(admitted["builderArchive"]).read_bytes(), builder_source.read_bytes())
+
+        selection = preparation.select_compose_runtime_assets(lock)
+        compose_provenance = json.loads(provenance_path.read_text())
+        runtime_provenance = json.loads(runtime_provenance_path.read_text())
+        compose_provenance["compiledSdkChain"]["source"] = runtime_asset["commit"]
+        with self.assertRaisesRegex(ValueError, "not associated with the selected Q runtime"):
+            preparation.validate_compose_runtime_association(
+                selection, compose_provenance, runtime_provenance,
+                Path(admitted["executables"]["container"]).parents[1])
+
+        guest_images = {"schemaVersion": 1, "images": [{
+            "name": "enhanced-vminit", "repository": "ghcr.io/stephenlclarke/containerization/vminit",
+            "reference": "ghcr.io/stephenlclarke/containerization/vminit:" + guest_asset["commit"],
+            "manifest": "sha256:29dd09551b3eb18a16df7a32c4e35b559551be6cb8328762bbf7f96f1122bc12",
+            "config": "sha256:2d715cb803032c9031733dc1654bf5c8593e0c6107f41d39babe633ae05a7c95",
+            "archiveSHA256": guest_asset["sha256"],
+        }]}
+        builder_images = {"schemaVersion": 1, "images": [{
+            "name": "enhanced-builder", "repository": "ghcr.io/stephenlclarke/container-builder-shim/builder",
+            "reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-"
+                        + builder_asset["commit"],
+            "manifest": "sha256:34cddb8928699ea8269887c925c7d5b9fe785c250656a50cbc15fb8c689a1417",
+            "config": "sha256:01cc0b8de2d7c72a2babeeb2bb66fc937e39bcd78cfa828f82e01caf21c7b1f9",
+            "archiveSHA256": builder_asset["sha256"],
+        }]}
+        image_retained = self.root / "guest-images"
+        image_retained.mkdir(mode=0o700)
+        with patch("prepare_guest_images.prepare", side_effect=lambda image, scratch, retained,
+                   **kwargs: {"image": image, "path": str(kwargs["source_archive"]),
+                              "sha256": image["archiveSHA256"]}) as importer:
+            imported = preparation.prepare_q_guest_builder_images(
+                admitted, guest_images, builder_images, self.root, image_retained)
+        self.assertEqual(set(imported), {"guest", "builder"})
+        self.assertEqual(importer.call_count, 2)
+        self.assertEqual(imported["guest"]["sha256"], guest_asset["sha256"])
+        self.assertEqual(imported["builder"]["sha256"], builder_asset["sha256"])
+        self.assertTrue(all(call.kwargs.get("source_archive") for call in importer.call_args_list))
+        self.assertTrue(all(call.kwargs.get("offline") is None for call in importer.call_args_list))
+        wrong_builder_lock = json.loads(json.dumps(builder_images))
+        wrong_builder_lock["images"][0]["archiveSHA256"] = "f" * 64
+        with patch("prepare_guest_images.prepare", side_effect=AssertionError("must reject before import")):
+            with self.assertRaisesRegex(ValueError, "builder image lock differs"):
+                preparation.prepare_q_guest_builder_images(
+                    admitted, guest_images, wrong_builder_lock, self.root, image_retained)
+
+    def test_prepare_releases_dispatches_complete_q_pair_and_rejects_lock_drift_before_import(self):
+        source = "6db16197bbad8196a78132f86529daa89125aafb"
+        builder_source = "016040197215684db474181b444767eb58797cfa"
+        guest = {"name": "enhanced-vminit", "repository": "ghcr.io/stephenlclarke/containerization/vminit",
+                 "reference": "ghcr.io/stephenlclarke/containerization/vminit:" + source,
+                 "manifest": "sha256:" + "1" * 64, "config": "sha256:" + "2" * 64,
+                 "archiveSHA256": "a" * 64}
+        builder = {"name": "enhanced-builder",
+                   "repository": "ghcr.io/stephenlclarke/container-builder-shim/builder",
+                   "reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-"
+                               + builder_source,
+                   "manifest": "sha256:" + "3" * 64, "config": "sha256:" + "4" * 64,
+                   "archiveSHA256": "b" * 64}
+        identity = {"format": "signed-compose-q-runtime", "qOciInputs": {
+            "guest": {"reference": guest["reference"], "archiveSHA256": guest["archiveSHA256"],
+                      "source": source, "path": "/retained/guest.oci.tar"},
+            "builder": {"reference": builder["reference"], "archiveSHA256": builder["archiveSHA256"],
+                        "source": builder_source, "path": "/retained/builder.oci.tar"},
+        }}
+        release = self.locked_asset({"repository": "stephenlclarke/container-compose", "tag": "compose-release",
+                                     "name": "container-compose-signed-arm64.zip", "commit": "a" * 40,
+                                     "size": 1, "sha256": "c" * 64, "publisher": "github-actions[bot]",
+                                     "prerelease": False, "architecture": "arm64"},
+                                    release_id=1, asset_id=1, tag_object="d" * 40)
+        lock = {"schemaVersion": 1, "assets": [release]}
+        bazel = self.root / "bazel-fixture"
+        bazel.mkdir(mode=0o700)
+        (bazel / "guest-images.lock.json").write_text(json.dumps({"schemaVersion": 1, "images": [guest]}))
+        (bazel / "builder-images.lock.json").write_text(json.dumps({"schemaVersion": 1, "images": [builder]}))
+        retained, scratch = self.root / "retained", self.root / "ssd"
+        retained.mkdir(mode=0o700)
+        scratch.mkdir(mode=0o700)
+        with (patch.object(preparation, "__file__", str(bazel / "prepare_releases.py")),
+              patch.object(preparation, "select_compose_runtime_assets",
+                           return_value={"format": "signed-compose-q-runtime"}),
+              patch.object(preparation, "admit_locked_compose_runtime", return_value=identity),
+              patch("prepare_guest_images.prepare",
+                    side_effect=lambda image, _scratch, _retained, **kwargs:
+                    {"image": image, "path": str(kwargs["source_archive"]),
+                     "sha256": image["archiveSHA256"]}) as importer):
+            result = preparation.prepare_locked_q_guest_builder_images(
+                lock, retained, scratch, self.prepared, self.receipts)
+        self.assertEqual(set(result), {"guest", "builder"})
+        self.assertEqual(importer.call_count, 2)
+        self.assertTrue(all("source_archive" in call.kwargs and "offline" not in call.kwargs
+                            for call in importer.call_args_list))
+        with (patch.object(preparation, "__file__", str(bazel / "prepare_releases.py")),
+              patch.object(preparation, "select_compose_runtime_assets",
+                           return_value={"format": "signed-compose-q-runtime"}),
+              patch.object(preparation, "admit_locked_compose_runtime", return_value=identity),
+              patch("prepare_guest_images.prepare", side_effect=AssertionError("import started"))):
+            changed = dict(builder, archiveSHA256="f" * 64)
+            (bazel / "builder-images.lock.json").write_text(
+                json.dumps({"schemaVersion": 1, "images": [changed]}))
+            with self.assertRaisesRegex(ValueError, "builder image lock differs"):
+                preparation.prepare_locked_q_guest_builder_images(
+                    lock, retained, scratch, self.prepared, self.receipts)
+        unrelated = {"schemaVersion": 1, "assets": [self.locked_asset({
+            "repository": "apple/container", "tag": "1.4.1", "name": "container.pkg",
+            "commit": "a" * 40, "size": 1, "sha256": "d" * 64,
+            "publisher": "github-actions[bot]", "prerelease": False, "architecture": "arm64"},
+            release_id=2, asset_id=2, tag_object="e" * 40)]}
+        with patch.object(preparation, "admit_locked_compose_runtime",
+                          side_effect=AssertionError("unrelated asset set must not admit Q")):
+            self.assertEqual(preparation.prepare_locked_q_guest_builder_images(
+                unrelated, retained, scratch, self.prepared, self.receipts), {})
+
+    def test_signed_compose_zip_rejects_traversal_before_writing_outside_root(self):
+        malicious = self.root / "malicious.zip"
+        outside = self.root / "outside"
+        with zipfile.ZipFile(malicious, "w") as archive:
+            archive.writestr("../outside", b"no")
+        destination = self.root / "extracted"
+        destination.mkdir()
+        with self.assertRaisesRegex(ValueError, "Unsafe release archive member"):
+            preparation.unpack_zip(malicious, destination)
+        self.assertFalse(outside.exists())
 
     def test_tar_reuses_authenticated_preparation_without_extraction(self):
         self.archive()

@@ -136,6 +136,112 @@ def load_finalized_package_helper(repository: Path):
     return module
 
 
+def load_release_preparation(repository: Path):
+    """Load the exact checkout's release-input adapter, rejecting cached foreign imports."""
+    tools = repository / "Tools/bazel"
+    path = tools / "prepare_releases.py"
+    release_inputs_path = tools / "release_inputs.py"
+    cached = sys.modules.get("release_inputs")
+    if cached is not None and Path(cached.__file__).resolve() != release_inputs_path.resolve(strict=True):
+        raise ValueError("release input verifier was already loaded from another checkout")
+    sys.path.insert(0, str(tools))
+    try:
+        spec = importlib.util.spec_from_file_location("native_qualification_prepare_releases", path)
+        if spec is None or spec.loader is None:
+            raise ValueError("maintained release-input adapter is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(tools))
+    if Path(module.__file__).resolve() != path.resolve(strict=True):
+        raise ValueError("release-input adapter resolved outside the selected repository")
+    return module
+
+
+def validate_native_provider_manifest_identity(manifest: dict, identity: dict) -> None:
+    """Require the manifest to distinguish the Compose frontend from its Q runtime."""
+    pins = manifest.get("referencePins", {})
+    runtime_pin = pins.get("containerRuntime")
+    compose_pin = pins.get("containerCompose", {})
+    runtime = identity.get("containerRuntime", {})
+    compose = identity.get("containerCompose", {})
+    if (not isinstance(runtime_pin, dict)
+            or set(runtime_pin) != {"repository", "stableCommit"}
+            or runtime_pin.get("repository") != runtime.get("repository")
+            or runtime_pin.get("stableCommit") != runtime.get("commit")
+            or set(compose_pin) != {"source", "stableVersion", "stableCommit"}
+            or compose_pin.get("source") != compose.get("repository")
+            or compose_pin.get("stableVersion") != compose.get("version")
+            or compose_pin.get("stableCommit") != compose.get("commit")):
+        raise ValueError("manifest does not pin the distinct Compose and Container runtime sources")
+    for row in (runtime_pin, compose_pin):
+        if re.fullmatch(r"[0-9a-f]{40}", row.get("stableCommit", "")) is None:
+            raise ValueError("native provider source pin must be a full lowercase Git commit")
+
+
+def output_contains_commit(output: str, commit: str) -> bool:
+    """Require provider version JSON to carry the exact full source commit."""
+    try:
+        value = json.loads(output)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    leaves = []
+
+    def collect(item):
+        if isinstance(item, dict):
+            for child in item.values():
+                collect(child)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+        elif isinstance(item, (str, int, float)):
+            leaves.append(str(item))
+
+    collect(value)
+    return commit in leaves
+
+
+def admit_locked_native_compose_inputs(args: argparse.Namespace, manifest: dict,
+                                       retained: Path) -> dict | None:
+    """Read-only bind new Compose/Q runtime inputs to the checked-in lock and prepared trees."""
+    release = load_release_preparation(args.repository)
+    lock_path = args.repository / "Tools/bazel/releases.lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    selection = release.select_compose_runtime_assets(lock)
+    if selection["format"] == "legacy-compose-bundle":
+        return None
+    identity = release.admit_locked_compose_runtime(
+        lock, retained / "release-objects", retained / "prepared-releases",
+        retained / "prepared-receipts")
+    expected_paths = {
+        "composeContainer": Path(identity["executables"]["container"]),
+        "composeProvider": Path(identity["executables"]["compose"]),
+        "composeAPIServer": Path(identity["executables"]["container-apiserver"]),
+    }
+    for key, expected_path in expected_paths.items():
+        actual_path = getattr(args, {
+            "composeContainer": "compose_container_bin",
+            "composeProvider": "compose_provider_bin",
+            "composeAPIServer": "compose_container_bin",
+        }[key])
+        if key == "composeAPIServer":
+            actual_path = actual_path.parent / "container-apiserver"
+        if actual_path != expected_path:
+            raise ValueError(f"{key} path differs from the exact lock-selected prepared release")
+    runtime = identity["containerRuntime"]
+    compose = identity["containerCompose"]
+    if (sha256(expected_paths["composeContainer"]) != runtime["containerSHA256"]
+            or sha256(expected_paths["composeAPIServer"]) != runtime["apiServerSHA256"]
+            or sha256(expected_paths["composeProvider"]) != identity["composeProviderSHA256"]
+            or runtime["commit"] != manifest.get("referencePins", {}).get(
+                "containerRuntime", {}).get("stableCommit")
+            or compose["commit"] != manifest.get("referencePins", {}).get(
+                "containerCompose", {}).get("stableCommit")):
+        raise ValueError("locked Compose/runtime identities differ from selected bytes or manifest pins")
+    validate_native_provider_manifest_identity(manifest, identity)
+    return identity
+
+
 def run(command: list[str], *, env: dict[str, str], cwd: Path = REPOSITORY,
         timeout: int = 60, capture: bool = False,
         check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -385,7 +491,8 @@ def host_can_clear_guard(cleanup: dict, initial_colima: str, final_colima: str,
                     for lane in LANES))
 
 
-def validate_provider_fingerprint(path: Path, lane: str, expected: dict[str, str], manifest: dict) -> None:
+def validate_provider_fingerprint(path: Path, lane: str, expected: dict[str, str], manifest: dict,
+                                  release_identity: dict | None = None) -> None:
     """Bind each maintained CLI/V01 observation to the selected provider bytes."""
     fingerprint = json.loads(path.read_text())
     actual = fingerprint.get("providerBinarySHA256", {})
@@ -407,8 +514,14 @@ def validate_provider_fingerprint(path: Path, lane: str, expected: dict[str, str
     elif lane == "container-compose":
         output = commands.get("container", {}).get("stdout", "")
         compose_output = commands.get("containerCompose", {}).get("stdout", "")
-        if (not output_contains_pin(output, manifest["referencePins"]["appleContainer"])
-                or not output_contains_pin(compose_output, manifest["referencePins"]["containerCompose"])):
+        runtime_ok = (output_contains_commit(output, release_identity["containerRuntime"]["commit"])
+                      if release_identity and release_identity.get("format") == "signed-compose-q-runtime"
+                      else output_contains_pin(output, manifest["referencePins"]["appleContainer"]))
+        compose_pin = (manifest["referencePins"]["containerCompose"] if not release_identity
+                       or release_identity.get("format") != "signed-compose-q-runtime" else {
+                           "stableVersion": release_identity["containerCompose"]["version"],
+                           "stableCommit": release_identity["containerCompose"]["commit"]})
+        if not runtime_ok or not output_contains_pin(compose_output, compose_pin):
             raise RuntimeError("container-compose runtime fingerprint differs from its checked-in version and commit")
 
 
@@ -496,7 +609,8 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
                     item[kind] = ref
                 result_value = json.loads((staging / item["results"]["path"]).read_text())
                 fingerprint = staging / item["fingerprint"]["path"]
-                validate_provider_fingerprint(fingerprint, lane, args._provider_hashes, args._manifest)
+                validate_provider_fingerprint(fingerprint, lane, args._provider_hashes, args._manifest,
+                                              getattr(args, "_provider_release_identity", None))
                 item["status"] = result_value.get("status")
                 if item["status"] != "passed":
                     raise ValueError(f"Cannot seal failed {lane} {suite} results")
@@ -557,12 +671,27 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
             **host_ref,
         }
 
-        for tool in ("appleStock", "containerCompose"):
+        for tool in ("appleStock",):
             relative = f"inputs/providers/{tool}.json"
             source = evidence / "providers" / f"{tool}.json"
             ref = descriptor(staging, source, relative)
             references[relative] = ref
             provider_tools[tool]["apiServerEvidence"] = ref
+        if (getattr(args, "_provider_release_identity", None)
+                and args._provider_release_identity.get("format") == "signed-compose-q-runtime"):
+            runtime_ref = descriptor(staging, evidence / "providers" / "containerRuntime.json",
+                                     "inputs/providers/container-runtime.json")
+            references[runtime_ref["path"]] = runtime_ref
+            provider_tools["containerRuntime"]["apiServerEvidence"] = runtime_ref
+            compose_ref = descriptor(staging, evidence / "providers" / "containerCompose.json",
+                                     "inputs/providers/container-compose.json")
+            references[compose_ref["path"]] = compose_ref
+            provider_tools["containerCompose"]["identityEvidence"] = compose_ref
+        else:
+            relative = "inputs/providers/containerCompose.json"
+            ref = descriptor(staging, evidence / "providers" / "containerCompose.json", relative)
+            references[relative] = ref
+            provider_tools["containerCompose"]["apiServerEvidence"] = ref
         relative = "inputs/providers/docker.json"
         ref = descriptor(staging, evidence / "providers/docker.json", relative)
         references[relative] = ref
@@ -695,21 +824,67 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
     apple = {"version": apple_pins["stableVersion"], "commit": apple_pins["stableCommit"],
              "containerSHA256": args._provider_hashes["stockContainer"],
              "apiServerSHA256": args._provider_hashes["stockAPIServer"]}
-    compose = {"version": compose_pins["stableVersion"], "commit": compose_pins["stableCommit"],
-               "containerSHA256": args._provider_hashes["composeContainer"],
-               "composeSHA256": args._provider_hashes["composeProvider"],
-               "apiServerSHA256": args._provider_hashes["composeAPIServer"]}
+    release_identity = getattr(args, "_provider_release_identity", None)
+    if release_identity and release_identity.get("format") == "signed-compose-q-runtime":
+        runtime_identity = release_identity["containerRuntime"]
+        compose_identity = release_identity["containerCompose"]
+        runtime = {
+            "repository": runtime_identity["repository"], "commit": runtime_identity["commit"],
+            "releaseTag": runtime_identity["releaseTag"],
+            "archiveSHA256": runtime_identity["archiveSHA256"],
+            "containerSHA256": runtime_identity["containerSHA256"],
+            "apiServerSHA256": runtime_identity["apiServerSHA256"],
+            "preparationSHA256": runtime_identity["preparationSHA256"],
+            "inventorySHA256": runtime_identity["inventorySHA256"],
+            "provenanceSHA256": release_identity["containerRuntimeProvenanceSHA256"],
+            "provenancePreparationSHA256":
+                release_identity["containerRuntimeProvenancePreparationSHA256"],
+            "runtimePayloadSHA256": release_identity["qRuntimeProvenance"]["runtimePayloadSHA256"],
+            "nativeCompiledChainSHA256":
+                release_identity["qRuntimeProvenance"]["nativeCompiledChainSHA256"],
+        }
+        compose = {
+            "repository": compose_identity["repository"], "version": compose_identity["version"],
+            "commit": compose_identity["commit"], "archiveSHA256": compose_identity["archiveSHA256"],
+            "provenanceSHA256": release_identity["composeProvenanceSHA256"],
+            "composeSHA256": release_identity["composeProviderSHA256"],
+            "preparationSHA256": compose_identity["preparationSHA256"],
+            "inventorySHA256": compose_identity["inventorySHA256"],
+            "signedAndNotarized": release_identity["signedAndNotarized"],
+            "distributionReady": release_identity["distributionReady"],
+        }
+        write_json(evidence / "providers" / "containerRuntime.json", {
+            "schemaVersion": 1, "lane": "container-compose",
+            "providerRepository": runtime["repository"], "providerCommit": runtime["commit"],
+            "releaseTag": runtime["releaseTag"], "archiveSHA256": runtime["archiveSHA256"],
+            "containerSHA256": runtime["containerSHA256"],
+            "apiServerSHA256": runtime["apiServerSHA256"],
+            "preparedProvider": args._provider_helper_evidence["container-compose"]})
+        write_json(evidence / "providers" / "containerCompose.json", {
+            "schemaVersion": 1, "source": compose["repository"], "version": compose["version"],
+            "commit": compose["commit"], "archiveSHA256": compose["archiveSHA256"],
+            "provenanceSHA256": compose["provenanceSHA256"],
+            "composeSHA256": compose["composeSHA256"],
+            "signedAndNotarized": compose["signedAndNotarized"],
+            "distributionReady": compose["distributionReady"]})
+    else:
+        runtime = None
+        compose = {"version": compose_pins["stableVersion"], "commit": compose_pins["stableCommit"],
+                   "containerSHA256": args._provider_hashes["composeContainer"],
+                   "composeSHA256": args._provider_hashes["composeProvider"],
+                   "apiServerSHA256": args._provider_hashes["composeAPIServer"]}
     write_json(evidence / "providers" / "appleStock.json", {
         "schemaVersion": 1, "lane": "apple-stock", "providerVersion": apple["version"],
         "providerCommit": apple["commit"], "containerSHA256": apple["containerSHA256"],
         "apiServerSHA256": apple["apiServerSHA256"],
         "preparedProvider": args._provider_helper_evidence["apple-stock"]})
-    write_json(evidence / "providers" / "containerCompose.json", {
-        "schemaVersion": 1, "lane": "container-compose", "providerVersion": compose["version"],
-        "providerCommit": compose["commit"], "containerSHA256": compose["containerSHA256"],
-        "composeVersion": compose["version"], "composeSHA256": compose["composeSHA256"],
-        "apiServerSHA256": compose["apiServerSHA256"],
-        "preparedProvider": args._provider_helper_evidence["container-compose"]})
+    if runtime is None:
+        write_json(evidence / "providers" / "containerCompose.json", {
+            "schemaVersion": 1, "lane": "container-compose", "providerVersion": compose["version"],
+            "providerCommit": compose["commit"], "containerSHA256": compose["containerSHA256"],
+            "composeVersion": compose["version"], "composeSHA256": compose["composeSHA256"],
+            "apiServerSHA256": compose["apiServerSHA256"],
+            "preparedProvider": args._provider_helper_evidence["container-compose"]})
     write_json(evidence / "providers" / "docker.json", {
         "schemaVersion": 1, "source": "docker-oracle", "clientVersion": docker_observed["clientVersion"],
         "dockerCLISHA256": args._provider_hashes["docker"],
@@ -720,10 +895,13 @@ def make_provider_tools(args: argparse.Namespace, evidence: Path) -> dict:
         "buildxVersion": docker_observed["buildxVersion"],
         "buildxSHA256": docker_observed["buildxSHA256"],
         "bottleSHA256": docker_pins["composeBottleSHA256"]})
-    return {"docker": docker_row, "dockerCompose": compose_row,
+    result = {"docker": docker_row, "dockerCompose": compose_row,
             "appleStock": apple, "containerCompose": compose,
             "colima": {"version": colima_version, "sha256": args._provider_hashes["colima"]},
             "vscode": vscode_row}
+    if runtime is not None:
+        result["containerRuntime"] = runtime
+    return result
 
 
 def seal_after_host_cleanup(args: argparse.Namespace, evidence: Path, cleanup: dict,
@@ -972,6 +1150,8 @@ def validate_inputs(args: argparse.Namespace, *,
             or args.qualification_directory.stat().st_mode & 0o777 != 0o700):
         raise ValueError("qualification retained root must be user-owned internal storage with mode 0700")
     args._guest_retained_root = validate_guest_asset_retained_root(DEFAULT_WORKFLOW_RETAINED)
+    args._provider_release_identity = admit_locked_native_compose_inputs(
+        args, manifest, args._guest_retained_root)
     if not args.evidence.is_relative_to(args.ssd_root):
         raise ValueError("raw runtime evidence must remain beneath SSD scratch")
     if len(args.source_commit) != 40 or any(c not in "0123456789abcdef" for c in args.source_commit):
@@ -1917,7 +2097,8 @@ def main() -> int:
                 lane_root = args.evidence / lane
                 validate_provider_result(lane_root / "results.json", lane, final_binaries)
                 validate_provider_fingerprint(lane_root / "fingerprint.json", lane,
-                                              final_binaries, args._manifest)
+                                              final_binaries, args._manifest,
+                                              args._provider_release_identity)
                 component_provider_inputs["laneEvidenceSHA256"][lane] = {
                     "results": sha256(lane_root / "results.json"),
                     "fingerprint": sha256(lane_root / "fingerprint.json"),

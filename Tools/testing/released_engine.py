@@ -64,13 +64,36 @@ def provider_runtime_selection(lock: dict, lane: str) -> dict:
     """Select only the provider package when the devcontainer comes from finalization."""
     if lane not in {"apple-stock", "container-compose"}:
         raise ValueError("Unsupported native runtime provider lane")
-    runtime = (("apple/container", "container-1.4.1-installer-signed.pkg") if lane == "apple-stock"
-               else ("stephenlclarke/container-compose", "container-release-arm64.tar.gz"))
+    if lane == "container-compose":
+        from prepare_releases import select_compose_runtime_assets
+
+        selection = select_compose_runtime_assets(lock)
+        return selection["containerRuntime"]
     matches = [asset for asset in validate_lock(lock)
-               if (asset["repository"], asset["name"]) == runtime]
+               if (asset["repository"], asset["name"]) ==
+               ("apple/container", "container-1.4.1-installer-signed.pkg")]
     if len(matches) != 1:
         raise ValueError("Required released provider runtime is missing or ambiguous")
     return matches[0]
+
+
+def provider_image_references(lock: dict, lane: str, retained: Path) -> dict | None:
+    """Return guest identities only after authenticating the complete Q release pair."""
+    if lane != "container-compose":
+        return None
+    import prepare_releases
+
+    selection = prepare_releases.select_compose_runtime_assets(lock)
+    if selection["format"] != "signed-compose-q-runtime":
+        return None
+    admitted = prepare_releases.admit_locked_compose_runtime(
+        lock, retained / "release-objects", retained / "prepared-releases",
+        retained / "prepared-receipts")
+    q_inputs = admitted.get("qOciInputs")
+    if not isinstance(q_inputs, dict) or set(q_inputs) != {"guest", "builder"}:
+        raise ValueError("Authenticated Q runtime has no exact guest/builder image pair")
+    return {role: {key: q_inputs[role][key] for key in ("reference", "archiveSHA256", "source")}
+            for role in ("guest", "builder")}
 
 
 def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
@@ -446,13 +469,15 @@ def main():
             return admit_candidate(RETAINED, args.compose_candidate_invocation,
                                    "stock" if args.lane == "apple-stock" else "enhanced", "container-compose")
         compose = selected_compose()
+        provider_images = provider_image_references(lock, args.lane, RETAINED)
         def selected_frontend():
             if args.candidate_invocation or finalized_inputs is not None or args.fixture not in DEVCONTAINER_FIXTURES:
                 return None
             return legacy_frontend(lock, args.lane, releases[0], repository, SSD, RETAINED)
 
         guest_inputs = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock,
-                                   fixture=args.fixture) if guest_locks is not None else None
+                                   fixture=args.fixture, provider_image_references=provider_images) \
+            if guest_locks is not None else None
         if guest_inputs is not None:
             guest_inputs = fixture_guest_inputs(guest_inputs, args.fixture, releases[0], repository, compose,
                                                selected_frontend())
@@ -480,7 +505,12 @@ def main():
             if require_owned_volume(SSD_VOLUME) != volume:
                 raise ValueError("SSD ownership or volume identity changed during execution")
             if guest_locks is not None:
-                current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock, fixture=args.fixture)
+                current_provider_images = provider_image_references(lock, args.lane, RETAINED)
+                if current_provider_images != provider_images:
+                    raise ValueError("Q provider guest/build identity changed during execution")
+                current = admit_guest(*guest_locks, args.lane, RETAINED, builder_lock=builder_lock,
+                                      fixture=args.fixture,
+                                      provider_image_references=provider_images)
                 if fixture_guest_inputs(current, args.fixture, releases[0], repository, selected_compose(),
                                         selected_frontend()) != guest_inputs:
                     raise ValueError("Released guest inputs changed during execution")

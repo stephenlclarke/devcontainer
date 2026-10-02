@@ -270,14 +270,23 @@ def validate_archive(archive_path: Path, required_references: set[str]) -> None:
                 raise ValidationError(
                     f"index.json.manifests[{position}] annotations must be an object"
                 )
-            reference = annotations.get("org.opencontainers.image.ref.name")
             digest = manifest.get("digest")
-            if isinstance(reference, str) and contains_image:
-                if reference in available and available[reference] != digest:
-                    raise ValidationError(
-                        f"required reference is ambiguous: {reference}"
-                    )
-                available[reference] = digest
+            references = []
+            for key in ("org.opencontainers.image.ref.name", "io.containerd.image.name"):
+                reference = annotations.get(key)
+                if reference is not None:
+                    if not isinstance(reference, str) or not reference:
+                        raise ValidationError(
+                            f"index.json.manifests[{position}] annotation {key} must be a nonempty string"
+                        )
+                    references.append(reference)
+            for reference in references:
+                if contains_image:
+                    if reference in available and available[reference] != digest:
+                        raise ValidationError(
+                            f"required reference is ambiguous: {reference}"
+                        )
+                    available[reference] = digest
 
         missing = sorted(required_references - available.keys())
         if missing:

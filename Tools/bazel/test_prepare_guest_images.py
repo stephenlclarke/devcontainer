@@ -93,6 +93,49 @@ class GuestImageTests(unittest.TestCase):
         self.assertEqual(self.prepare(offline=True), result)
         self.assertFalse(list(self.root.glob("guest-image-*")))
 
+    def test_containerd_full_image_name_is_an_authenticated_root_alias(self):
+        root = json.loads(self.files["index.json"])["manifests"][0]
+        root["annotations"] = {"io.containerd.image.name": self.image["reference"]}
+        self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [root]}).encode()
+        archive = self.archive(self.root)
+        self.assertEqual(verify_archive(archive, self.image)["image"]["config"], self.image["config"])
+
+    def test_org_opencontainers_ref_name_alias_remains_supported(self):
+        from oci_image_layout import validate_archive
+
+        archive = self.archive(self.root)
+        validate_archive(archive, {self.image["reference"]})
+
+    def test_malformed_containerd_alias_is_rejected(self):
+        from oci_image_layout import validate_archive
+
+        for malformed in ("", 17, []):
+            with self.subTest(alias=malformed):
+                root = json.loads(self.files["index.json"])["manifests"][0]
+                root["annotations"]["io.containerd.image.name"] = malformed
+                self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [root]}).encode()
+                archive = self.archive(self.root)
+                with self.assertRaisesRegex(ValueError, "annotation io.containerd.image.name"):
+                    validate_archive(archive, {self.image["reference"]})
+
+    def test_containerd_image_alias_cannot_resolve_to_two_manifest_roots(self):
+        from oci_image_layout import validate_archive
+
+        first = json.loads(self.files["index.json"])["manifests"][0]
+        first["annotations"] = {"io.containerd.image.name": self.image["reference"]}
+        manifest_path = "blobs/sha256/" + first["digest"].split(":", 1)[1]
+        changed_manifest = json.loads(self.files[manifest_path])
+        changed_manifest["annotations"] = {"fixture": "different-root"}
+        changed_payload = canonical(changed_manifest).encode()
+        changed_digest = "sha256:" + hashlib.sha256(changed_payload).hexdigest()
+        second = {key: value for key, value in first.items() if key != "digest"}
+        second.update(digest=changed_digest, size=len(changed_payload))
+        self.files["blobs/sha256/" + changed_digest.split(":", 1)[1]] = changed_payload
+        self.files["index.json"] = canonical({"schemaVersion": 2, "manifests": [first, second]}).encode()
+        archive = self.archive(self.root)
+        with self.assertRaisesRegex(ValueError, "reference is ambiguous"):
+            validate_archive(archive, {self.image["reference"]})
+
     def test_source_import_rejects_missing_pin_mismatch_symlink_and_writable_file(self):
         source = self.archive(self.root)
         source.chmod(0o600)

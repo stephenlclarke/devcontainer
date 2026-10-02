@@ -234,6 +234,35 @@ def inventory_files(root: Path, receipt: dict[str, Any]) -> dict[str, bytes]:
     return resolved
 
 
+def provider_tool_fields(split_provider_schema: bool) -> dict[str, set[str]]:
+    """Return one exact closed receipt shape selected by the checked-in source lock."""
+    fields = {
+        "docker": {"version", "sha256", "buildxVersion", "buildxSHA256",
+                   "engineVersion", "engineCommit", "engineApiVersion",
+                   "engineSHA256", "engineEvidence"},
+        "dockerCompose": {"version", "sha256", "bottleSHA256"},
+        "appleStock": {"version", "commit", "containerSHA256", "apiServerSHA256",
+                       "apiServerEvidence"},
+        "colima": {"version", "sha256"},
+        "vscode": {"version", "commit", "archiveSHA256", "vsixSHA256", "launcherSHA256"},
+    }
+    if split_provider_schema:
+        fields["containerRuntime"] = {
+            "repository", "commit", "releaseTag", "archiveSHA256", "containerSHA256",
+            "apiServerSHA256", "preparationSHA256", "inventorySHA256", "provenanceSHA256",
+            "provenancePreparationSHA256", "runtimePayloadSHA256", "nativeCompiledChainSHA256",
+            "apiServerEvidence"}
+        fields["containerCompose"] = {
+            "repository", "version", "commit", "archiveSHA256", "provenanceSHA256",
+            "composeSHA256", "preparationSHA256", "inventorySHA256", "signedAndNotarized",
+            "distributionReady", "identityEvidence"}
+    else:
+        fields["containerCompose"] = {
+            "version", "commit", "containerSHA256", "composeSHA256", "apiServerSHA256",
+            "apiServerEvidence"}
+    return fields
+
+
 def validate_receipt(receipt: dict[str, Any], repository: Path,
                      expected_source_commit: str) -> tuple[set[str], set[str]]:
     """Check schema, source/harness identity, exact fixture universe, and restoration."""
@@ -293,26 +322,18 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
     pins = manifest.get("referencePins", {})
     require(receipt.get("enginePins") == pins.get("docker"),
             "qualification Docker engine pins differ from the checked-in manifest")
+    _, provider_selection = locked_provider_format(repository)
+    split_provider_schema = provider_selection["format"] == "signed-compose-q-runtime"
     providers = receipt.get("providerTools")
-    provider_fields = {
-        "docker": {"version", "sha256", "buildxVersion", "buildxSHA256",
-                   "engineVersion", "engineCommit", "engineApiVersion",
-                   "engineSHA256", "engineEvidence"},
-        "dockerCompose": {"version", "sha256", "bottleSHA256"},
-        "appleStock": {"version", "commit", "containerSHA256", "apiServerSHA256",
-                       "apiServerEvidence"},
-        "containerCompose": {"version", "commit", "containerSHA256", "composeSHA256",
-                             "apiServerSHA256", "apiServerEvidence"},
-        "colima": {"version", "sha256"},
-        "vscode": {"version", "commit", "archiveSHA256", "vsixSHA256", "launcherSHA256"},
-    }
+    provider_fields = provider_tool_fields(split_provider_schema)
     require(isinstance(providers, dict) and set(providers) == set(provider_fields),
             "qualification provider tool inventory is incomplete")
     for name, tool in providers.items():
         require(isinstance(tool, dict) and set(tool) == provider_fields[name],
                 f"qualification {name} tool fields do not match schema 1")
-        require(isinstance(tool.get("version"), str) and tool["version"],
-                f"qualification {name} version is missing")
+        if "version" in provider_fields[name]:
+            require(isinstance(tool.get("version"), str) and tool["version"],
+                    f"qualification {name} version is missing")
         for key, value in tool.items():
             if key.lower().endswith("sha256"):
                 require(isinstance(value, str) and SHA256.fullmatch(value) is not None,
@@ -320,7 +341,7 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
             elif key == "commit":
                 require(isinstance(value, str) and COMMIT.fullmatch(value) is not None,
                         f"qualification {name} commit is invalid")
-        for key in ("engineEvidence", "apiServerEvidence"):
+        for key in ("engineEvidence", "apiServerEvidence", "identityEvidence"):
             if key in tool:
                 validate_file_reference(tool[key], f"qualification {name} {key}")
     require(providers["docker"].get("version") == pins["docker"]["cliVersion"]
@@ -339,9 +360,28 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
     require(providers["appleStock"].get("version") == pins["appleContainer"]["stableVersion"]
             and providers["appleStock"].get("commit") == pins["appleContainer"]["stableCommit"],
             "qualification stock Apple provider differs from checked-in pins")
-    require(providers["containerCompose"].get("version") == pins["containerCompose"]["stableVersion"]
-            and providers["containerCompose"].get("commit") == pins["containerCompose"]["stableCommit"],
-            "qualification container-compose provider differs from checked-in pins")
+    if split_provider_schema:
+        runtime_pin = pins.get("containerRuntime")
+        compose_pin = pins["containerCompose"]
+        runtime = providers["containerRuntime"]
+        compose = providers["containerCompose"]
+        require(isinstance(runtime_pin, dict)
+                and set(runtime_pin) == {"repository", "stableCommit"}
+                and runtime.get("repository") == runtime_pin.get("repository")
+                and runtime.get("commit") == runtime_pin.get("stableCommit")
+                and isinstance(compose_pin, dict)
+                and set(compose_pin) == {"source", "stableVersion", "stableCommit"}
+                and compose.get("repository") == compose_pin.get("source")
+                and compose.get("version") == compose_pin.get("stableVersion")
+                and compose.get("commit") == compose_pin.get("stableCommit"),
+                "qualification Compose and Container runtime commits are not independently pinned")
+        require(compose.get("signedAndNotarized") is True
+                and type(compose.get("distributionReady")) is bool,
+                "qualification signed Compose evidence has invalid distribution status")
+    else:
+        require(providers["containerCompose"].get("version") == pins["containerCompose"]["stableVersion"]
+                and providers["containerCompose"].get("commit") == pins["containerCompose"]["stableCommit"],
+                "qualification container-compose provider differs from checked-in pins")
     vscode = pins["vscode"]
     require(providers["vscode"].get("version") == vscode["version"]
             and providers["vscode"].get("commit") == vscode["commit"]
@@ -518,6 +558,14 @@ def provider_helper_identity(repository: Path, lane: str) -> dict[str, Any]:
     lock = load_json(bazel / "releases.lock.json", "checked-in provider release lock")
     try:
         asset = released_engine.provider_runtime_selection(lock, lane)
+        if lane == "container-compose":
+            selected = prepare_releases.select_compose_runtime_assets(lock)
+            if selected["format"] == "signed-compose-q-runtime":
+                asset = selected["containerRuntime"]
+        if lane == "container-compose":
+            selection = prepare_releases.select_compose_runtime_assets(lock)
+            if selection["format"] == "signed-compose-q-runtime":
+                asset = selection["containerRuntime"]
         retained = ACCOUNT_HOME / "Library/Application Support/ContainerFamily/retained/workflow"
         prepared = prepare_releases.require_retained(
             asset, retained / "release-objects" / asset["sha256"],
@@ -561,6 +609,23 @@ def provider_helper_identity(repository: Path, lane: str) -> dict[str, Any]:
         raise QualificationError(f"{lane} locked provider helper inventory could not be admitted") from error
 
 
+def locked_provider_format(repository: Path) -> tuple[dict, dict]:
+    """Resolve the closed provider-input schema from the checked-in source lock."""
+    bazel = repository / "Tools/bazel"
+    sys.path.insert(0, str(bazel))
+    try:
+        import prepare_releases
+        require(Path(prepare_releases.__file__).resolve() ==
+                (bazel / "prepare_releases.py").resolve(strict=True),
+                "release input adapter resolved outside the checked-in source")
+        lock = load_json(bazel / "releases.lock.json", "checked-in provider release lock")
+        return lock, prepare_releases.select_compose_runtime_assets(lock)
+    except (ImportError, OSError, ValueError) as error:
+        raise QualificationError("could not select locked Compose/runtime input schema") from error
+    finally:
+        sys.path.remove(str(bazel))
+
+
 def authenticate_provider_evidence(receipt: dict[str, Any], inventory: dict[str, bytes],
                                    repository: Path) -> None:
     """Bind sanitized provider/API observations to manifest pins and exact frontends."""
@@ -586,8 +651,7 @@ def authenticate_provider_evidence(receipt: dict[str, Any], inventory: dict[str,
         "bottleSHA256": compose["bottleSHA256"],
     }, "Docker engine evidence differs from pinned provider metadata")
 
-    for lane, name in (("apple-stock", "appleStock"),
-                       ("container-compose", "containerCompose")):
+    for lane, name in (("apple-stock", "appleStock"),):
         provider = tools[name]
         evidence = parse_json_object(inventory[provider["apiServerEvidence"]["path"]],
                                      f"{lane} provider/API evidence")
@@ -600,11 +664,90 @@ def authenticate_provider_evidence(receipt: dict[str, Any], inventory: dict[str,
             "apiServerSHA256": provider["apiServerSHA256"],
             "preparedProvider": provider_helper_identity(repository, lane),
         }
-        if lane == "container-compose":
-            expected.update(composeVersion=provider["version"],
-                            composeSHA256=provider["composeSHA256"])
         require(evidence == expected,
                 f"{lane} provider/API evidence differs from its pins and binaries")
+
+    _, selection = locked_provider_format(repository)
+    if selection["format"] == "signed-compose-q-runtime":
+        runtime = tools["containerRuntime"]
+        compose = tools["containerCompose"]
+        runtime_evidence = parse_json_object(
+            inventory[runtime["apiServerEvidence"]["path"]], "Container runtime/API evidence")
+        expected_runtime_evidence = {
+            "schemaVersion": 1, "lane": "container-compose",
+            "providerRepository": runtime["repository"], "providerCommit": runtime["commit"],
+            "releaseTag": runtime["releaseTag"], "archiveSHA256": runtime["archiveSHA256"],
+            "containerSHA256": runtime["containerSHA256"],
+            "apiServerSHA256": runtime["apiServerSHA256"],
+            "preparedProvider": provider_helper_identity(repository, "container-compose"),
+        }
+        require(runtime_evidence == expected_runtime_evidence,
+                "Container runtime/API evidence differs from the independently locked runtime")
+        compose_evidence = parse_json_object(
+            inventory[compose["identityEvidence"]["path"]], "Compose frontend evidence")
+        expected_compose_evidence = {
+            "schemaVersion": 1, "source": compose["repository"], "version": compose["version"],
+            "commit": compose["commit"], "archiveSHA256": compose["archiveSHA256"],
+            "provenanceSHA256": compose["provenanceSHA256"],
+            "composeSHA256": compose["composeSHA256"],
+            "signedAndNotarized": compose["signedAndNotarized"],
+            "distributionReady": compose["distributionReady"],
+        }
+        require(compose_evidence == expected_compose_evidence,
+                "signed Compose evidence differs from its pinned frontend identity")
+        retained = ACCOUNT_HOME / "Library/Application Support/ContainerFamily/retained/workflow"
+        bazel = repository / "Tools/bazel"
+        sys.path.insert(0, str(bazel))
+        try:
+            import prepare_releases
+            lock = load_json(bazel / "releases.lock.json", "checked-in provider release lock")
+            admitted = prepare_releases.admit_locked_compose_runtime(
+                lock, retained / "release-objects", retained / "prepared-releases",
+                retained / "prepared-receipts")
+        except (ImportError, OSError, ValueError, KeyError, TypeError) as error:
+            raise QualificationError("could not re-admit locked Compose/runtime release inputs") from error
+        finally:
+            sys.path.remove(str(bazel))
+        require(admitted.get("format") == selection["format"]
+                and admitted["containerRuntime"]["repository"] == runtime["repository"]
+                and admitted["containerRuntime"]["commit"] == runtime["commit"]
+                and admitted["containerRuntime"]["archiveSHA256"] == runtime["archiveSHA256"]
+                and admitted["containerRuntime"]["containerSHA256"] == runtime["containerSHA256"]
+                and admitted["containerRuntime"]["apiServerSHA256"] == runtime["apiServerSHA256"]
+                and admitted["containerRuntime"]["preparationSHA256"] == runtime["preparationSHA256"]
+                and admitted["containerRuntime"]["inventorySHA256"] == runtime["inventorySHA256"]
+                and admitted["containerRuntimeProvenanceSHA256"] == runtime["provenanceSHA256"]
+                and admitted["containerRuntimeProvenancePreparationSHA256"]
+                == runtime["provenancePreparationSHA256"]
+                and admitted["qRuntimeProvenance"]["runtimePayloadSHA256"]
+                == runtime["runtimePayloadSHA256"]
+                and admitted["qRuntimeProvenance"]["nativeCompiledChainSHA256"]
+                == runtime["nativeCompiledChainSHA256"]
+                and admitted["containerCompose"]["repository"] == compose["repository"]
+                and admitted["containerCompose"]["commit"] == compose["commit"]
+                and admitted["containerCompose"]["version"] == compose["version"]
+                and admitted["containerCompose"]["archiveSHA256"] == compose["archiveSHA256"]
+                and admitted["containerCompose"]["preparationSHA256"] == compose["preparationSHA256"]
+                and admitted["containerCompose"]["inventorySHA256"] == compose["inventorySHA256"]
+                and admitted["composeProviderSHA256"] == compose["composeSHA256"]
+                and admitted["composeProvenanceSHA256"] == compose["provenanceSHA256"]
+                and admitted["signedAndNotarized"] is compose["signedAndNotarized"]
+                and admitted["distributionReady"] is compose["distributionReady"],
+                "qualification provider tools differ from the authenticated lock-selected payloads")
+    else:
+        provider = tools["containerCompose"]
+        evidence = parse_json_object(inventory[provider["apiServerEvidence"]["path"]],
+                                     "container-compose provider/API evidence")
+        expected = {
+            "schemaVersion": 1, "lane": "container-compose",
+            "providerVersion": provider["version"], "providerCommit": provider["commit"],
+            "containerSHA256": provider["containerSHA256"],
+            "apiServerSHA256": provider["apiServerSHA256"],
+            "preparedProvider": provider_helper_identity(repository, "container-compose"),
+            "composeVersion": provider["version"], "composeSHA256": provider["composeSHA256"],
+        }
+        require(evidence == expected,
+                "legacy container-compose provider/API evidence differs from its pins and binaries")
 
 
 def expected_provider_hashes(receipt: dict[str, Any], lane: str) -> dict[str, str]:
@@ -613,10 +756,12 @@ def expected_provider_hashes(receipt: dict[str, Any], lane: str) -> dict[str, st
     if lane == "docker":
         return {}
     provider = receipt["providerTools"]["appleStock" if lane == "apple-stock"
-                                        else "containerCompose"]
+                                        else ("containerRuntime" if "containerRuntime"
+                                              in receipt["providerTools"] else "containerCompose")]
     hashes = {"DEVCONTAINER_CONTAINER_BIN": provider["containerSHA256"]}
     if lane == "container-compose":
-        hashes["DEVCONTAINER_COMPOSE_BIN"] = provider["composeSHA256"]
+        compose = receipt["providerTools"]["containerCompose"]
+        hashes["DEVCONTAINER_COMPOSE_BIN"] = compose["composeSHA256"]
     return hashes
 
 

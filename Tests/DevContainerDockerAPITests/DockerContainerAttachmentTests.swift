@@ -171,23 +171,44 @@ struct DockerContainerAttachmentTests {
             session: probe, history: nil, options: options("stream=1&stdin=1&stdout=1"),
             spec: .init(name: "test", image: "test", openStandardInput: true, standardInputOnce: once)
         )
-        let received = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
         let consumer = Task {
-            for try await _ in attachment.frames {
-                received.continuation.yield(())
+            for try await frame in attachment.frames {
+                #expect(frame.data == Data("ready".utf8))
             }
         }
         await probe.emit(.standardOutput, "ready")
-        var iterator = received.stream.makeAsyncIterator()
-        await iterator.next()
-        // No more output follows. Cancelling a suspended AsyncThrowingStream
-        // iterator may finish normally rather than throw CancellationError.
+        await probe.waitForRead(2)
         consumer.cancel()
         _ = await consumer.result
         await expectCancellation(probe)
         #expect(await probe.inputCloses == (once ? 1 : 0))
-        received.continuation.finish()
         await attachment.cancel()
+    }
+
+    @Test(arguments: [false, true])
+    func `transport cancellation cleans up between output reads`(once: Bool) async throws {
+        let probe = AttachmentProbe()
+        let gate = AttachmentConsumerGate()
+        let attachment = try DockerContainerAttachment(
+            session: probe, history: nil, options: options("stream=1&stdin=1&stdout=1"),
+            spec: .init(name: "test", image: "test", openStandardInput: true, standardInputOnce: once)
+        )
+        let consumer = Task {
+            var iterator = attachment.frames.makeAsyncIterator()
+            let first = try await iterator.next()
+            #expect(first?.data == Data("ready".utf8))
+            await gate.pauseBetweenReads()
+            try Task.checkCancellation()
+        }
+        await probe.emit(.standardOutput, "ready")
+        await gate.waitUntilPaused()
+        consumer.cancel()
+        // The HTTP hijack owner calls session.cancel() when its channel closes.
+        await attachment.cancel()
+        await gate.open()
+        _ = await consumer.result
+        await expectCancellation(probe)
+        #expect(await probe.inputCloses == (once ? 1 : 0))
     }
 
     @Test func `output failure closes StdinOnce before revoking the subscription`() async throws {
@@ -289,23 +310,27 @@ private actor DemandHistorySource {
 
 private actor AttachmentProbe: RuntimeProcessSession {
     nonisolated let frames: AsyncThrowingStream<RuntimeIOFrame, any Error>
-    let continuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    private let source: AttachmentFrameSource
     var input = Data()
     var inputCloses = 0
     var cancellations = 0
 
     init() {
-        let pair = AsyncThrowingStream<RuntimeIOFrame, any Error>.makeStream()
-        frames = pair.stream
-        continuation = pair.continuation
+        let source = AttachmentFrameSource()
+        self.source = source
+        frames = AsyncThrowingStream(unfolding: { try await source.next() })
     }
 
-    func emit(_ channel: RuntimeIOChannel, _ value: String) {
-        continuation.yield(.init(channel: channel, data: Data(value.utf8)))
+    func emit(_ channel: RuntimeIOChannel, _ value: String) async {
+        source.emit(.init(channel: channel, data: Data(value.utf8)))
     }
 
-    func finish() {
-        continuation.finish()
+    func finish() async {
+        source.finish()
+    }
+
+    func waitForRead(_ count: Int) async {
+        await source.waitForRead(count)
     }
 
     func write(_ data: Data) {
@@ -325,8 +350,93 @@ private actor AttachmentProbe: RuntimeProcessSession {
         return 23
     }
 
-    func cancel() {
+    func cancel() async {
         cancellations += 1
-        continuation.finish(throwing: CancellationError())
+        source.finish(throwing: CancellationError())
+    }
+}
+
+private final class AttachmentFrameSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private let continuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
+    private var iterator: AsyncThrowingStream<RuntimeIOFrame, any Error>.Iterator
+    private var reads = 0
+    private var reading = false
+    private var readWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init() {
+        let pair = AsyncThrowingStream<RuntimeIOFrame, any Error>.makeStream()
+        continuation = pair.continuation
+        iterator = pair.stream.makeAsyncIterator()
+    }
+
+    func next() async throws -> RuntimeIOFrame? {
+        let (snapshot, ready) = lock.withLock { () -> (
+            AsyncThrowingStream<RuntimeIOFrame, any Error>.Iterator,
+            [CheckedContinuation<Void, Never>]
+        ) in
+            precondition(!reading, "Attachment source allows only one reader")
+            reading = true
+            reads += 1
+            let ready = readWaiters.filter { $0.0 <= reads }.map(\.1)
+            readWaiters.removeAll { $0.0 <= reads }
+            return (iterator, ready)
+        }
+        ready.forEach { $0.resume() }
+        var iterator = snapshot
+        defer {
+            lock.withLock {
+                self.iterator = iterator
+                reading = false
+            }
+        }
+        return try await iterator.next()
+    }
+
+    func emit(_ frame: RuntimeIOFrame) {
+        continuation.yield(frame)
+    }
+
+    func finish(throwing error: (any Error)? = nil) {
+        continuation.finish(throwing: error)
+    }
+
+    func waitForRead(_ count: Int) async {
+        let alreadyRead = lock.withLock { reads >= count }
+        guard !alreadyRead else { return }
+        await withCheckedContinuation { continuation in
+            let alreadyRead = lock.withLock { () -> Bool in
+                guard reads < count else { return true }
+                readWaiters.append((count, continuation))
+                return false
+            }
+            if alreadyRead {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+private actor AttachmentConsumerGate {
+    private var hasPaused = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var release: CheckedContinuation<Void, Never>?
+
+    func pauseBetweenReads() async {
+        hasPaused = true
+        let waiting = waiters
+        waiters.removeAll(keepingCapacity: false)
+        waiting.forEach { $0.resume() }
+        await withCheckedContinuation { release = $0 }
+    }
+
+    func waitUntilPaused() async {
+        guard !hasPaused else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        release?.resume()
+        release = nil
     }
 }

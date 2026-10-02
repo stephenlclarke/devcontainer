@@ -28,6 +28,7 @@ from verify_local_qualification import (
     authenticate_provider_evidence,
     inventory_files,
     expected_provider_hashes,
+    provider_tool_fields,
     public_comparison,
     compare_and_publish,
     validate_retained_location,
@@ -52,6 +53,20 @@ def completed(command: list[str], stdout: str) -> subprocess.CompletedProcess[st
 
 
 class VerifyLocalQualificationTests(unittest.TestCase):
+    def test_locked_provider_schema_separates_compose_frontend_and_q_runtime(self) -> None:
+        legacy = provider_tool_fields(False)
+        split = provider_tool_fields(True)
+        self.assertIn("containerCompose", legacy)
+        self.assertNotIn("containerRuntime", legacy)
+        self.assertIn("containerRuntime", split)
+        self.assertNotIn("containerSHA256", split["containerCompose"])
+        self.assertNotIn("apiServerSHA256", split["containerCompose"])
+        self.assertIn("containerSHA256", split["containerRuntime"])
+        self.assertNotIn("provenanceEvidence", split["containerRuntime"])
+        self.assertNotIn("provenanceEvidence", split["containerCompose"])
+        self.assertIn("identityEvidence", split["containerCompose"])
+        self.assertNotEqual(split["containerRuntime"], legacy["containerCompose"])
+
     def setUp(self) -> None:
         self.commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=REPOSITORY, check=True,
@@ -413,6 +428,110 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                    side_effect=lambda _repository, lane: helper_evidence[lane]):
             with self.assertRaisesRegex(QualificationError, "apple-stock provider/API"):
                 authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
+
+    def test_split_compose_and_runtime_evidence_replays_distinct_locked_identities(self) -> None:
+        tools = self.receipt["providerTools"]
+        docker, docker_compose, apple = tools["docker"], tools["dockerCompose"], tools["appleStock"]
+        digest = "d" * 64
+        runtime_commit, compose_commit = "b" * 40, "a" * 40
+        provenance = {"source": compose_commit, "qualifiedContainer": runtime_commit}
+        provenance_bytes = json.dumps(provenance, sort_keys=True).encode()
+        runtime_provenance = {"schema": 1, "qualified_container_source": runtime_commit}
+        runtime_provenance_bytes = json.dumps(runtime_provenance, sort_keys=True).encode()
+        runtime = {"repository": "stephenlclarke/container", "commit": runtime_commit,
+                   "releaseTag": "layer-runtime-" + runtime_commit[:12],
+                   "archiveSHA256": "1" * 64, "containerSHA256": "2" * 64,
+                   "apiServerSHA256": "3" * 64, "preparationSHA256": "4" * 64,
+                   "inventorySHA256": "5" * 64,
+                   "provenanceSHA256": sha(runtime_provenance_bytes),
+                   "provenancePreparationSHA256": "6" * 64,
+                   "runtimePayloadSHA256": "7" * 64, "nativeCompiledChainSHA256": "8" * 64,
+                   "apiServerEvidence": {"path": "inputs/providers/container-runtime.json",
+                                         "sha256": digest}}
+        compose = {"repository": "stephenlclarke/container-compose", "version": "0.16.0",
+                   "commit": compose_commit, "archiveSHA256": "6" * 64,
+                   "provenanceSHA256": sha(provenance_bytes), "composeSHA256": "7" * 64,
+                   "preparationSHA256": "8" * 64, "inventorySHA256": "9" * 64,
+                   "signedAndNotarized": True, "distributionReady": False,
+                   "identityEvidence": {"path": "inputs/providers/container-compose.json",
+                                        "sha256": "c" * 64},
+                   "provenanceEvidence": {"path": "inputs/providers/compose-provenance.json",
+                                          "sha256": sha(provenance_bytes)}}
+        receipt = dict(self.receipt)
+        receipt["providerTools"] = {**tools, "containerRuntime": runtime,
+                                    "containerCompose": compose}
+        helper = {"assetSHA256": "e" * 64, "preparationSHA256": "f" * 64,
+                  "preparedReceiptSHA256": "0" * 64, "inventorySHA256": "1" * 64,
+                  "helperExecutables": {}}
+        runtime_doc = {"schemaVersion": 1, "lane": "container-compose",
+                       "providerRepository": runtime["repository"],
+                       "providerCommit": runtime_commit, "releaseTag": runtime["releaseTag"],
+                       "archiveSHA256": runtime["archiveSHA256"],
+                       "containerSHA256": runtime["containerSHA256"],
+                       "apiServerSHA256": runtime["apiServerSHA256"],
+                       "preparedProvider": helper}
+        compose_doc = {"schemaVersion": 1, "source": compose["repository"],
+                       "version": compose["version"], "commit": compose_commit,
+                       "archiveSHA256": compose["archiveSHA256"],
+                       "provenanceSHA256": compose["provenanceSHA256"],
+                       "composeSHA256": compose["composeSHA256"],
+                       "signedAndNotarized": True, "distributionReady": False}
+        docker_doc = {"schemaVersion": 1, "source": "docker-oracle",
+                      "clientVersion": docker["version"], "dockerCLISHA256": docker["sha256"],
+                      "buildxVersion": docker["buildxVersion"], "buildxSHA256": docker["buildxSHA256"],
+                      "engineVersion": docker["engineVersion"], "engineCommit": docker["engineCommit"],
+                      "engineApiVersion": docker["engineApiVersion"], "engineSHA256": docker["engineSHA256"],
+                      "composeVersion": docker_compose["version"], "composeSHA256": docker_compose["sha256"],
+                      "bottleSHA256": docker_compose["bottleSHA256"]}
+        apple_doc = {"schemaVersion": 1, "lane": "apple-stock",
+                     "providerVersion": apple["version"], "providerCommit": apple["commit"],
+                     "containerSHA256": apple["containerSHA256"],
+                     "apiServerSHA256": apple["apiServerSHA256"], "preparedProvider": helper}
+        inventory = {
+            self.receipt["providerTools"]["docker"]["engineEvidence"]["path"]:
+                json.dumps(docker_doc).encode(),
+            apple["apiServerEvidence"]["path"]: json.dumps(apple_doc).encode(),
+            runtime["apiServerEvidence"]["path"]: json.dumps(runtime_doc).encode(),
+            compose["identityEvidence"]["path"]: json.dumps(compose_doc).encode(),
+            compose["provenanceEvidence"]["path"]: provenance_bytes,
+        }
+        admitted = {"format": "signed-compose-q-runtime",
+                    "containerRuntime": {key: runtime[key] for key in (
+                        "repository", "commit", "archiveSHA256", "containerSHA256",
+                        "apiServerSHA256", "preparationSHA256", "inventorySHA256")},
+                    "containerRuntimeProvenanceSHA256": runtime["provenanceSHA256"],
+                    "containerRuntimeProvenancePreparationSHA256": runtime["provenancePreparationSHA256"],
+                    "qRuntimeProvenance": {"runtimePayloadSHA256": runtime["runtimePayloadSHA256"],
+                                            "nativeCompiledChainSHA256": runtime["nativeCompiledChainSHA256"]},
+                    "containerRuntimeProvenance": runtime_provenance,
+                    "containerCompose": {key: compose[key] for key in (
+                        "repository", "version", "commit", "archiveSHA256",
+                        "preparationSHA256", "inventorySHA256")},
+                    "composeProviderSHA256": compose["composeSHA256"],
+                    "composeProvenanceSHA256": compose["provenanceSHA256"],
+                    "signedAndNotarized": True, "distributionReady": False,
+                    "composeProvenance": provenance}
+        adapter = sys.modules.get("prepare_releases") or importlib.import_module("prepare_releases")
+        with (patch("verify_local_qualification.locked_provider_format",
+                    return_value=({}, {"format": "signed-compose-q-runtime"})),
+              patch("verify_local_qualification.provider_helper_identity", return_value=helper),
+              patch.object(adapter, "admit_locked_compose_runtime", return_value=admitted)):
+            authenticate_provider_evidence(receipt, inventory, REPOSITORY)
+            changed = dict(admitted, containerRuntime={**admitted["containerRuntime"],
+                                                       "commit": compose_commit})
+            with patch.object(adapter, "admit_locked_compose_runtime", return_value=changed):
+                with self.assertRaisesRegex(QualificationError, "authenticated lock-selected"):
+                    authenticate_provider_evidence(receipt, inventory, REPOSITORY)
+            for field in ("preparationSHA256", "inventorySHA256"):
+                changed = dict(admitted, containerCompose={
+                    **admitted["containerCompose"], field: "f" * 64})
+                with self.subTest(compose_identity_field=field), \
+                        patch.object(adapter, "admit_locked_compose_runtime", return_value=changed), \
+                        patch("verify_local_qualification.locked_provider_format",
+                              return_value=({}, {"format": "signed-compose-q-runtime"})), \
+                        patch("verify_local_qualification.provider_helper_identity", return_value=helper), \
+                        self.assertRaisesRegex(QualificationError, "authenticated lock-selected"):
+                    authenticate_provider_evidence(receipt, inventory, REPOSITORY)
 
     def test_provider_helper_identity_uses_locked_asset_and_internal_receipt(self) -> None:
         sys_path = [str(REPOSITORY / "Tools/bazel"), str(REPOSITORY / "Tools/testing")]

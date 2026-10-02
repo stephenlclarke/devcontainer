@@ -69,7 +69,8 @@ def diagnostic_snapshot(path: Path) -> tuple[bytes, bytes]:
     return payload, canonical({"bytes": len(payload), "sha256": digest(payload), "truncated": len(data) > len(payload)})
 
 
-def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, *, builder_lock=None, fixture=None) -> dict:
+def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, *, builder_lock=None,
+                fixture=None, provider_image_references=None) -> dict:
     """Missing enhanced inputs fail before any host-service or store mutation."""
     names = {"apple-stock": "stock-vminit", "container-compose": "enhanced-vminit"}
     if lane not in names:
@@ -83,10 +84,28 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
     workload = {"D05-features": "ubuntu-workload", "D06-ports": "python-workload"}.get(fixture, "alpine-workload")
     if len(by_name) != len(images) or any(name not in by_name for name in (names[lane], workload)):
         raise ValueError("Exact provider initialization/workload image is missing or ambiguous")
+    selected_provider_images = None
+    if provider_image_references is not None:
+        if (lane != "container-compose" or not isinstance(provider_image_references, dict)
+                or set(provider_image_references) != {"guest", "builder"}):
+            raise ValueError("Q provider image identity is not the selected locked pair")
+        for role, value in provider_image_references.items():
+            if (not isinstance(value, dict) or set(value) != {"reference", "archiveSHA256", "source"}
+                    or not isinstance(value.get("reference"), str)
+                    or re.fullmatch(r"ghcr\.io/[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+",
+                                    value["reference"]) is None
+                    or re.fullmatch(r"[0-9a-f]{64}", str(value.get("archiveSHA256", ""))) is None
+                    or re.fullmatch(r"[0-9a-f]{40}", str(value.get("source", ""))) is None):
+                raise ValueError("Q provider image identity is malformed")
+        selected_provider_images = provider_image_references
     init_reference = ("ghcr.io/apple/containerization/vminit:0.45.0" if lane == "apple-stock" else
+                      selected_provider_images["guest"]["reference"] if selected_provider_images else
                       "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567")
     if by_name[names[lane]]["reference"] != init_reference:
         raise ValueError("Initialization reference differs from the selected released provider")
+    if (selected_provider_images is not None
+            and by_name[names[lane]].get("archiveSHA256") != selected_provider_images["guest"]["archiveSHA256"]):
+        raise ValueError("Initialization archive differs from the admitted Q provider asset")
     assets = validate_lock(kernel_lock)
     if len(assets) != 1 or (assets[0]["repository"], assets[0]["tag"], assets[0]["name"]) != (
             "kata-containers/kata-containers", "3.32.0", "kata-static-3.32.0-arm64.tar.zst"):
@@ -102,7 +121,9 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
             raise ValueError("C02 dependency image is missing")
         result["dependencyWorkload"] = require_image(by_name["python-workload"], retained / "guest-images")
     if builder_lock is not None:
-        result["builder"] = admit_builder(builder_lock, lane, retained)
+        result["builder"] = admit_builder(
+            builder_lock, lane, retained,
+            provider_image=(selected_provider_images["builder"] if selected_provider_images else None))
     return result
 
 
