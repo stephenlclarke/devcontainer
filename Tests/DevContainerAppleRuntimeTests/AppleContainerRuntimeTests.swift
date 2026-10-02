@@ -158,18 +158,6 @@ struct AppleContainerRuntimeTests {
     #endif
 
     @Test
-    func `native inventory preserves IPv4 prefix for Docker network inspection`() throws {
-        let attachment = try JSONDecoder().decode(
-            Attachment.self,
-            from: Data(#"{"network":"fixture-network","hostname":"fixture","ipv4Address":"192.168.65.2/24","ipv4Gateway":"192.168.65.1"}"#.utf8)
-        )
-
-        #expect(AppleContainerRuntime.networkAddresses([attachment]) == [
-            "fixture-network": "192.168.65.2/24"
-        ])
-    }
-
-    @Test
     func `descriptor and inventory decode stock Apple records`() async throws {
         let fixture = try FakeAppleCLI()
         let runtime = try fixture.runtime()
@@ -804,6 +792,29 @@ struct AppleContainerRuntimeTests {
             }
         }
         #expect(actions == [.create, .start, .stop, .destroy])
+    }
+}
+
+@Suite(.serialized)
+struct AppleContainerRuntimeNetworkAddressTests {
+    @Test
+    func `native inventory preserves IPv4 prefix for Docker network inspection`() throws {
+        let attachmentJSON = """
+        {
+          "network": "fixture-network",
+          "hostname": "fixture",
+          "ipv4Address": "192.168.65.2/24",
+          "ipv4Gateway": "192.168.65.1"
+        }
+        """
+        let attachment = try JSONDecoder().decode(
+            Attachment.self,
+            from: Data(attachmentJSON.utf8)
+        )
+
+        #expect(AppleContainerRuntime.networkAddresses([attachment]) == [
+            "fixture-network": "192.168.65.2/24"
+        ])
     }
 }
 
