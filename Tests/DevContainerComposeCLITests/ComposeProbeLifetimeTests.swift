@@ -8,8 +8,7 @@ import DevContainerTestStorage
 import Foundation
 import Testing
 
-@Suite(.serialized)
-struct ComposeProbeLifetimeTests {
+extension DevContainerComposeCommandTests {
     @Test
     func `expired discovery does not launch the frontend or create state`() async throws {
         let fixture = try ProbeFixture(body: "printf '%s' $$ > \"$PROBE_PID\"")

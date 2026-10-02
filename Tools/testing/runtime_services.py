@@ -385,9 +385,13 @@ class ControlledRuntime:
         self.original_api_file_metadata = None
         self.provider_helper_originals = None
         self.provider_helper_selected = None
+        self.start_phase = "not-started"
+        self.host_mutation_started = False
 
     def start(self, *, prepare_home=None):
+        self.start_phase = "preflight"
         require_unscoped_provider_gateway_absent(self.launchd)
+        self.start_phase = "service-snapshot"
         prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
         api_original = next(item for item in prior if item["label"] == API)
         api_path = Path(api_original["path"])
@@ -407,6 +411,7 @@ class ControlledRuntime:
         }
         self.original_processes = capture_owned_processes(self.launchd, prior)
         self.require_idle_before_selection(prior)
+        self.start_phase = "private-state-setup"
         definition = selected_definition(self.root, self.executable)
         path = self.journal_parent / (digest(str(self.root).encode()) + ".sqlite")
         self.journal = ServiceJournal(path, self.owner, create=True)
@@ -417,6 +422,8 @@ class ControlledRuntime:
         self.journal.put("original-processes.plist", plistlib.dumps(self.original_processes))
         self.switch = ServiceSwitch(self.launchd, prior, self.root, self.journal.put)
         self.require_idle_before_selection(prior)
+        self.start_phase = "service-switch-prepare"
+        self.host_mutation_started = True
         self.switch.prepare()
         # A listener/helper that survived removal may not overlap this lane.
         wait_stopped(self.require_workers_stopped)
@@ -424,7 +431,9 @@ class ControlledRuntime:
         # Prepare the isolated HOME only after durable recovery and quiescence,
         # but before launchd can start any selected runtime consumer.
         if prepare_home is not None:
+            self.start_phase = "private-keychain-setup"
             prepare_home(self.journal)
+        self.start_phase = "selected-api-install"
         self.switch.install(definition)
         with deadline(25):
             while True:
@@ -442,6 +451,58 @@ class ControlledRuntime:
         self.journal.put("service-started.plist", plistlib.dumps(self.service))
         probe_api(self.root, self.executable.parent / "container", self.journal, self.verify)
         self.journal.put("service-ready.plist", plistlib.dumps(self.service))
+        self.start_phase = "ready"
+
+    def failure_disposition(self) -> dict:
+        """Report whether this start call could have changed host services."""
+        if self.host_mutation_started:
+            return {"status": "uncertain", "phase": self.start_phase,
+                    "hostMutationStarted": True}
+        return {"status": "not-started", "phase": self.start_phase,
+                "hostMutationStarted": False}
+
+    def retain_primary_failure(self, error: BaseException) -> dict:
+        """Retain typed bounded failure detail privately, even before journal creation."""
+        message = str(error)
+        truncated = len(message) > 8192
+        payload = json.dumps({
+            "schemaVersion": 1,
+            "phase": self.start_phase,
+            "hostMutationStarted": self.host_mutation_started,
+            "exceptionType": f"{type(error).__module__}.{type(error).__qualname__}",
+            "message": message[:8192],
+            "messageTruncated": truncated,
+        }, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        if self.journal is not None:
+            try:
+                self.journal.put("primary-runtime-failure.json", payload)
+                return {"location": "private-journal", "sha256": hashlib.sha256(payload).hexdigest()}
+            except BaseException:
+                # Keep the exact primary exception available even if journal
+                # retention itself failed; the owned case root remains private.
+                pass
+        path = self.root / "primary-runtime-failure.json"
+        root_info = self.root.lstat()
+        if (self.root.is_symlink() or self.root.resolve() != self.root
+                or not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid()
+                or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise ValueError("Private startup failure root changed")
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = -1
+                output.write(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            directory_fd = os.open(self.root, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        return {"location": "private-case-root", "sha256": hashlib.sha256(payload).hexdigest()}
 
     def propagate_provider_helper_home(
         self,

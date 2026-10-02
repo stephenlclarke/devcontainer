@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 import hashlib
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -241,6 +242,42 @@ class RuntimeServicesTests(unittest.TestCase):
 
         self.assertEqual(self.launchd.jobs, initial)
         self.assertEqual(self.launchd.mutations, mutations)
+
+    def test_preflight_failure_has_explicit_no_host_mutation_disposition(self):
+        runtime = self.runtime()
+        with patch("runtime_services.require_unscoped_provider_gateway_absent",
+                   side_effect=ValueError("injected preflight failure")):
+            with self.assertRaisesRegex(ValueError, "injected preflight failure") as raised:
+                runtime.start()
+
+        self.assertEqual(runtime.failure_disposition(), {
+            "status": "not-started", "phase": "preflight", "hostMutationStarted": False})
+        retained = runtime.retain_primary_failure(raised.exception)
+        self.assertEqual(retained["location"], "private-case-root")
+        failure_path = runtime.root / "primary-runtime-failure.json"
+        self.assertEqual(failure_path.stat().st_mode & 0o777, 0o600)
+        failure = json.loads(failure_path.read_text())
+        self.assertEqual(failure["exceptionType"], "builtins.ValueError")
+        self.assertEqual(failure["message"], "injected preflight failure")
+        self.assertIsNone(runtime.journal)
+        self.assertIsNone(runtime.switch)
+
+    def test_failure_after_mutation_boundary_is_uncertain_and_retained_in_journal(self):
+        runtime = self.runtime()
+        with patch("runtime_services.ServiceSwitch.prepare",
+                   side_effect=RuntimeError("injected switch failure")):
+            with self.assertRaisesRegex(RuntimeError, "injected switch failure") as raised:
+                runtime.start()
+
+        self.assertEqual(runtime.failure_disposition(), {
+            "status": "uncertain", "phase": "service-switch-prepare", "hostMutationStarted": True})
+        retained = runtime.retain_primary_failure(raised.exception)
+        self.assertEqual(retained["location"], "private-journal")
+        records = runtime.journal.records()
+        failure = json.loads(records["primary-runtime-failure.json"])
+        self.assertEqual(failure["exceptionType"], "builtins.RuntimeError")
+        self.assertEqual(failure["message"], "injected switch failure")
+        self.assertTrue(failure["hostMutationStarted"])
 
     def test_unscoped_fork_gateway_socket_blocks_selection_before_service_mutation(self):
         runtime = self.runtime()

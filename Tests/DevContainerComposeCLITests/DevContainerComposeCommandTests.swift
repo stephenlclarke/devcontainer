@@ -23,6 +23,7 @@ import DevContainerTestStorage
 import Foundation
 import Testing
 
+@Suite(.serialized)
 struct DevContainerComposeCommandTests {
     @Test(arguments: [Int32(0), Int32(7)])
     func `version entrypoint preserves status without creating project state`(status: Int32) async throws {
@@ -94,7 +95,7 @@ struct DevContainerComposeCommandTests {
     }
 
     @Test(arguments: [BackendProvider.stock, .containerCompose], [true, false])
-    func `native default receives selected runtime and socket despite ambient conflicts`(
+    func `explicit native provider receives selected runtime and socket despite ambient conflicts`(
         backend: BackendProvider, useConfiguration: Bool
     ) async throws {
         let fixture = try ComposeCommandFixture(projectName: "native-selection", backend: backend)
@@ -112,12 +113,13 @@ struct DevContainerComposeCommandTests {
             environment.removeValue(forKey: "DEVCONTAINER_SOCKET")
             try DevContainerConfigurationStore.save(
                 DevContainerConfiguration(
-                    backend: backend, containerExecutable: runtime,
+                    backend: backend, composeProvider: .containerCompose, containerExecutable: runtime,
                     socket: socket, stateDatabase: fixture.state.path
                 ),
                 to: fixture.root.appendingPathComponent("config.toml")
             )
         } else {
+            environment["DEVCONTAINER_COMPOSE_PROVIDER"] = ComposeProviderKind.containerCompose.rawValue
             environment["DEVCONTAINER_CONTAINER_BIN"] = runtime
             environment["DEVCONTAINER_SOCKET"] = socket
         }
@@ -168,7 +170,7 @@ struct DevContainerComposeCommandTests {
     func `missing native frontend cannot claim a project or fall back to Docker`() async throws {
         let fixture = try ComposeCommandFixture(projectName: "missing-native", backend: .stock)
         var environment = fixture.environment
-        environment.removeValue(forKey: "DEVCONTAINER_COMPOSE_PROVIDER")
+        environment["DEVCONTAINER_COMPOSE_PROVIDER"] = ComposeProviderKind.containerCompose.rawValue
         let native = environment["DEVCONTAINER_COMPOSE_BIN"]
         environment["DEVCONTAINER_DOCKER_BIN"] = native
         environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = native
@@ -179,6 +181,31 @@ struct DevContainerComposeCommandTests {
                 environment: environment
             )
         }
+        #expect(try fixture.invocations().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+    }
+
+    @Test
+    func `missing stock Docker Compose default does not fall back to native frontend`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "stock-default", backend: .stock)
+        var environment = fixture.environment
+        environment.removeValue(forKey: "DEVCONTAINER_COMPOSE_PROVIDER")
+        environment["DEVCONTAINER_DOCKER_BIN"] = fixture.root
+            .appendingPathComponent("container-compose").path
+        environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = fixture.root
+            .appendingPathComponent("missing-docker-compose").path
+
+        do {
+            _ = try await DevContainerComposeCommand.run(
+                arguments: ["--project-name", "stock-default", "up"],
+                environment: environment
+            )
+            Issue.record("the omitted stock provider must select Docker Compose")
+        } catch let error as DevContainerError {
+            #expect(error.code == .runtimeUnavailable)
+            #expect(error.message.contains("missing-docker-compose"))
+        }
+
         #expect(try fixture.invocations().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
     }

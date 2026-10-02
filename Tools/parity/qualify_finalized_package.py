@@ -1197,6 +1197,10 @@ def _finalize_host_cleanup(evidence: Path, args: argparse.Namespace, base_env: d
                    "status": row.get("status", "uncertain"),
                    "cliCleanupComplete": row.get("cliCleanupComplete") is True,
                    "vscodeCleanupComplete": row.get("vscodeCleanupComplete") is True}
+        for key in ("hostMutationStarted", "startPhase", "primaryFailureType",
+                    "primaryFailureSHA256", "ownerSHA256", "failureLocation"):
+            if key in row:
+                payload[key] = row[key]
         if getattr(args, "component_fixture", None):
             payload["vscodeStatus"] = "skipped"
         if lane == "docker":
@@ -1294,6 +1298,36 @@ def admit_provider_helper_programs(lane: str, args: argparse.Namespace) -> dict:
     return admitted
 
 
+def retain_lane_start_failure(runtime, error: BaseException) -> dict | None:
+    """Retain the primary typed error and classify only an explicit untouched start."""
+    if not callable(getattr(runtime, "failure_disposition", None)) or not callable(
+            getattr(runtime, "retain_primary_failure", None)):
+        raise RuntimeError("runtime start did not provide explicit mutation authority")
+    disposition = runtime.failure_disposition()
+    if (not isinstance(disposition, dict)
+            or set(disposition) != {"status", "phase", "hostMutationStarted"}
+            or not isinstance(disposition.get("phase"), str)
+            or type(disposition.get("hostMutationStarted")) is not bool):
+        raise RuntimeError("runtime start did not provide explicit mutation authority")
+    retained = runtime.retain_primary_failure(error)
+    if (not isinstance(retained, dict) or retained.get("location") not in
+            {"private-journal", "private-case-root"}
+            or re.fullmatch(r"[0-9a-f]{64}", str(retained.get("sha256", ""))) is None):
+        raise RuntimeError("primary startup failure was not retained privately")
+    if (disposition["status"] == "not-started"
+            and disposition["hostMutationStarted"] is False):
+        return {"status": "not-started", "hostMutationStarted": False,
+                "startPhase": disposition["phase"],
+                "primaryFailureType": f"{type(error).__module__}.{type(error).__qualname__}",
+                "primaryFailureSHA256": retained["sha256"],
+                "ownerSHA256": sha256(runtime.root / "owner.json"),
+                "failureLocation": retained["location"]}
+    if (disposition["status"] != "uncertain"
+            or disposition["hostMutationStarted"] is not True):
+        raise RuntimeError("runtime start disposition is inconsistent")
+    return None
+
+
 def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                base_env: dict[str, str], cleanup: dict[str, dict]) -> None:
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
@@ -1332,6 +1366,8 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
         keychain_created = True
 
     primary_error = None
+    startup_failure_row = None
+    failure_retention_error = None
     suites_started = False
     try:
         runtime.start(prepare_home=prepare_private_home)
@@ -1395,8 +1431,16 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                     primary_error = RuntimeError(f"{lane} {suite} parity result did not pass")
     except BaseException as error:
         primary_error = error
+    if primary_error is not None:
+        try:
+            startup_failure_row = retain_lane_start_failure(runtime, primary_error)
+        except BaseException as error:
+            failure_retention_error = error
 
-    cleanup_error = None
+    cleanup_error = failure_retention_error
+    if startup_failure_row is not None and cleanup_error is None:
+        cleanup[lane] = startup_failure_row
+        raise primary_error
     component_fixture = getattr(args, "component_fixture", None)
     complete = lane_cleanup_is_complete(evidence, lane, component_fixture)
     if provider_started and suites_started and not complete:

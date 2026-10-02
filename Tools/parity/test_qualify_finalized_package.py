@@ -333,6 +333,73 @@ class SuiteLifecycleTests(unittest.TestCase):
             self.assertEqual(host["restoration"]["docker"], "not-started")
             self.assertTrue(any("host service final observation failed" in item for item in errors))
 
+    def test_pre_mutation_start_failure_is_not_started_but_not_a_fixture_pass(self) -> None:
+        error = ValueError("gateway admission failed")
+
+        class Runtime:
+            root = None
+
+            def failure_disposition(self):
+                return {"status": "not-started", "phase": "preflight",
+                        "hostMutationStarted": False}
+
+            def retain_primary_failure(self, _error):
+                return {"location": "private-case-root", "sha256": "a" * 64}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Runtime()
+            runtime.root = Path(temporary)
+            owner = runtime.root / "owner.json"
+            owner.write_text('{"fixture":"owner"}\n')
+            owner_sha = hashlib.sha256(owner.read_bytes()).hexdigest()
+            row = qualify.retain_lane_start_failure(runtime, error)
+        self.assertEqual(row["status"], "not-started")
+        self.assertFalse(row["hostMutationStarted"])
+        self.assertEqual(row["primaryFailureType"], "builtins.ValueError")
+        self.assertEqual(row["primaryFailureSHA256"], "a" * 64)
+        self.assertEqual(row["ownerSHA256"], owner_sha)
+        self.assertEqual(row["failureLocation"], "private-case-root")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            cleanup = {lane: {"status": "restored"} for lane in qualify.LANES}
+            cleanup["apple-stock"] = row
+            guard = mock.Mock()
+            with (mock.patch.object(qualify, "colima_state", return_value=("stopped", "still stopped")),
+                  mock.patch.object(qualify, "host_service_digest", return_value=("same", 8))):
+                cleared = qualify._finalize_host_cleanup(
+                    evidence, argparse.Namespace(colima_bin=Path("colima")), {}, cleanup,
+                    "stopped", "initial state", "same", 8, guard, {"identity": "owner"},
+                    [], interrupted=False)
+            self.assertTrue(cleared)
+            guard.clear.assert_called_once_with({"identity": "owner"})
+            lane_cleanup = json.loads((evidence / "apple-stock-cleanup.json").read_text())
+            self.assertEqual(lane_cleanup["status"], "not-started")
+            self.assertFalse(lane_cleanup["cliCleanupComplete"])
+            self.assertEqual(lane_cleanup["primaryFailureSHA256"], "a" * 64)
+            self.assertEqual(lane_cleanup["ownerSHA256"], owner_sha)
+            self.assertNotIn("fixtureStatus", lane_cleanup)
+            self.assertFalse(qualify.cli_cleanup_is_complete(evidence, "apple-stock"))
+            self.assertFalse((evidence / "qualification.json").exists())
+
+    def test_missing_or_mutated_start_authority_never_claims_not_started(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "explicit mutation authority"):
+            qualify.retain_lane_start_failure(argparse.Namespace(journal=None), RuntimeError("failure"))
+
+        class MutatedRuntime:
+            def failure_disposition(self):
+                return {"status": "uncertain", "phase": "service-switch-prepare",
+                        "hostMutationStarted": True}
+
+            def retain_primary_failure(self, _error):
+                return {"location": "private-journal", "sha256": "b" * 64}
+
+        self.assertIsNone(qualify.retain_lane_start_failure(MutatedRuntime(), RuntimeError("failure")))
+        cleanup = {lane: {"status": "restored"} for lane in qualify.LANES}
+        cleanup["apple-stock"] = {"status": "uncertain"}
+        self.assertFalse(qualify.host_can_clear_guard(
+            cleanup, "stopped", "stopped", "same", "same"))
+
     def test_provider_quiescence_accepts_native_default_network_id_and_name(self) -> None:
         from service_switch import API
 
