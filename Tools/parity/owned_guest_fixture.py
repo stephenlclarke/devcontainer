@@ -224,8 +224,9 @@ class LaneRuntimeView:
 class ApiRuntimeView:
     """Verify the selected private API while admitted guest data is provisioned."""
 
-    def __init__(self, runner, root: Path, owner: dict, fixture_selection: tuple[str, ...]) -> None:
-        self.runner, self.root, self.owner = runner, root, owner
+    def __init__(self, runner, root: Path, owner: dict, journal: Any,
+                 fixture_selection: tuple[str, ...]) -> None:
+        self.runner, self.root, self.owner, self.journal = runner, root, owner, journal
         self.fixture_selection = fixture_selection
 
     def verify(self) -> None:
@@ -526,7 +527,7 @@ class OwnedGuestFixtureRunner:
             return
         root, journal, owner = self._case_paths_for_preparation()
         fixture_selection = tuple(fixture.identifier for fixture in self.fixtures)
-        runtime = ApiRuntimeView(self.runner, root, owner, fixture_selection)
+        runtime = ApiRuntimeView(self.runner, root, owner, journal, fixture_selection)
         self.preparation = (root, journal, runtime, owner)
         runtime.verify()
         before = admit_guest_inputs(self.repository, self.lane, self.retained)

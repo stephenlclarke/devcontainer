@@ -592,7 +592,7 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
                 finalized_selection=None, environment=environment,
                 provider_executable=lambda _name, _fallback: str(container),
             )
-            view = ApiRuntimeView(runner, home, owner, ("E07-init-attachment",))
+            view = ApiRuntimeView(runner, home, owner, mock.Mock(), ("E07-init-attachment",))
             with (mock.patch.object(owned_guest_fixture, "ACCOUNT_HOME", base),
                   mock.patch.object(runtime_services, "verify_selected_api") as verify):
                 view.verify()
@@ -618,9 +618,96 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
         with mock.patch.object(owned_guest_fixture, "_verify_native_api",
                                side_effect=ParityError("API PID changed")):
             runner = SimpleNamespace(finalized_selection=None)
-            view = ApiRuntimeView(runner, Path("/private/home"), {}, ())
+            view = ApiRuntimeView(runner, Path("/private/home"), {}, mock.Mock(), ())
             with self.assertRaisesRegex(ParityError, "API PID changed"):
                 view.verify()
+
+    def test_real_released_guest_provision_uses_api_view_journal_without_socket(self) -> None:
+        import shutil
+        import guest_runtime
+        import owned_guest_fixture
+        from service_journal import ServiceJournal
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            retained = base / "retained"
+            retained.mkdir(mode=0o700)
+            root = base / "provider-home"
+            root.mkdir(mode=0o700)
+            (root / "container").mkdir(mode=0o700)
+            provider_bin = base / "provider" / "bin"
+            provider_bin.mkdir(parents=True)
+            kernel = base / "kernel"
+            kernel.write_bytes(b"admitted-kernel")
+            initialization = base / "initialization.oci"
+            initialization.write_bytes(b"admitted-init")
+            workload = base / "workload.oci"
+            workload.write_bytes(b"admitted-workload")
+            inputs = {
+                "kernel": {"files": {"kernel": str(kernel)}, "sha256": "a" * 64},
+                "initialization": {"path": str(initialization), "sha256": "b" * 64,
+                                   "image": {"manifest": "sha256:" + "b" * 64,
+                                             "config": "sha256:" + "c" * 64}},
+                "workload": {"path": str(workload), "sha256": "c" * 64,
+                             "image": {"manifest": "sha256:" + "c" * 64,
+                                       "config": "sha256:" + "d" * 64}},
+            }
+            fixture = SimpleNamespace(identifier="E07-init-attachment")
+            owner = {"identity": {"campaign": "campaign", "lane": "apple-stock",
+                                  "fixture": "owned-guest-preparation"}, "root": str(root)}
+            journal = ServiceJournal(retained / "preparation.sqlite", owner, create=True)
+            runner = SimpleNamespace(lane="apple-stock", finalized_selection=None)
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.runner, bridge.lane = runner, "apple-stock"
+            bridge.repository, bridge.fixtures = REPOSITORY, [fixture]
+            bridge.retained, bridge.inputs = retained, inputs
+            bridge.container, bridge.socket, bridge.compose = str(provider_bin / "container"), None, None
+            bridge.preparation, bridge.preparation_error = None, None
+            bridge._provision_event_sequence = 0
+            bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+            guest_instances = []
+            original_init = guest_runtime.ReleasedGuest.__init__
+
+            def capture_guest(instance, *args, **kwargs):
+                original_init(instance, *args, **kwargs)
+                guest_instances.append(instance)
+
+            class CommandEffectsOnly:
+                def __init__(self):
+                    self.process = SimpleNamespace(pid=123456, wait=lambda timeout=None: 0)
+
+                def start(self, argv, cwd, output, *, provider_install=None):
+                    command = argv[1:]
+                    output.write(b"mocked admitted provider command\n")
+                    if command[:3] == ["system", "kernel", "set"]:
+                        kernels = root / "container" / "kernels"
+                        kernels.mkdir(mode=0o700, exist_ok=True)
+                        shutil.copyfile(kernel, kernels / "vmlinux")
+                        (kernels / "default.kernel-arm64").symlink_to("vmlinux")
+
+                def stop(self):
+                    # This fake starts no process, so there is nothing to stop.
+                    return None
+
+            with (mock.patch.object(owned_guest_fixture, "_verify_native_api",
+                                    return_value=(root, owner)),
+                  mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs),
+                  mock.patch.object(owned_guest_fixture, "guest_input_identity",
+                                    side_effect=lambda value: value),
+                  mock.patch.object(guest_runtime.ReleasedGuest, "__init__", new=capture_guest),
+                  mock.patch.object(guest_runtime, "OwnedProcess", CommandEffectsOnly)):
+                bridge.prepare_native_provider()
+
+            self.assertEqual(len(guest_instances), 1)
+            guest = guest_instances[0]
+            self.assertIsNone(guest.socket)
+            self.assertIs(guest.runtime.journal, journal)
+            self.assertIs(bridge.preparation[2].journal, journal)
+            self.assertIn("guest-inputs.json", journal.records())
+            self.assertIn("guest-provisioned.json", journal.records())
+            self.assertEqual(sum(name.endswith("-intent.json") for name in journal.records()), 3)
+            self.assertEqual(bridge.socket, None)
+            self.assertTrue((root / "container/kernels/default.kernel-arm64").is_symlink())
 
 
 class RemainingActiveProviderHomeTests(unittest.TestCase):
