@@ -335,15 +335,26 @@ class LaneRunner:
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
-        if self.lane != "docker":
-            self.start_engine()
-        else:
+        native_preparation_failed = False
+        if self.lane == "docker":
             self.configure_docker_oracle()
+        elif owned_fixtures:
+            try:
+                self._owned_guest_runner.prepare_native_provider()
+            except (OSError, ValueError, RuntimeError, ParityError,
+                    subprocess.SubprocessError, TimeoutError) as error:
+                native_preparation_failed = True
+                self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
+                self._preserve_engine_on_uncertain_guest_cleanup = True
+                self._owned_guest_runner.preparation_error = str(error)
+        if self.lane != "docker" and not native_preparation_failed:
+            self.start_engine()
 
-        if owned_fixtures:
+        if owned_fixtures and not native_preparation_failed:
             try:
                 self._owned_guest_runner.attach_endpoint()
-                self._owned_guest_runner.prepare()
+                if self.lane == "docker":
+                    self._owned_guest_runner.prepare()
             except (OSError, ValueError, RuntimeError, ParityError,
                     subprocess.SubprocessError, TimeoutError) as error:
                 self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
@@ -352,12 +363,18 @@ class LaneRunner:
 
         results: list[dict[str, Any]] = []
         try:
-            self.configure_devcontainer_client()
-            if self.lane != "apple-stock":
-                self.prepare_builder()
-            atomic_json(self.output / "fingerprint.json", self.fingerprint())
-            for fixture in fixtures:
-                results.append(self.run_fixture(fixture))
+            if native_preparation_failed:
+                results = [{"id": fixture.identifier, "status": "failed", "durationSeconds": 0.0,
+                            "observations": {}, "differences": [],
+                            "diagnostic": "native guest provisioning failed before Engine startup"}
+                           for fixture in fixtures]
+            else:
+                self.configure_devcontainer_client()
+                if self.lane != "apple-stock":
+                    self.prepare_builder()
+                atomic_json(self.output / "fingerprint.json", self.fingerprint())
+                for fixture in fixtures:
+                    results.append(self.run_fixture(fixture))
         finally:
             try:
                 if getattr(self, "_owned_guest_runner", None) is not None:
@@ -1742,6 +1759,9 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "CONTAINER_SERVICE_NAMESPACE",
         "DEVELOPER_DIR",
         "DEVCONTAINER_ALLOW_CUSTOM_STOCK",
+        "DEVCONTAINER_API_DEFINITION_SHA256",
+        "DEVCONTAINER_API_SERVER_SHA256",
+        "DEVCONTAINER_API_SERVICE_PID",
         "DEVCONTAINER_COMPOSE_BIN",
         "DEVCONTAINER_COMPOSE_PROVIDER_SHA256",
         "DEVCONTAINER_CONTAINER_BIN",

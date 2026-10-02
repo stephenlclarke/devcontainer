@@ -25,6 +25,12 @@ sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
 import qualify_finalized_package as qualify
 
 
+def helper_service_path(root: Path, label: str) -> str:
+    from runtime_services import PROVIDER_HELPER_LAYOUT
+
+    return str(root / "container/plugin-state" / PROVIDER_HELPER_LAYOUT[label][0] / "service.plist")
+
+
 class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
     def test_stock_wrapper_uses_pinned_docker_cli_and_compose(self) -> None:
         args = argparse.Namespace(
@@ -340,26 +346,39 @@ class SuiteLifecycleTests(unittest.TestCase):
                 if label == API:
                     return {"label": API, "path": "/runtime/selected-apiserver.plist",
                             "program": "/provider/container-apiserver"}
-                return {"label": label, "path": "/runtime/" + label,
+                path = "/foreign/helper.plist" if getattr(self, "foreign_helper_path", False) else helper_service_path(runtime.root, label)
+                return {"label": label, "path": path,
                         "program": str(helper_programs[label]["program"])}
 
             def process_id(self, label):
-                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+                if label == "com.apple.container.machine-apiserver":
+                    return None
+                return {API: 101, "com.apple.container.container-core-images": 200}[label]
 
         runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
-                                     executable=Path("/provider/container-apiserver"))
+                                     executable=Path("/provider/container-apiserver"), verify=lambda: None)
         for default_row in ({"id": "default"}, {"name": "default"},
                             {"configuration": {"name": "default"}}):
             with self.subTest(default_row=default_row):
-                outputs = [json.dumps({"status": "running"}), "[]", "[]", json.dumps([default_row])]
+                outputs = ["[]", "[]", json.dumps([default_row]), "[]"]
                 with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
                                         subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
                       mock.patch("runtime_services.process_inventory", return_value={
                           101: {"program": "/provider/container-apiserver"},
-                          200: {"program": "/provider/core"},
-                          201: {"program": "/provider/machine"}})):
+                          200: {"program": "/provider/core"}})):
                     proof = qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
                 self.assertEqual(proof["resourceCount"], 0)
+                self.assertEqual(proof["clientCount"], 0)
+
+        runtime.launchd.foreign_helper_path = True
+        outputs = ["[]", "[]", '[{"id":"default"}]', "[]"]
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value={
+                  101: {"program": "/provider/container-apiserver"},
+                  200: {"program": "/provider/core"}})):
+            with self.assertRaisesRegex(RuntimeError, "helper identity differs"):
+                qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
 
     def test_provider_quiescence_counts_unowned_engine_and_foreign_network(self) -> None:
         from service_switch import API
@@ -375,18 +394,16 @@ class SuiteLifecycleTests(unittest.TestCase):
                 if label == API:
                     return {"label": API, "path": "/runtime/selected-apiserver.plist",
                             "program": "/provider/container-apiserver"}
-                return {"label": label, "path": "/runtime/" + label, "program": str(helper_programs[label]["program"])}
+                return {"label": label, "path": helper_service_path(runtime.root, label),
+                        "program": str(helper_programs[label]["program"])}
 
             def process_id(self, label):
                 return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
 
         runtime = argparse.Namespace(
             service={"pid": 101}, launchd=Launchd(),
-            root=Path("/runtime"), executable=Path("/provider/container-apiserver"))
-        outputs = [
-            json.dumps({"status": "running"}),
-            "[]", "[]", json.dumps([{"id": "default"}]),
-        ]
+            root=Path("/runtime"), executable=Path("/provider/container-apiserver"), verify=lambda: None)
+        outputs = ["[]", "[]", json.dumps([{"id": "default"}]), "[]"]
         process_map = {101: {"program": "/provider/container-apiserver"},
                        200: {"program": "/provider/core"},
                        201: {"program": "/provider/machine"},
@@ -412,16 +429,17 @@ class SuiteLifecycleTests(unittest.TestCase):
                 if label == API:
                     return {"label": API, "path": "/runtime/selected-apiserver.plist",
                             "program": "/provider/container-apiserver"}
-                return {"label": label, "path": "/runtime/" + label, "program": str(helper_programs[label]["program"])}
+                return {"label": label, "path": helper_service_path(runtime.root, label),
+                        "program": str(helper_programs[label]["program"])}
 
             def process_id(self, label):
                 return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
 
         runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
-                                     executable=Path("/provider/container-apiserver"))
-        outputs = [json.dumps({"status": "running"}), "[]", '[{"configuration":{"name":"project-vol"}}]',
+                                     executable=Path("/provider/container-apiserver"), verify=lambda: None)
+        outputs = ["[]", '[{"configuration":{"name":"project-vol"}}]',
                    json.dumps([{"name": "default"},
-                               {"id": "default", "configuration": {"name": "project-net"}}])]
+                               {"id": "default", "configuration": {"name": "project-net"}}]), "[]"]
         with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
                                 subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
               mock.patch("runtime_services.process_inventory", return_value={
@@ -445,16 +463,15 @@ class SuiteLifecycleTests(unittest.TestCase):
                 if label == API:
                     return {"label": API, "path": "/runtime/selected-apiserver.plist",
                             "program": "/provider/container-apiserver"}
-                return {"label": label, "path": "/runtime/" + label,
+                return {"label": label, "path": helper_service_path(runtime.root, label),
                         "program": str(helper_programs[label]["program"])}
 
             def process_id(self, label):
                 return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
 
         runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
-                                     executable=Path("/provider/container-apiserver"))
-        outputs = [json.dumps({"status": "running"}), "[]", "[]",
-                   json.dumps([{"configuration": {"name": "bridge"}}])]
+                                     executable=Path("/provider/container-apiserver"), verify=lambda: None)
+        outputs = ["[]", "[]", json.dumps([{"configuration": {"name": "bridge"}}]), "[]"]
         with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
                                 subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
               mock.patch("runtime_services.process_inventory", return_value={
@@ -477,21 +494,51 @@ class SuiteLifecycleTests(unittest.TestCase):
                 if label == API:
                     return {"label": API, "path": "/runtime/selected-apiserver.plist",
                             "program": "/provider/container-apiserver"}
-                return {"label": label, "path": "/runtime/" + label,
+                return {"label": label, "path": helper_service_path(runtime.root, label),
                         "program": str(helper_programs[label]["program"])}
 
             def process_id(self, label):
                 return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
 
         runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
-                                     executable=Path("/provider/container-apiserver"))
-        outputs = [json.dumps({"status": "running"}), "[]", "[]", json.dumps([{}])]
+                                     executable=Path("/provider/container-apiserver"), verify=lambda: None)
+        outputs = ["[]", "[]", json.dumps([{}]), "[]"]
         with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
                                 subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
               mock.patch("runtime_services.process_inventory", return_value={
                   101: {"program": "/provider/container-apiserver"},
                   200: {"program": "/provider/core"}, 201: {"program": "/provider/machine"}})):
             with self.assertRaisesRegex(RuntimeError, "omits network identity"):
+                qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
+
+    def test_provider_quiescence_rejects_images_before_guest_provisioning(self) -> None:
+        from service_switch import API
+
+        helper_programs = {
+            "com.apple.container.container-core-images": {"program": Path("/provider/core"), "sha256": "a" * 64},
+            "com.apple.container.machine-apiserver": {"program": Path("/provider/machine"), "sha256": "b" * 64},
+        }
+
+        class Launchd:
+            def inspect(self, label):
+                if label == API:
+                    return {"label": API, "path": "/runtime/selected-apiserver.plist",
+                            "program": "/provider/container-apiserver"}
+                return {"label": label, "path": helper_service_path(runtime.root, label),
+                        "program": str(helper_programs[label]["program"])}
+
+            def process_id(self, label):
+                return {API: 101, **{key: 200 + index for index, key in enumerate(helper_programs)}}[label]
+
+        runtime = argparse.Namespace(service={"pid": 101}, launchd=Launchd(), root=Path("/runtime"),
+                                     executable=Path("/provider/container-apiserver"), verify=lambda: None)
+        outputs = ["[]", "[]", "[]", '[{"reference":"unadmitted"}]']
+        with (mock.patch.object(qualify, "run", side_effect=lambda *_a, **_k:
+                                subprocess.CompletedProcess([], 0, outputs.pop(0), "")),
+              mock.patch("runtime_services.process_inventory", return_value={
+                  101: {"program": "/provider/container-apiserver"},
+                  200: {"program": "/provider/core"}, 201: {"program": "/provider/machine"}})):
+            with self.assertRaisesRegex(RuntimeError, "already contains images"):
                 qualify.provider_quiescence(runtime, Path("/provider/container"), {}, helper_programs)
 
 

@@ -137,6 +137,9 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
+                "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
+                "DEVCONTAINER_API_SERVICE_PID": "1234",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DEVCONTAINER_BACKEND": "operator-choice",
                 "DEVCONTAINER_CONFIG": "/operator/config.toml",
@@ -159,6 +162,9 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
+                "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
+                "DEVCONTAINER_API_SERVICE_PID": "1234",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
@@ -221,7 +227,7 @@ class EngineRoutePreflightTests(unittest.TestCase):
         self.assertIs(runner.run_engine_fixture(fixture, raw), expected)
         adapter.run.assert_called_once_with(fixture, raw)
 
-    def test_runtime_error_during_guest_provisioning_retains_failed_rows_and_engine(self) -> None:
+    def test_runtime_error_during_guest_provisioning_skips_engine_start(self) -> None:
         import qualify_finalized_package as qualifier
 
         with TemporaryDirectory() as temporary:
@@ -237,10 +243,10 @@ class EngineRoutePreflightTests(unittest.TestCase):
                     self.preparation_error = None
 
                 def attach_endpoint(self):
-                    # Endpoint attachment succeeds before this test's provisioning failure.
+                    # No endpoint is attached after API-only provisioning fails.
                     pass
 
-                def prepare(self):
+                def prepare_native_provider(self):
                     raise RuntimeError("guest provision command failed")
 
                 def run(self, row, _raw):
@@ -262,7 +268,7 @@ class EngineRoutePreflightTests(unittest.TestCase):
                   mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
                   mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", FailingBridge),
                   mock.patch.object(runner, "admit_finalized"),
-                  mock.patch.object(runner, "start_engine"),
+                  mock.patch.object(runner, "start_engine") as start_engine,
                   mock.patch.object(runner, "configure_devcontainer_client"),
                   mock.patch.object(runner, "fingerprint", return_value={}),
                   mock.patch.object(runner, "stop_builder"),
@@ -278,8 +284,64 @@ class EngineRoutePreflightTests(unittest.TestCase):
             self.assertTrue(any("guest input preparation failed" in row
                                 for row in payload["cleanupDifferences"]))
             self.assertTrue(runner._preserve_engine_on_uncertain_guest_cleanup)
+            start_engine.assert_not_called()
             stop_engine.assert_not_called()
             self.assertFalse(qualifier.cli_cleanup_is_complete(root, "apple-stock"))
+
+    def test_native_guest_provisions_before_engine_and_attaches_only_after_ready(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "apple-stock"
+            fixture = SimpleNamespace(identifier="E07-init-attachment", runner="engine",
+                                      backends=("apple-stock",))
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+            events = []
+
+            class Bridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def prepare_native_provider(self):
+                    events.append("provision")
+
+                def attach_endpoint(self):
+                    events.append("attach")
+
+                def run(self, row, _raw):
+                    return {"id": row.identifier, "status": "passed", "observations": {},
+                            "durationSeconds": 0.0, "differences": [], "diagnostic": ""}
+
+                def cleanup(self):
+                    events.append("cleanup")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = "apple-stock", Path(__file__).resolve().parents[2], manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = evidence, None
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            with (mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
+                  mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
+                  mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
+                  mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", Bridge),
+                  mock.patch.object(runner, "admit_finalized"),
+                  mock.patch.object(runner, "start_engine", side_effect=lambda: events.append("engine")),
+                  mock.patch.object(runner, "configure_devcontainer_client"),
+                  mock.patch.object(runner, "run_fixture", side_effect=lambda row: (
+                      events.append("fixture") or {"id": row.identifier, "status": "passed",
+                                                     "durationSeconds": 0.0, "observations": {},
+                                                     "differences": [], "diagnostic": ""})),
+                  mock.patch.object(runner, "fingerprint", return_value={}),
+                  mock.patch.object(runner, "stop_builder"),
+                  mock.patch.object(runner, "check_runtime_state_cleanup"),
+                  mock.patch.object(runner, "readmit_finalized"),
+                  mock.patch.object(runner, "stop_engine")):
+                self.assertEqual(runner.run(), 0)
+
+            self.assertLess(events.index("provision"), events.index("engine"))
+            self.assertLess(events.index("engine"), events.index("attach"))
+            self.assertLess(events.index("attach"), events.index("cleanup"))
 
     def test_qualifier_and_lane_runner_hash_the_same_harness_closure(self) -> None:
         import qualify_finalized_package as qualifier

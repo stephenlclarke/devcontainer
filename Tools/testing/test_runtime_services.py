@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 import runtime_services
 from runtime_services import (ControlledRuntime, ProcessSurvivors, authorised_roots, capture_owned_processes, process_inventory,
                               process_programs, require_idle, selected_definition, wait_stopped)
-from runtime_services import require_owned_volume
+from runtime_services import require_owned_volume, verify_selected_api
 from service_journal import digest
 from service_switch import API, BASE_SERVICES
 from test_service_switch import FakeLaunchd
@@ -37,6 +37,7 @@ class RuntimeServicesTests(unittest.TestCase):
         self.executable = self.root / "released/bin/container-apiserver"
         self.executable.parent.mkdir(parents=True)
         self.executable.write_bytes(b"fixture executable, not executed")
+        self.executable.chmod(0o700)
         self.owner = {"root": str(self.owned), "identity": {"fixture": "fixture"}}
         self.launchd = FakeLaunchd()
         for label in BASE_SERVICES:
@@ -135,6 +136,51 @@ class RuntimeServicesTests(unittest.TestCase):
         self.assertNotIn("payload", runtime.receipt())
         self.assertEqual(self.launchd.mutations[-1], ("bootstrap", "com.stephenlclarke.container-family-ci"))
 
+    def test_selected_api_re_admission_binds_private_definition_executable_and_pid(self):
+        runtime = self.runtime()
+        runtime.start()
+        definition = runtime.root / "selected-apiserver.plist"
+        definition_sha = hashlib.sha256(definition.read_bytes()).hexdigest()
+        self.launchd.process_id = lambda label: 42 if label == API else None
+        self.inventory.return_value = {
+            42: {"pid": 42, "parent": 1, "group": 42, "started": "fixture-start",
+                 "program": str(self.executable)},
+        }
+
+        self.assertEqual(verify_selected_api(runtime.root, self.executable, 42, definition_sha,
+                                             self.launchd),
+                         {"status": "running", "pid": 42, "definitionSHA256": definition_sha})
+
+        self.assertRaisesRegex(
+            ValueError, "admitted private bytes",
+            verify_selected_api, runtime.root, self.executable, 42, "0" * 64, self.launchd)
+        self.launchd.process_id = lambda _label: 43
+        self.assertRaisesRegex(
+            ValueError, "admitted PID",
+            verify_selected_api, runtime.root, self.executable, 42, definition_sha, self.launchd)
+        runtime.restore()
+
+    def test_selected_api_re_admission_rejects_unexpected_environment_and_definition_path(self):
+        runtime = self.runtime()
+        runtime.start()
+        definition = runtime.root / "selected-apiserver.plist"
+        original = plistlib.loads(definition.read_bytes())
+        malformed = dict(original)
+        malformed_environment = dict(original["EnvironmentVariables"])
+        malformed_environment["HOME"] = str(self.home)
+        malformed["EnvironmentVariables"] = malformed_environment
+        definition.write_bytes(plistlib.dumps(malformed))
+        changed_sha = hashlib.sha256(definition.read_bytes()).hexdigest()
+        self.launchd.process_id = lambda label: 42 if label == API else None
+        self.inventory.return_value = {
+            42: {"pid": 42, "parent": 1, "group": 42, "started": "fixture-start",
+                 "program": str(self.executable)},
+        }
+        with self.assertRaisesRegex(ValueError, "private runtime contract"):
+            verify_selected_api(runtime.root, self.executable, 42, changed_sha, self.launchd)
+        definition.write_bytes(plistlib.dumps(original))
+        runtime.restore()
+
     def test_definition_uses_only_selected_release_and_disposable_roots(self):
         path = selected_definition(self.owned, self.executable)
         value = plistlib.loads(path.read_bytes())
@@ -181,6 +227,37 @@ class RuntimeServicesTests(unittest.TestCase):
         runtime.restore()
         self.assertEqual(len(self.launchd.mutations), count)
         self.assertEqual(runtime.receipt(), {"status": "not-started"})
+
+    def test_unscoped_fork_gateway_blocks_selection_before_service_mutation(self):
+        runtime = self.runtime()
+        label = runtime_services.UNSCOPED_PROVIDER_GATEWAY
+        self.launchd.jobs[label] = {"label": label, "path": "/foreign/gateway.plist",
+                                    "program": "/foreign/container-engine"}
+        initial = dict(self.launchd.jobs)
+        mutations = list(self.launchd.mutations)
+
+        with self.assertRaisesRegex(ValueError, "Unaccounted provider gateway"):
+            runtime.start()
+
+        self.assertEqual(self.launchd.jobs, initial)
+        self.assertEqual(self.launchd.mutations, mutations)
+
+    def test_unscoped_fork_gateway_socket_blocks_selection_before_service_mutation(self):
+        runtime = self.runtime()
+        temporary_root = self.root / "private-tmp"
+        temporary_root.mkdir(mode=0o700)
+        gateway_root = temporary_root / f"container-engine-{os.geteuid()}"
+        gateway_root.mkdir(mode=0o700)
+        (gateway_root / "docker.sock").write_text("unaccounted socket placeholder")
+        initial = dict(self.launchd.jobs)
+        mutations = list(self.launchd.mutations)
+
+        with patch.object(runtime_services, "PROVIDER_GATEWAY_SOCKET_ROOT", temporary_root):
+            with self.assertRaisesRegex(ValueError, "Unaccounted provider gateway socket"):
+                runtime.start()
+
+        self.assertEqual(self.launchd.jobs, initial)
+        self.assertEqual(self.launchd.mutations, mutations)
 
     def test_unrelated_listener_does_not_block_selected_start(self):
         runtime = self.runtime()
@@ -461,152 +538,6 @@ class RuntimeServicesTests(unittest.TestCase):
                     self.assertEqual(helper_paths[label].read_bytes(), payload)
                 runtime.restore()
                 self.assertEqual(self.launchd.jobs, self.original_jobs)
-
-    def test_system_start_global_api_plist_capture_and_restore_is_exact(self):
-        runtime = self.runtime()
-        runtime.start()
-        provider = self.root / "provider"
-        provider.mkdir()
-        prior = next(item for item in runtime.switch.prior if item["label"] == API)
-        path = Path(prior["path"])
-        original = plistlib.loads(prior["payload"])
-        generated = dict(original)
-        environment = dict(original["EnvironmentVariables"])
-        environment.pop("CONTAINER_SERVICE_NAMESPACE")
-        environment.update({
-            "CONTAINER_INSTALLATION_ROOT": str(provider),
-            "CONTAINER_INSTALL_ROOT": str(provider),
-            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
-        })
-        generated["EnvironmentVariables"] = environment
-        generated["ProgramArguments"] = [str(runtime.executable), "start"]
-        path.write_bytes(plistlib.dumps(generated))
-        finished = time.time()
-        started = finished - 1
-        capture = runtime.capture_system_start_api_definition(
-            provider, started, finished, provider_lane="apple-stock")
-        self.assertEqual(capture["status"], "captured")
-        runtime.restore_system_start_api_definition()
-        self.assertEqual(path.read_bytes(), prior["payload"])
-        self.assertEqual(path.stat().st_mtime_ns, runtime.original_api_file_metadata["mtimeNS"])
-        runtime.restore()
-        self.assertEqual(self.launchd.jobs, self.original_jobs)
-
-    def test_fork_system_start_preserves_exact_admitted_service_namespace(self):
-        runtime = self.runtime()
-        runtime.start()
-        provider = self.root / "provider"
-        provider.mkdir()
-        prior = next(item for item in runtime.switch.prior if item["label"] == API)
-        path = Path(prior["path"])
-        original = plistlib.loads(prior["payload"])
-        generated = dict(original)
-        environment = dict(original["EnvironmentVariables"])
-        environment.update({
-            "CONTAINER_INSTALLATION_ROOT": str(provider),
-            "CONTAINER_INSTALL_ROOT": str(provider),
-            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
-        })
-        generated["EnvironmentVariables"] = environment
-        generated["ProgramArguments"] = [str(runtime.executable), "start"]
-        path.write_bytes(plistlib.dumps(generated))
-        finished = time.time()
-
-        capture = runtime.capture_system_start_api_definition(
-            provider, finished - 1, finished, provider_lane="container-compose")
-
-        self.assertEqual(capture["status"], "captured")
-        self.assertEqual(runtime.system_start_api_capture["metadata"]["providerLane"], "container-compose")
-        runtime.restore_system_start_api_definition()
-        self.assertEqual(path.read_bytes(), prior["payload"])
-        runtime.restore()
-        self.assertEqual(self.launchd.jobs, self.original_jobs)
-
-    def test_fork_system_start_rejects_foreign_namespace_and_extra_environment(self):
-        for mutation in ("namespace", "extra"):
-            with self.subTest(mutation=mutation):
-                runtime = self.runtime(self.root / f"case-{mutation}")
-                runtime.start()
-                provider = self.root / f"provider-{mutation}"
-                provider.mkdir()
-                prior = next(item for item in runtime.switch.prior if item["label"] == API)
-                path = Path(prior["path"])
-                original = plistlib.loads(prior["payload"])
-                generated = dict(original)
-                environment = dict(original["EnvironmentVariables"])
-                environment.update({
-                    "CONTAINER_INSTALLATION_ROOT": str(provider),
-                    "CONTAINER_INSTALL_ROOT": str(provider),
-                    "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
-                })
-                if mutation == "namespace":
-                    environment["CONTAINER_SERVICE_NAMESPACE"] = "com.foreign.container"
-                else:
-                    environment["UNEXPECTED_SERVICE_SETTING"] = "value"
-                generated["EnvironmentVariables"] = environment
-                generated["ProgramArguments"] = [str(runtime.executable), "start"]
-                path.write_bytes(plistlib.dumps(generated))
-                finished = time.time()
-
-                with self.assertRaisesRegex(ValueError, "changes exceed the selected package contract"):
-                    runtime.capture_system_start_api_definition(
-                        provider, finished - 1, finished, provider_lane="container-compose")
-
-                path.write_bytes(prior["payload"])
-                runtime.restore()
-                self.assertEqual(self.launchd.jobs, self.original_jobs)
-
-    def test_system_start_global_api_plist_unchanged_is_an_idempotent_noop(self):
-        runtime = self.runtime()
-        runtime.start()
-        provider = self.root / "provider"
-        provider.mkdir()
-        now = time.time()
-        capture = runtime.capture_system_start_api_definition(
-            provider, now - 1, now, provider_lane="apple-stock")
-        self.assertEqual(capture["status"], "unchanged")
-        runtime.restore_system_start_api_definition()
-        runtime.restore()
-        self.assertEqual(self.launchd.jobs, self.original_jobs)
-
-    def test_system_start_global_api_plist_refuses_change_after_capture(self):
-        runtime = self.runtime()
-        runtime.start()
-        provider = self.root / "provider"
-        provider.mkdir()
-        prior = next(item for item in runtime.switch.prior if item["label"] == API)
-        path = Path(prior["path"])
-        original = plistlib.loads(prior["payload"])
-        generated = dict(original)
-        environment = dict(original["EnvironmentVariables"])
-        environment.pop("CONTAINER_SERVICE_NAMESPACE")
-        environment.update({
-            "CONTAINER_INSTALLATION_ROOT": str(provider),
-            "CONTAINER_INSTALL_ROOT": str(provider),
-            "CONTAINER_LOG_ROOT": str(runtime.root / "container-logs"),
-        })
-        generated["EnvironmentVariables"] = environment
-        generated["ProgramArguments"] = [str(runtime.executable), "start"]
-        path.write_bytes(plistlib.dumps(generated))
-        finished = time.time()
-        runtime.capture_system_start_api_definition(
-            provider, finished - 1, finished, provider_lane="apple-stock")
-        captured_payload = path.read_bytes()
-        captured_info = path.stat()
-        tampered = dict(generated)
-        tampered["RunAtLoad"] = False
-        path.write_bytes(plistlib.dumps(tampered))
-        os.utime(path, ns=(captured_info.st_atime_ns, captured_info.st_mtime_ns))
-        self.assertRaisesRegex(
-            ValueError,
-            "changed after SystemStart capture",
-            runtime.restore_system_start_api_definition,
-        )
-        path.write_bytes(captured_payload)
-        os.utime(path, ns=(captured_info.st_atime_ns, captured_info.st_mtime_ns))
-        runtime.restore_system_start_api_definition()
-        self.assertEqual(path.read_bytes(), prior["payload"])
-        runtime.restore()
 
     def test_uncertain_private_keychain_helper_prevents_runtime_restore(self):
         runtime = self.runtime()

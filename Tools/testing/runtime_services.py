@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import plistlib
@@ -48,6 +47,37 @@ PROVIDER_HELPER_QUIESCENCE = {
     "guestCount": 0,
     "clientCount": 0,
 }
+UNSCOPED_PROVIDER_GATEWAY = "io.github.stephenlclarke.container.engine"
+PROVIDER_GATEWAY_SOCKET_ROOT = Path("/private/tmp")
+
+
+def require_unscoped_provider_gateway_absent(launchd: Launchd, *, uid: int | None = None,
+                                             temporary_root: Path | None = None) -> None:
+    """Reject the fork's unscoped gateway label or public socket before switching services."""
+    if launchd.inspect(UNSCOPED_PROVIDER_GATEWAY) is not None:
+        raise ValueError("Unaccounted provider gateway prevents private API selection")
+    temporary_root = temporary_root or PROVIDER_GATEWAY_SOCKET_ROOT
+    owner = os.geteuid() if uid is None else uid
+    if type(owner) is not int or owner < 0 or not temporary_root.is_absolute():
+        raise ValueError("Provider gateway socket authority is invalid")
+    if not temporary_root.exists() and not temporary_root.is_symlink():
+        return
+    if temporary_root.is_symlink() or temporary_root.resolve() != temporary_root or not temporary_root.is_dir():
+        raise ValueError("Provider gateway temporary root is not canonical")
+    gateway_root = temporary_root / f"container-engine-{owner}"
+    if gateway_root.is_symlink():
+        raise ValueError("Unaccounted provider gateway socket root exists")
+    if gateway_root.exists():
+        info = gateway_root.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != owner
+                or stat.S_IMODE(info.st_mode) != 0o700 or gateway_root.resolve() != gateway_root):
+            raise ValueError("Unaccounted provider gateway socket root exists")
+    socket_path = gateway_root / "docker.sock"
+    try:
+        socket_path.lstat()
+    except FileNotFoundError:
+        return
+    raise ValueError("Unaccounted provider gateway socket prevents private API selection")
 
 
 def _require_canonical_owned_parent(path: Path, root: Path) -> None:
@@ -258,7 +288,7 @@ def authorised_roots(launchd: Launchd, home: Path) -> dict[str, Path]:
 
 
 def selected_definition(root: Path, executable: Path) -> Path:
-    """Mirror stock SystemStart's service contract, omitting guest provisioning."""
+    """Create the selected API service under the case's private runtime roots."""
     if not root.is_absolute() or root.resolve() != root or not root.is_dir():
         raise ValueError("Selected runtime needs a canonical owned root")
     if not executable.is_absolute() or executable.resolve() != executable or not executable.is_file():
@@ -282,6 +312,57 @@ def selected_definition(root: Path, executable: Path) -> Path:
     return path
 
 
+def verify_selected_api(root: Path, executable: Path, expected_pid: int,
+                        definition_sha256: str, launchd=None) -> dict:
+    """Re-admit the exact private API service before released guest provisioning."""
+    if (not root.is_absolute() or root.resolve() != root or root.is_symlink()
+            or not root.is_dir() or root.stat().st_uid != os.getuid()
+            or stat.S_IMODE(root.stat().st_mode) != 0o700):
+        raise ValueError("Selected API HOME must be a canonical private owner directory")
+    if (not executable.is_absolute() or executable.resolve() != executable or executable.is_symlink()
+            or not executable.is_file() or not os.access(executable, os.X_OK)
+            or type(expected_pid) is not int or expected_pid <= 0
+            or re.fullmatch(r"[0-9a-f]{64}", definition_sha256) is None):
+        raise ValueError("Selected API executable or process identity is invalid")
+    path = root / "selected-apiserver.plist"
+    info = path.lstat()
+    payload = canonical_file(path)
+    if (path.is_symlink() or path.resolve() != path or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o022
+            or info.st_dev != root.stat().st_dev
+            or hashlib.sha256(payload).hexdigest() != definition_sha256):
+        raise ValueError("Selected API definition differs from its admitted private bytes")
+    definition = plistlib.loads(payload)
+    expected_environment = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(root),
+        "TMPDIR": str(root), "TMP": str(root), "TEMP": str(root),
+        "CONTAINER_APP_ROOT": str(root / "container"),
+        "CONTAINER_INSTALL_ROOT": str(executable.parent.parent),
+        "CONTAINER_LOG_ROOT": str(root / "container-logs"),
+    }
+    if (set(definition) != {"Label", "ProgramArguments", "EnvironmentVariables",
+                            "RunAtLoad", "LimitLoadToSessionType", "MachServices"}
+            or definition.get("Label") != API
+            or definition.get("ProgramArguments") != [str(executable), "start"]
+            or definition.get("EnvironmentVariables") != expected_environment
+            or definition.get("RunAtLoad") is not True
+            or definition.get("LimitLoadToSessionType") != ["Aqua", "Background", "System"]
+            or definition.get("MachServices") != {API: True}):
+        raise ValueError("Selected API definition is not the private runtime contract")
+    launchd = launchd or Launchd()
+    if launchd.inspect(API) != {"label": API, "path": str(path), "program": str(executable)}:
+        raise ValueError("Selected API launchd registration differs from its private definition")
+    if launchd.process_id(API) != expected_pid:
+        raise ValueError("Selected API process differs from its admitted PID")
+    service = require_api_service(executable)
+    if service.get("pid") != expected_pid:
+        raise ValueError("Selected API executable process differs from its admitted PID")
+    process = process_inventory().get(expected_pid)
+    if not isinstance(process, dict) or process.get("program") != str(executable):
+        raise ValueError("Selected API PID no longer runs the admitted executable")
+    return {"status": "running", "pid": expected_pid, "definitionSHA256": definition_sha256}
+
+
 class ControlledRuntime:
     """Select one released service, then restore originals before guard removal.
 
@@ -302,11 +383,11 @@ class ControlledRuntime:
         self.service = None
         self.original_processes = []
         self.original_api_file_metadata = None
-        self.system_start_api_capture = None
         self.provider_helper_originals = None
         self.provider_helper_selected = None
 
     def start(self, *, prepare_home=None):
+        require_unscoped_provider_gateway_absent(self.launchd)
         prior = snapshot(self.launchd, authorised_roots(self.launchd, self.home))
         api_original = next(item for item in prior if item["label"] == API)
         api_path = Path(api_original["path"])
@@ -530,146 +611,6 @@ class ControlledRuntime:
         self.provider_helper_selected = None
         return {"status": "restored", "helpers": len(selected)}
 
-    def capture_system_start_api_definition(
-        self, provider_root: Path, started_at: float, finished_at: float, *, provider_lane: str
-    ) -> dict:
-        """Seal the lane-specific inactive global API plist write from SystemStart."""
-        if (self.journal is None or self.switch is None or self.service is None
-                or self.original_api_file_metadata is None or self.system_start_api_capture is not None):
-            raise ValueError("SystemStart API definition capture is not ready")
-        if (not provider_root.is_absolute() or provider_root.resolve() != provider_root
-                or provider_root.is_symlink() or not provider_root.is_dir()
-                or type(started_at) not in (int, float) or type(finished_at) not in (int, float)
-                or not math.isfinite(started_at) or not math.isfinite(finished_at)
-                or started_at > finished_at or finished_at - started_at > 180):
-            raise ValueError("SystemStart API definition capture bounds are invalid")
-        if provider_lane not in {"apple-stock", "container-compose"}:
-            raise ValueError("SystemStart API definition needs an admitted native provider lane")
-        prior = next(item for item in self.switch.prior if item["label"] == API)
-        path = Path(prior["path"])
-        expected_path = (
-            self.home / "Library/Application Support/com.apple.container"
-            / "apiserver/apiserver.plist"
-        )
-        expected_fields = {"Label", "EnvironmentVariables", "LimitLoadToSessionType",
-                           "MachServices", "ProgramArguments", "RunAtLoad"}
-        if (str(path) != self.original_api_file_metadata["path"]
-                or path != expected_path
-                or self.launchd.inspect(API) != {"label": API, "path": str(self.root / "selected-apiserver.plist"),
-                                                "program": str(self.executable)}):
-            raise ValueError("The global API plist is not inactive under the selected runtime")
-        original = plistlib.loads(prior["payload"])
-        payload = canonical_file(path)
-        if payload == prior["payload"]:
-            unchanged_info = path.lstat()
-            if (unchanged_info.st_dev != self.original_api_file_metadata["device"]
-                    or unchanged_info.st_ino != self.original_api_file_metadata["inode"]
-                    or unchanged_info.st_mtime_ns != self.original_api_file_metadata["mtimeNS"]
-                    or stat.S_IMODE(unchanged_info.st_mode)
-                       != self.original_api_file_metadata["mode"]):
-                raise ValueError("Unchanged global API bytes have unexpected file metadata")
-            self.system_start_api_capture = {"unchanged": True}
-            self.switch.record("system-start-api-plist-unchanged", API)
-            return {"status": "unchanged", "originalSHA256": prior["sha256"]}
-        generated = plistlib.loads(payload)
-        info = path.lstat()
-        if (info.st_uid != os.getuid() or info.st_nlink != 1 or not stat.S_ISREG(info.st_mode)
-                or path.is_symlink() or info.st_dev != self.original_api_file_metadata["device"]
-                or stat.S_IMODE(info.st_mode) != self.original_api_file_metadata["mode"]
-                or info.st_mtime < started_at or info.st_mtime > finished_at):
-            raise ValueError("SystemStart API plist write is outside the owned call interval")
-        if set(generated) != expected_fields:
-            raise ValueError("SystemStart API plist has an unsupported schema")
-        if set(original) != expected_fields or generated["Label"] != API:
-            raise ValueError("SystemStart API plist identity differs from its original")
-        if (not isinstance(original.get("EnvironmentVariables"), dict)
-                or not isinstance(generated.get("EnvironmentVariables"), dict)
-                or not isinstance(generated.get("ProgramArguments"), list)):
-            raise ValueError("SystemStart API plist fields are malformed")
-        for key in set(original) - {"EnvironmentVariables", "ProgramArguments"}:
-            if generated[key] != original[key]:
-                raise ValueError("SystemStart changed an unrelated API plist field")
-        expected_environment = dict(original["EnvironmentVariables"])
-        expected_keys = {
-            "CONTAINER_APP_ROOT", "CONTAINER_INSTALLATION_ROOT",
-            "CONTAINER_INSTALL_ROOT", "CONTAINER_LOG_ROOT",
-        }
-        if provider_lane == "apple-stock":
-            expected_environment.pop("CONTAINER_SERVICE_NAMESPACE", None)
-        else:
-            namespace = expected_environment.get("CONTAINER_SERVICE_NAMESPACE")
-            if not isinstance(namespace, str) or not namespace:
-                raise ValueError("Fork SystemStart has no admitted service namespace to preserve")
-            expected_keys.add("CONTAINER_SERVICE_NAMESPACE")
-        expected_environment.update({
-            "CONTAINER_INSTALLATION_ROOT": str(provider_root),
-            "CONTAINER_INSTALL_ROOT": str(provider_root),
-            "CONTAINER_LOG_ROOT": str(self.root / "container-logs"),
-        })
-        if (set(generated["EnvironmentVariables"]) != expected_keys
-                or generated["ProgramArguments"] != [str(self.executable), "start"]
-                or generated["EnvironmentVariables"] != expected_environment
-                or generated["EnvironmentVariables"].get("CONTAINER_APP_ROOT")
-                   != original["EnvironmentVariables"].get("CONTAINER_APP_ROOT")):
-            raise ValueError("SystemStart API plist changes exceed the selected package contract")
-        metadata = {
-            "path": str(path),
-            "uid": info.st_uid,
-            "mode": stat.S_IMODE(info.st_mode),
-            "nlink": info.st_nlink,
-            "device": info.st_dev,
-            "inode": info.st_ino,
-            "mtimeNS": info.st_mtime_ns,
-            "atimeNS": info.st_atime_ns,
-            "startedAt": float(started_at),
-            "finishedAt": float(finished_at),
-            "providerLane": provider_lane,
-            "originalSHA256": prior["sha256"],
-            "generatedSHA256": hashlib.sha256(payload).hexdigest(),
-        }
-        self.journal.put("system-start-api-generated.plist", payload)
-        self.journal.put("system-start-api-meta.json", json.dumps(metadata, sort_keys=True).encode())
-        self.switch.record("capture-system-start-api-plist", API)
-        self.system_start_api_capture = {"metadata": metadata, "payload": payload,
-                                         "original": prior["payload"]}
-        return {"status": "captured", "generatedSHA256": metadata["generatedSHA256"]}
-
-    def restore_system_start_api_definition(self) -> dict:
-        """Restore the privately journalled original inactive API plist bytes."""
-        if self.system_start_api_capture is None:
-            return {"status": "not-captured"}
-        capture = self.system_start_api_capture
-        if capture.get("unchanged") is True:
-            return {"status": "unchanged"}
-        metadata = capture["metadata"]
-        path = Path(metadata["path"])
-        if self.launchd.inspect(API) != {"label": API, "path": str(self.root / "selected-apiserver.plist"),
-                                        "program": str(self.executable)}:
-            raise ValueError("Selected API changed before inactive global plist restoration")
-        info = path.lstat()
-        current = canonical_file(path)
-        if (path.is_symlink() or current != capture["payload"]
-                or hashlib.sha256(current).hexdigest() != metadata["generatedSHA256"]
-                or info.st_uid != metadata["uid"] or info.st_mode & 0o022
-                or not stat.S_ISREG(info.st_mode) or info.st_nlink != metadata["nlink"]
-                or info.st_dev != metadata["device"] or info.st_ino != metadata["inode"]
-                or info.st_mtime_ns != metadata["mtimeNS"]):
-            raise ValueError("Inactive global API plist changed after SystemStart capture")
-        self.switch.record("restore-system-start-api-plist", API)
-        atomic_replace_private_file(
-            path, capture["payload"], capture["original"],
-            mode=self.original_api_file_metadata["mode"], owner=os.getuid(),
-        )
-        os.utime(path, ns=(self.original_api_file_metadata["atimeNS"],
-                           self.original_api_file_metadata["mtimeNS"]))
-        restored_info = path.lstat()
-        if (canonical_file(path) != capture["original"]
-                or stat.S_IMODE(restored_info.st_mode) != self.original_api_file_metadata["mode"]
-                or restored_info.st_mtime_ns != self.original_api_file_metadata["mtimeNS"]):
-            raise ValueError("Original inactive global API plist bytes were not restored")
-        self.system_start_api_capture = {"unchanged": True}
-        return {"status": "restored", "originalSHA256": metadata["originalSHA256"]}
-
     def require_idle_before_selection(self, prior):
         # Homebrew's registered one-shot `container system start` is itself an
         # authorised service to quiesce, not an unrelated user CLI. Exempt only
@@ -734,9 +675,9 @@ class ControlledRuntime:
         if self.journal is None:
             return
         probe_diagnostics(self.root, self.journal)
-        # Stock SystemStart leaves stdio to launchd and supplies LogRoot for
-        # service-owned file logging. launchd cannot open SSD stdio here
-        # (EX_CONFIG), even when the selected process itself can use the disk.
+        # Keep stdio under launchd and retain bounded service-owned logs from
+        # the private LogRoot. launchd cannot open SSD stdio here (EX_CONFIG),
+        # even when the selected process itself can use the disk.
         directory = self.root / "container-logs"
         if directory.resolve() != directory:
             raise ValueError("Selected API log path changed")

@@ -1067,16 +1067,11 @@ def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
 
 
 def provider_quiescence(runtime, container: Path, environment: dict[str, str], expected_programs: dict) -> dict:
-    """Prove the selected provider has no workload before changing helper HOME."""
+    """Prove the selected API and empty provider inventories before helper HOME changes."""
 
-    from runtime_services import PROVIDER_HELPER_LAYOUT, process_inventory
     from service_switch import API
 
-    status_result = run([str(container), "system", "status", "--format", "json"],
-                        env=environment, timeout=30, capture=True)
-    status = json.loads(status_result.stdout)
-    if not isinstance(status, dict) or status.get("status") != "running":
-        raise RuntimeError("selected provider is not running during helper quiescence check")
+    runtime.verify()
 
     def records(arguments: list[str], name: str) -> list[dict]:
         result = run([str(container), *arguments], env=environment, timeout=30, capture=True)
@@ -1088,6 +1083,9 @@ def provider_quiescence(runtime, container: Path, environment: dict[str, str], e
     containers = records(["list", "--all", "--format", "json"], "container")
     volumes = records(["volume", "list", "--format", "json"], "volume")
     networks = records(["network", "list", "--format", "json"], "network")
+    images = records(["image", "list", "--format", "json"], "image")
+    if images:
+        raise RuntimeError("private provider already contains images before admitted guest provisioning")
     custom_networks = []
     for network in networks:
         configuration = network.get("configuration", {})
@@ -1103,29 +1101,48 @@ def provider_quiescence(runtime, container: Path, environment: dict[str, str], e
         if any(value != "default" for value in identities):
             custom_networks.append(network)
 
-    allowed_pids = {runtime.service.get("pid")}
+    from runtime_services import PROVIDER_HELPER_LAYOUT, process_inventory
+
+    processes = process_inventory()
+    api_pid = runtime.service.get("pid")
+    if (type(api_pid) is not int or api_pid <= 0
+            or processes.get(api_pid, {}).get("program") != str(runtime.executable)):
+        raise RuntimeError("selected API process identity is absent from the process inventory")
+    allowed_pids = {api_pid}
     if runtime.launchd.inspect(API) != {
             "label": API, "path": str(runtime.root / "selected-apiserver.plist"),
             "program": str(runtime.executable)}:
         raise RuntimeError("selected API service identity changed before helper restart")
-    for label in PROVIDER_HELPER_LAYOUT:
+    for label, (directory, _executable_name, _mach_service) in PROVIDER_HELPER_LAYOUT.items():
         expected = expected_programs[label]
         job = runtime.launchd.inspect(label)
+        service_path = runtime.root / "container/plugin-state" / directory / "service.plist"
         if (not isinstance(job, dict) or job.get("label") != label
+                or job.get("path") != str(service_path)
                 or job.get("program") != str(expected["program"])):
             raise RuntimeError("provider helper identity differs from the locked package")
         pid = runtime.launchd.process_id(label)
-        if not isinstance(pid, int) or pid <= 0:
-            raise RuntimeError("provider helper is not running before private HOME propagation")
-        allowed_pids.add(pid)
+        if pid is None:
+            # propagate_provider_helper_home validates the complete generated
+            # plist before invoking this quiescence callback. RunAtLoad=false
+            # helpers are registered but intentionally have no PID until use.
+            continue
+        elif type(pid) is not int or pid <= 0:
+            raise RuntimeError("provider helper process identity is invalid")
+        else:
+            process = processes.get(pid)
+            if not isinstance(process, dict) or process.get("program") != str(expected["program"]):
+                raise RuntimeError("provider helper PID differs from its locked executable")
+            allowed_pids.add(pid)
 
     clients = []
     guests = []
     busy_names = {"Runner.Worker", "container", "compose", "docker", "docker-compose",
                   "colima", "container-compose", "devcontainer", "devcontainer-compose",
                   "devcontainer-engine"}
+    busy_names.update(Path(item["program"]).name for item in expected_programs.values())
     guest_names = {"container-runtime-linux", "com.apple.Virtualization.VirtualMachine"}
-    for pid, process in process_inventory().items():
+    for pid, process in processes.items():
         name = Path(process["program"]).name
         if name in guest_names:
             guests.append(pid)
@@ -1294,7 +1311,6 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     runtime = ControlledRuntime(root, owner, api, JOURNAL_PARENT, home=ACCOUNT_HOME)
     cleanup[lane] = {"status": "active"}
     restored = keychain_created = provider_started = provider_stopped = False
-    api_definition_capture = None
     lane_env = dict(base_env)
     # API service and clients share the transaction-owned HOME. Admission
     # anchors retained authority to the real account through pwd.
@@ -1317,42 +1333,40 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
 
     primary_error = None
     suites_started = False
-    provider_root_path = Path(provider_root)
     try:
         runtime.start(prepare_home=prepare_private_home)
-        system_start_started = time.time()
-        try:
-            runtime_started = run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "start",
-                                   "--enable-kernel-install", "--timeout", "120"],
-                                  env=lane_env, timeout=150, capture=True, check=False)
-        finally:
-            api_definition_capture = runtime.capture_system_start_api_definition(
-                provider_root_path, system_start_started, time.time(), provider_lane=lane)
-        if runtime_started.returncode != 0:
-            raise RuntimeError(f"{lane} provider SystemStart exited {runtime_started.returncode}")
-        runtime_status = json.loads(run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "status",
-                                         "--format", "json"], env=lane_env, timeout=30,
-                                        capture=True).stdout)
-        provider_started = runtime_status.get("status") == "running"
+        api_server_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
+        api_server_sha = args._provider_hashes[api_server_key]
+        if sha256(api) != api_server_sha:
+            raise RuntimeError(f"{lane} API server differs from the admitted signed package")
+        selected_api = root / "selected-apiserver.plist"
+        if (not selected_api.is_file() or selected_api.is_symlink()
+                or selected_api.resolve(strict=True) != selected_api):
+            raise RuntimeError(f"{lane} selected API definition is not canonical")
+        lane_env.update({
+            "DEVCONTAINER_API_SERVICE_PID": str(runtime.service["pid"]),
+            "DEVCONTAINER_API_DEFINITION_SHA256": sha256(selected_api),
+            "DEVCONTAINER_API_SERVER_SHA256": api_server_sha,
+        })
         expected_helpers = args._provider_helper_programs[lane]
-        helper_home = None
-        if provider_started:
-            helper_home = runtime.propagate_provider_helper_home(
-                provider_root_path, expected_helpers,
-                lambda: provider_quiescence(runtime, Path(lane_env["DEVCONTAINER_CONTAINER_BIN"]),
-                                            lane_env, expected_helpers))
+        helper_home = runtime.propagate_provider_helper_home(
+            Path(provider_root), expected_helpers,
+            lambda: provider_quiescence(runtime, Path(lane_env["DEVCONTAINER_CONTAINER_BIN"]),
+                                        lane_env, expected_helpers))
+        lane_env.update({
+            "DEVCONTAINER_API_SERVICE_PID": str(runtime.service["pid"]),
+            "DEVCONTAINER_API_DEFINITION_SHA256": sha256(root / "selected-apiserver.plist"),
+            "DEVCONTAINER_API_SERVER_SHA256": api_server_sha,
+        })
+        provider_started = True
         (evidence / f"{lane}-runtime-initialization.json").write_text(json.dumps(
-            {"commandExitCode": runtime_started.returncode,
-             "commandStdout": runtime_started.stdout[-4000:],
-             "commandStderr": runtime_started.stderr[-4000:], "status": runtime_status,
+            {"status": "api-and-helper-ready",
              "containerBinarySHA256": sha256(Path(lane_env["DEVCONTAINER_CONTAINER_BIN"])),
              "apiServerSHA256": sha256(api),
              "providerHelperSHA256": {label: value["sha256"] for label, value in expected_helpers.items()},
-             "apiDefinitionCapture": api_definition_capture,
              "providerHelperHome": helper_home,
-             "kernelInstall": "maintained system start under private HOME"}, sort_keys=True, indent=2) + "\n")
-        if not provider_started:
-            raise RuntimeError(f"{lane} provider did not reach running status")
+             "guestImagesAndKernel": "admitted ReleasedGuest provisioning before owned Engine start"},
+            sort_keys=True, indent=2) + "\n")
         cli, vscode = lane_commands(args, lane, evidence)
         suites_started = True
         cli_result, vscode_result, suites_passed = run_suite_pair(
@@ -1387,26 +1401,12 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     complete = lane_cleanup_is_complete(evidence, lane, component_fixture)
     if provider_started and suites_started and not complete:
         cleanup_error = RuntimeError(f"{lane} fixture cleanup is incomplete; preserving active provider and quarantine")
-    if runtime.switch is not None and api_definition_capture is not None:
-        try:
-            runtime.restore_system_start_api_definition()
-        except BaseException as error:
-            cleanup_error = error
-    if provider_started and (complete or not suites_started) and cleanup_error is None:
-        try:
-            stopped = run([lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "stop"],
-                          env=lane_env, timeout=120, capture=True)
-            (evidence / f"{lane}-runtime-stop.json").write_text(json.dumps(
-                {"exitCode": stopped.returncode, "stdout": stopped.stdout[-4000:],
-                 "stderr": stopped.stderr[-4000:]}, sort_keys=True, indent=2) + "\n")
-            provider_stopped = True
-        except BaseException as error:
-            cleanup_error = error
-    if runtime.switch is not None and (not provider_started or provider_stopped) and cleanup_error is None:
+    if runtime.switch is not None and cleanup_error is None:
         try:
             runtime.restore_provider_helper_definitions()
             runtime.restore()
             restored = True
+            provider_stopped = True
         except BaseException as error:
             cleanup_error = error
     if restored and (not provider_started or provider_stopped) and cleanup_error is None:

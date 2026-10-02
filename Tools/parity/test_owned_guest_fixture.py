@@ -17,7 +17,8 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from owned_guest_fixture import OwnedGuestFixtureRunner, _active_provider_home, admit_guest_inputs
+from owned_guest_fixture import (ApiRuntimeView, OwnedGuestFixtureRunner,
+                                 _active_provider_home, admit_guest_inputs)
 from parity_lib import ParityError
 
 
@@ -483,6 +484,146 @@ class ActiveProviderHomeTests(unittest.TestCase):
             self.assertFalse((campaign / "owned-guest-runtime").exists())
             self.assertEqual(json.loads(journal.owner), owner)
 
+
+class NativeProvisionBeforeEngineTests(unittest.TestCase):
+    def test_native_provision_uses_api_view_without_a_placeholder_socket_once(self) -> None:
+        import owned_guest_fixture
+
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        import guest_runtime
+
+        fixture = SimpleNamespace(identifier="E07-init-attachment")
+        inputs = {"kernel": {"sha256": "a" * 64},
+                  "initialization": {"archiveSHA256": "b" * 64},
+                  "workload": {"archiveSHA256": "c" * 64}}
+        events = []
+        owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
+        root = Path("/private/provider-home")
+        journal = mock.Mock()
+
+        class Runtime:
+            def __init__(self, *_args):
+                events.append("api-view")
+
+            def verify(self):
+                events.append("api-verify")
+
+        guests = []
+
+        class Guest:
+            def __init__(self, *args, **_kwargs):
+                self.socket = args[6]
+                guests.append(self)
+                events.append("guest-created")
+
+            def provision(self):
+                events.append("provision")
+
+        bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+        bridge.runner = SimpleNamespace(lane="apple-stock")
+        bridge.lane, bridge.repository = "apple-stock", REPOSITORY
+        bridge.fixtures, bridge.retained, bridge.inputs = [fixture], Path("/retained"), inputs
+        bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
+        bridge.preparation, bridge.preparation_error = None, None
+        bridge._provision_event_sequence = 0
+        bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+
+        with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
+              mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
+              mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
+              mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+            bridge.prepare_native_provider()
+            with self.assertRaisesRegex(ParityError, "only once"):
+                bridge.prepare_native_provider()
+
+        self.assertIsNone(bridge.socket)
+        self.assertIsNone(guests[0].socket)
+        self.assertEqual(admit.call_count, 2)
+        self.assertEqual(events.count("provision"), 1)
+        self.assertLess(events.index("api-verify"), events.index("provision"))
+        self.assertEqual(bridge.preparation[0], root)
+
+    def test_api_runtime_view_rechecks_home_api_pid_and_locked_server_bytes(self) -> None:
+        import owned_guest_fixture
+
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        import runtime_services
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "provider-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "retained"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            guard_path.write_text(json.dumps({
+                "identity": {"campaign": "campaign-id", "sourceCommit": "a" * 40,
+                             "scope": "finalized-native-parity"},
+                "root": str(campaign),
+            }, sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "campaign-id", "lane": "apple-stock",
+                                  "sourceCommit": "a" * 40}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            provider_bin = base / "provider/bin"
+            provider_bin.mkdir(parents=True)
+            container = provider_bin / "container"
+            container.write_bytes(b"container")
+            api = provider_bin / "container-apiserver"
+            api.write_bytes(b"locked api")
+            api.chmod(0o755)
+            environment = {
+                "HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                "DEVCONTAINER_PARITY_GUARD": str(guard_path),
+                "DEVCONTAINER_CONTAINER_BIN": str(container),
+                "DEVCONTAINER_API_SERVICE_PID": "4123",
+                "DEVCONTAINER_API_SERVER_SHA256": owned_guest_fixture.sha256(api),
+                "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
+            }
+            runner = SimpleNamespace(
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity={"sourceCommit": "a" * 40},
+                finalized_selection=None, environment=environment,
+                provider_executable=lambda _name, _fallback: str(container),
+            )
+            view = ApiRuntimeView(runner, home, owner, ("E07-init-attachment",))
+            with (mock.patch.object(owned_guest_fixture, "ACCOUNT_HOME", base),
+                  mock.patch.object(runtime_services, "verify_selected_api") as verify):
+                view.verify()
+                verify.assert_called_once_with(home, api, 4123, "d" * 64)
+
+                environment["DEVCONTAINER_API_SERVICE_PID"] = "0"
+                with self.assertRaisesRegex(ParityError, "API executable or identity"):
+                    view.verify()
+                environment["DEVCONTAINER_API_SERVICE_PID"] = "4123"
+
+                environment["HOME"] = str(base / "substituted-home")
+                with self.assertRaises(OSError):
+                    view.verify()
+                environment["HOME"] = str(home)
+
+                api.write_bytes(b"changed api")
+                with self.assertRaisesRegex(ParityError, "API executable or identity"):
+                    view.verify()
+
+    def test_api_runtime_view_fails_when_selected_service_identity_fails(self) -> None:
+        import owned_guest_fixture
+
+        with mock.patch.object(owned_guest_fixture, "_verify_native_api",
+                               side_effect=ParityError("API PID changed")):
+            runner = SimpleNamespace(finalized_selection=None)
+            view = ApiRuntimeView(runner, Path("/private/home"), {}, ())
+            with self.assertRaisesRegex(ParityError, "API PID changed"):
+                view.verify()
+
+
+class RemainingActiveProviderHomeTests(unittest.TestCase):
     def test_preparation_rejects_a_mismatched_active_home_owner_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
@@ -511,8 +652,9 @@ class ActiveProviderHomeTests(unittest.TestCase):
                 lane="apple-stock", output=campaign / "apple-stock",
                 finalized_identity={"sourceCommit": "a" * 40},
             )
-            with self.assertRaisesRegex(ParityError, "differs from this lane"):
-                _active_provider_home(runner)
+            with mock.patch("owned_guest_fixture.ACCOUNT_HOME", base):
+                with self.assertRaisesRegex(ParityError, "differs from this lane"):
+                    _active_provider_home(runner)
 
     def test_docker_preparation_keeps_its_campaign_scoped_ssd_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

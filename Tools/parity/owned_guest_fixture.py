@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -185,11 +186,13 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
 class LaneRuntimeView:
     """Verify the existing LaneRunner endpoint without acquiring or starting one."""
 
-    def __init__(self, runner, journal, socket: Path, compose: Path | None = None) -> None:
+    def __init__(self, runner, journal, socket: Path, compose: Path | None = None,
+                 fixture_selection: tuple[str, ...] = ()) -> None:
         self.runner = runner
         self.journal = journal
         self.socket = socket
         self.compose = compose
+        self.fixture_selection = fixture_selection
         self.endpoint = runner.environment.get("DOCKER_HOST", "")
         if runner.engine is not None:
             self.engine_pid = runner.engine.pid
@@ -215,6 +218,45 @@ class LaneRuntimeView:
                 raise ParityError("owned compatibility Engine bytes changed")
             if self.socket != runner.socket_root / "docker.sock" or not self.socket.is_socket():
                 raise ParityError("owned compatibility Engine socket changed")
+            _verify_native_api(runner, self.fixture_selection)
+
+
+class ApiRuntimeView:
+    """Verify the selected private API while admitted guest data is provisioned."""
+
+    def __init__(self, runner, root: Path, owner: dict, fixture_selection: tuple[str, ...]) -> None:
+        self.runner, self.root, self.owner = runner, root, owner
+        self.fixture_selection = fixture_selection
+
+    def verify(self) -> None:
+        if self.runner.finalized_selection is not None:
+            self.runner.readmit_finalized()
+        root, owner = _verify_native_api(self.runner, self.fixture_selection)
+        if root != self.root or owner != self.owner:
+            raise ParityError("active API HOME identity changed during guest provisioning")
+
+
+def _verify_native_api(runner, fixture_selection: tuple[str, ...]) -> tuple[Path, dict]:
+    """Bind API traffic to its admitted service, executable, private HOME and campaign."""
+
+    root, owner = _active_provider_home(runner, fixture_selection=fixture_selection)
+    environment = runner.environment
+    container = Path(runner.provider_executable("DEVCONTAINER_CONTAINER_BIN", ""))
+    api = container.parent / "container-apiserver"
+    expected_sha = environment.get("DEVCONTAINER_API_SERVER_SHA256", "")
+    expected_pid = environment.get("DEVCONTAINER_API_SERVICE_PID", "")
+    definition_sha = environment.get("DEVCONTAINER_API_DEFINITION_SHA256", "")
+    if (not api.is_absolute() or api.resolve(strict=True) != api or api.is_symlink()
+            or not api.is_file() or not os.access(api, os.X_OK)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+            or sha256(api) != expected_sha
+            or not expected_pid.isdecimal() or int(expected_pid) <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", definition_sha)):
+        raise ParityError("selected private API executable or identity is not admitted")
+    from runtime_services import verify_selected_api
+
+    verify_selected_api(root, api, int(expected_pid), definition_sha)
+    return root, owner
 
 class OwnedGuestFixtureRunner:
     """Own guest image preparation and execute routed fixtures on one active lane."""
@@ -237,16 +279,22 @@ class OwnedGuestFixtureRunner:
         self.docker_compose: Path | None = None
         self.compose = self._admit_compose() if any(
             fixture.identifier in COMPOSE_FIXTURES for fixture in fixtures) else None
-        self.preparation: tuple[Path, Any, LaneRuntimeView, dict] | None = None
+        self.preparation: tuple[Path, Any, LaneRuntimeView | ApiRuntimeView, dict] | None = None
         self.preparation_error: str | None = None
         self._provision_event_sequence = 0
         self.image_preexisting = False
         self.loaded_image_id: str | None = None
 
     def attach_endpoint(self) -> None:
-        """Attach only after LaneRunner has selected its single runtime endpoint."""
+        """Attach after Engine startup and replace API-only provisioning checks."""
 
         self.socket = self._select_socket()
+        if self.lane != "docker" and self.preparation is not None and self.preparation_error is None:
+            root, journal, _runtime, owner = self.preparation
+            runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose,
+                                      tuple(item.identifier for item in self.fixtures))
+            runtime.verify()
+            self.preparation = (root, journal, runtime, owner)
 
     def _select_socket(self) -> Path:
         if self.lane == "docker":
@@ -445,7 +493,10 @@ class OwnedGuestFixtureRunner:
         return parent
 
     def prepare(self) -> None:
-        """Load only the authenticated pinned guest input into the current endpoint."""
+        """Prepare Docker workload images after selecting the Docker endpoint."""
+
+        if self.lane != "docker":
+            raise ParityError("native guest inputs must be provisioned before Engine startup")
 
         first = next((fixture for fixture in self.fixtures if fixture.identifier in OWNED_GUEST_FIXTURES), None)
         if first is None:
@@ -460,15 +511,37 @@ class OwnedGuestFixtureRunner:
         if guest_input_identity(current_inputs) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed after preflight admission")
         self.inputs = current_inputs
-        if self.lane == "docker":
-            self._prepare_docker_image(runtime, journal)
-        else:
-            from guest_runtime import ReleasedGuest
+        self._prepare_docker_image(runtime, journal)
+        self.preparation = (root, journal, runtime, owner)
 
-            guest = ReleasedGuest(self.inputs, first.identifier, root, owner, runtime, self.container,
-                                  self.socket, observe=lambda event: self._record_provision_event(journal, event))
-            guest.provision()
-            runtime.verify()
+    def prepare_native_provider(self) -> None:
+        """Install the authenticated kernel and images through the ready private API."""
+
+        if self.lane == "docker":
+            raise ParityError("Docker image preparation uses its selected Engine endpoint")
+        if self.preparation is not None or self.preparation_error is not None:
+            raise ParityError("native guest provisioning may run only once")
+        first = next((fixture for fixture in self.fixtures if fixture.identifier in OWNED_GUEST_FIXTURES), None)
+        if first is None:
+            return
+        root, journal, owner = self._case_paths_for_preparation()
+        fixture_selection = tuple(fixture.identifier for fixture in self.fixtures)
+        runtime = ApiRuntimeView(self.runner, root, owner, fixture_selection)
+        self.preparation = (root, journal, runtime, owner)
+        runtime.verify()
+        before = admit_guest_inputs(self.repository, self.lane, self.retained)
+        if guest_input_identity(before) != guest_input_identity(self.inputs):
+            raise ParityError("guest input bytes changed before native provisioning")
+        from guest_runtime import ReleasedGuest
+
+        guest = ReleasedGuest(self.inputs, first.identifier, root, owner, runtime, self.container,
+                              None, observe=lambda event: self._record_provision_event(journal, event))
+        guest.provision()
+        runtime.verify()
+        after = admit_guest_inputs(self.repository, self.lane, self.retained)
+        if guest_input_identity(after) != guest_input_identity(self.inputs):
+            raise ParityError("guest input bytes changed during native provisioning")
+        self.inputs = after
         self.preparation = (root, journal, runtime, owner)
 
     def _record_provision_event(self, journal: Any, event: dict[str, Any]) -> None:
@@ -574,7 +647,8 @@ class OwnedGuestFixtureRunner:
         events: list[dict] = []
         try:
             root, journal, owner = self._case_paths(fixture)
-            runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose)
+            runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose,
+                                      tuple(item.identifier for item in self.fixtures))
             runtime.verify()
             from guest_runtime import GUEST_API_VERSION, ReleasedGuest
 

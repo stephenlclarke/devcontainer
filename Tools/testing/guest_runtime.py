@@ -109,7 +109,7 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
 class ReleasedGuest:
     """Own setup commands and guest cleanup before the Engine/provider is stopped."""
 
-    def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path,
+    def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path | None,
                  *, observe=None, image_id: str | None = None,
                  compose_selection: dict[str, str] | None = None):
         if fixture not in FIXTURES:
