@@ -371,26 +371,26 @@ private final class AttachmentFrameSource: @unchecked Sendable {
     }
 
     func next() async throws -> RuntimeIOFrame? {
-        let (snapshot, ready) = lock.withLock { () -> (
-            AsyncThrowingStream<RuntimeIOFrame, any Error>.Iterator,
-            [CheckedContinuation<Void, Never>]
-        ) in
+        let snapshot: (
+            iterator: AsyncThrowingStream<RuntimeIOFrame, any Error>.Iterator,
+            ready: [CheckedContinuation<Void, Never>]
+        ) = lock.withLock {
             precondition(!reading, "Attachment source allows only one reader")
             reading = true
             reads += 1
             let ready = readWaiters.filter { $0.0 <= reads }.map(\.1)
             readWaiters.removeAll { $0.0 <= reads }
-            return (iterator, ready)
+            return (iterator: self.iterator, ready: ready)
         }
-        ready.forEach { $0.resume() }
-        var iterator = snapshot
+        snapshot.ready.forEach { $0.resume() }
+        var currentIterator = snapshot.iterator
         defer {
             lock.withLock {
-                self.iterator = iterator
+                self.iterator = currentIterator
                 reading = false
             }
         }
-        return try await iterator.next()
+        return try await currentIterator.next()
     }
 
     func emit(_ frame: RuntimeIOFrame) {
