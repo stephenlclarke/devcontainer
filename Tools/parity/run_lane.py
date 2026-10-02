@@ -362,6 +362,11 @@ class LaneRunner:
                 self._owned_guest_runner.preparation_error = str(error)
 
         results: list[dict[str, Any]] = []
+        component_e13_only = (
+            selected == {"E13-compose-signals"}
+            and len(fixtures) == 1
+            and fixtures[0].identifier == "E13-compose-signals"
+        )
         try:
             if native_preparation_failed:
                 results = [{"id": fixture.identifier, "status": "failed", "durationSeconds": 0.0,
@@ -370,7 +375,7 @@ class LaneRunner:
                            for fixture in fixtures]
             else:
                 self.configure_devcontainer_client()
-                if self.lane != "apple-stock":
+                if self.lane != "apple-stock" and not component_e13_only:
                     self.prepare_builder()
                 atomic_json(self.output / "fingerprint.json", self.fingerprint())
                 for fixture in fixtures:

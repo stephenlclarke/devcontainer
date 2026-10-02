@@ -125,6 +125,106 @@ class FinalizedSelectionTests(unittest.TestCase):
                     runner.readmit_finalized()
 
 
+class ComponentBuilderSelectionTests(unittest.TestCase):
+    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str):
+        import sys
+
+        repository = Path(__file__).resolve().parents[2]
+        testing = repository / "Tools/testing"
+        if str(testing) not in sys.path:
+            sys.path.insert(0, str(testing))
+        import owned_guest_fixture
+
+        with TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            manifest = json.loads((repository / "Tests/Parity/manifest.json").read_text())
+            fixtures = [SimpleNamespace(identifier=identifier, runner="engine",
+                                        backends=("docker", "apple-stock", "container-compose"))
+                        for identifier in fixture_ids]
+            events = []
+
+            class Bridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def prepare_native_provider(self):
+                    events.append("provision")
+
+                def attach_endpoint(self):
+                    events.append("attach")
+
+                def prepare(self):
+                    events.append("docker-image-prepare")
+
+                def cleanup(self):
+                    events.append("guest-cleanup")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = lane, repository, manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = base / "evidence" / lane, {}
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            builder = mock.Mock()
+
+            def run_fixture(fixture):
+                events.append("fixture:" + fixture.identifier)
+                return {"id": fixture.identifier, "status": "passed", "durationSeconds": 0.0,
+                        "observations": {}, "differences": [], "diagnostic": ""}
+
+            common_patches = (
+                mock.patch("run_lane.implemented_fixtures", return_value=fixtures),
+                mock.patch.object(owned_guest_fixture, "_retained_root", return_value=base),
+                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value={}),
+                mock.patch.object(owned_guest_fixture, "OwnedGuestFixtureRunner", Bridge),
+                mock.patch.object(runner, "admit_finalized"),
+                mock.patch.object(runner, "configure_docker_oracle",
+                                  side_effect=lambda: events.append("docker-oracle")),
+                mock.patch.object(runner, "prepare_builder", builder),
+                mock.patch.object(runner, "configure_devcontainer_client"),
+                mock.patch.object(runner, "fingerprint", return_value={}),
+                mock.patch.object(runner, "run_fixture", side_effect=run_fixture),
+                mock.patch.object(runner, "stop_builder"),
+                mock.patch.object(runner, "check_runtime_state_cleanup"),
+                mock.patch.object(runner, "readmit_finalized"),
+                mock.patch.object(runner, "start_engine", side_effect=lambda: events.append("engine")),
+                mock.patch.object(runner, "stop_engine"),
+            )
+            with mock.patch.dict("run_lane.os.environ",
+                                 {"DEVCONTAINER_PARITY_FIXTURES": selected}, clear=True):
+                with common_patches[0], common_patches[1], common_patches[2], common_patches[3], \
+                        common_patches[4], common_patches[5], common_patches[6], common_patches[7], \
+                        common_patches[8], common_patches[9], common_patches[10], common_patches[11], \
+                        common_patches[12], common_patches[13], common_patches[14]:
+                    result = runner.run()
+            return result, builder, events
+
+    def test_selected_e13_component_skips_builder_on_docker_and_fork(self) -> None:
+        for lane in ("docker", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("E13-compose-signals", "E04-image-build"), "E13-compose-signals")
+                self.assertEqual(result, 0)
+                builder.assert_not_called()
+                if lane == "container-compose":
+                    self.assertLess(events.index("provision"), events.index("engine"))
+                    self.assertLess(events.index("engine"), events.index("attach"))
+                else:
+                    self.assertLess(events.index("docker-oracle"), events.index("attach"))
+                self.assertIn("attach", events)
+                self.assertLess(events.index("attach"), events.index("fixture:E13-compose-signals"))
+                self.assertLess(events.index("fixture:E13-compose-signals"), events.index("guest-cleanup"))
+                self.assertIn("guest-cleanup", events)
+
+    def test_unfiltered_build_matrix_still_prepares_builder(self) -> None:
+        for lane in ("docker", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, _events = self._run_selection(
+                    lane, ("E13-compose-signals", "E04-image-build"), "")
+                self.assertEqual(result, 0)
+                builder.assert_called_once_with()
+
+
 class SafeEnvironmentTests(unittest.TestCase):
     def test_environment_uses_an_explicit_non_secret_allowlist(self) -> None:
         environment = safe_environment(
