@@ -325,6 +325,50 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
 
 
 class ActiveProviderHomeTests(unittest.TestCase):
+    def test_component_guard_is_bound_only_to_the_exact_signal_fixture_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            guard_root = base / "workflow"
+            guard_root.mkdir(mode=0o700)
+            guard_path = guard_root / "runtime-admission.json"
+            guard = {"identity": {"campaign": "campaign-id", "sourceCommit": "a" * 40,
+                                   "scope": "finalized-native-parity-component"},
+                     "root": str(campaign)}
+            guard_path.write_text(json.dumps(guard, sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "campaign-id", "lane": "apple-stock",
+                                  "sourceCommit": "a" * 40}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            runner = SimpleNamespace(
+                environment={"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                             "DEVCONTAINER_PARITY_RETAINED_ROOT": str(guard_root),
+                             "DEVCONTAINER_PARITY_GUARD": str(guard_path)},
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity={"sourceCommit": "a" * 40},
+            )
+
+            self.assertEqual(
+                _active_provider_home(runner, fixture_selection=("E13-compose-signals",)),
+                (home, owner),
+            )
+            for selection in (None, (), ("E10-compose-redirected",),
+                              ("E13-compose-signals", "E14-compose-terminal-size")):
+                with self.subTest(selection=selection), self.assertRaisesRegex(
+                        ParityError, "campaign guard differs"):
+                    _active_provider_home(runner, fixture_selection=selection)
+
+            guard["identity"]["scope"] = "unrecognized-component-scope"
+            guard_path.write_text(json.dumps(guard, sort_keys=True))
+            with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                _active_provider_home(runner, fixture_selection=("E13-compose-signals",))
+
     def test_preparation_targets_the_active_private_home_not_fixture_scratch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
@@ -357,6 +401,7 @@ class ActiveProviderHomeTests(unittest.TestCase):
             )
             bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
             bridge.runner, bridge.lane, bridge.repository = runner, "apple-stock", REPOSITORY
+            bridge.fixtures = [SimpleNamespace(identifier="E09-compose-foreground")]
             bridge.retained = base / "retained"
             bridge.retained.mkdir(mode=0o700)
 

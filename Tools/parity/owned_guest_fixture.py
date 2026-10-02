@@ -123,7 +123,7 @@ def _require_private_directory(path: Path, *, create: bool = False) -> None:
         raise ParityError("owned guest storage must be canonical, user-owned and private")
 
 
-def _active_provider_home(runner) -> tuple[Path, dict]:
+def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None = None) -> tuple[Path, dict]:
     """Authenticate the same private HOME used by the active provider API."""
 
     value = runner.environment.get("HOME")
@@ -163,10 +163,14 @@ def _active_provider_home(runner) -> tuple[Path, dict]:
         raise ParityError("active provider campaign guard is unsafe")
     guard = json.loads(guard_path.read_bytes())
     guard_identity = guard.get("identity") if isinstance(guard, dict) else None
+    scope = guard_identity.get("scope") if isinstance(guard_identity, dict) else None
+    component_selection = fixture_selection == ("E13-compose-signals",)
+    scope_matches = (scope == "finalized-native-parity" or
+                     (scope == "finalized-native-parity-component" and component_selection))
     if (not isinstance(guard, dict) or set(guard) != {"identity", "root"}
             or not isinstance(guard_identity, dict) or set(guard_identity) !=
             {"campaign", "sourceCommit", "scope"} or
-            guard_identity.get("scope") != "finalized-native-parity" or
+            not scope_matches or
             guard_identity.get("sourceCommit") != (runner.finalized_identity or {}).get("sourceCommit") or
             guard.get("root") != str(runner.output.parent)):
         raise ParityError("active provider campaign guard differs from this evidence root")
@@ -439,7 +443,8 @@ class OwnedGuestFixtureRunner:
             (root / "owner.json").write_bytes(owner_bytes)
             (root / "owner.json").chmod(0o600)
         else:
-            root, owner = _active_provider_home(self.runner)
+            selection = tuple(fixture.identifier for fixture in self.fixtures)
+            root, owner = _active_provider_home(self.runner, fixture_selection=selection)
         owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
         journal_parent = self._journal_parent()
         from service_journal import ServiceJournal

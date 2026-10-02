@@ -57,6 +57,58 @@ class SuiteLifecycleTests(unittest.TestCase):
             self.assertFalse(qualify.cli_cleanup_is_complete(
                 evidence, "docker", qualify.COMPONENT_FIXTURE))
 
+    def test_component_recheck_accepts_only_initialized_evidence_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve() / "component"
+            evidence.mkdir(mode=0o700)
+            os.chmod(evidence, 0o700)
+            inputs = {"sourceCommit": "a" * 40, "sourceTree": "b" * 40,
+                      "campaign": "native-component-test"}
+            inputs_path = evidence / "operator-inputs.json"
+            qualify.write_json(inputs_path, inputs)
+            os.chmod(inputs_path, 0o600)
+            identity = qualify.capture_component_evidence_identity(evidence, inputs)
+            (evidence / "docker").mkdir()
+            args = argparse.Namespace(evidence=evidence, component_fixture=qualify.COMPONENT_FIXTURE,
+                                      source_commit=inputs["sourceCommit"], campaign=inputs["campaign"],
+                                      _source_tree=inputs["sourceTree"])
+
+            qualify.validate_evidence_root(args, identity)
+            with self.assertRaisesRegex(ValueError, "fresh"):
+                qualify.validate_evidence_root(args)
+
+    def test_component_recheck_rejects_foreign_preexisting_or_changed_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            original = parent / "original"
+            foreign = parent / "foreign"
+            original.mkdir(mode=0o700)
+            foreign.mkdir(mode=0o700)
+            os.chmod(original, 0o700)
+            os.chmod(foreign, 0o700)
+            inputs = {"sourceCommit": "a" * 40, "sourceTree": "b" * 40,
+                      "campaign": "native-component-test"}
+            for root in (original, foreign):
+                path = root / "operator-inputs.json"
+                qualify.write_json(path, inputs)
+                os.chmod(path, 0o600)
+            identity = qualify.capture_component_evidence_identity(original, inputs)
+            args = argparse.Namespace(evidence=foreign, component_fixture=qualify.COMPONENT_FIXTURE,
+                                      source_commit=inputs["sourceCommit"], campaign=inputs["campaign"],
+                                      _source_tree=inputs["sourceTree"])
+            with self.assertRaisesRegex(ValueError, "identity"):
+                qualify.validate_evidence_root(args, identity)
+
+            args.evidence = original
+            args.campaign = "different-campaign"
+            with self.assertRaisesRegex(ValueError, "identity"):
+                qualify.validate_evidence_root(args, identity)
+
+            args.campaign = inputs["campaign"]
+            (original / "operator-inputs.json").write_text(json.dumps(inputs), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "operator inputs changed"):
+                qualify.validate_evidence_root(args, identity)
+
     def test_component_success_writes_non_authoritative_result_without_sealing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()

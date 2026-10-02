@@ -818,7 +818,71 @@ def controller_capture_directory(evidence: Path, lane: str, suite: str) -> Path:
     return evidence / "controller-logs" / lane / suite
 
 
-def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
+def capture_component_evidence_identity(evidence: Path, operator_inputs: dict) -> dict:
+    """Bind the component recheck to its initialized private evidence root."""
+    if (not evidence.is_absolute() or evidence.resolve(strict=True) != evidence
+            or evidence.is_symlink() or not evidence.is_dir()):
+        raise ValueError("component evidence root is not a canonical initialized directory")
+    info = evidence.lstat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("component evidence root must be user-owned mode 0700")
+    inputs_path = evidence / "operator-inputs.json"
+    inputs_info = inputs_path.lstat()
+    if (not stat.S_ISREG(inputs_info.st_mode) or inputs_info.st_nlink != 1
+            or inputs_info.st_uid != os.getuid() or stat.S_IMODE(inputs_info.st_mode) != 0o600):
+        raise ValueError("component operator inputs must be a private single-link regular file")
+    if json.loads(inputs_path.read_text(encoding="utf-8")) != operator_inputs:
+        raise ValueError("component operator inputs differ from the initialized values")
+    return {
+        "path": str(evidence), "device": info.st_dev, "inode": info.st_ino,
+        "owner": info.st_uid, "mode": stat.S_IMODE(info.st_mode),
+        "operatorInputsSHA256": sha256(inputs_path),
+        "sourceCommit": operator_inputs["sourceCommit"],
+        "campaign": operator_inputs["campaign"],
+    }
+
+
+def validate_evidence_root(args: argparse.Namespace,
+                           initialized_component_identity: dict | None = None) -> None:
+    """Require fresh evidence initially, or the exact initialized component root on recheck."""
+    evidence = args.evidence
+    if not evidence.is_absolute() or evidence.resolve(strict=False) != evidence:
+        raise ValueError("evidence directory must be a canonical absolute path")
+    if initialized_component_identity is None:
+        if evidence.exists() or evidence.is_symlink():
+            raise ValueError("evidence directory must be fresh")
+        return
+    if getattr(args, "component_fixture", None) != COMPONENT_FIXTURE:
+        raise ValueError("existing evidence is permitted only for the E13 component recheck")
+    try:
+        info = evidence.lstat()
+    except FileNotFoundError as error:
+        raise ValueError("initialized component evidence root disappeared") from error
+    expected = initialized_component_identity
+    if (evidence.is_symlink() or not stat.S_ISDIR(info.st_mode)
+            or evidence.resolve(strict=True) != evidence
+            or str(evidence) != expected.get("path")
+            or info.st_dev != expected.get("device") or info.st_ino != expected.get("inode")
+            or info.st_uid != os.getuid() or info.st_uid != expected.get("owner")
+            or stat.S_IMODE(info.st_mode) != 0o700 or stat.S_IMODE(info.st_mode) != expected.get("mode")
+            or expected.get("sourceCommit") != args.source_commit
+            or expected.get("campaign") != args.campaign):
+        raise ValueError("component evidence root no longer matches its initialized identity")
+    inputs_path = evidence / "operator-inputs.json"
+    inputs_info = inputs_path.lstat()
+    if (not stat.S_ISREG(inputs_info.st_mode) or inputs_info.st_nlink != 1
+            or inputs_info.st_uid != os.getuid() or stat.S_IMODE(inputs_info.st_mode) != 0o600
+            or sha256(inputs_path) != expected.get("operatorInputsSHA256")):
+        raise ValueError("component operator inputs changed after initialization")
+    payload = json.loads(inputs_path.read_text(encoding="utf-8"))
+    if (payload.get("sourceCommit") != args.source_commit
+            or payload.get("campaign") != args.campaign
+            or payload.get("sourceTree") != getattr(args, "_source_tree", None)):
+        raise ValueError("component operator inputs do not bind the current source and campaign")
+
+
+def validate_inputs(args: argparse.Namespace, *,
+                    initialized_component_identity: dict | None = None) -> dict[str, str]:
     manifest_path = args.repository / "Tests/Parity/manifest.json"
     manifest = json.loads(manifest_path.read_text())
     from engine_fixture_routes import validate_engine_fixture_routes
@@ -880,8 +944,7 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, str]:
                       ("accepted state", args.accepted_state)):
         if not path.is_absolute() or path.resolve(strict=True) != path or not path.is_dir():
             raise ValueError(f"{key} must be a canonical absolute directory")
-    if not args.evidence.is_absolute() or args.evidence.exists() or args.evidence.resolve() != args.evidence:
-        raise ValueError("evidence directory must be a fresh canonical absolute path")
+    validate_evidence_root(args, initialized_component_identity)
     if (not args.retained_root.is_relative_to(ACCOUNT_HOME)
             or args.qualification_directory != args.retained_root / "qualifications"):
         raise ValueError("qualification output must remain beneath the configured internal retained root")
@@ -1664,8 +1727,9 @@ def main() -> int:
         shutil.copyfile(args.vscode_vsix, reference / f"remote-containers-{extension_version}.vsix")
     initial_colima, initial_colima_detail = colima_state(args.colima_bin, base_env)
     initial_services, initial_service_count = host_service_digest()
-    write_json(args.evidence / "operator-inputs.json", {
+    operator_inputs = {
         "sourceCommit": args.source_commit, "sourceTree": args._source_tree,
+        "campaign": args.campaign,
         "finalizationProvenanceSHA256": args.provenance_sha256,
         "trustedStateSHA256": args.state_sha256,
         "archiveSHA256": package_proof["archiveSHA256"],
@@ -1673,7 +1737,11 @@ def main() -> int:
         "guestInputAdmissions": args._guest_input_admissions,
         "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
         "initialServiceSetSHA256": initial_services, "initialServiceCount": initial_service_count,
-    })
+    }
+    write_json(args.evidence / "operator-inputs.json", operator_inputs)
+    if component_fixture:
+        args._component_evidence_identity = capture_component_evidence_identity(
+            args.evidence, operator_inputs)
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
     from host_runtime import HostGuard, cancellation, runtime_lease
     guard = HostGuard(GUARD_PATH)
@@ -1763,7 +1831,8 @@ def main() -> int:
         component_comparison = component_comparison or {"status": "failed"}
         component_provider_inputs = {}
         try:
-            final_binaries = validate_inputs(args)
+            final_binaries = validate_inputs(
+                args, initialized_component_identity=args._component_evidence_identity)
             if final_binaries != binaries or args._source_tree != json.loads(
                     (args.evidence / "operator-inputs.json").read_text())["sourceTree"]:
                 raise ValueError("source or provider inputs changed during component run")
