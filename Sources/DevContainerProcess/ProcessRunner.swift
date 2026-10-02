@@ -420,7 +420,9 @@ private final class ProcessSignalRelay: @unchecked Sendable {
         // Cancellation handlers run after queued event handlers on the source queue.
         // Join them before restoring the process-wide signal dispositions.
         cancellationGroup.wait()
-        queue.sync {}
+        queue.sync {
+            // Drain queued signal handlers before restoring process-wide dispositions.
+        }
         var firstError: (any Error)?
         for (number, savedAction) in previousActions.reversed() {
             var action = savedAction

@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pwd
 from pathlib import Path
 import signal
 import subprocess
@@ -19,6 +20,7 @@ import unittest
 from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
 sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
 
@@ -423,8 +425,10 @@ class SuiteLifecycleTests(unittest.TestCase):
             self.assertFalse((evidence / "qualification.json").exists())
 
     def test_missing_or_mutated_start_authority_never_claims_not_started(self) -> None:
+        runtime = argparse.Namespace(journal=None)
+        error = RuntimeError("failure")
         with self.assertRaisesRegex(RuntimeError, "explicit mutation authority"):
-            qualify.retain_lane_start_failure(argparse.Namespace(journal=None), RuntimeError("failure"))
+            qualify.retain_lane_start_failure(runtime, error)
 
         class MutatedRuntime:
             def failure_disposition(self):
@@ -868,7 +872,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
             self.assertEqual(set(result), {"apple-stock", "container-compose"})
 
     def test_guest_asset_root_must_be_private_internal_and_canonical(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             root = Path(temporary).resolve() / "workflow"
             root.mkdir(mode=0o700)
             self.assertEqual(qualify.validate_guest_asset_retained_root(root), root)

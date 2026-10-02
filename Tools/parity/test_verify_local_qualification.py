@@ -10,6 +10,7 @@ import hashlib
 import importlib
 import json
 import os
+import pwd
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,8 @@ from verify_local_qualification import (
 
 
 REPOSITORY = Path(__file__).parents[2]
+ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+FIXTURE_PROVIDER_FORMAT = "legacy-compose-bundle"
 
 
 def sha(value: bytes) -> str:
@@ -68,6 +71,12 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         self.assertNotEqual(split["containerRuntime"], legacy["containerCompose"])
 
     def setUp(self) -> None:
+        provider_format = patch(
+            "verify_local_qualification.locked_provider_format",
+            return_value=({}, {"format": FIXTURE_PROVIDER_FORMAT}),
+        )
+        provider_format.start()
+        self.addCleanup(provider_format.stop)
         self.commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=REPOSITORY, check=True,
             capture_output=True, text=True,
@@ -256,7 +265,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
 
     def test_retained_receipt_requires_private_content_addressed_directory(self) -> None:
         digest = "a" * 64
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             root = Path(temporary).resolve() / "qualifications"
             leaf = root / digest
             leaf.mkdir(parents=True, mode=0o700)
@@ -781,7 +790,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "launcherSHA256": provider_hashes["vscode"],
             },
         }
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             root = Path(temporary).resolve()
             evidence = root / "evidence"
             retained = root / "retained" / "devcontainer"

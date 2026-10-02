@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
+import pwd
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +25,7 @@ from parity_lib import ParityError
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 class OwnedGuestFailureTests(unittest.TestCase):
@@ -347,7 +350,7 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             self.assertNotEqual(selection["DEVCONTAINER_COMPOSE_BIN"], str(bridge.compose))
 
     def test_docker_inputs_select_only_the_locked_alpine_archive(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             retained = Path(temporary).resolve()
             image_store = retained / "guest-images"
             image_store.mkdir(mode=0o700)
@@ -365,7 +368,7 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             self.assertEqual(actual, {"workload": admitted})
 
     def test_native_guest_admission_threads_only_lock_admitted_provider_images(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             retained = Path(temporary).resolve()
             provider_images = {"guest": {"reference": "fixture", "archiveSHA256": "a" * 64,
                                           "source": "b" * 40},
@@ -383,7 +386,7 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
             self.assertEqual(admit.call_args.kwargs["provider_image_references"], provider_images)
 
     def test_docker_compose_requires_the_exact_manifest_hash_and_version(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             root = Path(temporary).resolve()
             retained = root / "retained"
             retained.mkdir(mode=0o700)
@@ -415,7 +418,7 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
 
 class ActiveProviderHomeTests(unittest.TestCase):
     def test_component_guard_is_bound_only_to_the_exact_signal_fixture_selection(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             base = Path(temporary).resolve()
             campaign = base / "campaign"
             campaign.mkdir(mode=0o700)
@@ -459,7 +462,7 @@ class ActiveProviderHomeTests(unittest.TestCase):
                 _active_provider_home(runner, fixture_selection=("E13-compose-signals",))
 
     def test_preparation_targets_the_active_private_home_not_fixture_scratch(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             base = Path(temporary).resolve()
             campaign = base / "campaign"
             campaign.mkdir(mode=0o700)
@@ -724,7 +727,7 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
             self.assertIn("guest-inputs.json", journal.records())
             self.assertIn("guest-provisioned.json", journal.records())
             self.assertEqual(sum(name.endswith("-intent.json") for name in journal.records()), 3)
-            self.assertEqual(bridge.socket, None)
+            self.assertIsNone(bridge.socket)
             self.assertTrue((root / "container/kernels/default.kernel-arm64").is_symlink())
 
 
