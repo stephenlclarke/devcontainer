@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
+import stat
 import subprocess
 import time
 from urllib.parse import quote
@@ -24,6 +26,8 @@ SIGNAL_FIXTURE = "E13-compose-signals"
 TERMINAL_SIZE_FIXTURE = "E14-compose-terminal-size"
 FIXTURES = {FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE, TERMINAL_SIZE_FIXTURE}
 PROCESS = "guest-compose-foreground"
+PROJECT_DOWN_PROCESS = "guest-compose-project-down"
+PROJECT_DOWN_TIMEOUT = 45
 STDOUT = b"compose-stdout\n"
 STDERR = b"compose-stderr\n"
 USR1_OUTPUT = b"signal:USR1\n"
@@ -55,6 +59,8 @@ class ComposeForegroundFixture(GuestFixture):
         self.redirected = redirected
         self.child = OwnedProcess()
         self.command_attempted = False
+        self.compose_config_path: Path | None = None
+        self.compose_run_arguments: list[str] | None = None
         self.output = root / (PROCESS + ".log")
         self.errors = root / (PROCESS + "-stderr.log")
         self.project = "cf-e09-" + self.owner[:32]
@@ -84,32 +90,49 @@ class ComposeForegroundFixture(GuestFixture):
         if self.redirected:
             # `run` selects the terminal independently of the service default.
             configuration["services"]["app"]["tty"] = True
-        if self.wrapper_selection is not None:
-            selected_provider = (self.wrapper_selection.get("DEVCONTAINER_COMPOSE_BIN")
-                                 or self.wrapper_selection.get("DEVCONTAINER_DOCKER_COMPOSE_BIN"))
-            if not selected_provider or selected_provider == self.executable:
-                raise ValueError("Native Compose wrapper and external provider must remain distinct")
-            config_path = self.root / "devcontainer-config.toml"
-            descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.close(descriptor)
-            config_path.chmod(0o600)
-            self.wrapper_environment = {
-                **self.wrapper_selection,
-                "DEVCONTAINER_CONFIG": str(config_path),
-            }
+        self._prepare_wrapper_environment()
         path = self.root / "compose-foreground.json"
         with path.open("xb") as output:
             output.write(canonical(configuration))
+        path.chmod(0o600)
         arguments = [self.executable, "--project-name", self.project, "--file", str(path),
                      "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "app"]
         if not self.redirected and not self.expected_tty:
             arguments.insert(-1, "-T")
         if self.quiet:
             arguments.insert(-1, "--quiet")
-        self.journal.put("container-intent.json", canonical(self.intent))
-        self.journal.put(PROCESS + "-intent.json", canonical({"arguments": arguments,
-                         "configurationSHA256": digest(canonical(configuration))}))
+        self._record_compose_intent(arguments, path, configuration)
         return arguments
+
+    def _prepare_wrapper_environment(self):
+        """Create the private empty config and preserve the admitted native selection."""
+        if self.wrapper_selection is None:
+            return
+        selected_provider = (self.wrapper_selection.get("DEVCONTAINER_COMPOSE_BIN")
+                             or self.wrapper_selection.get("DEVCONTAINER_DOCKER_COMPOSE_BIN"))
+        if not selected_provider or selected_provider == self.executable:
+            raise ValueError("Native Compose wrapper and external provider must remain distinct")
+        config_path = self.root / "devcontainer-config.toml"
+        descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        config_path.chmod(0o600)
+        self.wrapper_environment = {
+            **self.wrapper_selection,
+            "DEVCONTAINER_CONFIG": str(config_path),
+        }
+
+    def _record_compose_intent(self, arguments, path, configuration):
+        """Bind teardown to the exact owner-scoped command and config executed."""
+        self.compose_config_path = path
+        self.compose_run_arguments = list(arguments)
+        intent = {"arguments": arguments, "configurationSHA256": digest(canonical(configuration))}
+        if self.wrapper_selection is not None:
+            wrapper = self._require_private_wrapper()
+            intent.update({"project": self.project,
+                           "wrapperSHA256": digest(wrapper.read_bytes()),
+                           "selectionSHA256": digest(canonical(self.wrapper_environment))})
+        self.journal.put("container-intent.json", canonical(self.intent))
+        self.journal.put(PROCESS + "-intent.json", canonical(intent))
 
     def snapshot(self, path):
         from guest_runtime import diagnostic_snapshot
@@ -185,7 +208,190 @@ class ComposeForegroundFixture(GuestFixture):
                     payload, metadata = diagnostic_snapshot(path)
                     self.journal.put(PROCESS + suffix + ".log", payload)
                     self.journal.put(PROCESS + suffix + "-log.json", metadata)
-        return super().cleanup()
+        cleanup = super().cleanup()
+        if self.wrapper_selection is not None and self.command_attempted:
+            self._release_compose_project()
+        return cleanup
+
+    def _require_private_wrapper(self) -> Path:
+        """Require the unchanged canonical signed wrapper before each owned call."""
+        wrapper = Path(self.executable)
+        if (not wrapper.is_absolute() or wrapper.resolve(strict=True) != wrapper
+                or wrapper.is_symlink() or not wrapper.is_file() or not os.access(wrapper, os.X_OK)):
+            raise ValueError("Signed Compose wrapper is not a canonical executable")
+        return wrapper
+
+    def _project_down_inputs(self, records):
+        """Revalidate the exact private config and selection before project teardown."""
+        if self.wrapper_environment is None or self.runtime is None:
+            raise ValueError("Native Compose project cleanup has no admitted wrapper environment")
+        config_path = self.compose_config_path
+        if config_path is None or self.compose_run_arguments is None:
+            raise ValueError("Compose project cleanup has no captured fixture command")
+        config_info = config_path.lstat()
+        root_info = self.root.lstat()
+        if (self.root.is_symlink() or self.root.resolve(strict=True) != self.root
+                or not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid()
+                or root_info.st_mode & 0o777 != 0o700
+                or config_path.is_symlink() or not stat.S_ISREG(config_info.st_mode)
+                or config_info.st_uid != os.getuid() or config_info.st_nlink != 1
+                or config_info.st_mode & 0o777 != 0o600 or config_info.st_size > 64 * 1024):
+            raise ValueError("Compose project cleanup configuration is not a private owned file")
+        descriptor = os.open(config_path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as configuration_file:
+            opened_info = os.fstat(configuration_file.fileno())
+            if (opened_info.st_dev, opened_info.st_ino) != (config_info.st_dev, config_info.st_ino):
+                raise ValueError("Compose project cleanup configuration changed while opening")
+            config_bytes = configuration_file.read(64 * 1024 + 1)
+        if len(config_bytes) > 64 * 1024:
+            raise ValueError("Compose project cleanup configuration exceeds its bound")
+        config = json.loads(config_bytes)
+        services = config.get("services") if isinstance(config, dict) else None
+        app = services.get("app") if isinstance(services, dict) else None
+        if (self.wrapper_environment.get("DEVCONTAINER_CONFIG") != str(
+                    self.root / "devcontainer-config.toml")
+                or not isinstance(services, dict)
+                or set(services) not in ({"app"}, {"dependency", "app"})):
+            raise ValueError("Compose project cleanup configuration is outside the owned fixture scope")
+        for service in services.values():
+            if (not isinstance(service, dict) or service.get("network_mode") != "none"
+                    or "volumes" in service or service.get("labels") != self.intent["labels"]):
+                raise ValueError("Compose project cleanup service is not owner-scoped and network-free")
+        if set(services) == {"dependency", "app"}:
+            dependency = services["dependency"]
+            app = services["app"]
+            if (not hasattr(self, "app_name") or dependency.get("image") != self.image
+                    or dependency.get("container_name") != self.name
+                    or dependency.get("command") != self.intent["command"]
+                    or app.get("image") != self.missing_image or app.get("command") != ["true"]
+                    or app.get("depends_on") != ["dependency"]):
+                raise ValueError("Compose terminal cleanup differs from its admitted dependency fixture")
+        elif not isinstance(app, dict) or app.get("image") != self.image:
+            raise ValueError("Compose project cleanup image differs from its admitted fixture")
+        original = json.loads(records[PROCESS + "-intent.json"])
+        wrapper = self._require_private_wrapper()
+        if (not isinstance(original, dict)
+                or original.get("arguments") != self.compose_run_arguments
+                or original.get("configurationSHA256") != digest(config_bytes)
+                or original.get("project") != self.project
+                or original.get("wrapperSHA256") != digest(wrapper.read_bytes())
+                or original.get("selectionSHA256") != digest(canonical(self.wrapper_environment))):
+            raise ValueError("Compose project cleanup inputs differ from the executed fixture")
+        state = Path(self.wrapper_environment["DEVCONTAINER_STATE"])
+        if not state.is_absolute() or state.resolve(strict=True) != state or state.is_symlink():
+            raise ValueError("Compose project cleanup state is not the selected canonical database")
+        self.runtime.verify()
+        arguments = [str(wrapper), "--project-name", self.project, "--file", str(config_path), "down"]
+        intent = {
+            "arguments": arguments,
+            "project": self.project,
+            "wrapperSHA256": original["wrapperSHA256"],
+            "configurationSHA256": original["configurationSHA256"],
+            "selectionSHA256": original["selectionSHA256"],
+            "timeoutSeconds": PROJECT_DOWN_TIMEOUT,
+        }
+        return arguments, state, intent
+
+    def _project_claim_is_absent(self, state):
+        """Check only this case's project claim in the already selected database."""
+        with sqlite3.connect(state.as_uri() + "?mode=ro", uri=True) as database:
+            count = database.execute(
+                "SELECT COUNT(*) FROM projects WHERE compose_project = ?", (self.project,)
+            ).fetchone()[0]
+        return count == 0
+
+    def _retain_project_down_logs(self, root):
+        """Retain bounded stdout and stderr only after the child group is gone."""
+        from guest_runtime import diagnostic_snapshot
+
+        for suffix, path in (("", root / (PROJECT_DOWN_PROCESS + ".log")),
+                             ("-stderr", root / (PROJECT_DOWN_PROCESS + "-stderr.log"))):
+            if not path.exists():
+                raise ValueError("Compose project cleanup output was not retained")
+            payload, metadata = diagnostic_snapshot(path)
+            self.journal.put(PROJECT_DOWN_PROCESS + suffix + ".log", payload)
+            self.journal.put(PROJECT_DOWN_PROCESS + suffix + "-log.json", metadata)
+            if json.loads(metadata)["truncated"]:
+                raise ValueError("Compose project cleanup output exceeded its diagnostic bound")
+
+    def _release_compose_project(self):
+        """Release only this one-off Compose project's durable wrapper claim."""
+        records = self.journal.records()
+        if PROJECT_DOWN_PROCESS + "-intent.json" in records:
+            raise ValueError("Compose project cleanup already attempted; reconcile its receipt")
+        arguments, state, intent = self._project_down_inputs(records)
+        self.journal.put(PROJECT_DOWN_PROCESS + "-intent.json", canonical(intent))
+        child = OwnedProcess()
+        stdout_path = self.root / (PROJECT_DOWN_PROCESS + ".log")
+        stderr_path = self.root / (PROJECT_DOWN_PROCESS + "-stderr.log")
+        started = time.monotonic_ns()
+        exit_code = None
+        stopped = False
+        failure = None
+        interrupted = None
+        try:
+            with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
+                child.start(arguments, self.root, stdout, errors=stderr,
+                            runtime_socket=self.socket, provider_install=self.provider_install,
+                            wrapper_environment=self.wrapper_environment)
+                self.journal.put(PROJECT_DOWN_PROCESS + "-process.json", canonical({
+                    "pid": child.process.pid, "arguments": list(child.process.args)}))
+                exit_code = child.process.wait(timeout=PROJECT_DOWN_TIMEOUT)
+                self.journal.put(PROJECT_DOWN_PROCESS + "-exit.json", canonical({
+                    "code": exit_code, "durationNS": time.monotonic_ns() - started}))
+                if exit_code != 0:
+                    failure = RuntimeError("signed Compose project cleanup exited unsuccessfully")
+        except KeyboardInterrupt as error:
+            interrupted = error
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, TimeoutError) as error:
+            failure = error
+        finally:
+            try:
+                child.stop()
+                stopped = True
+                self.journal.put(PROJECT_DOWN_PROCESS + "-stopped.json",
+                                 canonical({"verifiedStopped": True}))
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, TimeoutError) as error:
+                failure = failure or error
+
+            logs_retained = False
+            if stopped:
+                try:
+                    self._retain_project_down_logs(self.root)
+                    logs_retained = True
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
+                    failure = failure or error
+
+            claim_absent = False
+            try:
+                self.runtime.verify()
+                claim_absent = self._project_claim_is_absent(state)
+                if not claim_absent:
+                    failure = failure or RuntimeError("signed Compose project cleanup left its project claim")
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError,
+                    TimeoutError, sqlite3.Error, TypeError) as error:
+                failure = failure or error
+
+            receipt = {
+                "schemaVersion": 1,
+                "status": "passed" if failure is None and exit_code == 0 and stopped and claim_absent
+                          else "uncertain",
+                "project": self.project,
+                "intentSHA256": digest(canonical(intent)),
+                "exitCode": exit_code,
+                "processStopped": stopped,
+                "projectClaimAbsent": claim_absent,
+                "logsRetained": logs_retained,
+            }
+            try:
+                self.journal.put(PROJECT_DOWN_PROCESS + "-receipt.json", canonical(receipt))
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, TimeoutError) as error:
+                failure = failure or error
+
+        if interrupted is not None:
+            raise interrupted
+        if failure is not None or exit_code != 0 or not stopped or not claim_absent:
+            raise RuntimeError(f"signed Compose project cleanup is uncertain: {failure or 'incomplete receipt'}")
 
 
 class ComposeSignalFixture(ComposeForegroundFixture):
@@ -349,6 +555,7 @@ class ComposeTerminalInputFixture(ComposeForegroundFixture):
         if self.inspect(self.name) is not None or self.inspect(self.app_name) is not None:
             raise ValueError("Compose terminal input requires unused names")
         self.root.mkdir(mode=0o700, exist_ok=True)
+        self._prepare_wrapper_environment()
         configuration = {"services": {
             "dependency": {"image": self.image, "container_name": self.name, "network_mode": "none",
                            "command": self.intent["command"], "labels": self.intent["labels"]},
@@ -357,11 +564,10 @@ class ComposeTerminalInputFixture(ComposeForegroundFixture):
         path = self.root / "compose-terminal-input.json"
         with path.open("xb") as output:
             output.write(canonical(configuration))
+        path.chmod(0o600)
         arguments = [self.executable, "--project-name", self.project, "--file", str(path),
                      "run", "--rm", "--pull", "never", "--name", self.app_name, "--tty", "app"]
-        self.journal.put("container-intent.json", canonical(self.intent))
-        self.journal.put(PROCESS + "-intent.json", canonical({"arguments": arguments,
-                         "configurationSHA256": digest(canonical(configuration))}))
+        self._record_compose_intent(arguments, path, configuration)
         return arguments
 
     def operation(self):

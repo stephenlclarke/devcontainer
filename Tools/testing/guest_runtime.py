@@ -29,6 +29,7 @@ from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
 from initial_terminal_probe import InitialTerminalSizeFixture, FIXTURE as INITIAL_TERMINAL_FIXTURE
 from compose_foreground_probe import (ComposeForegroundFixture, ComposeTerminalInputFixture, ComposeSignalFixture,
                                       FIXTURES as COMPOSE_FOREGROUND_FIXTURES,
+                                      PROJECT_DOWN_PROCESS,
                                       QUIET_FIXTURE, REDIRECTED_FIXTURE, TTY_INPUT_FIXTURE, SIGNAL_FIXTURE,
                                       TERMINAL_SIZE_FIXTURE)
 from compose_terminal_probe import ComposeTerminalSizeFixture
@@ -358,7 +359,8 @@ def require_guest_commands_stopped(records: dict[str, bytes]) -> list[str]:
                      if name.startswith("guest-builder-") and name.endswith("-intent.json")]
     from devcontainer_reuse_reference import COMMANDS as REUSE_COMMANDS
     d01_steps = ("devcontainer-image-pull", "devcontainer-dependency-pull", "devcontainer-up", "devcontainer-exec", "devcontainer-frozen-lock", *REUSE_COMMANDS)
-    for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps, "guest-compose-foreground"):
+    for name in (*PROVISION_STEPS, *sorted(builder_steps), *d01_steps,
+                 "guest-compose-foreground", PROJECT_DOWN_PROCESS):
         if name + "-intent.json" in records:
             stopped = json.loads(records.get(name + "-stopped.json", b"null"))
             if not isinstance(stopped, dict) or stopped.get("verifiedStopped") is not True:
@@ -379,7 +381,7 @@ def require_diagnostic(records: dict[str, bytes], name: str):
 def require_guest_cleanup(records: dict[str, bytes]) -> None:
     for name in require_guest_resources_stopped(records):
         require_diagnostic(records, name)
-        if name.startswith("devcontainer-") or name == "guest-compose-foreground":
+        if name.startswith("devcontainer-") or name in {"guest-compose-foreground", PROJECT_DOWN_PROCESS}:
             require_diagnostic(records, name + "-stderr")
 
 
@@ -391,7 +393,7 @@ def guest_diagnostic_plan(root: Path, records: dict[str, bytes]) -> dict[str, by
     """
     plan = {}
     for name in require_guest_resources_stopped(records):
-        separate = name.startswith("devcontainer-") or name == "guest-compose-foreground"
+        separate = name.startswith("devcontainer-") or name in {"guest-compose-foreground", PROJECT_DOWN_PROCESS}
         for stem in ([name, name + "-stderr"] if separate else [name]):
             names = (stem + ".log", stem + "-log.json")
             if all(key in records for key in names):

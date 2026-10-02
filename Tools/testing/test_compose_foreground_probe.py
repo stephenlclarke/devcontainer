@@ -4,6 +4,7 @@ import json
 import hashlib
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
@@ -11,7 +12,7 @@ from unittest.mock import Mock, patch
 from case_evidence import canonical, contract_observations
 from compose_foreground_probe import (COMMAND, FIXTURE, QUIET_FIXTURE, REDIRECTED_FIXTURE,
                                       TTY_INPUT_FIXTURE, SIGNAL_FIXTURE, PROCESS, STDERR, STDOUT,
-                                      USR1_OUTPUT, TERM_OUTPUT, ComposeForegroundFixture,
+                                      PROJECT_DOWN_PROCESS, USR1_OUTPUT, TERM_OUTPUT, ComposeForegroundFixture,
                                       ComposeTerminalInputFixture, ComposeSignalFixture,
                                       signal_stream_summary)
 from foreground_probe import ForegroundFixture
@@ -56,6 +57,161 @@ class ComposeForegroundTests(unittest.TestCase):
                 patch.object(ForegroundFixture, "require_auto_removed", auto_remove):
             return self.fixture.operation()
 
+    def configure_native_stock_wrapper(self):
+        provider_root = self.root / "provider"
+        binary_dir = provider_root / "bin"
+        binary_dir.mkdir(mode=0o700, parents=True)
+        container = binary_dir / "container"
+        wrapper = self.root / "devcontainer-compose-wrapper"
+        docker = self.root / "docker"
+        docker_compose = self.root / "docker-compose"
+        for executable in (container, wrapper, docker, docker_compose):
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+        state = self.root / "selected runtime state.sqlite"
+        with sqlite3.connect(state) as database:
+            database.execute("CREATE TABLE projects (compose_project TEXT NOT NULL)")
+            database.execute("INSERT INTO projects VALUES (?)", (self.fixture.project,))
+        state.chmod(0o600)
+        self.fixture.provider_install = provider_root
+        self.fixture.executable = str(wrapper)
+        self.fixture.wrapper_selection = {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_DOCKER_BIN": str(docker),
+            "DEVCONTAINER_DOCKER_COMPOSE_BIN": str(docker_compose),
+            "DEVCONTAINER_STATE": str(state),
+            "DEVCONTAINER_SOCKET": str(self.socket),
+        }
+        return state, wrapper, docker, docker_compose
+
+    class FakeOwnedDownProcess:
+        def __init__(self, state, *, exit_code=0, wait_error=None):
+            self.state = state
+            self.exit_code = exit_code
+            self.wait_error = wait_error
+            self.process = None
+            self.arguments = None
+            self.environment = None
+            self.stopped = False
+
+        def start(self, arguments, _root, output, *, errors, wrapper_environment, **_kwargs):
+            self.arguments = arguments
+            self.environment = dict(wrapper_environment)
+            output.write(b"down stdout\n")
+            errors.write(b"down stderr\n")
+            self.process = Mock()
+            self.process.args = arguments
+            self.process.pid = 12345
+            self.process.wait.side_effect = self.wait
+
+        def wait(self, *, timeout):
+            if self.wait_error is not None:
+                raise self.wait_error
+            if self.exit_code == 0:
+                with sqlite3.connect(self.state) as database:
+                    database.execute("DELETE FROM projects")
+            return self.exit_code
+
+        def stop(self):
+            self.stopped = True
+
+    def test_native_wrapper_project_claim_is_released_after_guest_cleanup(self):
+        state, wrapper, docker, docker_compose = self.configure_native_stock_wrapper()
+        self.run_cli()
+        child = self.FakeOwnedDownProcess(state)
+        with patch("compose_foreground_probe.OwnedProcess", return_value=child):
+            cleanup = self.fixture.cleanup()
+
+        expected = [str(wrapper), "--project-name", self.fixture.project, "--file",
+                    str(self.root / "compose-foreground.json"), "down"]
+        self.assertEqual(child.arguments, expected)
+        self.assertEqual(child.environment["DEVCONTAINER_DOCKER_BIN"], str(docker))
+        self.assertEqual(child.environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"], str(docker_compose))
+        self.assertEqual(child.environment["DEVCONTAINER_CONFIG"], str(self.root / "devcontainer-config.toml"))
+        self.assertTrue(child.stopped)
+        self.assertEqual(cleanup["status"], "passed")
+        records = self.journal.records()
+        receipt = json.loads(records[PROJECT_DOWN_PROCESS + "-receipt.json"])
+        self.assertEqual(receipt["status"], "passed")
+        self.assertTrue(receipt["projectClaimAbsent"])
+        self.assertTrue(receipt["logsRetained"])
+        self.assertEqual(require_guest_commands_stopped(records), [PROCESS, PROJECT_DOWN_PROCESS])
+        require_guest_cleanup(records)
+
+    def test_native_project_cleanup_refuses_to_run_when_guest_cleanup_is_uncertain(self):
+        state, *_ = self.configure_native_stock_wrapper()
+        self.run_cli()
+        with patch("compose_foreground_probe.GuestFixture.cleanup", side_effect=ValueError("uncertain guest")), \
+                patch("compose_foreground_probe.OwnedProcess") as launch:
+            with self.assertRaisesRegex(ValueError, "uncertain guest"):
+                self.fixture.cleanup()
+        launch.assert_not_called()
+        records = self.journal.records()
+        self.assertNotIn(PROJECT_DOWN_PROCESS + "-intent.json", records)
+        self.assertFalse(self.fixture._project_claim_is_absent(state))
+
+    def test_nonzero_project_down_keeps_claim_and_uncertain_receipt(self):
+        state, *_ = self.configure_native_stock_wrapper()
+        self.run_cli()
+        child = self.FakeOwnedDownProcess(state, exit_code=7)
+        with patch("compose_foreground_probe.OwnedProcess", return_value=child):
+            with self.assertRaisesRegex(RuntimeError, "project cleanup is uncertain"):
+                self.fixture.cleanup()
+        self.assertTrue(child.stopped)
+        records = self.journal.records()
+        receipt = json.loads(records[PROJECT_DOWN_PROCESS + "-receipt.json"])
+        self.assertEqual(receipt["status"], "uncertain")
+        self.assertEqual(receipt["exitCode"], 7)
+        self.assertFalse(receipt["projectClaimAbsent"])
+        self.assertIn(PROJECT_DOWN_PROCESS + ".log", records)
+        self.assertFalse(self.fixture._project_claim_is_absent(state))
+
+    def test_timed_out_project_down_stops_owned_child_and_retains_claim(self):
+        state, *_ = self.configure_native_stock_wrapper()
+        self.run_cli()
+        child = self.FakeOwnedDownProcess(
+            state, wait_error=subprocess.TimeoutExpired("compose down", 45))
+        with patch("compose_foreground_probe.OwnedProcess", return_value=child):
+            with self.assertRaisesRegex(RuntimeError, "project cleanup is uncertain"):
+                self.fixture.cleanup()
+        self.assertTrue(child.stopped)
+        receipt = json.loads(self.journal.records()[PROJECT_DOWN_PROCESS + "-receipt.json"])
+        self.assertEqual(receipt["status"], "uncertain")
+        self.assertTrue(receipt["processStopped"])
+        self.assertFalse(receipt["projectClaimAbsent"])
+        self.assertFalse(self.fixture._project_claim_is_absent(state))
+
+    def test_native_terminal_input_records_its_own_config_and_selection(self):
+        state, wrapper, docker, docker_compose = self.configure_native_stock_wrapper()
+        terminal_root = self.root / "terminal"
+        terminal = ComposeTerminalInputFixture(
+            self.socket, self.owner, self.server.image, "1.54", self.journal,
+            root=terminal_root, executable=str(wrapper), runtime=Mock(),
+            provider_install=self.fixture.provider_install,
+            wrapper_selection=self.fixture.wrapper_selection,
+        )
+        terminal.require_missing_image = lambda: None
+        arguments = terminal.prepare()
+        config_path = terminal_root / "compose-terminal-input.json"
+        self.assertEqual(arguments[:5], [str(wrapper), "--project-name", terminal.project,
+                                         "--file", str(config_path)])
+        config = json.loads(config_path.read_bytes())
+        self.assertEqual(set(config["services"]), {"dependency", "app"})
+        self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(terminal.wrapper_environment["DEVCONTAINER_CONFIG"],
+                         str(terminal_root / "devcontainer-config.toml"))
+        self.assertEqual(terminal.wrapper_environment["DEVCONTAINER_BACKEND"], "stock")
+        self.assertEqual(terminal.wrapper_environment["DEVCONTAINER_COMPOSE_PROVIDER"], "docker")
+        self.assertEqual(terminal.wrapper_environment["DEVCONTAINER_DOCKER_BIN"], str(docker))
+        self.assertEqual(terminal.wrapper_environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"],
+                         str(docker_compose))
+        inputs, recorded_state, _ = terminal._project_down_inputs(self.journal.records())
+        self.assertEqual(inputs, [str(wrapper), "--project-name", terminal.project,
+                                  "--file", str(config_path), "down"])
+        self.assertEqual(recorded_state, state)
+
     def test_real_child_stdin_output_exit_and_cleanup(self):
         observed = self.run_cli()
         contract = json.loads((Path(__file__).parents[2] / "Tests/Parity/fixtures" / FIXTURE / "contract.json").read_text())
@@ -68,6 +224,7 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(require_guest_commands_stopped(self.journal.records()), [PROCESS])
         self.assertEqual(json.loads(self.journal.records()[PROCESS + "-exit.json"])["code"], 17)
         self.assertIn(STDERR, self.journal.records()[PROCESS + "-stderr.log"])
+        self.assertNotIn(PROJECT_DOWN_PROCESS + "-intent.json", self.journal.records())
 
     def test_guest_variable_is_escaped_only_in_compose_source(self):
         self.fixture.prepare()
