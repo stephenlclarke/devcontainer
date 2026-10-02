@@ -35,6 +35,12 @@ SUBMISSION = "01234567-89ab-cdef-0123-456789abcdef"
 TEAM = "TEAM123456"
 
 
+def internal_fixture_directory() -> tempfile.TemporaryDirectory:
+    """Keep retained-role fixture data internal despite an external TMPDIR."""
+    home = Path(MODULE.account_home()).resolve()
+    return tempfile.TemporaryDirectory(prefix="prepare-finalized-", dir=home)
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -45,7 +51,7 @@ def encoded(value: object) -> bytes:
 
 class FinalizedAdmissionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = internal_fixture_directory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
         self.harness = sbom_tests.RuntimeSBOMTests()
@@ -55,7 +61,9 @@ class FinalizedAdmissionTests(unittest.TestCase):
         self.finalized.mkdir(parents=True)
         self.state = self.root / "notary-state"
         self.state.mkdir(mode=0o700)
-        self.scratch = self.root / "ssd-scratch"
+        scratch_root = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch_root.cleanup)
+        self.scratch = Path(scratch_root.name).resolve() / "ssd-scratch"
         self.scratch.mkdir(mode=0o700)
         self.retained = self.root / "retained"
         self.retained.mkdir(mode=0o700)
@@ -163,6 +171,7 @@ class FinalizedAdmissionTests(unittest.TestCase):
         (self.finalized / (name + ".sha256")).write_bytes(checksum.read_bytes())
         (self.finalized / "package-context.json").write_bytes(encoded(context))
         (self.finalized / "package-verification.json").write_bytes(encoded(report))
+        (self.finalized / "package-verification.json").chmod(0o600)
         proof = {
             "schema": 1, "scope": "signed-notarized-package-assembly", "distributionReady": False,
             "sourceCommit": COMMIT, "runtimeProfile": "stock", "candidateReceiptSHA256": record["candidateSHA256"],

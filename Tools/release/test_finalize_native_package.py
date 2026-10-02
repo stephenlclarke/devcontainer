@@ -9,6 +9,8 @@ import importlib.util
 import json
 import argparse
 from pathlib import Path
+import os
+import pwd
 import stat
 import tarfile
 import tempfile
@@ -25,6 +27,12 @@ SPEC.loader.exec_module(FINAL)
 def sha(contents: bytes) -> str:
     """Return one fixture's literal checksum."""
     return hashlib.sha256(contents).hexdigest()
+
+
+def internal_fixture_directory() -> tempfile.TemporaryDirectory:
+    """Keep retained-role fixture data internal despite an external TMPDIR."""
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    return tempfile.TemporaryDirectory(prefix="finalize-native-", dir=home)
 
 
 def inventory(tree: Path, excluded: Path) -> dict:
@@ -122,7 +130,7 @@ class FinalizationTests(unittest.TestCase):
     """Test immutable authority and byte-exact final payload boundaries."""
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = internal_fixture_directory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.state = self.root / "state"
@@ -284,8 +292,11 @@ class FinalizationTests(unittest.TestCase):
             (tools / name).write_bytes(b"reviewed helper")
         output = self.root / "finalized/package"
         output.parent.mkdir()
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        scratch_directory = Path(scratch.name).resolve()
         args = argparse.Namespace(repository=repository, state_directory=self.state,
-                                  trusted_state_sha256=trusted, scratch_directory=self.root / "ssd",
+                                  trusted_state_sha256=trusted, scratch_directory=scratch_directory,
                                   output_directory=output)
 
         archiver_paths = []

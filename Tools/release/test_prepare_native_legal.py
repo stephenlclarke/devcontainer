@@ -4,6 +4,8 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
+import pwd
 from pathlib import Path
 import shutil
 import tempfile
@@ -14,6 +16,12 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location('legal', Path(__file__).with_name('prepare-native-legal.py'))
 legal = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(legal)
+
+
+def internal_fixture_directory() -> tempfile.TemporaryDirectory:
+    """Keep retained-role fixture data internal despite an external TMPDIR."""
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    return tempfile.TemporaryDirectory(prefix="prepare-native-legal-", dir=home)
 
 
 class LegalTests(unittest.TestCase):
@@ -115,7 +123,7 @@ class LegalTests(unittest.TestCase):
     def test_main_selects_profile_ledger_and_seals_exact_notices(self):
         dependency, responses, _ = self.fixture()
         real_collect = legal.collect
-        with tempfile.TemporaryDirectory() as temporary:
+        with internal_fixture_directory() as temporary:
             root = Path(temporary).resolve()
             resolved = root / 'Package.resolved'
             ledger = root / 'licenses.json'
@@ -145,7 +153,7 @@ class LegalTests(unittest.TestCase):
         real_collect = legal.collect
         for changed in ['Package.resolved', 'licenses.json', 'dependency_metadata.py',
                         'write-third-party-notices.py']:
-            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(changed=changed), internal_fixture_directory() as temporary:
                 root = Path(temporary).resolve()
                 tools = root / 'release-tools'
                 tools.mkdir()

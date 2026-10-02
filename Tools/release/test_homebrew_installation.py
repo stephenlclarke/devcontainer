@@ -6,6 +6,7 @@ from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import plistlib
 import shutil
@@ -18,6 +19,12 @@ import homebrew_installation as installation
 SOURCE = "a" * 40
 VERSION = "2.0.0"
 ARCHIVE_SHA = "b" * 64
+
+
+def internal_fixture_directory() -> tempfile.TemporaryDirectory:
+    """Keep retained-role fixture data internal despite an external TMPDIR."""
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    return tempfile.TemporaryDirectory(prefix="homebrew-installation-", dir=home)
 
 
 def tree_sha(path: Path) -> str:
@@ -231,14 +238,16 @@ class FakeBrew:
 
 class HomebrewInstallationTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = internal_fixture_directory()
+        self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
         self.prefix = self.root / "homebrew"
         self.cellar = self.prefix / "Cellar"
         self.retained = self.root / "retained"
         self.retained.mkdir(mode=0o700)
-        self.ssd = self.root / "ssd"
-        self.ssd.mkdir(mode=0o700)
+        scratch_root = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch_root.cleanup)
+        self.ssd = Path(scratch_root.name).resolve()
         self.scratch = self.ssd / "homebrew-installation-123"
         self.formula_path = self.root / "devcontainer.rb"
         self.context_path = self.root / "package-context.json"
@@ -252,9 +261,6 @@ class HomebrewInstallationTests(unittest.TestCase):
         self.brew = FakeBrew(self.prefix, "stable", VERSION)
         self.services = FakeServices()
         self.guard = FakeGuard()
-
-    def tearDown(self):
-        self.temporary.cleanup()
 
     def _write_context_and_formula(self, lane):
         if lane == "stable":
