@@ -228,6 +228,7 @@ class OwnedGuestFixtureRunner:
             "DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "")
         if self.lane != "docker" and not self.container:
             raise ParityError("owned guest route requires the admitted native container provider")
+        self.compose_provider: Path | None = None
         self.compose = self._admit_compose() if any(
             fixture.identifier in COMPOSE_FIXTURES for fixture in fixtures) else None
         self.preparation: tuple[Path, Any, LaneRuntimeView, dict] | None = None
@@ -277,7 +278,73 @@ class OwnedGuestFixtureRunner:
         expected = self.runner.finalized["productionBinarySHA256"]["bin/devcontainer-compose"]
         if not executable.is_absolute() or executable.resolve(strict=True) != executable or sha256(executable) != expected:
             raise ParityError("native Compose frontend differs from the signed package inventory")
+        self.compose_provider = self._admit_external_compose_provider()
         return executable
+
+    def _admit_external_compose_provider(self) -> Path:
+        """Authenticate the separate container-compose provider before runtime use."""
+        environment = self.runner.environment
+        value = environment.get("DEVCONTAINER_COMPOSE_BIN")
+        expected_sha = environment.get("DEVCONTAINER_COMPOSE_PROVIDER_SHA256")
+        if (not value or not expected_sha or len(expected_sha) != 64
+                or any(character not in "0123456789abcdef" for character in expected_sha)):
+            raise ParityError("native Compose requires its explicitly admitted external provider and SHA-256")
+        executable = Path(value)
+        if (not executable.is_absolute() or executable.resolve(strict=True) != executable
+                or executable.is_symlink() or not executable.is_file() or not os.access(executable, os.X_OK)
+                or sha256(executable) != expected_sha):
+            raise ParityError("external container-compose provider differs from its admitted executable")
+        pins = self.runner.manifest["referencePins"]["containerCompose"]
+        observed = subprocess.run([str(executable), "version", "--format", "json"],
+                                  cwd=self.repository, env=environment, capture_output=True,
+                                  text=True, timeout=20, check=False)
+        if observed.returncode != 0:
+            raise ParityError("external container-compose version command failed")
+        try:
+            identity = json.loads(observed.stdout)
+        except json.JSONDecodeError as error:
+            raise ParityError("external container-compose returned invalid version JSON") from error
+        if (not isinstance(identity, dict) or identity.get("version") != pins["stableVersion"]
+                or identity.get("commit") != pins["stableCommit"]):
+            raise ParityError("external container-compose provider differs from its locked release")
+        return executable
+
+    def _compose_wrapper_selection(self) -> dict[str, str] | None:
+        """Bind native Compose CLI selection to inputs admitted for this lane."""
+        if self.lane == "docker":
+            return None
+        if self.lane not in {"apple-stock", "container-compose"} or self.socket is None:
+            raise ParityError("native Compose wrapper has no admitted lane endpoint")
+        if self.compose is None or self.compose_provider is None or not self.container:
+            raise ParityError("native Compose wrapper has no admitted provider executables")
+        state_value = self.runner.environment.get("DEVCONTAINER_STATE")
+        if not state_value:
+            raise ParityError("native Compose wrapper has no selected runtime state")
+        state = Path(state_value)
+        if (not state.is_absolute() or state.resolve(strict=True) != state or not state.is_file()
+                or state.is_symlink()):
+            raise ParityError("native Compose wrapper state is not the selected canonical database")
+        expected_provider_sha = self.runner.environment.get("DEVCONTAINER_COMPOSE_PROVIDER_SHA256")
+        container = Path(self.container)
+        if (not container.is_absolute() or container.resolve(strict=True) != container
+                or container.is_symlink() or not container.is_file()):
+            raise ParityError("native Compose wrapper container is not the admitted executable")
+        if (not self.compose.is_absolute() or self.compose.resolve(strict=True) != self.compose
+                or self.compose.is_symlink() or not self.compose.is_file()):
+            raise ParityError("native Compose wrapper frontend is not the admitted executable")
+        if (self.compose_provider is None or not expected_provider_sha
+                or self.compose_provider.resolve(strict=True) != self.compose_provider
+                or self.compose_provider.is_symlink() or not self.compose_provider.is_file()
+                or sha256(self.compose_provider) != expected_provider_sha):
+            raise ParityError("external container-compose provider changed after admission")
+        return {
+            "DEVCONTAINER_BACKEND": "stock" if self.lane == "apple-stock" else "container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": str(self.compose_provider),
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_SOCKET": str(self.socket),
+            "DEVCONTAINER_STATE": str(state),
+        }
 
     def _case_paths(self, fixture: Any) -> tuple[Path, Path, dict]:
         base = self.runner.output.parent / "owned-guest-runtime" / self.lane
@@ -459,7 +526,9 @@ class OwnedGuestFixtureRunner:
                 inputs[key] = {"executables": {executable_key: str(self.compose)}}
             image_id = self.inputs["workload"]["image"].get("manifest") if self.lane == "docker" else None
             guest = ReleasedGuest(inputs, fixture.identifier, root, owner, runtime, self.container,
-                                  self.socket, image_id=image_id, observe=events.append)
+                                  self.socket, image_id=image_id, observe=events.append,
+                                  compose_selection=(self._compose_wrapper_selection()
+                                                     if fixture.identifier in COMPOSE_FIXTURES else None))
             observations = guest.operation()
             differences = assert_contract(fixture, observations)
             if differences:

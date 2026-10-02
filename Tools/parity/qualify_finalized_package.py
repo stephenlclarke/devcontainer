@@ -33,6 +33,7 @@ JOURNAL_PARENT = RETAINED / "runtime-journals"
 GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
 LEASE_PATH = Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")
 LANES = ("docker", "apple-stock", "container-compose")
+COMPONENT_FIXTURE = "E13-compose-signals"
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
@@ -209,16 +210,132 @@ def admit_docker_buildx(path: Path, pins: dict[str, str]) -> tuple[str, str]:
     return version, digest
 
 
-def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup):
-    """Run V01 after an ordinary CLI failure only when the CLI cleanup receipt is complete."""
+def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup, *, component_fixture=None):
+    """Run the full CLI/V01 pair, or the explicitly scoped CLI component only."""
     cli_result = cli_runner()
     if not cli_cleanup():
         raise RuntimeError("CLI cleanup is incomplete; V01 cannot safely start")
+    if component_fixture is not None:
+        if component_fixture != COMPONENT_FIXTURE:
+            raise ValueError("Unsupported parity component fixture")
+        return cli_result, None, cli_result.returncode == 0
     vscode_result = vscode_runner()
     if not vscode_cleanup():
         raise RuntimeError("V01 cleanup is incomplete")
     passed = cli_result.returncode == 0 and vscode_result.returncode == 0
     return cli_result, vscode_result, passed
+
+
+def selected_fixture_environment(environment: dict[str, str], fixture: str | None) -> dict[str, str]:
+    """Select one maintained CLI fixture only for the explicit component mode."""
+    if fixture is None:
+        return environment
+    if fixture != COMPONENT_FIXTURE:
+        raise ValueError("Unsupported parity component fixture")
+    return {**environment, "DEVCONTAINER_PARITY_FIXTURES": fixture}
+
+
+def compare_component_results(evidence: Path, fixture: str) -> dict:
+    """Run the maintained exact comparator against the single requested fixture."""
+    if fixture != COMPONENT_FIXTURE:
+        raise ValueError("Unsupported parity component fixture")
+    parity_directory = REPOSITORY / "Tools/parity"
+    path = parity_directory / "compare_results.py"
+    if path.resolve(strict=True) != path:
+        raise ValueError("Parity comparator path is not canonical")
+    sys.path.insert(0, str(parity_directory))
+    try:
+        spec = importlib.util.spec_from_file_location("native_component_compare_results", path)
+        if spec is None or spec.loader is None:
+            raise ValueError("Maintained parity comparator is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        payload, matrix = module.compare(evidence, {fixture}, "cli")
+    finally:
+        sys.path.remove(str(parity_directory))
+    write_json(evidence / "component-comparison.json", payload)
+    (evidence / "component-matrix.md").write_text(matrix, encoding="utf-8")
+    return payload
+
+
+def write_component_result(evidence: Path, value: dict) -> Path:
+    """Write a non-CAS component result without invoking qualification sealing."""
+    path = evidence / "component-result.json"
+    if path.exists() or path.is_symlink():
+        raise ValueError("Component result already exists")
+    descriptor_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor_fd, "wb") as output:
+        output.write(json.dumps(value, sort_keys=True, indent=2).encode() + b"\n")
+        output.flush()
+        os.fsync(output.fileno())
+    return path
+
+
+def component_result_payload(args: argparse.Namespace, cleanup: dict, comparison: dict,
+                             host_payload: dict, provider_hashes: dict[str, str],
+                             provider_inputs: dict, status: str,
+                             failures: list[str]) -> dict:
+    """Describe the bounded component run without qualification or publisher authority."""
+    return {
+        "schemaVersion": 1,
+        "scope": "component-only",
+        "status": status,
+        "releaseAuthority": False,
+        "sourceCommit": args.source_commit,
+        "sourceTree": args._source_tree,
+        "finalizationProvenanceSHA256": args.provenance_sha256,
+        "trustedStateSHA256": args.state_sha256,
+        "archiveSHA256": args._component_package_proof["archiveSHA256"],
+        "fixture": COMPONENT_FIXTURE,
+        "fixtureCounts": {"cliPerLane": 1, "vscodePerLane": 0,
+                           "laneCount": 3, "totalLaneFixtureResults": 3},
+        "vscodeStatus": "skipped",
+        "comparison": {"status": comparison.get("status"),
+                        "sha256": sha256(args.evidence / "component-comparison.json")
+                        if (args.evidence / "component-comparison.json").is_file() else None},
+        "providerSHA256": provider_hashes,
+        "providerInputs": provider_inputs,
+        "laneCleanup": {lane: cleanup[lane] for lane in LANES},
+        "hostCleanup": {key: host_payload.get(key) for key in (
+            "status", "initialColima", "finalColima", "initialServiceSetSHA256",
+            "finalServiceSetSHA256", "hostGuardCleared", "restoration")},
+        "failures": failures,
+    }
+
+
+def finalize_component_result(args: argparse.Namespace, cleanup: dict, comparison: dict,
+                              host_payload: dict, provider_hashes: dict[str, str],
+                              provider_inputs: dict, failures: list[str]) -> dict:
+    """Persist component evidence after restoration; this path never seals a qualification."""
+    complete = component_restoration_is_complete(cleanup, host_payload)
+    recorded_failures = list(failures)
+    if not complete and "component provider or host restoration is incomplete" not in recorded_failures:
+        recorded_failures.append("component provider or host restoration is incomplete")
+    if not component_comparison_is_passed(comparison, args.evidence):
+        recorded_failures.append("E13 comparator evidence is incomplete or failed")
+    passed = not recorded_failures
+    payload = component_result_payload(
+        args, cleanup, comparison, host_payload, provider_hashes, provider_inputs,
+        "passed" if passed else "failed", recorded_failures)
+    write_component_result(args.evidence, payload)
+    return payload
+
+
+def component_comparison_is_passed(comparison: dict, evidence: Path) -> bool:
+    """Require the maintained comparator's exact single-fixture CLI result and file."""
+    if (not isinstance(comparison, dict) or comparison.get("status") != "passed"
+            or comparison.get("suite") != "cli"
+            or comparison.get("expectedFixtures") != [COMPONENT_FIXTURE]
+            or comparison.get("evidenceStatus") != "passed"
+            or comparison.get("functionalParityStatus") != "passed"
+            or comparison.get("timingStatus") != "passed"
+            or comparison.get("requireZeroFunctionalDifferences") is not True):
+        return False
+    comparison_path = evidence / "component-comparison.json"
+    try:
+        return json.loads(comparison_path.read_text(encoding="utf-8")) == comparison
+    except (OSError, ValueError):
+        return False
 
 
 def docker_stop_allowed(*, started_here: bool, suites_started: bool,
@@ -241,6 +358,23 @@ def require_host_restoration(cleanup: dict, initial_colima: str, final_colima: s
         raise RuntimeError("not all runtime lanes have complete restoration receipts")
     if initial_colima != final_colima or not guard_cleared:
         raise RuntimeError("host runtime state or admission guard was not restored")
+
+
+def component_restoration_is_complete(cleanup: dict, host_payload: dict) -> bool:
+    """Require three restored providers and an explicitly skipped V01 observation."""
+    if set(cleanup) != set(LANES):
+        return False
+    for lane in LANES:
+        row = cleanup[lane]
+        if (row.get("status") != "restored" or row.get("cliCleanupComplete") is not True
+                or row.get("vscodeCleanupComplete") is not False
+                or row.get("vscodeStatus") != "skipped"):
+            return False
+    return (host_payload.get("status") == "restored"
+            and host_payload.get("hostGuardCleared") is True
+            and host_payload.get("initialColima") == host_payload.get("finalColima")
+            and host_payload.get("initialServiceSetSHA256") == host_payload.get("finalServiceSetSHA256")
+            and host_payload.get("initialServiceCount") == host_payload.get("finalServiceCount"))
 
 
 def host_can_clear_guard(cleanup: dict, initial_colima: str, final_colima: str,
@@ -964,6 +1098,8 @@ def _finalize_host_cleanup(evidence: Path, args: argparse.Namespace, base_env: d
                    "status": row.get("status", "uncertain"),
                    "cliCleanupComplete": row.get("cliCleanupComplete") is True,
                    "vscodeCleanupComplete": row.get("vscodeCleanupComplete") is True}
+        if getattr(args, "component_fixture", None):
+            payload["vscodeStatus"] = "skipped"
         if lane == "docker":
             payload["colima"] = row.get("colima", {"initial": initial_colima,
                                                    "final": final_colima,
@@ -1084,8 +1220,8 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                      "TEMP": str(SSD), "TMP": str(SSD)})
     lane_env["DEVCONTAINER_CONTAINER_BIN"] = str(
         args.stock_container_bin if lane == "apple-stock" else args.compose_container_bin)
-    if lane == "container-compose":
-        lane_env["DEVCONTAINER_COMPOSE_BIN"] = str(args.compose_provider_bin)
+    lane_env["DEVCONTAINER_COMPOSE_BIN"] = str(args.compose_provider_bin)
+    lane_env["DEVCONTAINER_COMPOSE_PROVIDER_SHA256"] = args.compose_provider_sha256
     provider_root = str(provider_install_root(lane, args))
     lane_env.update({"CONTAINER_APP_ROOT": str(root / "container"),
                      "CONTAINER_INSTALL_ROOT": provider_root,
@@ -1139,26 +1275,35 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
         cli, vscode = lane_commands(args, lane, evidence)
         suites_started = True
         cli_result, vscode_result, suites_passed = run_suite_pair(
-            lambda: command_outcome(cli, env=lane_env, timeout=3 * 60 * 60,
+            lambda: command_outcome(cli, env=selected_fixture_environment(
+                                        lane_env, getattr(args, "component_fixture", None)),
+                                    timeout=3 * 60 * 60,
                                     capture_directory=controller_capture_directory(evidence, lane, "cli")),
             lambda: command_outcome(vscode, env={**lane_env, "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                                                  "DEVCONTAINER_VSCODE_APP": str(args.vscode_app)}, timeout=90 * 60,
                                     capture_directory=controller_capture_directory(evidence, lane, "vscode")),
-            lambda: cli_cleanup_is_complete(evidence, lane),
-            lambda: vscode_cleanup_is_complete(evidence, lane))
+            lambda: cli_cleanup_is_complete(evidence, lane, getattr(args, "component_fixture", None)),
+            lambda: vscode_cleanup_is_complete(evidence, lane),
+            component_fixture=getattr(args, "component_fixture", None))
         runtime.verify()
         if not suites_passed:
             primary_error = RuntimeError(f"{lane} parity command returned a nonzero status")
-        for suite, command_result, result_path in (
-                ("CLI", cli_result, evidence / lane / "results.json"),
-                ("V01", vscode_result, evidence / "vscode" / lane / "results.json")):
-            if command_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
-                primary_error = RuntimeError(f"{lane} {suite} parity result did not pass")
+        if getattr(args, "component_fixture", None):
+            result_path = evidence / lane / "results.json"
+            if cli_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
+                primary_error = RuntimeError(f"{lane} component fixture did not pass")
+        else:
+            for suite, command_result, result_path in (
+                    ("CLI", cli_result, evidence / lane / "results.json"),
+                    ("V01", vscode_result, evidence / "vscode" / lane / "results.json")):
+                if command_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
+                    primary_error = RuntimeError(f"{lane} {suite} parity result did not pass")
     except BaseException as error:
         primary_error = error
 
     cleanup_error = None
-    complete = lane_cleanup_is_complete(evidence, lane)
+    component_fixture = getattr(args, "component_fixture", None)
+    complete = lane_cleanup_is_complete(evidence, lane, component_fixture)
     if provider_started and suites_started and not complete:
         cleanup_error = RuntimeError(f"{lane} fixture cleanup is incomplete; preserving active provider and quarantine")
     if runtime.switch is not None and api_definition_capture is not None:
@@ -1197,16 +1342,23 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             if json.loads((root / "owner.json").read_text()) != owner:
                 raise RuntimeError("Apple lane ownership marker changed; preserving scratch")
             shutil.rmtree(root)
-            cleanup[lane] = {"status": "restored",
-                             "cliCleanupComplete": cli_cleanup_is_complete(evidence, lane),
-                             "vscodeCleanupComplete": vscode_cleanup_is_complete(evidence, lane),
-                             "providerStopped": provider_stopped, "serviceRestored": True,
-                             "serviceJournalReceiptSHA256": sha256(evidence / f"{lane}-service-journal-receipt.json")}
         except BaseException as error:
             cleanup_error = error
+        else:
+            cleanup[lane] = {"status": "restored",
+                             "cliCleanupComplete": cli_cleanup_is_complete(evidence, lane, component_fixture),
+                             "vscodeCleanupComplete": False if component_fixture else vscode_cleanup_is_complete(evidence, lane),
+                             "providerStopped": provider_stopped, "serviceRestored": True,
+                             "serviceJournalReceiptSHA256": sha256(evidence / f"{lane}-service-journal-receipt.json")}
+            if component_fixture:
+                cleanup[lane]["vscodeStatus"] = "skipped"
     else:
         cleanup[lane] = {"status": "uncertain", "providerStopped": provider_stopped,
                          "serviceRestored": restored, "scratchRoot": str(root)}
+        if component_fixture:
+            cleanup[lane]["cliCleanupComplete"] = cli_cleanup_is_complete(evidence, lane, component_fixture)
+            cleanup[lane]["vscodeCleanupComplete"] = False
+            cleanup[lane]["vscodeStatus"] = "skipped"
         cleanup_error = cleanup_error or RuntimeError(f"{lane} restoration is uncertain; guard and scratch retained")
     if cleanup_error is not None:
         raise RuntimeError(f"{lane} cleanup failed: {cleanup_error}") from primary_error
@@ -1219,7 +1371,8 @@ def provider_install_root(lane: str, args: argparse.Namespace) -> Path:
     return executable.parent.parent
 
 
-def cli_cleanup_is_complete(evidence: Path, lane: str) -> bool:
+def cli_cleanup_is_complete(evidence: Path, lane: str,
+                            component_fixture: str | None = None) -> bool:
     """Check maintained CLI cleanup independently so V01 can still run after a clean failure."""
     lane_root = evidence / lane
     try:
@@ -1228,6 +1381,10 @@ def cli_cleanup_is_complete(evidence: Path, lane: str) -> bool:
         manifest = json.loads((REPOSITORY / "Tests/Parity/manifest.json").read_text())
         expected = {item["id"]: item.get("runner") for item in manifest["fixtures"]
                     if item.get("runner") != "vscode" and lane in item.get("backends", [])}
+        if component_fixture is not None:
+            if component_fixture != COMPONENT_FIXTURE or component_fixture not in expected:
+                return False
+            expected = {component_fixture: expected[component_fixture]}
         if (len(fixtures) != len(expected) or {item.get("id") for item in fixtures} != set(expected)
                 or result.get("cleanupDifferences") != []):
             return False
@@ -1263,23 +1420,29 @@ def vscode_cleanup_is_complete(evidence: Path, lane: str) -> bool:
         return False
 
 
-def lane_cleanup_is_complete(evidence: Path, lane: str) -> bool:
+def lane_cleanup_is_complete(evidence: Path, lane: str,
+                             component_fixture: str | None = None) -> bool:
+    if component_fixture is not None:
+        return cli_cleanup_is_complete(evidence, lane, component_fixture)
     return cli_cleanup_is_complete(evidence, lane) and vscode_cleanup_is_complete(evidence, lane)
 
 
 def record_docker_cleanup(evidence: Path, cleanup: dict[str, dict], initial: str,
-                          final: str, started_here: bool, suites_started: bool) -> None:
+                          final: str, started_here: bool, suites_started: bool,
+                          component_fixture: str | None = None) -> None:
     """Keep the global runtime guard unless both Docker cleanup proofs and Colima restore pass."""
-    suite_clean = lane_cleanup_is_complete(evidence, "docker")
+    suite_clean = lane_cleanup_is_complete(evidence, "docker", component_fixture)
     complete = docker_restore_is_safe(started_here=started_here, suites_started=suites_started,
-        suite_cleanup_complete=suite_clean, initial=initial, final=final)
+                                      suite_cleanup_complete=suite_clean, initial=initial, final=final)
     cleanup["docker"] = {
         "status": "restored" if complete else "uncertain",
-        "cliCleanupComplete": cli_cleanup_is_complete(evidence, "docker"),
-        "vscodeCleanupComplete": vscode_cleanup_is_complete(evidence, "docker"),
+        "cliCleanupComplete": cli_cleanup_is_complete(evidence, "docker", component_fixture),
+        "vscodeCleanupComplete": False if component_fixture else vscode_cleanup_is_complete(evidence, "docker"),
         "colima": {"initial": initial, "final": final,
                    "restored": complete, "startedByController": started_here},
     }
+    if component_fixture:
+        cleanup["docker"]["vscodeStatus"] = "skipped"
 
 
 def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
@@ -1337,24 +1500,32 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
         cli, vscode = lane_commands(args, "docker", evidence)
         suites_started = True
         cli_result, vscode_result, suites_passed = run_suite_pair(
-            lambda: command_outcome(cli, env={**lane_env, "DEVCONTAINER_DOCKER_ORACLE_HOST": endpoint},
+            lambda: command_outcome(cli, env=selected_fixture_environment(
+                                        {**lane_env, "DEVCONTAINER_DOCKER_ORACLE_HOST": endpoint},
+                                        getattr(args, "component_fixture", None)),
                                     timeout=3 * 60 * 60,
                                     capture_directory=controller_capture_directory(evidence, "docker", "cli")),
             lambda: command_outcome(vscode, env={**lane_env, "DEVCONTAINER_DOCKER_ORACLE_HOST": endpoint,
                                                  "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                                                  "DEVCONTAINER_VSCODE_APP": str(args.vscode_app)}, timeout=90 * 60,
                                     capture_directory=controller_capture_directory(evidence, "docker", "vscode")),
-            lambda: cli_cleanup_is_complete(evidence, "docker"),
-            lambda: vscode_cleanup_is_complete(evidence, "docker"))
-        for suite, command_result, result_path in (
-                ("CLI", cli_result, evidence / "docker" / "results.json"),
-                ("V01", vscode_result, evidence / "vscode" / "docker" / "results.json")):
-            if command_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
-                raise RuntimeError(f"Docker {suite} parity result did not pass")
+            lambda: cli_cleanup_is_complete(evidence, "docker", getattr(args, "component_fixture", None)),
+            lambda: vscode_cleanup_is_complete(evidence, "docker"),
+            component_fixture=getattr(args, "component_fixture", None))
+        if getattr(args, "component_fixture", None):
+            if cli_result.returncode or json.loads((evidence / "docker" / "results.json").read_text()).get("status") != "passed":
+                raise RuntimeError("Docker component fixture did not pass")
+        else:
+            for suite, command_result, result_path in (
+                    ("CLI", cli_result, evidence / "docker" / "results.json"),
+                    ("V01", vscode_result, evidence / "vscode" / "docker" / "results.json")):
+                if command_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
+                    raise RuntimeError(f"Docker {suite} parity result did not pass")
     except BaseException as error:
         primary_error = error
     finally:
-        suite_clean = lane_cleanup_is_complete(evidence, "docker")
+        component_fixture = getattr(args, "component_fixture", None)
+        suite_clean = lane_cleanup_is_complete(evidence, "docker", component_fixture)
         safe_to_stop = docker_stop_allowed(started_here=started_here, suites_started=suites_started,
                                            suite_cleanup_complete=suite_clean)
         cleanup_error = None
@@ -1371,7 +1542,8 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
         elif colima_state(args.colima_bin, base_env)[0] != "running":
             cleanup_error = cleanup_error or RuntimeError("Initially running Colima default profile stopped during parity")
         final, _ = colima_state(args.colima_bin, base_env)
-        record_docker_cleanup(evidence, cleanup, initial, final, started_here, suites_started)
+        record_docker_cleanup(evidence, cleanup, initial, final, started_here, suites_started,
+                              component_fixture)
         if cleanup_error is not None:
             raise RuntimeError(f"Docker restoration failed: {cleanup_error}") from primary_error
     if primary_error is not None:
@@ -1381,6 +1553,8 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="perform the live 84-observation campaign")
+    parser.add_argument("--component-fixture", choices=(COMPONENT_FIXTURE,),
+                        help="run only the named CLI fixture as a non-qualifying component check")
     parser.add_argument("--repository", type=Path, default=REPOSITORY)
     parser.add_argument("--ssd-root", type=Path, required=True,
                         help="fresh runtime evidence parent on the enrolled SSD")
@@ -1422,22 +1596,31 @@ def main() -> int:
     RETAINED = args.retained_root
     JOURNAL_PARENT = RETAINED / "runtime-journals"
     GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
+    component_fixture = getattr(args, "component_fixture", None)
     binaries = validate_inputs(args)
-    if (not args.vscode_app.is_absolute() or args.vscode_app.resolve(strict=True) != args.vscode_app
-            or not (args.vscode_app / "Contents/MacOS/Code").is_file()):
+    if not component_fixture and (not args.vscode_app.is_absolute() or args.vscode_app.resolve(strict=True) != args.vscode_app
+                                  or not (args.vscode_app / "Contents/MacOS/Code").is_file()):
         raise ValueError("VS Code app must be the exact staged application bundle")
     manifest = args._manifest
-    expected_vsix = manifest["referencePins"]["vscode"]["devContainersExtension"]["vsixSHA256"]
-    if (not args.vscode_vsix.is_absolute() or args.vscode_vsix.resolve(strict=True) != args.vscode_vsix
-            or sha256(args.vscode_vsix) != expected_vsix):
-        raise ValueError("VSIX must be the exact manifest-pinned retained extension archive")
+    if not component_fixture:
+        expected_vsix = manifest["referencePins"]["vscode"]["devContainersExtension"]["vsixSHA256"]
+        if (not args.vscode_vsix.is_absolute() or args.vscode_vsix.resolve(strict=True) != args.vscode_vsix
+                or sha256(args.vscode_vsix) != expected_vsix):
+            raise ValueError("VSIX must be the exact manifest-pinned retained extension archive")
     if not args.execute:
-        print(json.dumps({"scope": "inert-preflight", "sourceCommit": args.source_commit,
-                          "providerSHA256": binaries, "lanes": LANES, "observations": 84,
-                          "evidence": str(args.evidence),
-                          "qualificationRoot": str(args.qualification_directory)},
-                         sort_keys=True, indent=2))
+        preflight = {"scope": "component-only-inert-preflight", "componentFixture": component_fixture,
+                     "releaseAuthority": False, "sourceCommit": args.source_commit,
+                     "providerSHA256": binaries, "lanes": LANES,
+                     "evidence": str(args.evidence)} if component_fixture else {
+                         "scope": "inert-preflight", "sourceCommit": args.source_commit,
+                         "providerSHA256": binaries, "lanes": LANES, "observations": 84,
+                         "evidence": str(args.evidence),
+                         "qualificationRoot": str(args.qualification_directory)}
+        print(json.dumps(preflight, sort_keys=True, indent=2))
         return 0
+
+    if component_fixture and (args.evidence.exists() or args.evidence.is_symlink()):
+        raise ValueError("Component evidence root must be fresh")
 
     # Exact signed-package admissions precede lease acquisition and any runtime,
     # Colima, launchd, provider or keychain mutation.
@@ -1449,6 +1632,8 @@ def main() -> int:
             or package_proof.get("trustedStateSHA256") != args.state_sha256
             or package_proof.get("archiveSHA256") != package_admissions["apple-stock"]["archiveSHA256"]):
         raise ValueError("finalized package proof differs from the exact accepted archive and source")
+    if component_fixture:
+        args._component_package_proof = package_proof
     args._parity_harness_sha256 = load_run_lane(REPOSITORY).parity_harness_sha256(REPOSITORY)
     args._package_admissions = package_admissions
 
@@ -1472,10 +1657,11 @@ def main() -> int:
                      "DEVCONTAINER_VSCODE_LIVE": "1"})
     docker_config = create_docker_cli_config(args.evidence, args)
     base_env["DOCKER_CONFIG"] = str(docker_config)
-    reference = args.evidence / "vscode" / "reference"
-    reference.mkdir(parents=True, mode=0o700)
-    extension_version = manifest["referencePins"]["vscode"]["devContainersExtension"]["version"]
-    shutil.copyfile(args.vscode_vsix, reference / f"remote-containers-{extension_version}.vsix")
+    if not component_fixture:
+        reference = args.evidence / "vscode" / "reference"
+        reference.mkdir(parents=True, mode=0o700)
+        extension_version = manifest["referencePins"]["vscode"]["devContainersExtension"]["version"]
+        shutil.copyfile(args.vscode_vsix, reference / f"remote-containers-{extension_version}.vsix")
     initial_colima, initial_colima_detail = colima_state(args.colima_bin, base_env)
     initial_services, initial_service_count = host_service_digest()
     write_json(args.evidence / "operator-inputs.json", {
@@ -1492,7 +1678,8 @@ def main() -> int:
     from host_runtime import HostGuard, cancellation, runtime_lease
     guard = HostGuard(GUARD_PATH)
     transaction_owner = {"identity": {"campaign": args.campaign, "sourceCommit": args.source_commit,
-                                      "scope": "finalized-native-parity"}, "root": str(args.evidence)}
+                                      "scope": "finalized-native-parity-component" if component_fixture
+                                      else "finalized-native-parity"}, "root": str(args.evidence)}
     cleanup = {lane: {"status": "not-started"} for lane in LANES}
     guard_cleared = False
     errors = []
@@ -1517,26 +1704,38 @@ def main() -> int:
                         if cleanup[lane].get("status") != "restored":
                             break
             comparison_status = {}
-            for suite, root in (("cli", args.evidence), ("vscode", args.evidence / "vscode")):
-                comparison = run([sys.executable, str(REPOSITORY / "Tools/parity/compare_results.py"),
-                                  str(root), "--manifest", str(REPOSITORY / "Tests/Parity/manifest.json"),
-                                  "--suite", suite], env=base_env, timeout=5 * 60, capture=True, check=False)
-                comparison_path = root / "comparison.json"
-                comparison_payload = json.loads(comparison_path.read_text()) if comparison_path.is_file() else {}
-                comparison_status[suite] = {"status": comparison_payload.get("status")}
-                if comparison.returncode or comparison_status[suite]["status"] != "passed":
-                    errors.append(f"{suite} comparison exited {comparison.returncode}")
-            release_validation = run([sys.executable, str(REPOSITORY / "Tools/parity/validate_manifest.py"),
-                                      "--release"], env=base_env, timeout=5 * 60, capture=True, check=False)
-            if release_validation.returncode == 0:
-                write_json(args.evidence / "release-manifest.json", {
-                    "schemaVersion": 1, "status": "passed", "sourceCommit": args.source_commit,
-                    "manifestSHA256": sha256(REPOSITORY / "Tests/Parity/manifest.json"),
-                    "validator": "Tools/parity/validate_manifest.py --release", "exitCode": 0})
-                comparison_status["releaseManifest"] = {"status": "passed"}
+            component_comparison = {"status": "failed"} if component_fixture else None
+            if component_fixture:
+                try:
+                    component_comparison = compare_component_results(args.evidence, component_fixture)
+                    comparison_status["component"] = {"status": component_comparison.get("status")}
+                    if component_comparison.get("status") != "passed":
+                        errors.append("E13 component comparison did not pass")
+                except (OSError, ValueError, RuntimeError, KeyError, TypeError, ImportError) as error:
+                    component_comparison = {"status": "failed"}
+                    comparison_status["component"] = {"status": "failed"}
+                    errors.append(f"E13 component comparison failed: {error}")
             else:
-                comparison_status["releaseManifest"] = {"status": "failed"}
-                errors.append(f"release manifest validation exited {release_validation.returncode}")
+                for suite, root in (("cli", args.evidence), ("vscode", args.evidence / "vscode")):
+                    comparison = run([sys.executable, str(REPOSITORY / "Tools/parity/compare_results.py"),
+                                      str(root), "--manifest", str(REPOSITORY / "Tests/Parity/manifest.json"),
+                                      "--suite", suite], env=base_env, timeout=5 * 60, capture=True, check=False)
+                    comparison_path = root / "comparison.json"
+                    comparison_payload = json.loads(comparison_path.read_text()) if comparison_path.is_file() else {}
+                    comparison_status[suite] = {"status": comparison_payload.get("status")}
+                    if comparison.returncode or comparison_status[suite]["status"] != "passed":
+                        errors.append(f"{suite} comparison exited {comparison.returncode}")
+                release_validation = run([sys.executable, str(REPOSITORY / "Tools/parity/validate_manifest.py"),
+                                          "--release"], env=base_env, timeout=5 * 60, capture=True, check=False)
+                if release_validation.returncode == 0:
+                    write_json(args.evidence / "release-manifest.json", {
+                        "schemaVersion": 1, "status": "passed", "sourceCommit": args.source_commit,
+                        "manifestSHA256": sha256(REPOSITORY / "Tests/Parity/manifest.json"),
+                        "validator": "Tools/parity/validate_manifest.py --release", "exitCode": 0})
+                    comparison_status["releaseManifest"] = {"status": "passed"}
+                else:
+                    comparison_status["releaseManifest"] = {"status": "failed"}
+                    errors.append(f"release manifest validation exited {release_validation.returncode}")
         finally:
             interrupted = isinstance(sys.exc_info()[1], KeyboardInterrupt)
             if interrupted:
@@ -1560,6 +1759,57 @@ def main() -> int:
         errors.append("runtime guard was not cleared")
     if not all(cleanup[lane].get("status") == "restored" for lane in LANES):
         errors.append("one or more runtime lanes were not fully restored")
+    if component_fixture:
+        component_comparison = component_comparison or {"status": "failed"}
+        component_provider_inputs = {}
+        try:
+            final_binaries = validate_inputs(args)
+            if final_binaries != binaries or args._source_tree != json.loads(
+                    (args.evidence / "operator-inputs.json").read_text())["sourceTree"]:
+                raise ValueError("source or provider inputs changed during component run")
+            final_package_admissions = admit_package_before_runtime(args)
+            if final_package_admissions != package_admissions:
+                raise ValueError("finalized package admissions changed during component run")
+            final_proof, _ = prepare_finalized_package.read_provenance(
+                args.finalized_directory, args.provenance_sha256)
+            if (final_proof != package_proof
+                    or sha256(args.finalized_directory / "native-finalization-provenance.json") != args.provenance_sha256
+                    or sha256(args.accepted_state / "state.json") != args.state_sha256):
+                raise ValueError("finalization provenance or accepted state changed during component run")
+            component_provider_inputs = {
+                "providerSHA256": final_binaries,
+                "admittedPackageLanes": final_package_admissions,
+                "providerHelperEvidence": args._provider_helper_evidence,
+                "laneEvidenceSHA256": {},
+            }
+            for lane in LANES:
+                lane_root = args.evidence / lane
+                validate_provider_result(lane_root / "results.json", lane, final_binaries)
+                validate_provider_fingerprint(lane_root / "fingerprint.json", lane,
+                                              final_binaries, args._manifest)
+                component_provider_inputs["laneEvidenceSHA256"][lane] = {
+                    "results": sha256(lane_root / "results.json"),
+                    "fingerprint": sha256(lane_root / "fingerprint.json"),
+                }
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            errors.append(f"component input recheck failed: {error}")
+        host_payload = json.loads((args.evidence / "host-cleanup.json").read_text())
+        payload = finalize_component_result(args, cleanup, component_comparison, host_payload,
+                                            binaries, component_provider_inputs, errors)
+        errors = payload["failures"]
+        passed = payload["status"] == "passed"
+        if not passed:
+            write_json(args.evidence / "controller-failure.json", {"status": "failed", "errors": errors})
+            print(json.dumps({"status": "failed", "scope": "component-only",
+                              "evidence": str(args.evidence), "errors": errors}, indent=2),
+                  file=sys.stderr)
+            return 1
+        print(json.dumps({"status": "passed", "scope": "component-only",
+                          "releaseAuthority": False, "componentResult": str(args.evidence / "component-result.json"),
+                          "sourceCommit": args.source_commit, "fixture": COMPONENT_FIXTURE,
+                          "fixtureResults": 3}, sort_keys=True, indent=2))
+        return 0
+
     if errors:
         write_json(args.evidence / "controller-failure.json", {"status": "failed", "errors": errors})
         print(json.dumps({"status": "failed", "evidence": str(args.evidence), "errors": errors}, indent=2),

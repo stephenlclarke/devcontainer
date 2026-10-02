@@ -109,11 +109,13 @@ class ReleasedGuest:
     """Own setup commands and guest cleanup before the Engine/provider is stopped."""
 
     def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path,
-                 *, observe=None, image_id: str | None = None):
+                 *, observe=None, image_id: str | None = None,
+                 compose_selection: dict[str, str] | None = None):
         if fixture not in FIXTURES:
             raise ValueError("Unsupported released guest fixture")
         self.inputs, self.fixture, self.root = inputs, fixture, root
         self.owner, self.runtime, self.container, self.socket = owner, runtime, container, socket
+        self.compose_selection = compose_selection
         self.observe, self.guest, self.commands = observe, None, []
         self.builder = None
         self.pending_logs = {}
@@ -252,6 +254,8 @@ class ReleasedGuest:
             with deadline(90):
                 return self.guest.operation()
         if self.fixture in COMPOSE_FOREGROUND_FIXTURES:
+            if self.container and self.compose_selection is None:
+                raise ValueError("Native Compose fixtures require an admitted wrapper selection")
             bundle = self.inputs["composeCandidate" if self.container else "compose"]
             executable = bundle["executables"]["compose" if self.container else "docker-compose"]
             fixture_type = {TTY_INPUT_FIXTURE: ComposeTerminalInputFixture,
@@ -261,6 +265,7 @@ class ReleasedGuest:
                 self.socket, digest(canonical(self.owner["identity"])), self.image_id, GUEST_API_VERSION,
                 self.runtime.journal, root=self.root, executable=executable, runtime=self.runtime,
                 provider_install=Path(self.container).parent.parent if self.container else None,
+                wrapper_selection=self.compose_selection,
                 quiet=self.fixture == QUIET_FIXTURE,
                 redirected=self.fixture == REDIRECTED_FIXTURE,
                 observe=self.observe)

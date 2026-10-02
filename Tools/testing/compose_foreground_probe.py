@@ -45,10 +45,12 @@ class ComposeForegroundFixture(GuestFixture):
     ready_output = STDOUT
 
     def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None,
-                 quiet=False, redirected=False, **kwargs):
+                 wrapper_selection=None, quiet=False, redirected=False, **kwargs):
         super().__init__(*args, command=COMMAND, **kwargs)
         self.root, self.executable, self.runtime = root, executable, runtime
         self.provider_install = provider_install
+        self.wrapper_selection = wrapper_selection
+        self.wrapper_environment = None
         self.quiet = quiet
         self.redirected = redirected
         self.child = OwnedProcess()
@@ -82,6 +84,17 @@ class ComposeForegroundFixture(GuestFixture):
         if self.redirected:
             # `run` selects the terminal independently of the service default.
             configuration["services"]["app"]["tty"] = True
+        if self.wrapper_selection is not None:
+            if self.wrapper_selection.get("DEVCONTAINER_COMPOSE_BIN") == self.executable:
+                raise ValueError("Native Compose wrapper and external provider must remain distinct")
+            config_path = self.root / "devcontainer-config.toml"
+            descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(descriptor)
+            config_path.chmod(0o600)
+            self.wrapper_environment = {
+                **self.wrapper_selection,
+                "DEVCONTAINER_CONFIG": str(config_path),
+            }
         path = self.root / "compose-foreground.json"
         with path.open("xb") as output:
             output.write(canonical(configuration))
@@ -128,7 +141,8 @@ class ComposeForegroundFixture(GuestFixture):
         with self.output.open("xb") as output, self.errors.open("xb") as errors:
             self.command_attempted = True
             self.child.start(arguments, self.root, output, errors=errors, stdin=subprocess.PIPE,
-                             runtime_socket=self.socket, provider_install=self.provider_install)
+                             runtime_socket=self.socket, provider_install=self.provider_install,
+                             wrapper_environment=self.wrapper_environment)
             self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
             try:
                 self.ready(end)
@@ -221,7 +235,8 @@ class ComposeSignalFixture(ComposeForegroundFixture):
         with self.output.open("xb") as output, self.errors.open("xb") as errors:
             self.command_attempted = True
             self.child.start(arguments, self.root, output, errors=errors, stdin=subprocess.PIPE,
-                             runtime_socket=self.socket, provider_install=self.provider_install)
+                             runtime_socket=self.socket, provider_install=self.provider_install,
+                             wrapper_environment=self.wrapper_environment)
             self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
             try:
                 self.ready(end)
@@ -354,7 +369,8 @@ class ComposeTerminalInputFixture(ComposeForegroundFixture):
         with self.output.open("xb") as output, self.errors.open("xb") as errors:
             self.command_attempted = True
             self.child.start(arguments, self.root, output, errors=errors, stdin=subprocess.PIPE,
-                             runtime_socket=self.socket, provider_install=self.provider_install)
+                             runtime_socket=self.socket, provider_install=self.provider_install,
+                             wrapper_environment=self.wrapper_environment)
             self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
             self.child.process.stdin.close()
             code = self.child.process.wait(timeout=remaining(end))

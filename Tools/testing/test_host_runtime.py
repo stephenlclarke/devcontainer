@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -225,6 +226,69 @@ class HostRuntimeTests(unittest.TestCase):
             invalid.start(["fixture"], self.root, None, provider_install=Path("relative"))
         spawn.assert_not_called()
         self.assertFalse(invalid.spawn_pending)
+
+    def test_native_compose_child_requires_complete_private_lane_selection(self):
+        provider = self.root / "provider"
+        binary_dir = provider / "bin"
+        binary_dir.mkdir(parents=True, mode=0o700)
+        container = binary_dir / "container"
+        compose = self.root / "devcontainer-compose"
+        for executable in (container, compose):
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+        state = self.root / "state.sqlite"
+        state.touch(mode=0o600)
+        socket_path = self.root / "docker.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.bind(str(socket_path))
+        config = self.root / "devcontainer-config.toml"
+        config.touch(mode=0o600)
+        config.chmod(0o600)
+        selection = {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": str(compose),
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_CONFIG": str(config),
+            "DEVCONTAINER_STATE": str(state),
+            "DEVCONTAINER_SOCKET": str(socket_path),
+        }
+
+        process = OwnedProcess()
+        with patch.dict(os.environ, {
+            "DEVCONTAINER_BACKEND": "operator",
+            "DEVCONTAINER_CONFIG": "/operator/config.toml",
+            "DEVCONTAINER_COMPOSE_BIN": "/operator/container-compose",
+        }), patch("host_runtime.subprocess.Popen") as spawn:
+            process.start([str(compose)], self.root, None, provider_install=provider,
+                          runtime_socket=socket_path, wrapper_environment=selection)
+        environment = spawn.call_args.kwargs["env"]
+        self.assertEqual({key: environment[key] for key in selection}, selection)
+        self.assertEqual(environment["HOME"], str(self.root))
+        self.assertEqual(environment["CONTAINER_APP_ROOT"], str(self.root / "container"))
+        self.assertEqual(environment["CONTAINER_INSTALL_ROOT"], str(provider))
+        self.assertEqual(environment["CONTAINER_LOG_ROOT"], str(self.root / "container-logs"))
+        self.assertNotEqual(environment["DEVCONTAINER_CONFIG"], "/operator/config.toml")
+
+        for invalid in ({key: value for key, value in selection.items()
+                         if key != "DEVCONTAINER_CONFIG"},
+                        {**selection, "DEVCONTAINER_OPERATOR_OVERRIDE": "1"},
+                        {**selection, "DEVCONTAINER_COMPOSE_PROVIDER": "docker"}):
+            rejected = OwnedProcess()
+            with patch("host_runtime.subprocess.Popen") as rejected_spawn, \
+                    self.assertRaises(ValueError):
+                rejected.start([str(compose)], self.root, None, provider_install=provider,
+                               runtime_socket=socket_path, wrapper_environment=invalid)
+            rejected_spawn.assert_not_called()
+
+        config.write_text("[runtime]\n", encoding="utf-8")
+        rejected = OwnedProcess()
+        with patch("host_runtime.subprocess.Popen") as rejected_spawn, \
+                self.assertRaisesRegex(ValueError, "empty private owned file"):
+            rejected.start([str(compose)], self.root, None, provider_install=provider,
+                           runtime_socket=socket_path, wrapper_environment=selection)
+        rejected_spawn.assert_not_called()
 
     def test_interrupted_spawn_is_not_mistaken_for_no_child(self):
         process = OwnedProcess()

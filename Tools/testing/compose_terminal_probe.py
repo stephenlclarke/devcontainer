@@ -148,7 +148,8 @@ class ComposeTerminalSizeFixture(ComposeForegroundFixture):
             with self.errors.open("xb") as errors:
                 self.command_attempted = True
                 self.child.start(arguments, self.root, slave, errors=errors, stdin=slave,
-                                 runtime_socket=self.socket, provider_install=self.provider_install)
+                                 runtime_socket=self.socket, provider_install=self.provider_install,
+                                 wrapper_environment=self.wrapper_environment)
             self.journal.put(PROCESS + "-process.json", canonical(self.child.identity()))
         finally:
             os.close(slave)

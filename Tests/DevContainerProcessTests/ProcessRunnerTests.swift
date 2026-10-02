@@ -157,6 +157,31 @@ struct ProcessRunnerTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func `inherited runner forwards exact signals and restores prior dispositions`(signalBeforeSpawnReturns: Bool) async throws {
+        let result = try await runSignalRelayProbe(signalBeforeSpawnReturns: signalBeforeSpawnReturns)
+        #expect(result.readyObserved)
+        #expect(result.signalObserved)
+        #expect(result.exited)
+        #expect(result.exitCode == 23)
+        #expect(result.stdout == Data("usr1\nterm\ndispositions-restored\n".utf8))
+        #expect(result.stderr == Data("child-stderr\n".utf8))
+        #expect(result.termMarkerExists)
+        #expect(result.productionWaitCompleted)
+        #expect(!result.fixtureRootPreserved)
+        #expect(result.competingRequestRejected, "Contender result: \(result.competingStatus)")
+        #expect(!result.competingChildStarted)
+    }
+
+    @Test
+    func `exact signal forwarding stops when the child has been reaped`() throws {
+        let command = ProcessCommand("/bin/sleep", arguments: ["10"], environment: [], directory: nil)
+        try command.start()
+        #expect(try command.forwardSignal(SIGTERM))
+        #expect(try command.wait() == 128 + SIGTERM)
+        #expect(try !command.forwardSignal(SIGTERM))
+    }
+
     @Test
     func `failed terminal handoff reaps the suspended child before execution`() throws {
         let marker = TestStorage.temporaryDirectory.appendingPathComponent("tty-\(UUID().uuidString)")
@@ -358,6 +383,151 @@ struct ProcessRunnerTests {
     private static func processExists(_ identifier: pid_t) -> Bool {
         errno = 0
         return Darwin.kill(identifier, 0) == 0 || errno != ESRCH
+    }
+}
+
+private func processProbeURL() throws -> URL {
+    let environment = ProcessInfo.processInfo.environment
+    if environment["BAZEL_TEST"] == "1" {
+        guard let root = environment["TEST_SRCDIR"],
+              let workspace = environment["TEST_WORKSPACE"],
+              let runfile = environment["DEVCONTAINER_PROCESS_TEST_RUNFILE"]
+        else {
+            throw POSIXError(.ENOENT)
+        }
+        return URL(fileURLWithPath: root).appendingPathComponent(workspace).appendingPathComponent(runfile)
+    }
+    return Bundle(for: ProcessProbeBundle.self).bundleURL.deletingLastPathComponent()
+        .appendingPathComponent("DevContainerProcessProbe")
+}
+
+private func waitForSignalMarker(_ url: URL) async throws -> Bool {
+    for _ in 0 ..< 400 {
+        if FileManager.default.fileExists(atPath: url.path) {
+            return true
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    return false
+}
+
+private func waitForProcessExit(_ process: Process, checks: Int = 400) async throws -> Bool {
+    for _ in 0 ..< checks {
+        if !process.isRunning {
+            return true
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    return !process.isRunning
+}
+
+private struct SignalRelayProbeResult {
+    var readyObserved: Bool
+    var signalObserved: Bool
+    var exited: Bool
+    var exitCode: Int32
+    var stdout: Data
+    var stderr: Data
+    var termMarkerExists: Bool
+    var productionWaitCompleted: Bool
+    var fixtureRootPreserved: Bool
+    var competingRequestRejected: Bool
+    var competingChildStarted: Bool
+    var competingStatus: String
+}
+
+private func runSignalRelayProbe(signalBeforeSpawnReturns: Bool) async throws -> SignalRelayProbeResult {
+    let probe = try SignalRelayProbe(signalBeforeSpawnReturns: signalBeforeSpawnReturns)
+    try probe.process.run()
+    var result = try await probe.observe()
+    result.fixtureRootPreserved = !result.productionWaitCompleted
+    if result.productionWaitCompleted {
+        try? FileManager.default.removeItem(at: probe.root)
+    }
+    return result
+}
+
+private struct SignalRelayProbe {
+    let root: URL
+    let ready: URL
+    let pidMarker: URL
+    let userMarker: URL
+    let termMarker: URL
+    let competingMarker: URL
+    let competingRejectedMarker: URL
+    let competingStatusMarker: URL
+    let process: Process
+    let signalBeforeSpawnReturns: Bool
+    let output = Pipe()
+    let error = Pipe()
+
+    init(signalBeforeSpawnReturns: Bool) throws {
+        root = TestStorage.temporaryDirectory.appendingPathComponent("signal-relay-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        ready = root.appendingPathComponent("ready")
+        pidMarker = root.appendingPathComponent("pid")
+        userMarker = root.appendingPathComponent("usr1")
+        termMarker = root.appendingPathComponent("term")
+        competingMarker = root.appendingPathComponent("competing")
+        competingRejectedMarker = root.appendingPathComponent("competing-rejected")
+        competingStatusMarker = root.appendingPathComponent("competing-status")
+        process = Process()
+        self.signalBeforeSpawnReturns = signalBeforeSpawnReturns
+        process.executableURL = try processProbeURL()
+        process.arguments = ["--forward-signals"]
+        process.environment = [
+            "RELAY_READY_MARKER": ready.path,
+            "RELAY_PID_MARKER": pidMarker.path,
+            "RELAY_USR1_MARKER": userMarker.path,
+            "RELAY_TERM_MARKER": termMarker.path,
+            "RELAY_COMPETING_MARKER": competingMarker.path,
+            "RELAY_COMPETING_REJECTED_MARKER": competingRejectedMarker.path,
+            "RELAY_COMPETING_STATUS_MARKER": competingStatusMarker.path,
+            "RELAY_EARLY_SIGNAL": signalBeforeSpawnReturns ? "1" : "0"
+        ]
+        process.standardOutput = output
+        process.standardError = error
+    }
+
+    func observe() async throws -> SignalRelayProbeResult {
+        let readyFile = try await waitForSignalMarker(ready)
+        let pidFile = try await waitForSignalMarker(pidMarker)
+        let readyObserved = readyFile && pidFile
+        let competingRequestRejected = try await waitForSignalMarker(competingRejectedMarker)
+        if !signalBeforeSpawnReturns, readyObserved, process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGUSR1)
+        }
+        let signalObserved = try await waitForSignalMarker(userMarker)
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGTERM)
+        }
+        var exited = try await waitForProcessExit(process)
+        if !exited, process.isRunning {
+            // Cleanup only addresses the owned wrapper; its production signal relay
+            // forwards TERM to the child while preserving exact-child ownership.
+            _ = Darwin.kill(process.processIdentifier, SIGTERM)
+            exited = try await waitForProcessExit(process, checks: 1400)
+        }
+        if exited {
+            process.waitUntilExit()
+        }
+        let exitCode = exited ? process.terminationStatus : -1
+        let termMarkerExists = FileManager.default.fileExists(atPath: termMarker.path)
+        let productionWaitCompleted = exited && exitCode == 23 && termMarkerExists
+        return SignalRelayProbeResult(
+            readyObserved: readyObserved,
+            signalObserved: signalObserved,
+            exited: exited,
+            exitCode: exitCode,
+            stdout: exited ? output.fileHandleForReading.readDataToEndOfFile() : Data(),
+            stderr: exited ? error.fileHandleForReading.readDataToEndOfFile() : Data(),
+            termMarkerExists: termMarkerExists,
+            productionWaitCompleted: productionWaitCompleted,
+            fixtureRootPreserved: false,
+            competingRequestRejected: competingRequestRejected,
+            competingChildStarted: FileManager.default.fileExists(atPath: competingMarker.path),
+            competingStatus: (try? String(contentsOf: competingStatusMarker, encoding: .utf8)) ?? "missing"
+        )
     }
 }
 

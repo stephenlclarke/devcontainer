@@ -126,6 +126,11 @@ class OwnedGuestFailureTests(unittest.TestCase):
             with (mock.patch.object(owned_guest_fixture, "LaneRuntimeView", Runtime),
                   mock.patch.object(guest_runtime, "ReleasedGuest", Guest),
                   mock.patch.object(owned_guest_fixture, "assert_contract", return_value=[]),
+                  mock.patch.object(bridge, "_compose_wrapper_selection", return_value={
+                      "DEVCONTAINER_BACKEND": "stock", "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+                      "DEVCONTAINER_COMPOSE_BIN": "/admitted/container-compose",
+                      "DEVCONTAINER_CONTAINER_BIN": "/admitted/container", "DEVCONTAINER_STATE": "/state",
+                      "DEVCONTAINER_SOCKET": "/socket"}),
                   mock.patch.object(owned_guest_fixture.shutil, "rmtree", side_effect=check_receipt_then_remove)):
                 result = bridge.run(fixture, raw)
 
@@ -209,6 +214,67 @@ class OwnedGuestFailureTests(unittest.TestCase):
 
 
 class OwnedGuestAdmissionTests(unittest.TestCase):
+    def test_native_compose_provider_is_distinct_from_the_signed_wrapper_and_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            provider = root / "container-compose"
+            provider.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            provider.chmod(0o755)
+            provider_sha = hashlib.sha256(provider.read_bytes()).hexdigest()
+            pins = json.loads((REPOSITORY / "Tests/Parity/manifest.json").read_text())["referencePins"]
+            environment = {"DEVCONTAINER_COMPOSE_BIN": str(provider),
+                           "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": provider_sha}
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.runner = SimpleNamespace(environment=environment, manifest={"referencePins": pins})
+            bridge.repository = REPOSITORY
+            reported = {"version": pins["containerCompose"]["stableVersion"],
+                        "commit": pins["containerCompose"]["stableCommit"]}
+            with mock.patch("owned_guest_fixture.subprocess.run", return_value=subprocess.CompletedProcess(
+                    [str(provider)], 0, json.dumps(reported), "")) as invoke:
+                admitted = bridge._admit_external_compose_provider()
+            self.assertEqual(admitted, provider)
+            self.assertNotEqual(admitted, Path("/signed/devcontainer-compose"))
+            invoke.assert_called_once()
+            self.assertEqual(invoke.call_args.args[0], [str(provider), "version", "--format", "json"])
+
+            environment["DEVCONTAINER_COMPOSE_PROVIDER_SHA256"] = "0" * 64
+            with mock.patch("owned_guest_fixture.subprocess.run") as invoke:
+                with self.assertRaisesRegex(ParityError, "admitted executable"):
+                    bridge._admit_external_compose_provider()
+            invoke.assert_not_called()
+
+    def test_compose_selection_exports_authenticated_lane_paths_and_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            provider_root = root / "provider"
+            bin_root = provider_root / "bin"
+            bin_root.mkdir(parents=True, mode=0o700)
+            container = bin_root / "container"
+            wrapper = root / "devcontainer-compose-wrapper"
+            provider = root / "container-compose-provider"
+            state = root / "state.sqlite"
+            for executable in (container, wrapper, provider):
+                executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+                executable.chmod(0o755)
+            state.touch(mode=0o600)
+            provider_sha = hashlib.sha256(provider.read_bytes()).hexdigest()
+            for lane, backend in (("apple-stock", "stock"), ("container-compose", "container-compose")):
+                bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+                bridge.lane, bridge.socket = lane, root / "docker.sock"
+                bridge.container, bridge.compose, bridge.compose_provider = str(container), wrapper, provider
+                bridge.runner = SimpleNamespace(environment={
+                    "DEVCONTAINER_STATE": str(state),
+                    "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": provider_sha,
+                })
+                selection = bridge._compose_wrapper_selection()
+                self.assertEqual(selection["DEVCONTAINER_BACKEND"], backend)
+                self.assertEqual(selection["DEVCONTAINER_COMPOSE_PROVIDER"], "container-compose")
+                self.assertEqual(selection["DEVCONTAINER_COMPOSE_BIN"], str(provider))
+                self.assertEqual(selection["DEVCONTAINER_CONTAINER_BIN"], str(container))
+                self.assertEqual(selection["DEVCONTAINER_STATE"], str(state))
+                self.assertEqual(selection["DEVCONTAINER_SOCKET"], str(bridge.socket))
+                self.assertNotEqual(selection["DEVCONTAINER_COMPOSE_BIN"], str(bridge.compose))
+
     def test_docker_inputs_select_only_the_locked_alpine_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             retained = Path(temporary).resolve()

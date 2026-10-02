@@ -188,11 +188,56 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(environment["CONTAINER_COMPOSE_ENGINE_SOCKET"], str(self.socket))
         self.assertEqual(environment["CONTAINER_COMPOSE_CONTAINER"], str(self.root / "bin/container"))
         self.assertEqual(environment["CONTAINER_BIN"], str(self.root / "bin/container"))
+        self.assertNotIn("DEVCONTAINER_CONFIG", environment)
+        self.assertNotIn("DEVCONTAINER_COMPOSE_PROVIDER", environment)
         process = OwnedProcess()
         mock_value = Mock()
         socket_path = Path("relative")
         with self.assertRaisesRegex(ValueError, "canonical"):
             process.start(["/owned/compose"], self.root, mock_value, runtime_socket=socket_path)
+
+    def test_native_cli_gets_empty_private_config_and_only_admitted_lane_paths(self):
+        provider_root = self.root / "provider"
+        binary_dir = provider_root / "bin"
+        binary_dir.mkdir(parents=True, mode=0o700)
+        container = binary_dir / "container"
+        wrapper = self.root / "devcontainer-compose-wrapper"
+        provider = self.root / "container-compose-provider"
+        for executable in (container, wrapper, provider):
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+        state = self.root / "state.sqlite"
+        state.touch(mode=0o600)
+        self.fixture.provider_install = provider_root
+        self.fixture.executable = str(wrapper)
+        self.fixture.wrapper_selection = {
+            "DEVCONTAINER_BACKEND": "container-compose",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": str(provider),
+            "DEVCONTAINER_CONTAINER_BIN": str(container),
+            "DEVCONTAINER_STATE": str(state),
+            "DEVCONTAINER_SOCKET": str(self.socket),
+        }
+        arguments = self.fixture.prepare()
+        config = self.root / "devcontainer-config.toml"
+        self.assertEqual(config.read_bytes(), b"")
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(arguments[0], str(wrapper))
+        self.assertNotEqual(arguments[0], self.fixture.wrapper_selection["DEVCONTAINER_COMPOSE_BIN"])
+
+        process = OwnedProcess()
+        with patch.dict("os.environ", {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_CONFIG": "/operator/config.toml",
+        }), patch("host_runtime.subprocess.Popen") as spawn:
+            process.start(arguments, self.root, Mock(), stdin=subprocess.PIPE,
+                          runtime_socket=self.socket, provider_install=provider_root,
+                          wrapper_environment=self.fixture.wrapper_environment)
+        environment = spawn.call_args.kwargs["env"]
+        for key, value in self.fixture.wrapper_environment.items():
+            self.assertEqual(environment[key], value)
+        self.assertNotEqual(environment["DEVCONTAINER_CONFIG"], "/operator/config.toml")
+        self.assertEqual(environment["DEVCONTAINER_BACKEND"], "container-compose")
 
 
 class ComposeSignalTests(unittest.TestCase):

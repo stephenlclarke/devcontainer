@@ -152,8 +152,72 @@ class OwnedProcess:
         self.process = None
         self.spawn_pending = False
 
+    @staticmethod
+    def _validate_wrapper_environment(root: Path, provider_install: Path | None,
+                                      runtime_socket: Path | None,
+                                      selection: dict[str, str]) -> None:
+        """Require the native Compose wrapper's complete, admitted path contract."""
+        expected = {
+            "DEVCONTAINER_BACKEND",
+            "DEVCONTAINER_COMPOSE_BIN",
+            "DEVCONTAINER_COMPOSE_PROVIDER",
+            "DEVCONTAINER_CONFIG",
+            "DEVCONTAINER_CONTAINER_BIN",
+            "DEVCONTAINER_SOCKET",
+            "DEVCONTAINER_STATE",
+        }
+        if set(selection) != expected or provider_install is None or runtime_socket is None:
+            raise ValueError("Native Compose wrapper selection is incomplete")
+        if any(not isinstance(value, str) or not value for value in selection.values()):
+            raise ValueError("Native Compose wrapper selection contains an invalid value")
+        if selection["DEVCONTAINER_BACKEND"] not in {"stock", "container-compose"}:
+            raise ValueError("Native Compose wrapper backend is invalid")
+        if selection["DEVCONTAINER_COMPOSE_PROVIDER"] != "container-compose":
+            raise ValueError("Native Compose wrapper provider is invalid")
+
+        config = Path(selection["DEVCONTAINER_CONFIG"])
+        if config != root / "devcontainer-config.toml" or config.resolve(strict=True) != config:
+            raise ValueError("Native Compose configuration must be the canonical private case file")
+        root_info, config_info = root.lstat(), config.lstat()
+        if (root.is_symlink() or not root.is_dir() or root.resolve(strict=True) != root
+                or root_info.st_uid != os.getuid() or root_info.st_mode & 0o777 != 0o700
+                or config.is_symlink() or not config.is_file() or config_info.st_uid != os.getuid()
+                or config_info.st_nlink != 1 or config_info.st_mode & 0o777 != 0o600
+                or config_info.st_size != 0):
+            raise ValueError("Native Compose configuration is not an empty private owned file")
+
+        def require_executable(name: str) -> Path:
+            selected = Path(selection[name])
+            if (not selected.is_absolute() or selected.resolve(strict=True) != selected
+                    or selected.is_symlink() or not selected.is_file()
+                    or not os.access(selected, os.X_OK)):
+                raise ValueError(f"Native Compose {name} is not a canonical executable")
+            return selected
+
+        container = require_executable("DEVCONTAINER_CONTAINER_BIN")
+        require_executable("DEVCONTAINER_COMPOSE_BIN")
+        if (not provider_install.is_absolute() or provider_install.resolve(strict=True) != provider_install
+                or container != provider_install / "bin/container"):
+            raise ValueError("Native Compose container executable differs from the admitted provider root")
+
+        state = Path(selection["DEVCONTAINER_STATE"])
+        state_info = state.lstat()
+        state_parent = state.parent
+        parent_info = state_parent.lstat()
+        if (not state.is_absolute() or state.resolve(strict=True) != state or state.is_symlink()
+                or not state.is_file() or state_info.st_uid != os.getuid() or state_info.st_nlink != 1
+                or state_info.st_mode & 0o077 != 0 or state_parent.is_symlink()
+                or state_parent.resolve(strict=True) != state_parent or not state_parent.is_dir()
+                or parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o777 != 0o700):
+            raise ValueError("Native Compose state database is not a canonical owned file")
+        socket = Path(selection["DEVCONTAINER_SOCKET"])
+        if (socket != runtime_socket or not socket.is_absolute() or socket.resolve(strict=True) != socket
+                or not socket.is_socket()):
+            raise ValueError("Native Compose socket differs from the selected runtime endpoint")
+
     def start(self, arguments: list[str], root: Path, output, *, provider_install: Path | None = None,
-              errors=None, stdin=subprocess.DEVNULL, runtime_socket: Path | None = None) -> None:
+              errors=None, stdin=subprocess.DEVNULL, runtime_socket: Path | None = None,
+              wrapper_environment: dict[str, str] | None = None) -> None:
         if self.process is not None or self.spawn_pending:
             raise ValueError("Case already owns a process")
         environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(root),
@@ -172,6 +236,9 @@ class OwnedProcess:
             if provider_install is not None:
                 container = str(provider_install / "bin/container")
                 environment.update(CONTAINER_COMPOSE_CONTAINER=container, CONTAINER_BIN=container)
+        if wrapper_environment is not None:
+            self._validate_wrapper_environment(root, provider_install, runtime_socket, wrapper_environment)
+            environment.update(wrapper_environment)
         # Popen can be interrupted after fork but before returning the handle.
         # An uncertain launch is quarantined, never interpreted as no child.
         self.spawn_pending = True

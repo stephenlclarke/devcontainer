@@ -62,17 +62,26 @@ class GuestRuntimeTests(unittest.TestCase):
     def test_compose_foreground_selects_exact_bundle_provider_and_quiet_mode(self):
         self.inputs['composeCandidate'] = {'executables': {'compose': '/native/compose'}}
         self.inputs['compose'] = {'executables': {'docker-compose': '/reference/compose'}}
+        selected = {"DEVCONTAINER_BACKEND": "stock",
+                    "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+                    "DEVCONTAINER_COMPOSE_BIN": "/qualified/container-compose",
+                    "DEVCONTAINER_CONTAINER_BIN": "/provider/bin/container",
+                    "DEVCONTAINER_STATE": "/private/state.sqlite",
+                    "DEVCONTAINER_SOCKET": "/private/docker.sock"}
         for name, quiet, redirected in (('E09-compose-foreground', False, False),
                                          ('E10-compose-quiet', True, False), ('E11-compose-redirected', False, True)):
             self.case.fixture = name
             for container, executable, install in (('/provider/bin/container', '/native/compose', Path('/provider')),
                                                    ('', '/reference/compose', None)):
                 self.case.container = container
+                self.case.compose_selection = selected if container else None
                 with self.subTest(fixture=name, container=container), \
                         patch('guest_runtime.ComposeForegroundFixture') as fixture:
                     self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
                     self.assertEqual(fixture.call_args.kwargs['executable'], executable)
                     self.assertEqual(fixture.call_args.kwargs['provider_install'], install)
+                    self.assertEqual(fixture.call_args.kwargs['wrapper_selection'],
+                                     selected if container else None)
                     self.assertEqual(fixture.call_args.kwargs['quiet'], quiet)
                     self.assertEqual(fixture.call_args.kwargs['redirected'], redirected)
                     self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
@@ -88,11 +97,23 @@ class GuestRuntimeTests(unittest.TestCase):
         self.inputs['composeCandidate'] = {'executables': {'compose': '/native/compose'}}
         self.inputs['compose'] = {'executables': {'docker-compose': '/reference/compose'}}
         self.case.fixture = 'E14-compose-terminal-size'
+        self.case.compose_selection = {
+            "DEVCONTAINER_BACKEND": "stock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "container-compose",
+            "DEVCONTAINER_COMPOSE_BIN": "/qualified/container-compose",
+            "DEVCONTAINER_CONTAINER_BIN": "/provider/bin/container",
+            "DEVCONTAINER_STATE": "/private/state.sqlite",
+            "DEVCONTAINER_SOCKET": "/private/docker.sock",
+        }
         for container, executable in (('/provider/bin/container', '/native/compose'), ('', '/reference/compose')):
             self.case.container = container
+            if not container:
+                self.case.compose_selection = None
             with patch('guest_runtime.ComposeTerminalSizeFixture') as fixture, patch('guest_runtime.deadline') as deadline:
                 self.assertEqual(self.case.operation(), fixture.return_value.operation.return_value)
                 self.assertEqual(fixture.call_args.kwargs['executable'], executable)
+                self.assertEqual(fixture.call_args.kwargs['wrapper_selection'],
+                                 self.case.compose_selection)
                 deadline.assert_called_once_with(90)
                 self.assertEqual(self.case.cleanup(), fixture.return_value.cleanup.return_value)
 

@@ -26,6 +26,110 @@ import qualify_finalized_package as qualify
 
 
 class SuiteLifecycleTests(unittest.TestCase):
+    def test_explicit_component_runs_cli_only_and_selects_exact_fixture(self) -> None:
+        calls = []
+        cli = subprocess.CompletedProcess(["cli"], 0, "", "")
+        actual_cli, actual_vscode, passed = qualify.run_suite_pair(
+            lambda: (calls.append("cli"), cli)[1],
+            lambda: calls.append("vscode"), lambda: True, lambda: True,
+            component_fixture=qualify.COMPONENT_FIXTURE)
+        self.assertEqual(calls, ["cli"])
+        self.assertIs(actual_cli, cli)
+        self.assertIsNone(actual_vscode)
+        self.assertTrue(passed)
+        environment = {"PATH": "/usr/bin"}
+        self.assertEqual(qualify.selected_fixture_environment(
+            environment, qualify.COMPONENT_FIXTURE),
+            {"PATH": "/usr/bin", "DEVCONTAINER_PARITY_FIXTURES": qualify.COMPONENT_FIXTURE})
+
+    def test_component_cleanup_requires_only_exact_cli_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            lane_root = evidence / "docker"
+            lane_root.mkdir()
+            (lane_root / "results.json").write_text(json.dumps({
+                "fixtures": [{"id": qualify.COMPONENT_FIXTURE}], "cleanupDifferences": []}))
+            self.assertTrue(qualify.cli_cleanup_is_complete(
+                evidence, "docker", qualify.COMPONENT_FIXTURE))
+            (lane_root / "results.json").write_text(json.dumps({
+                "fixtures": [{"id": qualify.COMPONENT_FIXTURE}, {"id": "E01"}],
+                "cleanupDifferences": []}))
+            self.assertFalse(qualify.cli_cleanup_is_complete(
+                evidence, "docker", qualify.COMPONENT_FIXTURE))
+
+    def test_component_success_writes_non_authoritative_result_without_sealing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            args = argparse.Namespace(evidence=evidence, source_commit="a" * 40,
+                                      _source_tree="b" * 40, provenance_sha256="c" * 64,
+                                      state_sha256="d" * 64,
+                                      _component_package_proof={"archiveSHA256": "e" * 64})
+            cleanup = {lane: {"status": "restored", "cliCleanupComplete": True,
+                              "vscodeCleanupComplete": False, "vscodeStatus": "skipped"}
+                       for lane in qualify.LANES}
+            host = {"status": "restored", "initialColima": "stopped", "finalColima": "stopped",
+                    "initialServiceSetSHA256": "f" * 64, "finalServiceSetSHA256": "f" * 64,
+                    "initialServiceCount": 8, "finalServiceCount": 8, "hostGuardCleared": True,
+                    "restoration": {lane: "restored" for lane in qualify.LANES}}
+            comparison = {"schemaVersion": 3, "suite": "cli", "status": "passed",
+                          "expectedFixtures": [qualify.COMPONENT_FIXTURE],
+                          "evidenceStatus": "passed", "functionalParityStatus": "passed",
+                          "timingStatus": "passed", "requireZeroFunctionalDifferences": True}
+            qualify.write_json(evidence / "component-comparison.json", comparison)
+            with mock.patch.object(qualify, "seal_after_host_cleanup") as sealer:
+                result = qualify.finalize_component_result(
+                    args, cleanup, comparison, host, {"docker": "1" * 64}, {}, [])
+            sealer.assert_not_called()
+            self.assertEqual(result["scope"], "component-only")
+            self.assertFalse(result["releaseAuthority"])
+            self.assertEqual(result["fixtureCounts"], {"cliPerLane": 1, "vscodePerLane": 0,
+                                                        "laneCount": 3, "totalLaneFixtureResults": 3})
+            self.assertEqual(json.loads((evidence / "component-result.json").read_text()), result)
+            self.assertFalse((evidence / "qualification.json").exists())
+
+    def test_component_restoration_rejects_missing_or_mislabeled_vscode_skip(self) -> None:
+        cleanup = {lane: {"status": "restored", "cliCleanupComplete": True,
+                          "vscodeCleanupComplete": False, "vscodeStatus": "skipped"}
+                   for lane in qualify.LANES}
+        host = {"status": "restored", "hostGuardCleared": True,
+                "initialColima": "stopped", "finalColima": "stopped",
+                "initialServiceSetSHA256": "a", "finalServiceSetSHA256": "a",
+                "initialServiceCount": 8, "finalServiceCount": 8}
+        self.assertTrue(qualify.component_restoration_is_complete(cleanup, host))
+        cleanup["apple-stock"]["vscodeStatus"] = "passed"
+        self.assertFalse(qualify.component_restoration_is_complete(cleanup, host))
+
+    def test_component_comparator_requires_exact_measured_signal_count(self) -> None:
+        import hashlib
+
+        def stream(count):
+            stdout = b"compose-stdout\n" + b"signal:USR1\n" * count + b"signal:TERM\n"
+            return {"stdoutSHA256": hashlib.sha256(stdout).hexdigest(),
+                    "signals": ["SIGUSR1"] * count + ["SIGTERM"],
+                    "counts": {"SIGUSR1": count, "SIGTERM": 1}}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            for lane in qualify.LANES:
+                lane_root = evidence / lane
+                lane_root.mkdir()
+                (lane_root / "results.json").write_text(json.dumps({
+                    "backend": lane, "status": "passed", "durationSeconds": 1.0,
+                    "cleanupDifferences": [],
+                    "fixtures": [{"id": qualify.COMPONENT_FIXTURE, "status": "passed",
+                                  "durationSeconds": 1.0, "observations": {"exit": "23"},
+                                  "signalStream": stream(1)}]}))
+            passing = qualify.compare_component_results(evidence, qualify.COMPONENT_FIXTURE)
+            self.assertEqual(passing["status"], "passed")
+            compose_result = evidence / "container-compose/results.json"
+            compose_payload = json.loads(compose_result.read_text())
+            compose_payload["fixtures"][0]["signalStream"] = stream(2)
+            compose_result.write_text(json.dumps(compose_payload))
+            comparison = qualify.compare_component_results(evidence, qualify.COMPONENT_FIXTURE)
+            self.assertEqual(comparison["status"], "failed")
+            self.assertEqual(comparison["expectedFixtures"], [qualify.COMPONENT_FIXTURE])
+            self.assertTrue((evidence / "component-comparison.json").is_file())
+
     def test_success_sealer_reads_the_durable_host_cleanup_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
@@ -553,6 +657,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
             )
             manifest = {"referencePins": {"vscode": {"devContainersExtension": {"vsixSHA256": "3" * 64}}}}
             with (mock.patch.object(qualify, "parse_args", return_value=values),
+                  mock.patch.object(qualify, "REPOSITORY", REPOSITORY),
                   mock.patch.object(qualify, "validate_inputs", return_value={}),
                   mock.patch.object(qualify, "sha256", return_value="3" * 64),
                   mock.patch.object(qualify, "admit_package_before_runtime",

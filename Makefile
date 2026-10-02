@@ -54,6 +54,7 @@ DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256 ?= $(NATIVE_NOTARY_STATE_SHA256)
 NATIVE_PARITY_EVIDENCE ?=
 NATIVE_PARITY_QUALIFICATION_DIRECTORY ?= $(NATIVE_RETAINED_ROOT)/qualifications
 NATIVE_PARITY_CAMPAIGN ?=
+NATIVE_PARITY_COMPONENT_FIXTURE ?=
 NATIVE_PARITY_DOCKER_BIN ?=
 NATIVE_PARITY_DOCKER_COMPOSE_BIN ?=
 # Retained manifest-pinned Docker CLI Buildx plugin (version/SHA are checked before runtime changes).
@@ -603,6 +604,11 @@ parity-vscode-container-compose:
 
 parity-release: parity parity-vscode
 
+# Check E13 alone with the same signed package and restoration boundaries.
+.PHONY: native-parity-component
+native-parity-component:
+	$(MAKE) native-parity-release NATIVE_PARITY_COMPONENT_FIXTURE=E13-compose-signals
+
 # Qualify the same finalized stock package in every lane without rebuilding it.
 native-parity-release:
 	@test -n "$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" || { printf 'Set DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY.\n' >&2; exit 2; }
@@ -618,6 +624,7 @@ native-parity-release:
 	@test "$$(git rev-parse HEAD)" = "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)"
 	@test -z "$$(git status --porcelain --untracked-files=all)"
 	$(PYTHON) Tools/parity/qualify_finalized_package.py --execute \
+		$(if $(NATIVE_PARITY_COMPONENT_FIXTURE),--component-fixture "$(NATIVE_PARITY_COMPONENT_FIXTURE)") \
 		--repository "$(CURDIR)" --ssd-root "$(NATIVE_SSD_SCRATCH)" \
 		--retained-root "$(NATIVE_RETAINED_ROOT)" \
 		--qualification-directory "$(NATIVE_PARITY_QUALIFICATION_DIRECTORY)" \

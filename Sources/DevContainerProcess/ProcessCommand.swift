@@ -164,6 +164,21 @@ public final class ProcessCommand: @unchecked Sendable {
         }
     }
 
+    /// Forward one signal only while this exact child is still unreaped.
+    @discardableResult
+    func forwardSignal(_ signal: Int32) throws -> Bool {
+        try lock.withLock {
+            guard processIdentifier > 0 else { return false }
+            guard Darwin.kill(processIdentifier, signal) == 0 else {
+                if errno == ESRCH {
+                    return false
+                }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            return true
+        }
+    }
+
     private static func duplicate(
         _ handle: FileHandle, to destination: Int32, actions: inout posix_spawn_file_actions_t?
     ) throws {

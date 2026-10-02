@@ -137,6 +137,9 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
+                "DEVCONTAINER_BACKEND": "operator-choice",
+                "DEVCONTAINER_CONFIG": "/operator/config.toml",
                 "DOCKER_CONTEXT": "fixture",
                 "GITHUB_TOKEN": "must-not-leak",
                 "HOME": "/Users/operator",
@@ -156,12 +159,27 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
                 "PATH": "/usr/bin:/bin",
                 "RUNNER_TRACKING_ID": "github_fixture",
             },
         )
+
+    def test_runtime_selection_values_are_not_inherited_from_operator_environment(self) -> None:
+        environment = safe_environment({
+            "DEVCONTAINER_BACKEND": "operator-choice",
+            "DEVCONTAINER_CONFIG": "/operator/config.toml",
+            "DEVCONTAINER_STATE": "/operator/state.sqlite",
+            "DEVCONTAINER_SOCKET": "/operator/docker.sock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+        })
+        self.assertNotIn("DEVCONTAINER_BACKEND", environment)
+        self.assertNotIn("DEVCONTAINER_CONFIG", environment)
+        self.assertNotIn("DEVCONTAINER_STATE", environment)
+        self.assertNotIn("DEVCONTAINER_SOCKET", environment)
+        self.assertNotIn("DEVCONTAINER_COMPOSE_PROVIDER", environment)
 
 
 class EngineRoutePreflightTests(unittest.TestCase):
