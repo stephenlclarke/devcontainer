@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Sequence
 
 from dependency_metadata import Dependency, load_dependencies
+from reference_runtime_metadata import LEGAL_FILES, REFERENCE_FILES, reference_packages
 from versioning import require_commit, require_semantic_version
 
 
@@ -159,6 +160,7 @@ def require_sbom(
     commit: str,
     source_date_epoch: int,
     dependencies: list[Dependency],
+    runtime_packages: list[dict] | None = None,
 ) -> None:
     """Require SPDX metadata for the root and every exact resolved dependency."""
 
@@ -170,7 +172,9 @@ def require_sbom(
     if not all(isinstance(package, dict) for package in packages):
         raise ValueError("package SBOM contains a non-object package")
     by_name = {package.get("name"): package for package in packages}
-    expected_names = {"devcontainer", *(dependency.identity for dependency in dependencies)}
+    runtime_packages = runtime_packages or []
+    expected_names = {"devcontainer", *(dependency.identity for dependency in dependencies),
+                      *(package["name"] for package in runtime_packages)}
     if set(by_name) != expected_names or len(packages) != len(expected_names):
         raise ValueError("package SBOM dependency set does not match Package.resolved")
     root = by_name["devcontainer"]
@@ -217,6 +221,17 @@ def require_sbom(
             raise ValueError(
                 f"package SBOM metadata is invalid for {dependency.identity}"
             )
+    if runtime_packages:
+        for name, package in by_name.items():
+            expected_id = ("SPDXRef-Package-devcontainer" if name == "devcontainer" else
+                           "SPDXRef-" + "".join(character if character.isalnum() else "-" for character in name))
+            if name not in {runtime["name"] for runtime in runtime_packages} and (
+                package.get("SPDXID") != expected_id or package.get("filesAnalyzed") is not False
+            ):
+                raise ValueError("native package SBOM identity is invalid: " + name)
+    for package in runtime_packages:
+        if by_name[package["name"]] != package:
+            raise ValueError("package SBOM runtime metadata is invalid: " + package["name"])
     relationships = value.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError("package SBOM is missing dependency relationships")
@@ -235,6 +250,7 @@ def require_sbom(
         )
         for dependency in dependencies
     }
+    expected_related.update(package["SPDXID"] for package in runtime_packages)
     if related != expected_related or len(relationships) != len(expected_related):
         raise ValueError("package SBOM dependency relationships are incomplete")
 
@@ -296,6 +312,7 @@ def verify_archive(
     commit: str,
     require_notarization: bool,
     dependencies: list[Dependency],
+    resolved_sha256: str | None = None,
 ) -> bool:
     """Validate archive structure, metadata, SBOM, and notary evidence."""
 
@@ -327,6 +344,36 @@ def verify_archive(
         by_name = {member.name.rstrip("/"): member for member in members}
         if len(by_name) != len(members):
             raise ValueError("archive contains duplicate member names")
+        metadata_root = f"{root}/share/devcontainer"
+        reference_root = f"{root}/libexec/devcontainer/reference/"
+        candidate_name = f"{metadata_root}/candidate.json"
+        runtime_packages = []
+        if candidate_name in by_name:
+            if resolved_sha256 is None:
+                raise ValueError("native package requires the selected dependency lock digest")
+            candidate = read_json_member(archive, candidate_name)
+            selected_lock = read_text_member(archive, f"{metadata_root}/Package.resolved").encode()
+            if hashlib.sha256(selected_lock).hexdigest() != resolved_sha256:
+                raise ValueError("native packaged dependency lock differs from selected lock")
+            runtime_members = {name.removeprefix(reference_root): member for name, member in by_name.items()
+                               if name.startswith(reference_root) and not member.isdir()}
+            if set(runtime_members) != REFERENCE_FILES:
+                raise ValueError("native runtime archive file inventory is incomplete")
+            files = {}
+            for name, member in runtime_members.items():
+                if not member.isfile() or member.size <= 0:
+                    raise ValueError("native runtime archive member is invalid: " + name)
+                if name != "node":
+                    if member.mode & 0o111:
+                        raise ValueError("native runtime metadata must not be executable: " + name)
+                    files[name] = archive.extractfile(member).read()
+            for name in LEGAL_FILES:
+                require_nonempty_regular_member(archive, reference_root + name)
+            runtime_packages = reference_packages(candidate, files, version=version, commit=commit,
+                                                  resolved_sha256=resolved_sha256)
+            required_executables.update({f"{root}/bin/devcontainer-docker", reference_root + "node"})
+        elif any(name.startswith(reference_root) for name in by_name) or f"{root}/bin/devcontainer-docker" in by_name:
+            raise ValueError("native runtime closure requires candidate.json")
         for executable in required_executables:
             member = by_name.get(executable)
             if member is None or not member.isfile() or not member.mode & 0o111:
@@ -353,7 +400,7 @@ def verify_archive(
         build_info = read_json_member(archive, f"{metadata_root}/build-info.json")
         require_build_info(build_info, version, lane, commit)
         sbom = read_json_member(archive, f"{metadata_root}/devcontainer.spdx.json")
-        require_sbom(sbom, version, commit, source_date_epoch, dependencies)
+        require_sbom(sbom, version, commit, source_date_epoch, dependencies, runtime_packages)
         notices = read_text_member(
             archive,
             f"{metadata_root}/THIRD-PARTY-NOTICES.txt",
@@ -420,6 +467,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             commit,
             args.require_notarization,
             dependencies,
+            hashlib.sha256(args.resolved.read_bytes()).hexdigest(),
         )
     except (OSError, tarfile.TarError, ValueError) as error:
         raise SystemExit(str(error)) from error

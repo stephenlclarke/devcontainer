@@ -17,6 +17,7 @@
 import DevContainerComposeProvider
 import DevContainerModel
 import DevContainerRuntimeSPI
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -357,7 +358,7 @@ private struct FakeComposeExecutable {
     private let environmentURL: URL
 
     init(mode: Mode) throws {
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-compose-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container-compose")
         environmentURL = root.appendingPathComponent("environment.log")

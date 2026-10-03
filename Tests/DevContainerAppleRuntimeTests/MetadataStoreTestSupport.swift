@@ -18,15 +18,54 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-actor TestMetadataStore: RuntimeMetadataStore {
+actor TestMetadataStore: RuntimeCreationStore {
     private let recordDelay: Duration?
     private var values: [String: RuntimeContainerMetadata] = [:]
     private var listCount = 0
     private var lookupCount = 0
     private var records = 0
+    private var creations: [String: RuntimeContainerCreation] = [:]
+    private let failCreationCompletion: Bool
+    private let failCreationIntent: Bool
 
-    init(recordDelay: Duration? = nil) {
+    init(recordDelay: Duration? = nil, failCreationCompletion: Bool = false, failCreationIntent: Bool = false) {
         self.recordDelay = recordDelay
+        self.failCreationCompletion = failCreationCompletion
+        self.failCreationIntent = failCreationIntent
+    }
+
+    func beginContainerCreation(_ creation: RuntimeContainerCreation) throws {
+        guard !failCreationIntent, creations[creation.runtimeID] == nil else { throw MetadataTestError.writeFailed }
+        creations[creation.runtimeID] = creation
+    }
+
+    func pendingContainerCreation(id: String) -> RuntimeContainerCreation? {
+        creations[id]
+    }
+
+    func pendingContainerCreations() -> [RuntimeContainerCreation] {
+        creations.values.sorted { $0.runtimeID < $1.runtimeID }
+    }
+
+    func hasPendingContainerCreations() async -> Bool {
+        !creations.isEmpty
+    }
+
+    func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
+        guard !failCreationCompletion, let creation = creations[metadata.runtimeID.rawValue],
+              creation.operationID == operationID, creation.imageID == metadata.imageID,
+              creation.spec == metadata.spec, creation.nativeCreatedAt == metadata.createdAt
+        else {
+            throw MetadataTestError.writeFailed
+        }
+        records += 1
+        values[metadata.runtimeID.rawValue] = metadata
+        creations[metadata.runtimeID.rawValue] = nil
+    }
+
+    func discardContainerCreation(id: String, operationID: UUID) throws {
+        guard creations[id]?.operationID == operationID else { throw MetadataTestError.writeFailed }
+        creations[id] = nil
     }
 
     func recordContainerMetadata(

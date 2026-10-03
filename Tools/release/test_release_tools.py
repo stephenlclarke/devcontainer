@@ -443,6 +443,101 @@ class ReleaseToolTests(unittest.TestCase):
                 rendered,
             )
 
+    def test_native_homebrew_template_installs_and_smokes_complete_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            archive = temporary_root / "devcontainer.tar.gz"
+            output = temporary_root / "devcontainer.rb"
+            archive.write_bytes(b"native-release-archive")
+
+            self.run_tool(
+                "render-homebrew-formula.py",
+                "--product-version",
+                "1.2.3",
+                "--formula-class",
+                "Devcontainer",
+                "--url",
+                "https://github.com/stephenlclarke/devcontainer/releases/download/1.2.3/devcontainer-release-arm64.tar.gz",
+                "--archive",
+                str(archive),
+                "--template",
+                str(TOOLS / "devcontainer.rb.in"),
+                "--output",
+                str(output),
+            )
+
+            rendered = output.read_text(encoding="utf-8")
+            subprocess.run(["ruby", "-c", str(output)], check=True, capture_output=True, text=True)
+            lines = rendered.splitlines()
+            start = lines.index("  def install")
+            end = lines.index("  end", start + 1)
+            install_method = "\n".join(lines[start : end + 1])
+            package = temporary_root / "extracted-package"
+            for relative in (
+                "bin/devcontainer",
+                "bin/devcontainer-engine",
+                "bin/devcontainer-compose",
+                "bin/devcontainer-docker",
+                "libexec/container",
+                "libexec/devcontainer",
+                "share/devcontainer",
+            ):
+                path = package / relative
+                if relative.startswith("bin/"):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("fixture", encoding="utf-8")
+                else:
+                    path.mkdir(parents=True, exist_ok=True)
+
+            harness = temporary_root / "install-formula.rb"
+            harness.write_text(
+                "require 'json'\n"
+                "class InstallTarget\n"
+                "  def initialize(name, root, events)\n"
+                "    @name, @root, @events = name, root, events\n"
+                "  end\n"
+                "  def install(source)\n"
+                "    raise \"missing package input: #{source}\" unless File.exist?(File.join(@root, source))\n"
+                "    @events << [@name, source]\n"
+                "  end\n"
+                "end\n"
+                "class InstallHarness\n"
+                "  def initialize(root)\n"
+                "    @root, @events = root, []\n"
+                "  end\n"
+                "  def bin = InstallTarget.new('bin', @root, @events)\n"
+                "  def libexec = InstallTarget.new('libexec', @root, @events)\n"
+                "  def pkgshare = InstallTarget.new('pkgshare', @root, @events)\n"
+                "  def events = @events\n"
+                "end\n"
+                "InstallHarness.class_eval(<<~FORMULA)\n"
+                f"{install_method}\n"
+                "FORMULA\n"
+                "installer = InstallHarness.new(ARGV.fetch(0))\n"
+                "installer.install\n"
+                "puts JSON.generate(installer.events)\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["ruby", str(harness), str(package)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            installed = json.loads(result.stdout)
+            self.assertEqual(
+                installed,
+                [
+                    ["bin", "bin/devcontainer"],
+                    ["bin", "bin/devcontainer-engine"],
+                    ["bin", "bin/devcontainer-compose"],
+                    ["bin", "bin/devcontainer-docker"],
+                    ["libexec", "libexec/container"],
+                    ["libexec", "libexec/devcontainer"],
+                    ["pkgshare", "share/devcontainer"],
+                ],
+            )
+
     def test_stable_homebrew_formula_uses_url_version_without_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

@@ -24,8 +24,8 @@ struct AppleContainerRecord {
     let dockerID: String
     let spec: ContainerSpec
     let state: String
-    let createdAt: Date
-    let startedAt: Date?
+    var createdAt: Date
+    var startedAt: Date?
     let finishedAt: Date?
     let exitCode: Int32?
     let networkAddresses: [String: String]
@@ -33,6 +33,7 @@ struct AppleContainerRecord {
 
 struct AppleManagedHostsState: Equatable, Sendable {
     let createdAt: Date
+    let startedAt: Date?
     let managedHosts: String
 }
 
@@ -46,7 +47,11 @@ struct AppleVersionRecord: Decodable {
 final class TemporaryDirectory {
     let url: URL
 
-    init(base: URL = FileManager.default.temporaryDirectory) throws {
+    init(
+        base: URL = ProcessInfo.processInfo.environment["TMPDIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory
+    ) throws {
         try FileManager.default.createDirectory(
             at: base,
             withIntermediateDirectories: true,

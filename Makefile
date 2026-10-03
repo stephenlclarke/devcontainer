@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := workflow
 
-DEVCONTAINER_VERSION ?= 1.0.1
+DEVCONTAINER_VERSION ?= 1.1.0
 SWIFT ?= swift
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
@@ -17,6 +17,8 @@ SWIFT_COVERAGE_HEAD ?= HEAD
 SWIFT_COVERAGE_SCRATCH_PATH ?= .build/coverage
 SWIFT_ASAN_SCRATCH_PATH ?= .build/asan
 SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan
+DOCS_SCRATCH_PATH ?= .build/docc
+export DOCS_SCRATCH_PATH
 SWIFT_TEST_RESULT_LOG ?= .build/swift-test.log
 SWIFT_TEST_ATTEMPTS ?= 2
 SWIFT_TEST_RUNNER_FLAGS ?= --no-parallel
@@ -29,12 +31,58 @@ DEVCONTAINER_CLI_VERSION ?= 0.88.0
 DEVCONTAINER_PACKAGE_LANE ?= development
 DEVCONTAINER_PACKAGE_RUN_NUMBER ?=
 DEVCONTAINER_SIGNING_REQUIRED ?= 0
+NATIVE_RETAINED_ROOT ?=
+NATIVE_SSD_SCRATCH ?=
+NATIVE_CANDIDATE_INVOCATION ?=
+NATIVE_COMPILED_PROOF ?=
+NATIVE_LEGAL_BUNDLE ?=
+NATIVE_LEGAL_BUNDLE_SHA256 ?=
+NATIVE_STAGE ?=
+NATIVE_PACKAGE_ROOT ?=
+NATIVE_CANDIDATE_RECEIPT ?=
+NATIVE_CANDIDATE_SHA256 ?=
+NATIVE_STAGE_PROVENANCE ?=
+NATIVE_STAGE_PROVENANCE_SHA256 ?=
+NATIVE_NOTARY_EVIDENCE ?=
+NATIVE_NOTARY_STATE ?=
+NATIVE_NOTARY_STATE_SHA256 ?=
+NATIVE_FINAL_OUTPUT ?=
+NATIVE_NOTARY_RESUME ?= 0
+DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY ?=
+DEVCONTAINER_NATIVE_FINALIZATION_SHA256 ?=
+DEVCONTAINER_NATIVE_NOTARY_STATE ?=
+DEVCONTAINER_NATIVE_SOURCE_COMMIT ?=
+DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256 ?= $(NATIVE_NOTARY_STATE_SHA256)
+NATIVE_PARITY_EVIDENCE ?=
+NATIVE_PARITY_QUALIFICATION_DIRECTORY ?= $(NATIVE_RETAINED_ROOT)/qualifications
+NATIVE_PARITY_CAMPAIGN ?=
+NATIVE_PARITY_COMPONENT_FIXTURE ?=
+NATIVE_PARITY_DOCKER_BIN ?=
+NATIVE_PARITY_DOCKER_COMPOSE_BIN ?=
+# Retained manifest-pinned Docker CLI Buildx plugin (version/SHA are checked before runtime changes).
+NATIVE_PARITY_DOCKER_BUILDX_BIN ?=
+NATIVE_PARITY_COMPOSE_PROVIDER_BIN ?=
+NATIVE_PARITY_COLIMA_BIN ?=
+NATIVE_PARITY_VSCODE_BIN ?=
+NATIVE_PARITY_VSCODE_APP ?=
+NATIVE_PARITY_VSCODE_VSIX ?=
+NATIVE_PARITY_STOCK_CONTAINER_SHA256 ?=
+NATIVE_PARITY_STOCK_API_SHA256 ?=
+NATIVE_PARITY_COMPOSE_CONTAINER_SHA256 ?=
+NATIVE_PARITY_COMPOSE_API_SHA256 ?=
+NATIVE_PARITY_COMPOSE_PROVIDER_SHA256 ?=
+NATIVE_PARITY_COLIMA_SHA256 ?=
+export DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY DEVCONTAINER_NATIVE_FINALIZATION_SHA256
+export DEVCONTAINER_NATIVE_NOTARY_STATE DEVCONTAINER_NATIVE_SOURCE_COMMIT
+export DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256
+export DEVCONTAINER_RUNTIME_STOCK_BIN DEVCONTAINER_RUNTIME_COMPOSE_BIN
 SONAR_SCAN_ATTEMPTS ?= 3
 SONAR_QUALITYGATE_WAIT ?= true
 
 .PHONY: all workflow ci bootstrap resolve build build-release test test-unit
 .PHONY: test-contract test-integration swift-test coverage coverage-check
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
+.PHONY: swiftpm-prepare swiftpm-prepare-coverage swiftpm-prepare-asan swiftpm-prepare-tsan swiftpm-prepare-docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
 .PHONY: parity-container-compose parity parity-vscode-docker
 .PHONY: parity-vscode-apple-stock parity-vscode-container-compose parity-vscode
@@ -43,6 +91,230 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: release-version
 .PHONY: prepare-release release-check release-gate-hosted sonar sonar-scan demo
 .PHONY: clean
+.PHONY: bazel-configure bazel-qualify bazel-test-tools bazel-build bazel-unit bazel-package bazel-acquire-releases bazel-cleanup bazel-checkpoint
+.PHONY: bazel-coverage-report bazel-build-timings bazel-harness bazel-prepare-releases bazel-engine-case bazel-prepare-candidate
+.PHONY: bazel-coverage-counters
+.PHONY: native-package-stage native-package-sign native-package-finalize
+.PHONY: native-parity-release
+.PHONY: bazel-recover-runtime bazel-recover-runtime-apply
+.PHONY: bazel-activate-runtime
+.PHONY: bazel-parity-report
+.PHONY: bazel-release-comparison
+.PHONY: bazel-layers bazel-layer-model bazel-layer-runtime-foundation bazel-layer-core bazel-layer-adapters bazel-layer-host bazel-layer-cli bazel-compiled-argument-parser bazel-compiled-consumers
+export BASELINE_CAMPAIGN TARGET_CAMPAIGN CASE_LANE
+.PHONY: bazel-prepare-guest-images
+.PHONY: bazel-import-guest-image
+export GUEST_ARCHIVE_NAME GUEST_ARCHIVE_PATH
+.PHONY: bazel-prepare-builders
+.PHONY: bazel-prepare-guest-kernel
+.PHONY: bazel-prepare-docker-oracle
+.PHONY: bazel-prepare-docker-cli
+.PHONY: bazel-prepare-devcontainers-cli
+.PHONY: bazel-docs
+export CASE_ID
+export CASE_FIXTURE
+BAZEL_PROFILE ?= enhanced
+LAYER_PROFILE ?= both
+RELEASE_SET ?= Tools/bazel/releases.lock.json
+
+# Opt-in native qualification; existing product/release entry points are unchanged.
+bazel-configure:
+	Tools/bazel/run.sh configure
+
+bazel-qualify:
+	Tools/bazel/run.sh coverage //:bazel_qualification
+
+bazel-test-tools:
+	Tools/bazel/run.sh test-tools
+
+bazel-harness:
+	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests //Tools/bazel:reference_runtime_test
+
+bazel-parity-report:
+	@test -n "$(CAMPAIGN)" || { printf 'Set CAMPAIGN explicitly.\n' >&2; exit 2; }
+	@Tools/bazel/run.sh parity-report "$(CAMPAIGN)" $(if $(CASE_FIXTURE),--fixture="$(CASE_FIXTURE)") --format="$${REPORT_FORMAT:-json}"
+
+bazel-release-comparison:
+	@Tools/bazel/run.sh release-comparison --baseline "$${BASELINE_CAMPAIGN:?Set BASELINE_CAMPAIGN}" --target "$${TARGET_CAMPAIGN:?Set TARGET_CAMPAIGN}" --fixture "$${CASE_FIXTURE:?Set CASE_FIXTURE}" --lane "$${CASE_LANE:?Set CASE_LANE}" --format="$${REPORT_FORMAT:-json}"
+
+bazel-prepare-guest-images:
+	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-import-guest-image:
+	Tools/bazel/run.sh prepare-guest-images Tools/bazel/guest-images.lock.json --source-archive "$${GUEST_ARCHIVE_NAME:?Set GUEST_ARCHIVE_NAME}=$${GUEST_ARCHIVE_PATH:?Set GUEST_ARCHIVE_PATH}"
+
+bazel-prepare-builders:
+	Tools/bazel/run.sh prepare-guest-images Tools/bazel/builder-images.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-guest-kernel:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/guest-kernel.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-docker-oracle:
+	Tools/bazel/run.sh prepare-releases Tools/bazel/docker-oracle.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-docker-cli:
+	Tools/bazel/run.sh prepare-docker-cli Tools/bazel/docker-cli.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-prepare-devcontainers-cli:
+	Tools/bazel/run.sh prepare-devcontainers-cli Tools/bazel/devcontainers-cli.lock.json $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-engine-case:
+	@test -n "$(CAMPAIGN)" -a -n "$(LANE)" || { printf 'Set CAMPAIGN and LANE explicitly.\n' >&2; exit 2; }
+	Tools/bazel/run.sh test //Tools/testing:$(if $(filter docker,$(LANE)),released_docker_engine,released_engine_negotiation) --test_arg="--campaign=$(CAMPAIGN)" --test_arg="--lane=$(LANE)" --test_arg="--fixture=$${CASE_FIXTURE:-E01-engine-negotiation}" $(if $(CANDIDATE_INVOCATION),--test_arg="--candidate-invocation=$(CANDIDATE_INVOCATION)") $(if $(COMPOSE_CANDIDATE_INVOCATION),--test_arg="--compose-candidate-invocation=$(COMPOSE_CANDIDATE_INVOCATION)") $(if $(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY),--test_arg="--finalized-directory=$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" --test_arg="--finalization-provenance-sha256=$(DEVCONTAINER_NATIVE_FINALIZATION_SHA256)" --test_arg="--finalization-state=$(DEVCONTAINER_NATIVE_NOTARY_STATE)" --test_arg="--expected-source-commit=$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)")
+
+bazel-prepare-candidate:
+	Tools/bazel/run.sh prepare-candidate "$(CANDIDATE_INVOCATION)" $(if $(filter container-compose,$(CANDIDATE_FAMILY)),--family=container-compose)
+
+# Stage already-compiled native products; this path never invokes a compiler.
+native-package-stage:
+	@test -n "$(NATIVE_RETAINED_ROOT)" || { printf 'Set NATIVE_RETAINED_ROOT to retained workflow evidence.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD scratch.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_INVOCATION)" || { printf 'Set NATIVE_CANDIDATE_INVOCATION to a successful retained candidate invocation.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_COMPILED_PROOF)" || { printf 'Set NATIVE_COMPILED_PROOF to same-head four-product consumer evidence.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_LEGAL_BUNDLE)" || { printf 'Set NATIVE_LEGAL_BUNDLE to the authenticated legal bundle.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_LEGAL_BUNDLE_SHA256)" || { printf 'Set NATIVE_LEGAL_BUNDLE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE)" || { printf 'Set NATIVE_STAGE to a fresh path under NATIVE_SSD_SCRATCH/native-packages.\n' >&2; exit 2; }
+	@test "$(BAZEL_PROFILE)" = stock -o "$(BAZEL_PROFILE)" = enhanced || { printf 'BAZEL_PROFILE must be stock or enhanced.\n' >&2; exit 2; }
+	@test "$(DEVCONTAINER_PACKAGE_LANE)" = development -o "$(DEVCONTAINER_PACKAGE_LANE)" = current -o "$(DEVCONTAINER_PACKAGE_LANE)" = stable || { printf 'DEVCONTAINER_PACKAGE_LANE must be development, current, or stable.\n' >&2; exit 2; }
+	@test "$(DEVCONTAINER_PACKAGE_LANE)" != current -o -n "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" || { printf 'Set DEVCONTAINER_PACKAGE_RUN_NUMBER for the current lane.\n' >&2; exit 2; }
+	$(PYTHON) Tools/release/prepare-native-package.py \
+		--repository "$(CURDIR)" \
+		--retained-root "$(NATIVE_RETAINED_ROOT)" \
+		--ssd-scratch "$(NATIVE_SSD_SCRATCH)" \
+		--candidate-invocation "$(NATIVE_CANDIDATE_INVOCATION)" \
+		--profile "$(BAZEL_PROFILE)" \
+		--compiled-proof "$(NATIVE_COMPILED_PROOF)" \
+		--legal-bundle "$(NATIVE_LEGAL_BUNDLE)" \
+		--legal-bundle-sha256 "$(NATIVE_LEGAL_BUNDLE_SHA256)" \
+		--stage "$(NATIVE_STAGE)" \
+		--lane "$(DEVCONTAINER_PACKAGE_LANE)" \
+		$(if $(filter current,$(DEVCONTAINER_PACKAGE_LANE)),--run-number "$(DEVCONTAINER_PACKAGE_RUN_NUMBER)")
+
+# Sign and submit the staged six-executable package using the configured identity.
+native-package-sign:
+	@test "$(NATIVE_NOTARY_RESUME)" = 0 -o "$(NATIVE_NOTARY_RESUME)" = 1 || { printf 'NATIVE_NOTARY_RESUME must be 0 or 1.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PACKAGE_ROOT)" || { printf 'Set NATIVE_PACKAGE_ROOT to the devcontainer-VERSION payload inside NATIVE_STAGE.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_RECEIPT)" || { printf 'Set NATIVE_CANDIDATE_RECEIPT to the admitted candidate receipt.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_CANDIDATE_SHA256)" || { printf 'Set NATIVE_CANDIDATE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE_PROVENANCE)" || { printf 'Set NATIVE_STAGE_PROVENANCE to native-stage-provenance.json.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_STAGE_PROVENANCE_SHA256)" || { printf 'Set NATIVE_STAGE_PROVENANCE_SHA256 to its independently trusted SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_EVIDENCE)" || { printf 'Set NATIVE_NOTARY_EVIDENCE to a private internal acceptance evidence path.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_STATE)" || { printf 'Set NATIVE_NOTARY_STATE to retained internal notary state.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD signing scratch.\n' >&2; exit 2; }
+	Tools/release/sign-and-notarize.sh "$(NATIVE_PACKAGE_ROOT)" "$(NATIVE_NOTARY_EVIDENCE)" \
+		--candidate-receipt "$(NATIVE_CANDIDATE_RECEIPT)" \
+		--candidate-sha256 "$(NATIVE_CANDIDATE_SHA256)" \
+		--stage-provenance "$(NATIVE_STAGE_PROVENANCE)" \
+		--stage-provenance-sha256 "$(NATIVE_STAGE_PROVENANCE_SHA256)" \
+		--state-directory "$(NATIVE_NOTARY_STATE)" \
+		--scratch-directory "$(NATIVE_SSD_SCRATCH)" \
+		$(if $(filter 1,$(NATIVE_NOTARY_RESUME)),--resume)
+
+# Assemble the verified final archive from an accepted, retained notary state.
+native-package-finalize:
+	@test -n "$(NATIVE_NOTARY_STATE)" || { printf 'Set NATIVE_NOTARY_STATE to accepted retained notary state.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_NOTARY_STATE_SHA256)" || { printf 'Set NATIVE_NOTARY_STATE_SHA256 to the independently trusted terminal state.json SHA-256.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_FINAL_OUTPUT)" || { printf 'Set NATIVE_FINAL_OUTPUT to a fresh internal retained output directory.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" || { printf 'Set NATIVE_SSD_SCRATCH to enrolled SSD finalization scratch.\n' >&2; exit 2; }
+	$(PYTHON) Tools/release/finalize-native-package.py \
+		--repository "$(CURDIR)" \
+		--state-directory "$(NATIVE_NOTARY_STATE)" \
+		--trusted-state-sha256 "$(NATIVE_NOTARY_STATE_SHA256)" \
+		--scratch-directory "$(NATIVE_SSD_SCRATCH)" \
+		--output-directory "$(NATIVE_FINAL_OUTPUT)"
+
+bazel-recover-runtime:
+	Tools/bazel/run.sh recover-runtime
+
+bazel-activate-runtime:
+	Tools/bazel/run.sh activate-runtime --lane "$${LANE:?Set LANE=apple-stock or container-compose}"
+
+bazel-recover-runtime-apply:
+	Tools/bazel/run.sh recover-runtime --apply --case "$${CASE_ID}"
+
+bazel-build:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:product
+
+# Dependency-order entry points; tests remain source-mode and retain all eleven
+# original //:source_tests targets. These targets are not release admission.
+bazel-layers:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/layered_build.py --profile "$(LAYER_PROFILE)" --output "$(LAYER_EVIDENCE)" $(if $(filter 1,$(LAYER_DEVELOPMENT)),--development)
+
+# This separate proof builds all four products against admitted released layers.
+bazel-compiled-consumers:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/compiled_consumers.py --profile "$(LAYER_PROFILE)" --output "$(LAYER_EVIDENCE)" $(if $(filter 1,$(LAYER_DEVELOPMENT)),--development)
+
+bazel-layer-model:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_model
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_model_tests
+
+bazel-layer-runtime-foundation:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_runtime_foundation
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_runtime_foundation_tests
+
+bazel-layer-core:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_core
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_core_tests
+
+bazel-layer-adapters:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_adapters
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_adapters_tests
+
+bazel-layer-host:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_host
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_host_tests
+
+bazel-layer-cli:
+	Tools/bazel/run.sh build --config=$(BAZEL_PROFILE) //:layer_cli
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) //:layer_cli_tests
+
+bazel-compiled-argument-parser:
+	@test -n "$(LAYER_EVIDENCE)" || { printf 'Set LAYER_EVIDENCE to a fresh absolute directory.\n' >&2; exit 2; }
+	/usr/bin/python3 Tools/bazel/artifacts/prove_argument_parser.py --output "$(LAYER_EVIDENCE)"
+
+bazel-coverage-counters:
+	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //Tools/bazel:coverage_counter_tests
+
+bazel-unit: bazel-coverage-counters
+	Tools/bazel/run.sh coverage --config=$(BAZEL_PROFILE) //:unit
+
+bazel-coverage-report:
+	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a retained source-unit coverage ID.\n' >&2; exit 2; }
+	Tools/bazel/run.sh coverage-report "$(INVOCATION)"
+
+bazel-build-timings:
+	@test -n "$(INVOCATION)" || { printf 'Set INVOCATION to a measured build/test invocation ID.\n' >&2; exit 2; }
+	@if [[ -n "$(BASELINE)" ]]; then \
+		Tools/bazel/run.sh build-timings "$(INVOCATION)" --baseline "$(BASELINE)"; \
+	else Tools/bazel/run.sh build-timings "$(INVOCATION)"; fi
+
+bazel-package:
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release --config=prebuilt-container-sdk --config=package //:candidate_archive //Tools/bazel:package_smoke
+
+bazel-docs:
+	Tools/bazel/run.sh test --config=$(BAZEL_PROFILE) --config=release //:documentation_tests
+
+bazel-acquire-releases:
+	Tools/bazel/run.sh acquire-releases "$(RELEASE_SET)"
+
+bazel-prepare-releases:
+	Tools/bazel/run.sh prepare-releases "$(RELEASE_SET)" $(if $(filter 1,$(OFFLINE)),--offline)
+
+bazel-cleanup:
+	Tools/bazel/run.sh cleanup
+
+# Explicit coherent checkpoint, not the per-edit loop. Profile-specific actions
+# are distinct; each invocation shares its native product/test dependency graph.
+bazel-checkpoint:
+	Tools/bazel/run.sh test-tools
+	Tools/bazel/run.sh coverage --config=stock //Tools/bazel:coverage_counter_tests
+	Tools/bazel/run.sh coverage --config=stock //:unit //:product
+	$(MAKE) bazel-package BAZEL_PROFILE=stock
+	Tools/bazel/run.sh coverage --config=enhanced //:unit //:product
+	$(MAKE) bazel-package BAZEL_PROFILE=enhanced
+	Tools/bazel/run.sh cleanup --apply
 
 all: workflow
 
@@ -56,10 +328,27 @@ bootstrap:
 resolve:
 	$(SWIFT) package resolve
 
-build:
+# Apply exact enhanced-only dependency patches to the selected SwiftPM scratch tree.
+swiftpm-prepare:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path ".build" --swift "$(SWIFT)"
+swiftpm-prepare-coverage:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-asan:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-tsan:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-docs:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(DOCS_SCRATCH_PATH)" --swift "$(SWIFT)"
+
+build: swiftpm-prepare
 	$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS)
 
-build-release:
+build-release: swiftpm-prepare
 	GIT_COMMIT="$$(git rev-parse HEAD)" DEVCONTAINER_BUILD_LANE=release \
 		$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) -c release
 
@@ -70,9 +359,9 @@ test-unit: swift-test
 test-contract: swift-test
 
 test-integration:
-	DEVCONTAINER_RUN_HOST_INTEGRATION=1 $(MAKE) swift-test
+	DEVCONTAINER_HOST_INTEGRATION=1 $(MAKE) swift-test
 
-swift-test:
+swift-test: swiftpm-prepare
 	@mkdir -p .build
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--build-tests
@@ -88,7 +377,7 @@ swift-test:
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
 		$(SWIFT_TEST_RUNNER_FLAGS)
 
-coverage:
+coverage: swiftpm-prepare-coverage
 	@worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
 	if [[ -n "$$worktree_changes" ]]; then \
 		printf 'Coverage evidence requires a clean worktree:\n%s\n' \
@@ -96,9 +385,12 @@ coverage:
 		exit 2; \
 	fi
 	@mkdir -p .build
-	@find "$(SWIFT_COVERAGE_SCRATCH_PATH)" -type f \
-		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \
-		-delete 2>/dev/null || true
+	@TEST_BIN_PATH="$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--show-bin-path)"; \
+		$(PYTHON) Tools/ci/clean-swift-coverage.py \
+		--scratch-root "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--bin-directory "$$TEST_BIN_PATH"
 	@PROFILE_SPOOL="$$(mktemp -d "$${TMPDIR:-/tmp}/devcontainer-swift-profile.XXXXXX")"; \
 		trap 'rm -rf "$$PROFILE_SPOOL"' EXIT; \
 		LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-build-%m-%p.profraw" \
@@ -232,7 +524,7 @@ sonar-scan:
 		((attempt += 1)); \
 	done
 
-asan:
+asan: swiftpm-prepare-asan
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
 		--sanitize=address --build-tests
@@ -251,13 +543,13 @@ asan:
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
 		--sanitize=address $(SWIFT_TEST_RUNNER_FLAGS)
 
-tsan:
+tsan: swiftpm-prepare-tsan
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --build-tests
+		--sanitize=thread -Xswiftc -DDEVCONTAINER_TSAN --build-tests
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
-		--sanitize=thread --product devcontainer-engine
+		--sanitize=thread -Xswiftc -DDEVCONTAINER_TSAN --product devcontainer-engine
 	@TEST_BIN_PATH="$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
 		--show-bin-path)"; \
@@ -281,6 +573,13 @@ lint:
 	$(PYTHON) -m unittest discover Tools/parity
 	$(PYTHON) -m unittest discover Tools/release
 	$(PYTHON) -m unittest discover Tools/ci
+	PYTHONPATH=Tools/bazel /usr/bin/python3 -m unittest artifacts.test_foundation
+	PYTHONPATH=Tools/bazel $(PYTHON) -m unittest \
+		artifacts.test_argument_parser \
+		artifacts.test_native_argument_parser artifacts.test_native_layers \
+		artifacts.test_prove_layers artifacts.test_release_asset \
+		test_layered_build test_compiled_consumers test_source_graph \
+		test_retained_test_xml
 	$(MARKDOWNLINT) '*.md' 'docs/**/*.md' 'Tests/**/*.md' \
 		'Sources/**/*.md'
 	$(SWIFTLINT) lint --strict --quiet \
@@ -328,11 +627,56 @@ parity-vscode-container-compose:
 	Tools/parity/run-vscode.sh "$(PARITY_EVIDENCE_DIR)" container-compose
 
 parity-release: parity parity-vscode
-	$(PYTHON) Tools/parity/validate_manifest.py --release
+
+# Check E13 alone with the same signed package and restoration boundaries.
+.PHONY: native-parity-component
+native-parity-component:
+	$(MAKE) native-parity-release NATIVE_PARITY_COMPONENT_FIXTURE=E13-compose-signals
+
+# Qualify the same finalized stock package in every lane without rebuilding it.
+native-parity-release:
+	@test -n "$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" || { printf 'Set DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_FINALIZATION_SHA256)" || { printf 'Set trusted DEVCONTAINER_NATIVE_FINALIZATION_SHA256.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_NOTARY_STATE)" -a -n "$(DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256)" || { printf 'Set the accepted state directory and independently trusted DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)" || { printf 'Set exact DEVCONTAINER_NATIVE_SOURCE_COMMIT.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_SSD_SCRATCH)" -a -n "$(NATIVE_PARITY_EVIDENCE)" || { printf 'Set NATIVE_SSD_SCRATCH and a fresh NATIVE_PARITY_EVIDENCE path on that enrolled SSD.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_RETAINED_ROOT)" -a -n "$(NATIVE_PARITY_CAMPAIGN)" || { printf 'Set internal NATIVE_RETAINED_ROOT and NATIVE_PARITY_CAMPAIGN.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PARITY_DOCKER_BIN)" -a -n "$(NATIVE_PARITY_DOCKER_COMPOSE_BIN)" -a -n "$(NATIVE_PARITY_DOCKER_BUILDX_BIN)" -a -n "$(NATIVE_PARITY_COMPOSE_PROVIDER_BIN)" -a -n "$(NATIVE_PARITY_COLIMA_BIN)" || { printf 'Set pinned Docker, Docker Compose, Docker Buildx, container-compose provider, and Colima executable paths.\n' >&2; exit 2; }
+	@test -n "$(DEVCONTAINER_RUNTIME_STOCK_BIN)" -a -n "$(DEVCONTAINER_RUNTIME_COMPOSE_BIN)" || { printf 'Set both qualified DEVCONTAINER_RUNTIME_STOCK_BIN and DEVCONTAINER_RUNTIME_COMPOSE_BIN.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PARITY_VSCODE_BIN)" -a -n "$(NATIVE_PARITY_VSCODE_APP)" -a -n "$(NATIVE_PARITY_VSCODE_VSIX)" || { printf 'Set pinned VS Code launcher, application, and VSIX paths.\n' >&2; exit 2; }
+	@test -n "$(NATIVE_PARITY_STOCK_CONTAINER_SHA256)" -a -n "$(NATIVE_PARITY_STOCK_API_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_CONTAINER_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_API_SHA256)" -a -n "$(NATIVE_PARITY_COMPOSE_PROVIDER_SHA256)" -a -n "$(NATIVE_PARITY_COLIMA_SHA256)" || { printf 'Set trusted SHA-256 values for all Apple, Colima, and Compose provider executables.\n' >&2; exit 2; }
+	@test "$$(git rev-parse HEAD)" = "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)"
+	@test -z "$$(git status --porcelain --untracked-files=all)"
+	$(PYTHON) Tools/parity/qualify_finalized_package.py --execute \
+		$(if $(NATIVE_PARITY_COMPONENT_FIXTURE),--component-fixture "$(NATIVE_PARITY_COMPONENT_FIXTURE)") \
+		--repository "$(CURDIR)" --ssd-root "$(NATIVE_SSD_SCRATCH)" \
+		--retained-root "$(NATIVE_RETAINED_ROOT)" \
+		--qualification-directory "$(NATIVE_PARITY_QUALIFICATION_DIRECTORY)" \
+		--campaign "$(NATIVE_PARITY_CAMPAIGN)" --source-commit "$(DEVCONTAINER_NATIVE_SOURCE_COMMIT)" \
+		--finalized-directory "$(DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY)" \
+		--provenance-sha256 "$(DEVCONTAINER_NATIVE_FINALIZATION_SHA256)" \
+		--accepted-state "$(DEVCONTAINER_NATIVE_NOTARY_STATE)" \
+		--state-sha256 "$(DEVCONTAINER_NATIVE_NOTARY_STATE_SHA256)" \
+		--docker-bin "$(NATIVE_PARITY_DOCKER_BIN)" \
+		--docker-compose-bin "$(NATIVE_PARITY_DOCKER_COMPOSE_BIN)" \
+		--docker-buildx-bin "$(NATIVE_PARITY_DOCKER_BUILDX_BIN)" \
+		--stock-container-bin "$(DEVCONTAINER_RUNTIME_STOCK_BIN)" \
+		--compose-container-bin "$(DEVCONTAINER_RUNTIME_COMPOSE_BIN)" \
+		--compose-provider-bin "$(NATIVE_PARITY_COMPOSE_PROVIDER_BIN)" \
+		--colima-bin "$(NATIVE_PARITY_COLIMA_BIN)" \
+		--vscode-bin "$(NATIVE_PARITY_VSCODE_BIN)" \
+		--vscode-app "$(NATIVE_PARITY_VSCODE_APP)" --vscode-vsix "$(NATIVE_PARITY_VSCODE_VSIX)" \
+		--stock-container-sha256 "$(NATIVE_PARITY_STOCK_CONTAINER_SHA256)" \
+		--stock-api-sha256 "$(NATIVE_PARITY_STOCK_API_SHA256)" \
+		--compose-container-sha256 "$(NATIVE_PARITY_COMPOSE_CONTAINER_SHA256)" \
+		--compose-api-sha256 "$(NATIVE_PARITY_COMPOSE_API_SHA256)" \
+		--compose-provider-sha256 "$(NATIVE_PARITY_COMPOSE_PROVIDER_SHA256)" \
+		--colima-sha256 "$(NATIVE_PARITY_COLIMA_SHA256)" \
+		--evidence "$(NATIVE_PARITY_EVIDENCE)"
 
 runtime-check: test-integration test-asan test-tsan parity-release
 
-package:
+package: $(if $(filter 1,$(DEVCONTAINER_SIGNING_REQUIRED)),,swiftpm-prepare)
 	DEVCONTAINER_PACKAGE_LANE="$(DEVCONTAINER_PACKAGE_LANE)" \
 	DEVCONTAINER_PACKAGE_RUN_NUMBER="$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
 	DEVCONTAINER_SIGNING_REQUIRED="$(DEVCONTAINER_SIGNING_REQUIRED)" \
@@ -410,13 +754,13 @@ release-check: check test-asan test-tsan parity-release homebrew-formula
 
 release-gate-hosted: check homebrew-formula
 
-docs:
+docs: swiftpm-prepare-docs
 	scripts/make-docs.sh "$(DOCS_OUTPUT_DIR)" "$(DOCS_HOSTING_BASE_PATH)"
 
 serve-docs: docs
 	$(PYTHON) -m http.server 8000 --directory "$(DOCS_OUTPUT_DIR)"
 
-demo:
+demo: swiftpm-prepare
 	Tools/release/record-vhs-live-demo.sh \
 		docs/devcontainer-demo.tape \
 		docs/images/devcontainer-demo.gif

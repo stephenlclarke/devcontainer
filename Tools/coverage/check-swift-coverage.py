@@ -241,6 +241,9 @@ def changed_coverage(
     missing: list[str] = []
     for filename, changed_lines in sorted(changed.items()):
         if filename not in by_file:
+            source = source_root / filename
+            if protocol_requirements_only_source(source):
+                continue
             missing.append(filename)
             continue
         for line in sorted(changed_lines.intersection(by_file[filename])):
@@ -250,6 +253,56 @@ def changed_coverage(
             else:
                 uncovered.append((filename, line))
     return covered, count, uncovered, missing
+
+
+def protocol_requirements_only_source(path: Path) -> bool:
+    """Recognize protocol-only files that have no executable LLVM lines."""
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"//.*", "", source)
+    if any(character in source for character in "#;\"'=@"):
+        return False
+
+    header = re.compile(
+        r"(?:public\s+)?"
+        r"protocol\s+[A-Za-z_][A-Za-z_0-9]*(?:\s*:\s*[^{}]+)?\s*\{"
+    )
+    imported_module = re.compile(
+        r"import\s+[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*"
+    )
+    protocol_count = 0
+    in_protocol = False
+    parameter_depth = 0
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not in_protocol:
+            if imported_module.fullmatch(line):
+                continue
+            if header.fullmatch(line):
+                protocol_count += 1
+                in_protocol = True
+                continue
+            return False
+        if line == "}":
+            if parameter_depth:
+                return False
+            in_protocol = False
+            continue
+        if "{" in line or "}" in line:
+            return False
+        if parameter_depth == 0 and not line.startswith("func "):
+            return False
+        parameter_depth += line.count("(") - line.count(")")
+        if parameter_depth < 0:
+            return False
+
+    return protocol_count > 0 and not in_protocol and parameter_depth == 0
 
 
 def annotate_uncovered(uncovered: list[tuple[str, int]]) -> None:

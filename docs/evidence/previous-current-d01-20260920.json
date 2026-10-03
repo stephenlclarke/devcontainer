@@ -1,0 +1,121 @@
+{
+  "fixtures": [
+    {
+      "baseline": {
+        "eligible": false,
+        "product": {
+          "assetSHA256": "0cd5210388572fd7c30eeb8f6196f72264c6881b445c13cda73a8c228633d906",
+          "kind": "published-release",
+          "sourceCommit": "37ae0a873d4112576dac98fea3d969acb962a18b",
+          "url": "https://github.com/stephenlclarke/devcontainer/releases/tag/1.0.1",
+          "version": "1.0.1"
+        },
+        "samples": [
+          {
+            "cleanupStatus": "unknown",
+            "durationsNS": {
+              "cleanup": 44811042,
+              "operation": 2081057333,
+              "setup": 6822899958
+            },
+            "errorCount": 2,
+            "identity": {
+              "campaign": "published-baseline-d01-20260920a",
+              "contractSHA256": "c378c9c15c2ca5500920efe53c99fa2f8490127168928b1a7d6ff14ad10c3da5",
+              "fixture": "D01-image-config",
+              "harnessSHA256": "6cdaad09e60732b5321340e471f7df2c0a6ba3aa189a0b51a8836bce6769644b",
+              "lane": "apple-stock",
+              "releaseSetSHA256": "3315537936a89a43454415abeaeffe7da8cf48a9c4263fb14695292f8f13613b",
+              "runtimeSHA256": "806efbe978182fc6b4ad3cf8f0333606a9c65300fea1fbab81e5d671d630c1d0"
+            },
+            "observationsMatch": false,
+            "observationsSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "remainingOwnedResourceCount": 0,
+            "sealSHA256": "7f00d1ab311ced689ef4f3aa1f8eacffdcbb4004efb54be609b89205a7059ff6",
+            "status": "failed"
+          }
+        ],
+        "summary": null
+      },
+      "fixture": "D01-image-config",
+      "rawDifference": null,
+      "rawOrderOfMagnitudeRegression": false,
+      "target": {
+        "eligible": true,
+        "product": {
+          "assetSHA256": "84db92cfa0bf593a21c74b74289fe25a6cc5069b0d43fbbbf5f2604b6fe96de2",
+          "kind": "local-candidate",
+          "sourceCommit": "fbcb3f68a89f2682443e9c2031f5c2042020e22b"
+        },
+        "samples": [
+          {
+            "cleanupStatus": "passed",
+            "durationsNS": {
+              "cleanup": 1524288666,
+              "operation": 3191203166,
+              "setup": 6809036125
+            },
+            "errorCount": 0,
+            "identity": {
+              "campaign": "current-stock-d01-20260920b",
+              "contractSHA256": "c378c9c15c2ca5500920efe53c99fa2f8490127168928b1a7d6ff14ad10c3da5",
+              "fixture": "D01-image-config",
+              "harnessSHA256": "6cdaad09e60732b5321340e471f7df2c0a6ba3aa189a0b51a8836bce6769644b",
+              "lane": "apple-stock",
+              "releaseSetSHA256": "69d55a589f4181cc3c015b1d46e8f5565661d86bb6b4b455c1ae3b80f0d9fcd5",
+              "runtimeSHA256": "f0110c30f88364aa0012a9dbafb80db7df65e1824b3d6ae0755bdb83caf9285c"
+            },
+            "observationsMatch": true,
+            "observationsSHA256": "c378c9c15c2ca5500920efe53c99fa2f8490127168928b1a7d6ff14ad10c3da5",
+            "remainingOwnedResourceCount": 0,
+            "sealSHA256": "1589d148da0fecfe1b0a279d0e139c9d0d997816a2a677049a509eb79c00d378",
+            "status": "passed"
+          }
+        ],
+        "summary": {
+          "medianNS": 3191203166,
+          "p95NS": 3191203166
+        }
+      }
+    }
+  ],
+  "lane": "apple-stock",
+  "releaseQualified": false,
+  "requestedFixtures": [
+    "D01-image-config"
+  ],
+  "samplingNote": "Campaign lists identify samples, not recorded execution order. Quiet paired sampling is not certified.",
+  "schema": 1,
+  "scope": "previous-current-native-observations",
+  "statistics": "Operation only; median and nearest-rank P95. Positive saved values mean lower raw latency.",
+  "timingQualified": false,
+  "unrequestedFixtures": [
+    "C01-compose-service",
+    "C02-compose-dependencies",
+    "C03-compose-resources",
+    "C04-compose-lifecycle",
+    "D02-dockerfile-config",
+    "D03-users-environment",
+    "D04-lifecycle-hooks",
+    "D05-features",
+    "D06-ports",
+    "D07-reuse-cleanup",
+    "E01-engine-negotiation",
+    "E02-container-lifecycle",
+    "E03-exec-streams",
+    "E04-image-build",
+    "E05-archive-copy",
+    "E06-network-volume",
+    "E07-init-attachment",
+    "E08-foreground-terminal",
+    "E09-compose-foreground",
+    "E10-compose-quiet",
+    "E11-compose-redirected",
+    "E12-compose-tty-input",
+    "E13-compose-signals",
+    "E14-compose-terminal-size",
+    "E15-initial-terminal-size",
+    "F01-fault-recovery",
+    "V01-vscode-end-to-end"
+  ]
+}

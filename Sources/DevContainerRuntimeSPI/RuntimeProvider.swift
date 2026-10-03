@@ -27,6 +27,15 @@ public protocol RuntimeProcessSession: Sendable {
     func cancel() async
 }
 
+/// An acknowledged subscription to one container's next native process exit.
+/// Registration precedes startup; cancellation releases only this waiter.
+/// The authenticated snapshot/result remain usable after automatic removal.
+public protocol RuntimeContainerExitWait: Sendable {
+    var snapshot: ContainerSnapshot { get }
+    func wait() async throws -> Int32
+    func cancel() async
+}
+
 public protocol RuntimeIdentityProvider: Sendable {
     func descriptor(context: RuntimeRequestContext) async throws -> ProtocolDescriptor
 }
@@ -66,6 +75,58 @@ public protocol RuntimeMetadataStore: Sendable {
     func removeContainerMetadata(id: String) async throws
 }
 
+/// Write-ahead identity for a native create whose acknowledgement may be lost.
+/// This is not successful container metadata and must survive provider restart.
+public struct RuntimeContainerCreation: Codable, Equatable, Sendable {
+    public let operationID: UUID
+    public let runtimeID: String
+    public let nativeCreatedAt: Date
+    public let imageID: String
+    public let spec: ContainerSpec
+    public let nativeConfiguration: Data
+
+    public init(
+        operationID: UUID = UUID(), runtimeID: String, nativeCreatedAt: Date,
+        imageID: String, spec: ContainerSpec, nativeConfiguration: Data
+    ) {
+        self.operationID = operationID
+        self.runtimeID = runtimeID
+        self.nativeCreatedAt = nativeCreatedAt
+        self.imageID = imageID
+        self.spec = spec
+        self.nativeConfiguration = nativeConfiguration
+    }
+}
+
+/// Implementations must durably persist intent before returning and atomically
+/// publish metadata with intent removal. In-memory stores are for tests only.
+/// Ordinary metadata writes must reject a pending creation in the same storage
+/// transaction. Discard is an explicit reconciliation primitive, not permission
+/// to clear intent merely because name-based deletion or lookup succeeded.
+public protocol RuntimeCreationStore: RuntimeMetadataStore {
+    func hasPendingContainerCreations() async throws -> Bool
+    func pendingContainerCreations() async throws -> [RuntimeContainerCreation]
+    func beginContainerCreation(_ creation: RuntimeContainerCreation) async throws
+    func pendingContainerCreation(id: String) async throws -> RuntimeContainerCreation?
+    func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) async throws
+    func discardContainerCreation(id: String, operationID: UUID) async throws
+}
+
+public extension RuntimeCreationStore {
+    func hasPendingContainerCreations() async throws -> Bool {
+        throw DevContainerError(.unsupportedCapability, message: "Creation quiescence is unavailable")
+    }
+
+    func pendingContainerCreations() async throws -> [RuntimeContainerCreation] {
+        throw DevContainerError(.unsupportedCapability, message: "Creation reconciliation is unavailable")
+    }
+}
+
+/// Receiver-side check used only after the gateway has frozen new mutations.
+public protocol RuntimeRecoveryProbe: Sendable {
+    func requireRecoveryQuiescence(context: RuntimeRequestContext) async throws
+}
+
 public protocol ImageRuntime: Sendable {
     func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot]
     func inspectImage(reference: String, context: RuntimeRequestContext) async throws -> ImageSnapshot
@@ -84,6 +145,7 @@ public protocol ImageRuntime: Sendable {
 }
 
 public protocol ContainerRuntime: Sendable {
+    var supportsContainerExitWaitRegistration: Bool { get async }
     func listContainers(
         all: Bool,
         labels: [String: String],
@@ -100,6 +162,8 @@ public protocol ContainerRuntime: Sendable {
     func renameContainer(id: String, name: String, context: RuntimeRequestContext) async throws
     func removeContainer(id: String, force: Bool, context: RuntimeRequestContext) async throws
     func waitContainer(id: String, context: RuntimeRequestContext) async throws -> Int32
+    func prepareContainerExitWait(id: String, context: RuntimeRequestContext) async throws
+        -> any RuntimeContainerExitWait
     func containerLogs(
         id: String,
         follow: Bool,
@@ -112,9 +176,60 @@ public protocol ContainerRuntime: Sendable {
         terminal: Bool,
         context: RuntimeRequestContext
     ) async throws -> any RuntimeProcessSession
+    func resizeContainer(id: String, width: UInt16, height: UInt16, context: RuntimeRequestContext) async throws
+    func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) async throws -> RuntimeContainerAttachment
+    /// Finite, bounded-acquisition history retaining the original stream tags.
+    /// A provider must not relabel a merged native log to satisfy this contract.
+    func containerAttachmentHistory(
+        id: String, standardOutput: Bool, standardError: Bool, context: RuntimeRequestContext
+    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error>
 }
 
 public extension ContainerRuntime {
+    func prepareContainerAttachment(
+        id: String, terminal: Bool, history: Bool, live: Bool, context: RuntimeRequestContext
+    ) async throws -> RuntimeContainerAttachment {
+        guard !history || !live else {
+            throw DevContainerError(.unsupportedCapability, message: "Atomic history/live attachment is unavailable")
+        }
+        let saved = history ? try await containerAttachmentHistory(
+            id: id, standardOutput: true, standardError: true, context: context
+        ) : nil
+        let session = live ? try await attachContainer(id: id, terminal: terminal, context: context) : nil
+        return RuntimeContainerAttachment(history: saved, session: session)
+    }
+
+    var supportsContainerExitWaitRegistration: Bool {
+        get async { false }
+    }
+
+    func prepareContainerExitWait(id _: String, context _: RuntimeRequestContext) async throws
+        -> any RuntimeContainerExitWait
+    {
+        throw DevContainerError(
+            .unsupportedCapability, message: "Acknowledged container exit registration is unavailable"
+        )
+    }
+
+    func containerAttachmentHistory(
+        id _: String, standardOutput _: Bool, standardError _: Bool, context _: RuntimeRequestContext
+    ) async throws -> AsyncThrowingStream<RuntimeIOFrame, any Error> {
+        throw DevContainerError(
+            .unsupportedCapability, message: "Source-aware container attachment history is unavailable"
+        )
+    }
+
+    func resizeContainer(
+        id _: String,
+        width _: UInt16,
+        height _: UInt16,
+        context _: RuntimeRequestContext
+    ) async throws {
+        throw DevContainerError(.unsupportedCapability, message: "Container terminal resize is unavailable")
+    }
+
     /// Compatibility fallback for providers that have not yet adopted an
     /// authority-owned restart transaction.
     func restartContainer(

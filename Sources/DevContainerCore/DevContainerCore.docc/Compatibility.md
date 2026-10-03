@@ -1,5 +1,7 @@
 # Compatibility
 
+The next native campaign selects the existing immutable Apple `container` 1.4.1 and external `container-compose` 0.15.1 release assets on the designated macOS 27/Xcode 27 host. All 28 fixtures must pass in each of the three lanes, including Compose lifecycle and actual VS Code sessions. These pins identify the pending qualification inputs; they do not extend historical release support or permit old receipts to be relabeled.
+
 Compatibility is evidence-based. Each release records exact versions and
 commits for Docker Engine, Docker CLI, Docker Compose, VS Code, the Dev
 Containers extension, `@devcontainers/cli`, macOS, Apple container, and the

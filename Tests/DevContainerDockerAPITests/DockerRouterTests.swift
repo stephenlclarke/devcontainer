@@ -18,6 +18,7 @@ import DevContainerCore
 @testable import DevContainerDockerAPI
 import DevContainerModel
 import DevContainerState
+import DevContainerTestStorage
 import DevContainerTestSupport
 import Foundation
 import Testing
@@ -328,14 +329,12 @@ func `known unsupported create fields fail before runtime side effects`() async 
         (#"{"Image":"alpine:test","NetworkDisabled":true}"#, "NetworkDisabled"),
         (#"{"Image":"alpine:test","OnBuild":["RUN true"]}"#, "OnBuild"),
         (#"{"Image":"alpine:test","Shell":["/bin/sh","-c"]}"#, "Shell"),
-        (#"{"Image":"alpine:test","StdinOnce":true}"#, "StdinOnce"),
-        (#"{"Image":"alpine:test","StopSignal":"SIGUSR1"}"#, "StopSignal"),
         (
             #"{"Image":"alpine:test","HostConfig":{"PublishAllPorts":true}}"#,
             "HostConfig.PublishAllPorts"
         ),
         (
-            #"{"Image":"alpine:test","HostConfig":{"LogConfig":{"Type":"json-file","Config":{}}}}"#,
+            #"{"Image":"alpine:test","HostConfig":{"LogConfig":{"Type":"local","Config":{}}}}"#,
             "HostConfig.LogConfig"
         ),
         (
@@ -346,14 +345,9 @@ func `known unsupported create fields fail before runtime side effects`() async 
             #"{"Image":"alpine:test","Tty":true,"HostConfig":{"ConsoleSize":[24,80]}}"#,
             "HostConfig.ConsoleSize"
         ),
-        (#"{"Image":"alpine:test","HostConfig":{"Memory":1048576}}"#, "HostConfig.Memory"),
         (
             #"{"Image":"alpine:test","HostConfig":{"DeviceRequests":[{"Count":-1,"Capabilities":[["gpu"]]}]}}"#,
             "HostConfig.DeviceRequests"
-        ),
-        (
-            #"{"Image":"alpine:test","HostConfig":{"Dns":["1.1.1.1"]}}"#,
-            "HostConfig.Dns"
         ),
         (
             #"{"Image":"alpine:test","HostConfig":{"PidMode":"host"}}"#,
@@ -676,7 +670,7 @@ func `exposed ports and empty Docker host IP retain their semantics`() async thr
 @Test
 // swiftlint:disable:next function_body_length
 func `production router journals and labels owned container mutations`() async throws {
-    let directory = FileManager.default.temporaryDirectory
+    let directory = TestStorage.temporaryDirectory
         .appendingPathComponent(
             "devcontainer-router-coordinator-\(UUID().uuidString)",
             isDirectory: true
@@ -886,6 +880,45 @@ func `daemon information head requests and invalid inputs use Docker semantics`(
     ] {
         #expect(await router.respond(to: request).status == 400)
     }
+}
+
+@Test
+func `image inventory applies label predicates and exposes original labels`() async throws {
+    let runtime = InMemoryRuntime()
+    for (identifier, labels) in [
+        ("owned", ["owner": "case", "empty": "", "value": "a=b"]),
+        ("foreign", ["owner": "other", "empty": "not-empty"]),
+        ("base", [:])
+    ] {
+        await runtime.seedImage(ImageSnapshot(
+            id: "sha256:" + identifier, references: [identifier + ":latest"],
+            createdAt: Date(), size: 42, labels: labels
+        ))
+    }
+    let router = DockerRouter(runtime: runtime)
+    for (filters, expected) in [
+        (["owner=case"], ["sha256:owned"]),
+        (["owner"], ["sha256:foreign", "sha256:owned"]),
+        (["empty="], ["sha256:owned"]),
+        (["value=a=b", "owner=case"], ["sha256:owned"]),
+        (["owner=missing"], []),
+        (["owner=case", "owner=other"], []),
+        ([""], [])
+    ] {
+        let encoded = try JSONSerialization.data(withJSONObject: ["label": filters])
+        let filterJSON = try #require(String(data: encoded, encoding: .utf8))
+        let query = try #require(filterJSON.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+        let request = DockerHTTPRequest(method: .get, target: "/images/json?filters=" + query)
+        let response = await router.respond(to: request)
+        #expect(response.status == 200)
+        let values = try #require(JSONSerialization.jsonObject(with: bytes(response)) as? [[String: Any]])
+        #expect(values.compactMap { $0["Id"] as? String }.sorted() == expected)
+        for value in values {
+            #expect((value["Labels"] as? [String: String])?["owner"] != nil)
+        }
+    }
+    let invalid = await router.respond(to: DockerHTTPRequest(method: .get, target: "/images/json?filters=%5B%5D"))
+    #expect(invalid.status == 400)
 }
 
 @Test

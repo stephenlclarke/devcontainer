@@ -29,8 +29,6 @@ private struct AppleTerminalSessionIO: @unchecked Sendable {
     let frameContinuation: AsyncThrowingStream<RuntimeIOFrame, any Error>.Continuation
     let termination: AsyncStream<Int32>
     let terminationContinuation: AsyncStream<Int32>.Continuation
-    let outputEnd: AsyncStream<Void>
-    let outputEndContinuation: AsyncStream<Void>.Continuation
 
     init() throws {
         var controllerDescriptor: Int32 = -1
@@ -74,7 +72,6 @@ private struct AppleTerminalSessionIO: @unchecked Sendable {
         )
         (frames, frameContinuation) = AsyncThrowingStream.makeStream()
         (termination, terminationContinuation) = AsyncStream.makeStream()
-        (outputEnd, outputEndContinuation) = AsyncStream.makeStream()
     }
 }
 
@@ -99,8 +96,7 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
         let streams = try AppleTerminalSessionIO()
         let inputWriter = ProcessInputWriter(
             handle: streams.controllerInput,
-            label: "io.github.stephenlclarke.devcontainer.terminal-process-input",
-            nonBlocking: false
+            label: "io.github.stephenlclarke.devcontainer.terminal-process-input"
         )
         let outputMonitor = Self.outputMonitor(streams)
         let command = Self.command(
@@ -119,7 +115,8 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
         )
         completion = Self.completionTask(
             streams,
-            inputWriter: inputWriter
+            inputWriter: inputWriter,
+            outputMonitor: outputMonitor
         )
         self.command = command
         self.termination = termination
@@ -135,7 +132,6 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
         ProcessPipeMonitor(
             handle: streams.controllerOutput,
             channel: .standardOutput,
-            end: streams.outputEndContinuation,
             frames: streams.frameContinuation,
             endOnEIO: true,
             closeHandleOnFinish: false
@@ -197,7 +193,8 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
 
     private static func completionTask(
         _ streams: AppleTerminalSessionIO,
-        inputWriter: ProcessInputWriter
+        inputWriter: ProcessInputWriter,
+        outputMonitor: ProcessPipeMonitor
     ) -> Task<Int32, any Error> {
         Task {
             var exitCode: Int32 = 255
@@ -206,7 +203,7 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
                 break
             }
             inputWriter.cancel()
-            for await _ in streams.outputEnd { /* Completion latch for PTY output. */ }
+            await outputMonitor.waitForCompletion()
             streams.frameContinuation.finish()
             return exitCode
         }
@@ -251,7 +248,8 @@ final class AppleTerminalProcessSession: RuntimeProcessSession, @unchecked Senda
     }
 
     func cancel() {
-        completion.cancel()
+        // Keep the completion waiter alive to reap the real process exit.
+        // Cancelling its AsyncStream iterator would publish synthetic status 255.
         inputWriter.cancel()
         outputMonitor.cancel()
         termination.cancel()

@@ -59,6 +59,7 @@ enum DevContainerComposeCommand {
             configuration: paths.configuration.path
         )
         paths.socket = selection.socket
+        paths.containerExecutable = selection.containerExecutable
         paths.state = URL(fileURLWithPath: selection.stateDatabase)
         let provider = selection.composeProvider
         let envelope = try ComposeCommandEnvelope(arguments: arguments)
@@ -69,12 +70,26 @@ enum DevContainerComposeCommand {
             environment: environment,
             socket: selection.socket
         )
+        // Reject a missing selected frontend before recording project ownership.
+        // Never fall back to a different orchestration tool or runtime.
+        try requireExecutable(child.executable)
+        if let version = try await nativeShortVersion(
+            provider: provider, executable: child.executable,
+            arguments: child.arguments, environment: child.environment
+        ) {
+            FileHandle.standardOutput.write(version.standardOutput)
+            FileHandle.standardError.write(version.standardError)
+            return version.exitCode
+        }
         let claim = try await claimIfNeeded(
             envelope: envelope,
             provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: selection.socket
+            backend: selection.backend,
+            execution: ComposeExecutionEnvironment(
+                paths: paths,
+                environment: environment,
+                socket: selection.socket
+            )
         )
 
         let result: Int32
@@ -158,7 +173,7 @@ enum DevContainerComposeCommand {
             try await releaseProjectIfEmpty(claim)
             return
         }
-        guard let liveVolumes = await liveContainerComposeVolumes(
+        guard let liveVolumes = try await liveContainerComposeVolumes(
             envelope: envelope,
             execution: execution
         ) else {
@@ -177,7 +192,7 @@ enum DevContainerComposeCommand {
     private static func liveContainerComposeVolumes(
         envelope: ComposeCommandEnvelope,
         execution: ComposeExecutionEnvironment
-    ) async -> Set<String>? {
+    ) async throws -> Set<String>? {
         let child = childCommand(
             provider: .containerCompose,
             arguments: envelope.projectArguments + ["volumes", "--quiet"],
@@ -185,11 +200,21 @@ enum DevContainerComposeCommand {
             environment: execution.environment,
             socket: execution.socket
         )
-        guard let result = try? await executeCaptured(
-            executable: child.executable,
-            arguments: child.arguments,
-            environment: child.environment
-        ), result.exitCode == 0 else {
+        let result: CapturedProcessResult
+        do {
+            result = try await executeCaptured(
+                executable: child.executable,
+                arguments: child.arguments,
+                environment: child.environment
+            )
+        } catch {
+            // An unavailable probe preserves ownership, but cancellation must
+            // not be reported as a successfully completed command.
+            try Task.checkCancellation()
+            return nil
+        }
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else {
             return nil
         }
         guard let output = String(bytes: result.standardOutput, encoding: .utf8) else {
@@ -229,9 +254,8 @@ enum DevContainerComposeCommand {
     private static func claimIfNeeded(
         envelope: ComposeCommandEnvelope,
         provider: ComposeProviderKind,
-        paths: Paths,
-        environment: [String: String],
-        socket: String
+        backend: BackendProvider,
+        execution: ComposeExecutionEnvironment
     ) async throws -> ComposeProjectClaim? {
         guard envelope.mutating else {
             return nil
@@ -239,13 +263,12 @@ enum DevContainerComposeCommand {
         let projectName = try await resolvedProjectName(
             envelope: envelope,
             provider: provider,
-            paths: paths,
-            environment: environment,
-            socket: socket
+            paths: execution.paths,
+            environment: execution.environment,
+            socket: execution.socket
         )
         let projectKey = ProjectKey(rawValue: "\(getuid()):\(projectName)")
-        let backend: BackendProvider = provider == .docker ? .stock : .containerCompose
-        let store = try SQLiteStateStore(path: paths.state)
+        let store = try SQLiteStateStore(path: execution.paths.state)
         return ComposeProjectClaim(
             key: projectKey,
             store: store,
@@ -342,6 +365,15 @@ enum DevContainerComposeCommand {
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
         case .containerCompose:
             executable = paths.containerCompose
+            // The facade's resolved selection is authoritative for discovery
+            // and mutations alike; ambient Compose settings cannot redirect it.
+            childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = socket
+            childEnvironment["CONTAINER_BIN"] = paths.containerExecutable
+            childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = paths.containerExecutable
+            // The selected devcontainer adapter implements creation-time aliases
+            // even when the underlying stock Apple CLI advertises none.
+            childEnvironment["CONTAINER_COMPOSE_RUNTIME_CAPABILITIES"] =
+                "io.github.stephenlclarke.container.compose.network-aliases.v1"
         }
         if childArguments.isEmpty {
             childArguments = ["help"]
@@ -351,6 +383,34 @@ enum DevContainerComposeCommand {
             arguments: childArguments,
             environment: childEnvironment
         )
+    }
+
+    static func nativeShortVersion(
+        provider: ComposeProviderKind,
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> CapturedProcessResult? {
+        guard provider == .containerCompose,
+              arguments == ["version", "--short"] || arguments == ["version", "-s"]
+        else {
+            return nil
+        }
+        var result = try await executeCaptured(
+            executable: executable, arguments: arguments, environment: environment
+        )
+        guard result.exitCode == 0 else { return result }
+        guard let value = String(data: result.standardOutput, encoding: .utf8),
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              value.split(whereSeparator: \.isNewline).count == 1
+        else {
+            throw DevContainerError(.providerProtocolMismatch, message: "invalid native Compose short version")
+        }
+        // The upstream CLI compares bare numbers with Docker Compose versions.
+        // Qualify the native version instead of claiming a Docker release: an
+        // unknown vendor version keeps its modern project-name rules enabled.
+        result.standardOutput = Data("container-compose ".utf8) + result.standardOutput
+        return result
     }
 
     private static func execute(
@@ -376,15 +436,32 @@ enum DevContainerComposeCommand {
         environment: [String: String]
     ) async throws -> CapturedProcessResult {
         try requireExecutable(executable)
-        return try await ProcessRunner.captured(
-            executable: executable,
-            arguments: arguments,
-            environment: environment,
-            workingDirectory: URL(
-                fileURLWithPath: FileManager.default.currentDirectoryPath,
-                isDirectory: true
-            )
-        )
+        var context = RuntimeRequestScope.context ?? RuntimeRequestContext()
+        let probeDeadline = Date().addingTimeInterval(30)
+        context.deadline = min(context.deadline ?? probeDeadline, probeDeadline)
+        return try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline {
+                let result = try await ProcessRunner.captured(
+                    executable: executable,
+                    arguments: arguments,
+                    environment: environment,
+                    workingDirectory: URL(
+                        fileURLWithPath: FileManager.default.currentDirectoryPath,
+                        isDirectory: true
+                    ),
+                    maximumOutputBytes: 1024 * 1024
+                )
+                guard result.omittedStandardOutputBytes == 0,
+                      result.omittedStandardErrorBytes == 0
+                else {
+                    throw DevContainerError(
+                        .providerProtocolMismatch,
+                        message: "Compose discovery output exceeded the 1 MiB per-stream limit"
+                    )
+                }
+                return result
+            }
+        }
     }
 
     private static func requireExecutable(_ executable: URL) throws {
@@ -449,6 +526,7 @@ private struct Paths {
     let configuration: URL
     var state: URL
     var socket: String
+    var containerExecutable = DevContainerPathDefaults.containerExecutable
     let docker: URL
     let dockerCompose: URL?
     let containerCompose: URL

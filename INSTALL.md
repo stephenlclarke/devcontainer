@@ -162,6 +162,8 @@ container devcontainer version
 container devcontainer doctor
 ```
 
+In current source builds, automatic install-root discovery has a five-second deadline and cleans up its owned probe before reporting failure. An explicit `--install-root` skips that probe. This bounded-discovery change is not included in the published 1.0.1 binary.
+
 The command obtains `installRoot` from `container system status --format json`.
 Use `--container` to select a container executable or `--install-root` for an
 offline installation. If the runtime root is protected, rerun this single

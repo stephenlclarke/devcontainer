@@ -26,6 +26,7 @@ public enum RuntimeCapability: String, Codable, CaseIterable, Hashable, Sendable
     case attach
     case build
     case containers
+    case composeHealthPolicy
     case events
     case exec
     case images
@@ -234,19 +235,24 @@ public struct RuntimeMount: Codable, Equatable, Sendable {
     /// these paths on native EXT4 storage instead of projecting a host
     /// directory through VirtioFS.
     public var anonymous: Bool?
+    /// Create a missing host bind source as a directory. Nil preserves the
+    /// existing requirement that the source already exists.
+    public var createSourceDirectory: Bool?
 
     public init(
         type: RuntimeMountType,
         source: String,
         destination: String,
         readOnly: Bool = false,
-        anonymous: Bool? = nil
+        anonymous: Bool? = nil,
+        createSourceDirectory: Bool? = nil
     ) {
         self.type = type
         self.source = source
         self.destination = destination
         self.readOnly = readOnly
         self.anonymous = anonymous
+        self.createSourceDirectory = createSourceDirectory
     }
 }
 
@@ -270,20 +276,28 @@ public struct ContainerHealthcheck: Codable, Equatable, Sendable {
     public var timeoutNanoseconds: Int64
     public var retries: Int
     public var startPeriodNanoseconds: Int64
+    /// Nil and zero retain Docker's default startup probe interval.
+    public var startIntervalNanoseconds: Int64?
 
     public init(
         test: [String],
         intervalNanoseconds: Int64 = 30_000_000_000,
         timeoutNanoseconds: Int64 = 30_000_000_000,
         retries: Int = 3,
-        startPeriodNanoseconds: Int64 = 0
+        startPeriodNanoseconds: Int64 = 0,
+        startIntervalNanoseconds: Int64? = nil
     ) {
         self.test = test
         self.intervalNanoseconds = intervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
         self.retries = retries
         self.startPeriodNanoseconds = startPeriodNanoseconds
+        self.startIntervalNanoseconds = startIntervalNanoseconds
     }
+}
+
+public enum ContainerOutputLogFormat: String, Codable, Sendable {
+    case jsonFileV1
 }
 
 public struct ContainerSpec: Codable, Equatable, Sendable {
@@ -301,6 +315,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var networks: [NetworkAttachment]
     public var terminal: Bool
     public var openStandardInput: Bool
+    /// Nil preserves legacy metadata; true closes non-TTY stdin after its attached client disconnects.
+    public var standardInputOnce: Bool?
     public var privileged: Bool
     public var initProcess: Bool
     public var autoRemove: Bool
@@ -308,6 +324,22 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var capabilitiesToDrop: [String]
     public var securityOptions: [String]
     public var healthcheck: ContainerHealthcheck?
+    public var dns: RuntimeDNSConfiguration?
+    /// Nil retains legacy inference; false preserves an explicitly cleared entrypoint.
+    public var inheritImageEntrypoint: Bool?
+    public var executionSettings: ContainerExecutionSettings?
+    /// Bare Engine Env keys remove inherited image values; nil is legacy metadata.
+    public var removedEnvironmentKeys: [String]?
+    /// Engine stop/restart grace period; nil selects the Engine default.
+    public var stopTimeoutSeconds: Int?
+    /// Historical caller spelling for display; image remains the immutable launch identity.
+    public var requestedImageReference: String?
+    /// Accepted Engine selector, independent of explicit endpoint attachments.
+    /// Nil preserves older/adopted metadata without inventing a caller request.
+    public var requestedNetworkMode: String?
+    /// Requested on create; retained as effective policy only by a supporting provider.
+    /// Nil in legacy/adopted metadata does not certify a logging implementation.
+    public var outputLogFormat: ContainerOutputLogFormat?
 
     public init(
         name: String,
@@ -324,13 +356,22 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         networks: [NetworkAttachment] = [],
         terminal: Bool = false,
         openStandardInput: Bool = false,
+        standardInputOnce: Bool? = nil,
         privileged: Bool = false,
         initProcess: Bool = false,
         autoRemove: Bool = false,
         capabilitiesToAdd: [String] = [],
         capabilitiesToDrop: [String] = [],
         securityOptions: [String] = [],
-        healthcheck: ContainerHealthcheck? = nil
+        healthcheck: ContainerHealthcheck? = nil,
+        dns: RuntimeDNSConfiguration? = nil,
+        inheritImageEntrypoint: Bool? = nil,
+        executionSettings: ContainerExecutionSettings? = nil,
+        removedEnvironmentKeys: [String]? = nil,
+        stopTimeoutSeconds: Int? = nil,
+        requestedImageReference: String? = nil,
+        requestedNetworkMode: String? = nil,
+        outputLogFormat: ContainerOutputLogFormat? = nil
     ) {
         self.name = name
         self.image = image
@@ -346,6 +387,7 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.networks = networks
         self.terminal = terminal
         self.openStandardInput = openStandardInput
+        self.standardInputOnce = standardInputOnce
         self.privileged = privileged
         self.initProcess = initProcess
         self.autoRemove = autoRemove
@@ -353,6 +395,14 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.capabilitiesToDrop = capabilitiesToDrop
         self.securityOptions = securityOptions
         self.healthcheck = healthcheck
+        self.dns = dns
+        self.inheritImageEntrypoint = inheritImageEntrypoint
+        self.executionSettings = executionSettings
+        self.removedEnvironmentKeys = removedEnvironmentKeys
+        self.stopTimeoutSeconds = stopTimeoutSeconds
+        self.requestedImageReference = requestedImageReference
+        self.requestedNetworkMode = requestedNetworkMode
+        self.outputLogFormat = outputLogFormat
     }
 }
 
@@ -449,7 +499,8 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         environment: [String] = [],
         entrypoint: [String] = [],
         command: [String] = [],
-        labels: [String: String] = [:]
+        labels: [String: String] = [:],
+        rootFSLayers: [String]? = nil
     ) {
         self.id = id
         self.references = references
@@ -462,7 +513,11 @@ public struct ImageSnapshot: Codable, Equatable, Sendable {
         self.entrypoint = entrypoint
         self.command = command
         self.labels = labels
+        self.rootFSLayers = rootFSLayers
     }
+
+    /// Ordered OCI uncompressed layer digests; nil means the provider did not report them.
+    public var rootFSLayers: [String]?
 }
 
 public struct ImageBuildRequest: Codable, Equatable, Sendable {

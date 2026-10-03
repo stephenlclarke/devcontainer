@@ -30,12 +30,16 @@ extension AppleContainerRuntime {
         let process = configuration.initProcess
         let labels = configuration.labels
         let id = value.id
-        return AppleContainerRecord(
+        return try AppleContainerRecord(
             id: id,
             dockerID: labels[Self.dockerIDLabel] ?? id,
             spec: ContainerSpec(
                 name: id,
-                image: configuration.image.reference,
+                image: Self.composeImageReference(
+                    observed: configuration.image.reference,
+                    descriptorDigest: configuration.image.descriptor.digest,
+                    labels: labels
+                ),
                 command: process.executable.isEmpty
                     ? process.arguments
                     : [process.executable] + process.arguments,
@@ -53,7 +57,14 @@ extension AppleContainerRuntime {
                 privileged: false,
                 initProcess: configuration.useInit,
                 capabilitiesToAdd: configuration.capAdd,
-                capabilitiesToDrop: configuration.capDrop
+                capabilitiesToDrop: configuration.capDrop,
+                healthcheck: Self.composeHealthPolicy(labels: labels),
+                dns: configuration.dns.map {
+                    RuntimeDNSConfiguration(
+                        nameservers: $0.nameservers, searchDomains: $0.searchDomains, options: $0.options
+                    )
+                },
+                executionSettings: AppleContainerExecutionSettings.observed(configuration)
             ),
             state: value.status.rawValue,
             createdAt: configuration.creationDate,
@@ -69,14 +80,14 @@ extension AppleContainerRuntime {
             Dictionary(
                 uniqueKeysWithValues: attachments.compactMap { attachment in
                     attachment.ipv4Address.map {
-                        (attachment.network, $0.address.description)
+                        (attachment.network, $0.description)
                     }
                 }
             )
         #else
             Dictionary(
                 uniqueKeysWithValues: attachments.map { attachment in
-                    (attachment.network, attachment.ipv4Address.address.description)
+                    (attachment.network, attachment.ipv4Address.description)
                 }
             )
         #endif
@@ -124,14 +135,18 @@ extension AppleContainerRuntime {
         let labels = configuration["labels"] as? [String: String] ?? [:]
         let creationDate = Self.date(configuration["creationDate"]) ?? Date(timeIntervalSince1970: 0)
         let dockerID = labels[Self.dockerIDLabel] ?? id
+        var spec = Self.observedContainerSpec(id: id, configuration: configuration, labels: labels)
+        let image = configuration["image"] as? [String: Any]
+        spec.image = try Self.composeImageReference(
+            observed: spec.image,
+            descriptorDigest: (image?["descriptor"] as? [String: Any])?["digest"] as? String,
+            labels: labels
+        )
+        spec.healthcheck = try Self.composeHealthPolicy(labels: labels)
         return AppleContainerRecord(
             id: id,
             dockerID: dockerID,
-            spec: Self.observedContainerSpec(
-                id: id,
-                configuration: configuration,
-                labels: labels
-            ),
+            spec: spec,
             state: status?["state"] as? String ?? "unknown",
             createdAt: creationDate,
             startedAt: Self.date(status?["startedDate"]),
@@ -140,6 +155,75 @@ extension AppleContainerRuntime {
                 .flatMap(Int32.init(exactly:)),
             networkAddresses: Self.networkAddresses(status)
         )
+    }
+
+    func preciseContainerRecord(
+        _ value: [String: Any], context: RuntimeRequestContext
+    ) async throws -> AppleContainerRecord {
+        var record = try containerRecord(value)
+        guard useDirectContainerAPI,
+              metadataStore != nil || requestedContainers[record.id] != nil
+              || requestedContainers[record.dockerID] != nil
+        else {
+            return record
+        }
+        try context.checkActive()
+        let native: AppleContainerIdentity
+        do {
+            native = try await inventoryClient.identity(id: record.id)
+        } catch {
+            throw directAPIError(error, operation: "precise container identity")
+        }
+        try context.checkActive()
+        let configuration = value["configuration"] as? [String: Any]
+        let image = configuration?["image"] as? [String: Any]
+        let status = value["status"] as? [String: Any]
+        guard native.id == record.id,
+              native.labels == record.spec.labels,
+              image?["reference"] as? String == native.image.reference,
+              (image?["descriptor"] as? [String: Any])?["digest"] as? String == native.image.descriptor.digest,
+              let encodedDate = configuration?["creationDate"] as? String,
+              Self.matchesEncodedDate(encodedDate, native: native.creationDate),
+              Self.matchesEncodedStartDate(status?["startedDate"], native: native.startedDate)
+        else {
+            throw DevContainerError(.conflict, message: "Container identity changed during CLI inventory")
+        }
+        // Never loosen incarnation matching to a one-second tolerance: two
+        // replacements or process generations can occupy the same encoded
+        // second. Preserve CLI-only enhanced fields while restoring both
+        // precise native timestamps used by attachment ownership checks.
+        record.createdAt = native.creationDate
+        record.startedAt = native.startedDate
+        return record
+    }
+
+    private static func matchesEncodedStartDate(_ value: Any?, native: Date?) -> Bool {
+        guard let native else {
+            return value == nil || value is NSNull
+        }
+        guard let value = value as? String else { return false }
+        return matchesEncodedDate(value, native: native)
+    }
+
+    private static func matchesEncodedDate(_ value: String, native: Date) -> Bool {
+        if value.contains(".") {
+            guard let observed = date(value) else { return false }
+            return sameContainerIncarnation(metadataCreatedAt: native, observedCreatedAt: observed)
+        }
+        return ISO8601DateFormatter().string(from: native) == value
+    }
+
+    static func matchingContainerMetadata(
+        _ metadata: [String: RuntimeContainerMetadata], observed: [DevContainerModel.ContainerSnapshot]
+    ) -> [String: RuntimeContainerMetadata] {
+        observed.reduce(into: [:]) { result, snapshot in
+            let id = snapshot.runtimeID.rawValue
+            if let item = metadata[id], sameContainerIncarnation(
+                metadataCreatedAt: item.createdAt, observedCreatedAt: snapshot.createdAt
+            ) {
+                result[id] = item
+            }
+        }
     }
 
     func requestedContainer(for record: AppleContainerRecord) -> RequestedContainer? {
@@ -202,11 +286,18 @@ extension AppleContainerRuntime {
         )
     }
 
+    func discardContainerState(snapshot: DevContainerModel.ContainerSnapshot) -> AppleContainerIO? {
+        discardContainerState(
+            id: snapshot.runtimeID.rawValue, dockerID: snapshot.dockerID.rawValue, name: snapshot.spec.name
+        )
+    }
+
+    @discardableResult
     func discardContainerState(
         id: String,
         dockerID: String,
         name: String? = nil
-    ) {
+    ) -> AppleContainerIO? {
         requestedContainers.removeValue(forKey: id)
         requestedContainers.removeValue(forKey: dockerID)
         if let name {
@@ -226,6 +317,11 @@ extension AppleContainerRuntime {
         containerExitTasks.removeValue(forKey: id)?.cancel()
         containerExitRegistrations.removeValue(forKey: id)
         containerExits.removeValue(forKey: id)
+        let channel = containerIO.removeValue(forKey: id)
+        if let channel {
+            scheduleContainerIOClosure(id: id, channel: channel)
+        }
+        return channel
     }
 
     static func containerState(
@@ -271,7 +367,15 @@ extension AppleContainerRuntime {
             initProcess: configuration["useInit"] as? Bool ?? false,
             capabilitiesToAdd: configuration["capAdd"] as? [String] ?? [],
             capabilitiesToDrop: configuration["capDrop"] as? [String] ?? [],
-            securityOptions: securityOptions(configuration)
+            securityOptions: securityOptions(configuration),
+            dns: (configuration["dns"] as? [String: Any]).map {
+                RuntimeDNSConfiguration(
+                    nameservers: $0["nameservers"] as? [String] ?? [],
+                    searchDomains: $0["searchDomains"] as? [String] ?? [],
+                    options: $0["options"] as? [String] ?? []
+                )
+            },
+            executionSettings: AppleContainerExecutionSettings.observed(configuration)
         )
     }
 
@@ -280,7 +384,29 @@ extension AppleContainerRuntime {
         observed: ContainerSpec
     ) -> ContainerSpec {
         var spec = requested
+        if var settings = requested.executionSettings {
+            if settings.stopSignal == nil {
+                settings.stopSignal = observed.executionSettings?.stopSignal
+            }
+            spec.executionSettings = settings
+        } else {
+            spec.executionSettings = observed.executionSettings
+        }
+        if requested.dns == nil {
+            spec.dns = observed.dns
+        }
+        if observed.labels[composeHealthPolicyLabel] != nil {
+            spec.healthcheck = observed.healthcheck
+        }
+        if observed.labels[composeImageReferenceLabel] != nil {
+            // containerRecord already proved this alias against the native
+            // descriptor; older adopted metadata must not erase its spelling.
+            spec.image = observed.image
+        }
         spec.environment = observed.environment
+        for key in requested.removedEnvironmentKeys ?? [] {
+            spec.environment.removeValue(forKey: key)
+        }
         spec.environment.merge(requested.environment) { _, requestedValue in
             requestedValue
         }
@@ -321,7 +447,9 @@ extension AppleContainerRuntime {
         snapshot.dockerID = metadata.dockerID
         snapshot.imageID = metadata.imageID
         snapshot.createdAt = metadata.createdAt
-        snapshot.startedAt = metadata.startedAt ?? observed.startedAt
+        // A native restart preserves creation identity but replaces the start
+        // generation. Persisted gateway timestamps cannot override runtime truth.
+        snapshot.startedAt = observed.startedAt ?? metadata.startedAt
         if observed.state == .stopped, metadata.startedAt == nil {
             snapshot.state = .created
             snapshot.exitCode = nil

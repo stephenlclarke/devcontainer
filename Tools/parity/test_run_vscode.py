@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -17,7 +19,10 @@ from pathlib import Path
 from unittest import mock
 
 from parity_lib import Fixture, ParityError
+from run_lane import FIXTURE_WORKSPACE_MARKER, FIXTURE_WORKSPACE_MARKER_CONTENT, LaneRunner
 from run_vscode import (
+    DRIVER_PHASE_TIMEOUT_SECONDS,
+    DriverPhaseDeadline,
     FIXTURE_ID,
     VSCodeLane,
     VSCodePins,
@@ -25,10 +30,12 @@ from run_vscode import (
     decode_vsix_response,
     download_vsix,
     isolated_vscode_processes,
+    no_resources_remain,
     parse_code_version,
     scrub_sensitive_evidence,
     validate_driver_result,
     verify_code_version,
+    verify_guest_workspace,
     verify_signing_output,
     verify_vsix_metadata,
     vscode_environment,
@@ -96,6 +103,529 @@ class Response:
 
 
 class VSCodeParityTests(unittest.TestCase):
+    def test_guest_workspace_admission_checks_exact_lifecycle_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            colima = root / "colima"
+            colima.write_bytes(b"pinned colima executable")
+            colima.chmod(0o700)
+            workspace = root / "repository" / ".build" / "parity-workspaces" / "case"
+            source = workspace / ".devcontainer"
+            source.mkdir(parents=True)
+            workspace = workspace.resolve()
+            source = workspace / ".devcontainer"
+            (source / "devcontainer.json").write_text("{}\n", encoding="utf-8")
+            lifecycle = source / "lifecycle.sh"
+            lifecycle.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            expected_digests = {
+                str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (source / "devcontainer.json", lifecycle)
+            }
+            calls: list[tuple[list[str], dict[str, object]]] = []
+
+            def guest_run(
+                command: list[str], **kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                calls.append((command, kwargs))
+                if "sha256sum" in command:
+                    path = command[-1]
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{expected_digests[path]}  {path}\n",
+                        "",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            verify_guest_workspace(
+                colima,
+                hashlib.sha256(colima.read_bytes()).hexdigest(),
+                workspace,
+                {"PATH": "/usr/bin:/bin"},
+                run=guest_run,
+            )
+
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(calls[0][0][-3:], ["test", "-r", str(source / "devcontainer.json")])
+            self.assertEqual(calls[1][0][-3:], ["sha256sum", "--", str(source / "devcontainer.json")])
+            self.assertEqual(calls[2][0][-3:], ["test", "-r", str(lifecycle)])
+            self.assertEqual(calls[3][0][-3:], ["sha256sum", "--", str(lifecycle)])
+            self.assertTrue(all(call[1]["timeout"] == 30 for call in calls))
+            self.assertTrue(all(call[1]["env"] == {"PATH": "/usr/bin:/bin"} for call in calls))
+
+    def test_guest_workspace_admission_rejects_missing_and_changed_guest_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            colima = root / "colima"
+            colima.write_bytes(b"pinned colima executable")
+            colima.chmod(0o700)
+            workspace = root / "workspace"
+            source = workspace / ".devcontainer"
+            source.mkdir(parents=True)
+            workspace = workspace.resolve()
+            source = workspace / ".devcontainer"
+            (source / "devcontainer.json").write_text("{}\n", encoding="utf-8")
+            lifecycle = source / "lifecycle.sh"
+            lifecycle.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable_digest = hashlib.sha256(colima.read_bytes()).hexdigest()
+
+            def missing_lifecycle(
+                command: list[str], **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                exit_code = int("-r" in command and command[-1] == str(lifecycle))
+                if "sha256sum" in command:
+                    path = command[-1]
+                    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                    return subprocess.CompletedProcess(command, 0, f"{digest}  {path}\n", "")
+                return subprocess.CompletedProcess(command, exit_code, "", "missing guest file")
+
+            self.assertRaisesRegex(
+                ParityError,
+                "cannot read.*lifecycle",
+                verify_guest_workspace,
+                colima,
+                executable_digest,
+                workspace,
+                {},
+                run=missing_lifecycle,
+            )
+
+            def mismatched_digest(
+                command: list[str], **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                if "sha256sum" in command:
+                    path = command[-1]
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        f"{'0' * 64}  {path}\n",
+                        "",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            self.assertRaisesRegex(
+                ParityError,
+                "bytes differ.*devcontainer.json",
+                verify_guest_workspace,
+                colima,
+                executable_digest,
+                workspace,
+                {},
+                run=mismatched_digest,
+            )
+
+    def test_guest_workspace_admission_rejects_changed_colima_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            colima = root / "colima"
+            colima.write_bytes(b"changed colima executable")
+            colima.chmod(0o700)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runner = mock.Mock()
+
+            self.assertRaisesRegex(
+                ParityError,
+                "Colima executable changed",
+                verify_guest_workspace,
+                colima,
+                "0" * 64,
+                workspace,
+                {},
+                run=runner,
+            )
+            runner.assert_not_called()
+
+    def test_guest_workspace_rejects_noncanonical_colima_alias_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            colima = root / "colima"
+            colima.write_bytes(b"pinned colima executable")
+            colima.chmod(0o700)
+            alias = root / "colima-alias"
+            alias.symlink_to(colima)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runner = mock.Mock()
+
+            self.assertRaisesRegex(
+                ParityError,
+                "noncanonical or unusable",
+                verify_guest_workspace,
+                alias,
+                hashlib.sha256(colima.read_bytes()).hexdigest(),
+                workspace,
+                {},
+                run=runner,
+            )
+            runner.assert_not_called()
+
+    def test_guest_workspace_rejects_non_executable_colima_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            colima = root / "colima"
+            colima.write_bytes(b"pinned colima executable")
+            colima.chmod(0o600)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runner = mock.Mock()
+
+            self.assertRaisesRegex(
+                ParityError,
+                "noncanonical or unusable",
+                verify_guest_workspace,
+                colima,
+                hashlib.sha256(colima.read_bytes()).hexdigest(),
+                workspace,
+                {},
+                run=runner,
+            )
+            runner.assert_not_called()
+
+    def test_parent_phase_deadline_is_monotonic_and_resets_on_transition(self) -> None:
+        deadline = DriverPhaseDeadline()
+        deadline.observe("local-open", 0.0)
+        deadline.observe("attaching", 1.0)
+        deadline.observe("attaching", 1.0 + DRIVER_PHASE_TIMEOUT_SECONDS - 0.1)
+        deadline.observe("rebuilding", 40.0)
+        deadline.observe("rebuilding", 99.9)
+
+        self.assertRaisesRegex(
+            ParityError,
+            "phase rebuilding timed out",
+            deadline.observe,
+            "rebuilding",
+            100.0,
+        )
+
+    def test_launch_enforces_phase_deadline_after_extension_timer_is_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "evidence" / "docker"
+            output.mkdir(parents=True)
+            driver_state = root / "driver-state.json"
+            driver_state.write_text('{"phase":"attaching"}\n', encoding="utf-8")
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.output = output
+            lane.runtime = mock.Mock(environment={"PATH": "/usr/bin:/bin"})
+            lane.vscode_gui = root / "Code"
+            lane.devcontainer_docker_path = mock.Mock(return_value="/pinned/docker")
+            process = mock.Mock()
+            process.poll.return_value = None
+            lane.process = None
+
+            with (
+                mock.patch("run_vscode.subprocess.Popen", return_value=process),
+                mock.patch("run_vscode.os.killpg"),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+                mock.patch("run_vscode.time.monotonic", side_effect=[0.0, 0.0, 0.0, 61.0, 61.0]),
+                mock.patch("run_vscode.time.sleep"),
+            ):
+                self.assertRaisesRegex(
+                    ParityError,
+                    "phase attaching timed out after 61.0 seconds",
+                    lane.launch,
+                    root / "workspace",
+                    root / "profile" / "data",
+                    root / "profile" / "extensions",
+                    driver_state,
+                    root / "driver-result.json",
+                )
+
+            process.wait.assert_called_once_with(timeout=10)
+
+    def test_parent_phase_timeout_flows_through_fixture_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture_root = root / "fixture"
+            fixture_root.mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.evidence_root = root / "evidence"
+            lane.output = lane.evidence_root / lane.lane
+            lane.runtime = mock.Mock(
+                docker="/usr/bin/docker",
+                environment={"PATH": "/usr/bin:/bin"},
+            )
+            workspace_owner = LaneRunner.__new__(LaneRunner)
+            workspace_owner.repository = root
+            created: dict[str, Path] = {}
+
+            def create_workspace(fixture: Fixture) -> tuple[Path, Path]:
+                workspace_root, workspace = workspace_owner.create_fixture_workspace(
+                    fixture
+                )
+                created["root"] = workspace_root
+                created["workspace"] = workspace
+                return workspace_root, workspace
+
+            lane.runtime.create_fixture_workspace.side_effect = create_workspace
+            lane.runtime.cleanup_fixture_workspace.side_effect = (
+                workspace_owner.cleanup_fixture_workspace
+            )
+            lane.runtime.cleanup_fixture.return_value = ""
+            lane.fixture = mock.Mock(
+                return_value=Fixture(
+                    identifier=FIXTURE_ID,
+                    directory=fixture_root,
+                    expected={"open": "true"},
+                    backends=("docker",),
+                    runner="vscode",
+                )
+            )
+            lane.require_reference = mock.Mock(return_value={})
+            lane.prepare_runtime = mock.Mock(return_value={})
+            lane.require_guest_workspace = mock.Mock()
+            lane.compose_path = mock.Mock(return_value="/usr/bin/docker-compose")
+            lane.install_extensions = mock.Mock()
+            lane.launch = mock.Mock(
+                side_effect=ParityError(
+                    "VS Code driver phase attaching timed out after 60.0 seconds"
+                )
+            )
+            with (
+                mock.patch("run_vscode.discover_compose_project", return_value=""),
+                mock.patch(
+                    "run_vscode.no_resources_remain",
+                    return_value=(True, "clean\n"),
+                ) as absence,
+                mock.patch("run_vscode.scrub_sensitive_evidence", return_value=([], [])),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+                mock.patch("run_vscode.assert_contract", return_value=[]),
+                mock.patch("run_vscode.time.monotonic", side_effect=[100.0, 102.0]),
+            ):
+                status = lane.run()
+
+            self.assertEqual(status, 1)
+            lane.runtime.cleanup_fixture.assert_called_once()
+            absence.assert_called_once()
+            lane.runtime.cleanup_fixture_workspace.assert_not_called()
+            self.assertTrue(created["root"].exists())
+            result = json.loads((lane.output / "results.json").read_text(encoding="utf-8"))
+            self.assertIn("phase attaching timed out", result["fixtures"][0]["diagnostic"])
+            self.assertIn("workspace preserved", result["fixtures"][0]["diagnostic"])
+            self.assertEqual(result["fixtures"][0]["observations"]["cleanup"], "false")
+
+    def test_discovery_timeout_still_cleans_engine_and_writes_failure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture_root = root / "fixture"
+            fixture_root.mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.evidence_root = root / "evidence"
+            lane.output = lane.evidence_root / lane.lane
+            lane.runtime = mock.Mock(docker="/usr/bin/docker", environment={"PATH": "/usr/bin:/bin"})
+            workspace_owner = LaneRunner.__new__(LaneRunner)
+            workspace_owner.repository = root
+            created: dict[str, Path] = {}
+
+            def create_workspace(fixture: Fixture) -> tuple[Path, Path]:
+                workspace_root, workspace = workspace_owner.create_fixture_workspace(fixture)
+                created["root"] = workspace_root
+                created["workspace"] = workspace
+                return workspace_root, workspace
+
+            lane.runtime.create_fixture_workspace.side_effect = create_workspace
+            lane.runtime.cleanup_fixture_workspace.side_effect = workspace_owner.cleanup_fixture_workspace
+            lane.runtime.cleanup_fixture.return_value = "cleanup attempted\n"
+            lane.fixture = mock.Mock(return_value=Fixture(
+                identifier=FIXTURE_ID,
+                directory=fixture_root,
+                expected={"open": "true"},
+                backends=("docker",),
+                runner="vscode",
+            ))
+            lane.require_reference = mock.Mock(return_value={})
+            lane.prepare_runtime = mock.Mock(return_value={})
+            lane.require_guest_workspace = mock.Mock()
+            lane.compose_path = mock.Mock(return_value="/usr/bin/docker-compose")
+            lane.install_extensions = mock.Mock()
+            lane.launch = mock.Mock(side_effect=ParityError("driver failed"))
+            with (
+                mock.patch(
+                    "run_vscode.discover_compose_project",
+                    side_effect=subprocess.TimeoutExpired("docker inspect", 30),
+                ),
+                mock.patch("run_vscode.no_resources_remain", return_value=(False, "uncertain\n")),
+                mock.patch("run_vscode.scrub_sensitive_evidence", return_value=([], [])),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+                mock.patch("run_vscode.assert_contract", return_value=[]),
+                mock.patch("run_vscode.time.monotonic", side_effect=[100.0, 102.0]),
+            ):
+                status = lane.run()
+
+            self.assertEqual(status, 1)
+            lane.runtime.cleanup_fixture.assert_called_once()
+            lane.runtime.stop_engine.assert_called_once()
+            lane.runtime.cleanup_fixture_workspace.assert_not_called()
+            self.assertTrue(created["root"].exists())
+            self.assertIn("Compose project discovery failed", (lane.output / "cleanup.log").read_text())
+            self.assertTrue((lane.output / "security-scan.json").is_file())
+
+    def test_no_resources_timeout_preserves_workspace_and_writes_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture_root = root / "fixture"
+            fixture_root.mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.evidence_root = root / "evidence"
+            lane.output = lane.evidence_root / lane.lane
+            lane.runtime = mock.Mock(docker="/usr/bin/docker", environment={"PATH": "/usr/bin:/bin"})
+            workspace_owner = LaneRunner.__new__(LaneRunner)
+            workspace_owner.repository = root
+            created: dict[str, Path] = {}
+
+            def create_workspace(fixture: Fixture) -> tuple[Path, Path]:
+                workspace_root, workspace = workspace_owner.create_fixture_workspace(fixture)
+                created["root"] = workspace_root
+                created["workspace"] = workspace
+                return workspace_root, workspace
+
+            lane.runtime.create_fixture_workspace.side_effect = create_workspace
+            lane.runtime.cleanup_fixture_workspace.side_effect = workspace_owner.cleanup_fixture_workspace
+            lane.runtime.cleanup_fixture.return_value = "cleanup attempted\n"
+            lane.fixture = mock.Mock(return_value=Fixture(
+                identifier=FIXTURE_ID,
+                directory=fixture_root,
+                expected={"open": "true"},
+                backends=("docker",),
+                runner="vscode",
+            ))
+            lane.require_reference = mock.Mock(return_value={})
+            lane.prepare_runtime = mock.Mock(return_value={})
+            lane.require_guest_workspace = mock.Mock()
+            lane.compose_path = mock.Mock(return_value="/usr/bin/docker-compose")
+            lane.install_extensions = mock.Mock()
+            lane.launch = mock.Mock(side_effect=ParityError("driver failed"))
+            with (
+                mock.patch("run_vscode.discover_compose_project", return_value="known-project"),
+                mock.patch(
+                    "run_vscode.no_resources_remain",
+                    side_effect=subprocess.TimeoutExpired("docker network ls", 30),
+                ),
+                mock.patch("run_vscode.scrub_sensitive_evidence", return_value=([], [])),
+                mock.patch("run_vscode.terminate_isolated_vscode"),
+                mock.patch("run_vscode.assert_contract", return_value=[]),
+                mock.patch("run_vscode.time.monotonic", side_effect=[100.0, 102.0]),
+            ):
+                status = lane.run()
+
+            self.assertEqual(status, 1)
+            lane.runtime.cleanup_fixture.assert_called_once()
+            lane.runtime.stop_engine.assert_called_once()
+            lane.runtime.cleanup_fixture_workspace.assert_not_called()
+            self.assertTrue(created["root"].exists())
+            self.assertIn("resource verification failed", (lane.output / "cleanup.log").read_text())
+            self.assertTrue((lane.output / "security-scan.json").is_file())
+
+    def test_empty_compose_project_cannot_prove_network_volume_cleanup(self) -> None:
+        with mock.patch("run_vscode.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            clean, evidence = no_resources_remain(
+                "/usr/bin/docker", Path("/workspace"), "", {"PATH": "/usr/bin:/bin"}
+            )
+        self.assertFalse(clean)
+        self.assertIn("Compose project identity is unavailable", evidence)
+        self.assertEqual(run.call_count, 1)
+
+    def test_gui_termination_failure_preserves_workspace_profile_and_cleanup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture_root = root / "fixture"
+            fixture_root.mkdir()
+            profile_root = root / "retained-profile"
+            profile_root.mkdir()
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "docker"
+            lane.repository = root
+            lane.evidence_root = root / "evidence"
+            lane.output = lane.evidence_root / lane.lane
+            lane.runtime = mock.Mock(
+                docker="/usr/bin/docker",
+                environment={"PATH": "/usr/bin:/bin"},
+                finalized_identity=None,
+            )
+            workspace_owner = LaneRunner.__new__(LaneRunner)
+            workspace_owner.repository = root
+            created: dict[str, Path] = {}
+
+            def create_workspace(fixture: Fixture) -> tuple[Path, Path]:
+                workspace_root, workspace = workspace_owner.create_fixture_workspace(fixture)
+                created["root"] = workspace_root
+                created["workspace"] = workspace
+                return workspace_root, workspace
+
+            lane.runtime.create_fixture_workspace.side_effect = create_workspace
+            lane.runtime.cleanup_fixture_workspace.side_effect = workspace_owner.cleanup_fixture_workspace
+            lane.fixture = mock.Mock(return_value=Fixture(
+                identifier=FIXTURE_ID,
+                directory=fixture_root,
+                expected={"open": "true"},
+                backends=("docker",),
+                runner="vscode",
+            ))
+            lane.require_reference = mock.Mock(return_value={})
+            lane.prepare_runtime = mock.Mock(return_value={})
+            lane.require_guest_workspace = mock.Mock()
+            lane.compose_path = mock.Mock(return_value="/usr/bin/docker-compose")
+            lane.install_extensions = mock.Mock()
+            lane.launch = mock.Mock(side_effect=ParityError("driver failed"))
+
+            with (
+                mock.patch("run_vscode.tempfile.mkdtemp", return_value=str(profile_root)),
+                mock.patch(
+                    "run_vscode.terminate_isolated_vscode",
+                    side_effect=ParityError("owned GUI process did not stop"),
+                ),
+                mock.patch("run_vscode.discover_compose_project", return_value="known-project") as discover,
+                mock.patch("run_vscode.no_resources_remain", return_value=(True, "clean\n")) as absence,
+                mock.patch("run_vscode.scrub_sensitive_evidence", return_value=([], [])),
+                mock.patch("run_vscode.assert_contract", return_value=[]),
+                mock.patch("run_vscode.time.monotonic", side_effect=[100.0, 102.0]),
+            ):
+                status = lane.run()
+
+            self.assertEqual(status, 1)
+            lane.runtime.cleanup_fixture.assert_not_called()
+            absence.assert_not_called()
+            discover.assert_not_called()
+            lane.runtime.cleanup_fixture_workspace.assert_not_called()
+            lane.runtime.stop_engine.assert_called_once()
+            self.assertTrue(created["root"].exists())
+            self.assertTrue(profile_root.exists())
+            cleanup_log = (lane.output / "cleanup.log").read_text(encoding="utf-8")
+            self.assertIn("process closure is uncertain", cleanup_log)
+            self.assertIn("profile preserved", cleanup_log)
+            self.assertTrue((lane.output / "security-scan.json").is_file())
+            result = json.loads((lane.output / "results.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["fixtures"][0]["observations"]["cleanup"], "false")
+
+    def test_native_compose_setting_selects_admitted_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "devcontainer-compose"
+            executable.write_bytes(b"signed adapter")
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane = "container-compose"
+            lane.repository = Path("/repository")
+            lane.runtime = mock.Mock()
+            lane.runtime.package_executable.return_value = str(executable)
+            self.assertEqual(lane.compose_path(), str(executable))
+            lane.runtime.package_executable.assert_called_once_with("devcontainer-compose")
+
+    def test_native_vscode_uses_packaged_docker_surface(self) -> None:
+        lane = VSCodeLane.__new__(VSCodeLane)
+        lane.lane = "apple-stock"
+        lane.runtime = mock.Mock()
+        lane.runtime.finalized_selection = {"expected_source_commit": "a" * 40}
+        lane.runtime.package_executable.return_value = "/signed/devcontainer-docker"
+        self.assertEqual(lane.devcontainer_docker_path(), "/signed/devcontainer-docker")
+
     def test_code_version_requires_all_three_identity_lines(self) -> None:
         self.assertEqual(
             parse_code_version(f"1.2.3\n{'a' * 40}\narm64\n"),
@@ -306,7 +836,40 @@ class VSCodeParityTests(unittest.TestCase):
                 docker="/usr/bin/docker",
                 environment={"PATH": "/usr/bin:/bin"},
             )
+            workspace_owner = LaneRunner.__new__(LaneRunner)
+            workspace_owner.repository = root
+
+            created_workspace: dict[str, Path] = {}
+
+            def create_owned_workspace(fixture: Fixture) -> tuple[Path, Path]:
+                workspace_root, workspace = workspace_owner.create_fixture_workspace(
+                    fixture
+                )
+                created_workspace["root"] = workspace_root
+                created_workspace["workspace"] = workspace
+                return workspace_root, workspace
+
+            def verify_owned_workspace(
+                colima_bin: Path,
+                colima_sha256: str,
+                workspace: Path,
+                _environment: dict[str, str],
+            ) -> None:
+                self.assertEqual(colima_bin, lane.colima_bin)
+                self.assertEqual(colima_sha256, lane.colima_sha256)
+                marker = workspace.parent / FIXTURE_WORKSPACE_MARKER
+                self.assertEqual(
+                    marker.read_text(encoding="utf-8"),
+                    FIXTURE_WORKSPACE_MARKER_CONTENT,
+                )
+
+            lane.runtime.create_fixture_workspace.side_effect = create_owned_workspace
+            lane.runtime.cleanup_fixture_workspace.side_effect = (
+                workspace_owner.cleanup_fixture_workspace
+            )
             lane.runtime.cleanup_fixture.return_value = ""
+            lane.colima_bin = Path("/admitted/colima")
+            lane.colima_sha256 = "c" * 64
             lane.fixture = mock.Mock(
                 return_value=Fixture(
                     identifier=FIXTURE_ID,
@@ -349,8 +912,12 @@ class VSCodeParityTests(unittest.TestCase):
                 ),
                 mock.patch(
                     "run_vscode.discover_compose_project",
-                    return_value="",
+                    return_value="known-project",
                 ),
+                mock.patch(
+                    "run_vscode.verify_guest_workspace",
+                    side_effect=verify_owned_workspace,
+                ) as guest_check,
                 mock.patch(
                     "run_vscode.no_resources_remain",
                     return_value=(True, "clean\n"),
@@ -375,6 +942,21 @@ class VSCodeParityTests(unittest.TestCase):
             self.assertIsNotNone(case)
             self.assertEqual(case.attrib["name"], FIXTURE_ID)
             self.assertEqual(case.attrib["time"], "2.500")
+            workspace_root = created_workspace["root"]
+            workspace = created_workspace["workspace"]
+            self.assertTrue(
+                workspace.is_relative_to(root / ".build" / "parity-workspaces")
+            )
+            self.assertFalse(workspace.exists())
+            guest_check.assert_called_once_with(
+                lane.colima_bin,
+                lane.colima_sha256,
+                workspace,
+                lane.runtime.environment,
+            )
+            lane.runtime.cleanup_fixture_workspace.assert_called_once_with(
+                workspace_root
+            )
 
 
 if __name__ == "__main__":

@@ -25,6 +25,71 @@ import Testing
 
 struct AppleContainerRuntimeDirectTests {
     @Test
+    func `native typed inventory verifies digest image spelling`() async throws {
+        let fixture = try FakeAppleCLI()
+        let runtime = try fixture.runtime()
+        let digest = "sha256:" + String(repeating: "a", count: 64)
+        let original = "fixture:version@" + digest
+        let native = nativeSnapshot(
+            id: "app", labels: [AppleContainerRuntime.composeImageReferenceLabel: original],
+            status: .running, imageReference: "docker.io/library/fixture@" + digest
+        )
+        let record = try await runtime.containerRecord(native)
+        #expect(record.spec.image == original)
+    }
+
+    @Test(arguments: [0o644, 0o750, 0o777], [false, true])
+    func `archive upload preserves member permissions inside private staging`(
+        mode: Int, includesRoot: Bool
+    ) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let input = fixture.root.appendingPathComponent("archive-input")
+        try FileManager.default.createDirectory(at: input, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: input.path)
+        let source = input.appendingPathComponent("permissions.txt")
+        try Data("archive permission fixture".utf8).write(to: source)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: source.path)
+        let archive = try await AppleCommandRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["--format=ustar", "-cf", "-", "-C", input.path, includesRoot ? "." : source.lastPathComponent],
+            environment: ["COPYFILE_DISABLE": "1"]
+        )
+        #expect(archive.exitCode == 0)
+        let files = ArchivePermissionsClient()
+        let runtime = try directRuntime(
+            fixture: fixture,
+            inventory: FakeContainerInventory(snapshots: [
+                nativeSnapshot(id: "fixture", labels: [:], status: .running)
+            ]),
+            files: files
+        )
+        try await runtime.copyArchiveToContainer(
+            id: "fixture", path: "/workspace", archive: archive.standardOutput, context: RuntimeRequestContext()
+        )
+        #expect(await files.memberMode == mode)
+        #expect(await files.privateParentMode == 0o700)
+        #expect(await files.stagingMode == (includesRoot ? 0o777 : 0o700))
+    }
+
+    @Test(arguments: ["a", "c"])
+    func `native digest references retain config IDs during list and inspection`(hex: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try fixture.setImageInventory([imageRecord("fixture:latest")])
+        let snapshot = nativeSnapshot(
+            id: "fixture", labels: [:], status: .running,
+            imageReference: "fixture@sha256:" + String(repeating: hex, count: 64)
+        )
+        let runtime = try directRuntime(fixture: fixture, inventory: FakeContainerInventory(snapshots: [snapshot]))
+        let context = RuntimeRequestContext()
+        let listed = try await runtime.listContainersDirect(all: true, labels: [:], context: context)
+        #expect(listed.first?.imageID == FakeAppleImageIdentityClient.digest)
+        let inspected = try await runtime.inspectContainerDirect(id: "fixture", context: context)
+        #expect(inspected?.imageID == FakeAppleImageIdentityClient.digest)
+    }
+
+    @Test
     func `direct inventory filters state labels and internal builders`() async throws {
         let fixture = try FakeAppleCLI()
         let inventory = FakeContainerInventory(
@@ -52,7 +117,7 @@ struct AppleContainerRuntimeDirectTests {
             context: context
         )
         #expect(running.map(\.runtimeID.rawValue) == ["running"])
-        #expect(running.first?.imageID == "sha256:abc123")
+        #expect(running.first?.imageID == FakeAppleImageIdentityClient.digest)
 
         let all = try await runtime.listContainers(
             all: true,
@@ -84,7 +149,7 @@ struct AppleContainerRuntimeDirectTests {
             try await runtime.inspectContainerDirect(id: "fixture", context: context)
         )
         #expect(exact.dockerID.rawValue == "docker-fixture")
-        #expect(exact.imageID == "sha256:abc123")
+        #expect(exact.imageID == FakeAppleImageIdentityClient.digest)
         #expect(
             try await runtime.inspectContainerDirect(
                 id: "unrelated",
@@ -180,6 +245,70 @@ struct AppleContainerRuntimeDirectTests {
         #expect(await networks.listCallCount() == 1)
     }
 
+    @Test(arguments: [false, true])
+    func `stale incarnation and start generation never receive hosts writes`(restarted: Bool) async throws {
+        let fixture = try FakeAppleCLI()
+        let inventory = FakeContainerInventory(snapshots: [nativeSnapshot(
+            id: "fixture",
+            labels: [:],
+            status: .running
+        )])
+        let files = FakeContainerFileClient()
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, files: files)
+        let target = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "fixture"), dockerID: DockerID(rawValue: "fixture"),
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                networks: [NetworkAttachment(name: "shared")]
+            ),
+            state: .running, createdAt: Date(timeIntervalSince1970: restarted ? 1 : 0),
+            startedAt: Date(timeIntervalSince1970: restarted ? 0 : 2),
+            networkAddresses: ["shared": "192.0.2.2"]
+        )
+        try await runtime.synchronizeNetworkHosts(
+            target: target,
+            containers: [target],
+            context: RuntimeRequestContext()
+        )
+        #expect(await files.copyInCallCount() == 0)
+        #expect(await files.copyOutCallCount() == 0)
+    }
+
+    @Test
+    func `external restart invalidates managed hosts without a creation date change`() async throws {
+        let fixture = try FakeAppleCLI()
+        let inventory = FakeContainerInventory(snapshots: [nativeSnapshot(
+            id: "fixture",
+            labels: [:],
+            status: .running
+        )])
+        let files = FakeContainerFileClient()
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, files: files)
+        var target = ContainerSnapshot(
+            runtimeID: RuntimeID(rawValue: "fixture"), dockerID: DockerID(rawValue: "fixture"),
+            spec: ContainerSpec(
+                name: "fixture",
+                image: "fixture:latest",
+                networks: [NetworkAttachment(name: "direct-network")]
+            ),
+            state: .running, createdAt: Date(timeIntervalSince1970: 1),
+            networkAddresses: ["direct-network": "192.0.2.2"]
+        )
+        target.startedAt = Date(timeIntervalSince1970: 2)
+        let context = RuntimeRequestContext()
+        try await runtime.synchronizeNetworkHosts(target: target, containers: [target], context: context)
+        await files.resetHostsForBootstrap()
+        target.startedAt = Date(timeIntervalSince1970: 3)
+        let prior = nativeSnapshot(id: "fixture", labels: [:], status: .running)
+        await inventory.replaceSnapshots([ContainerResource.ContainerSnapshot(
+            configuration: prior.configuration, status: .running, networks: [], startedDate: target.startedAt
+        )])
+        try await runtime.synchronizeNetworkHosts(target: target, containers: [target], context: context)
+        #expect(await files.copyInCallCount() == 2)
+        #expect(await files.hosts().contains("192.0.2.2 fixture"))
+    }
+
     @Test
     // The full restart sequence is kept together as one regression scenario.
     // swiftlint:disable:next function_body_length
@@ -211,6 +340,7 @@ struct AppleContainerRuntimeDirectTests {
             ),
             state: .running,
             createdAt: Date(timeIntervalSince1970: 1),
+            startedAt: Date(timeIntervalSince1970: 2),
             networkAddresses: ["direct-network": "192.0.2.2"]
         )
 
@@ -219,6 +349,9 @@ struct AppleContainerRuntimeDirectTests {
             containers: [target],
             context: context
         )
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("transfers").path
+        ))
         try await runtime.synchronizeNetworkHosts(
             target: target,
             containers: [target],
@@ -226,6 +359,7 @@ struct AppleContainerRuntimeDirectTests {
         )
         #expect(await files.copyOutCallCount() == 1)
         #expect(await files.copyInCallCount() == 1)
+        #expect(await files.uploadedPermissions() == 0o644)
 
         await files.resetHostsForBootstrap()
         try await runtime.startContainer(id: "fixture", context: context)
@@ -610,226 +744,4 @@ struct AppleContainerRuntimeDirectTests {
             )
         }
     }
-}
-
-private actor FakeContainerInventory: AppleContainerInventoryClient {
-    private let snapshots: [ContainerResource.ContainerSnapshot]
-    private let returnFirstForUnknownID: Bool
-    private var listFails = false
-    private var getFailure: DirectInventoryFailure?
-    private var listCalls = 0
-
-    init(
-        snapshots: [ContainerResource.ContainerSnapshot],
-        returnFirstForUnknownID: Bool = false
-    ) {
-        self.snapshots = snapshots
-        self.returnFirstForUnknownID = returnFirstForUnknownID
-    }
-
-    func list() throws -> [ContainerResource.ContainerSnapshot] {
-        listCalls += 1
-        if listFails {
-            throw DirectInventoryFailure.failed
-        }
-        return snapshots
-    }
-
-    func get(id: String) throws -> ContainerResource.ContainerSnapshot {
-        if let getFailure {
-            switch getFailure {
-            case .failed:
-                throw getFailure
-            case .notFound:
-                throw ContainerizationError(.notFound, message: id)
-            }
-        }
-        if let match = snapshots.first(where: { $0.id == id }) {
-            return match
-        }
-        if returnFirstForUnknownID, let first = snapshots.first {
-            return first
-        }
-        throw ContainerizationError(.notFound, message: id)
-    }
-
-    func setListFailure(_ value: Bool) {
-        listFails = value
-    }
-
-    func setGetFailure(_ value: DirectInventoryFailure?) {
-        getFailure = value
-    }
-
-    func listCallCount() -> Int {
-        listCalls
-    }
-}
-
-private actor FakeNetworkClient: AppleNetworkClient {
-    private let snapshot: NetworkSnapshot
-    private var failure: NetworkFailureOperation?
-    private var deleted: [String] = []
-    private var listCalls = 0
-
-    init(snapshot: NetworkSnapshot? = nil) {
-        self.snapshot = snapshot ?? NetworkSnapshot(
-            id: "unused",
-            spec: NetworkSpec(name: "unused"),
-            createdAt: Date(timeIntervalSince1970: 0)
-        )
-    }
-
-    func list() throws -> [NetworkSnapshot] {
-        listCalls += 1
-        try check(.list)
-        return [snapshot]
-    }
-
-    func get(id: String) throws -> NetworkSnapshot {
-        try check(.get)
-        guard id == snapshot.id else {
-            throw ContainerizationError(.notFound, message: id)
-        }
-        return snapshot
-    }
-
-    func create(spec _: NetworkSpec) throws -> NetworkSnapshot {
-        try check(.create)
-        return snapshot
-    }
-
-    func delete(id: String) throws {
-        try check(.delete)
-        deleted.append(id)
-    }
-
-    func setFailure(_ operation: NetworkFailureOperation?) {
-        failure = operation
-    }
-
-    func deletedIDs() -> [String] {
-        deleted
-    }
-
-    func listCallCount() -> Int {
-        listCalls
-    }
-
-    private func check(_ operation: NetworkFailureOperation) throws {
-        if failure == operation {
-            throw DirectInventoryFailure.failed
-        }
-    }
-}
-
-private actor FakeContainerFileClient: AppleContainerFileClient {
-    private var currentHosts = "127.0.0.1 localhost\n"
-    private var copyOutCalls = 0
-    private var copyInCalls = 0
-
-    func copyIn(
-        id _: String,
-        source: String,
-        destination _: String
-    ) throws {
-        copyInCalls += 1
-        currentHosts = try String(contentsOfFile: source, encoding: .utf8)
-    }
-
-    func copyOut(
-        id _: String,
-        source _: String,
-        destination: String
-    ) throws {
-        copyOutCalls += 1
-        try Data(currentHosts.utf8).write(
-            to: URL(fileURLWithPath: destination)
-        )
-    }
-
-    func resetHostsForBootstrap() {
-        currentHosts = "127.0.0.1 localhost\n"
-    }
-
-    func copyOutCallCount() -> Int {
-        copyOutCalls
-    }
-
-    func copyInCallCount() -> Int {
-        copyInCalls
-    }
-
-    func hosts() -> String {
-        currentHosts
-    }
-}
-
-private enum NetworkFailureOperation: CaseIterable {
-    case list
-    case get
-    case create
-    case delete
-}
-
-private enum DirectInventoryFailure: Error {
-    case failed
-    case notFound
-}
-
-private func directRuntime(
-    fixture: FakeAppleCLI,
-    inventory: any AppleContainerInventoryClient,
-    files: any AppleContainerFileClient = FakeContainerFileClient(),
-    networks: any AppleNetworkClient = FakeNetworkClient()
-) throws -> AppleContainerRuntime {
-    try AppleContainerRuntime(
-        executable: fixture.executable,
-        environment: [:],
-        useDirectProcessAPI: false,
-        useDirectContainerAPI: true,
-        metadataStore: nil,
-        volumeRoot: fixture.root.appendingPathComponent("volumes"),
-        clients: AppleContainerRuntime.DirectClients(
-            api: ContainerClient(),
-            inventory: inventory,
-            files: files,
-            networks: networks
-        )
-    )
-}
-
-private func nativeSnapshot(
-    id: String,
-    labels: [String: String],
-    status: RuntimeStatus
-) -> ContainerResource.ContainerSnapshot {
-    let image = ImageDescription(
-        reference: "fixture:latest",
-        descriptor: .init(
-            mediaType: "application/vnd.oci.image.manifest.v1+json",
-            digest: "sha256:" + String(repeating: "a", count: 64),
-            size: 1
-        )
-    )
-    let process = ProcessConfiguration(
-        executable: "/bin/sh",
-        arguments: ["-c", "sleep infinity"],
-        environment: ["FIXTURE=yes"]
-    )
-    var configuration = ContainerConfiguration(
-        id: id,
-        image: image,
-        process: process
-    )
-    configuration.labels = labels
-    configuration.creationDate = Date(timeIntervalSince1970: 1)
-    return ContainerResource.ContainerSnapshot(
-        configuration: configuration,
-        status: status,
-        networks: [],
-        startedDate: status == .running
-            ? Date(timeIntervalSince1970: 2)
-            : nil
-    )
 }

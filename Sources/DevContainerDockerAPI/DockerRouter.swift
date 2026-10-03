@@ -29,6 +29,7 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
     public let runtime: any DevContainerRuntime
     private let execSessions: ExecSessionRegistry
     private let mutationReplays: DockerMutationReplayRegistry
+    let recoveryBarrier = DockerRecoveryBarrier()
     let healthChecks: ContainerHealthRegistry
     private let coordinator: ProjectCoordinator?
     private let provider: BackendProvider
@@ -54,6 +55,44 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
     }
 
     public func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        do {
+            let target = try ParsedTarget(request.target)
+            let path = stripAPIVersion(target.path)
+            if path == DockerRecoveryBarrier.route {
+                return try await recoveryResponse(request)
+            }
+            let token = try await recoveryBarrier.begin(request.method, path: path)
+            let response = await trackedResponse(to: request)
+            await recoveryBarrier.finish(token, method: request.method, path: path, response: response)
+            return response
+        } catch let error as DevContainerError {
+            return errorResponse(error)
+        } catch {
+            return errorResponse(.init(.invalidRequest, message: "Invalid recovery request"))
+        }
+    }
+
+    private func recoveryResponse(_ request: DockerHTTPRequest) async throws -> DockerHTTPResponse {
+        guard let probe = runtime as? any RuntimeRecoveryProbe else {
+            throw DevContainerError(.unsupportedCapability, message: "Runtime cannot prove recovery quiescence")
+        }
+        if request.method == .get {
+            return try .json(["epoch": recoveryBarrier.epoch, "protocol": "1"])
+        }
+        guard request.method == .post else {
+            throw DevContainerError(.invalidRequest, message: "Recovery requires GET or POST")
+        }
+        let value = try JSONDecoder().decode([String: String].self, from: request.body)
+        guard Set(value.keys) == ["epoch", "owner"], let epoch = value["epoch"], let owner = value["owner"] else {
+            throw DevContainerError(.invalidRequest, message: "Recovery requires an epoch and owner")
+        }
+        try await recoveryBarrier.freeze(epoch: epoch, owner: owner)
+        try await probe.requireRecoveryQuiescence(context: requestContext(for: request))
+        try await recoveryBarrier.requireIdle()
+        return try .json(["epoch": epoch, "owner": owner, "protocol": "1", "state": "quiescent"])
+    }
+
+    private func trackedResponse(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
         if let key = idempotencyKey(for: request),
            isReplayableMutation(request)
         {
@@ -100,6 +139,14 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
                 return try await route(request, context: context)
             }
             response.headers["X-Request-ID"] = context.correlationID
+            if request.method == .post,
+               try stripAPIVersion(ParsedTarget(request.target).path) == "/build",
+               response.status == 200,
+               case let .stream(stream) = response.body
+            {
+                // Encode only after coordination has recorded the failure.
+                response.body = .stream(dockerBuildResultStream(stream))
+            }
             return response
         } catch let error as DevContainerError {
             var response = errorResponse(error)
@@ -327,10 +374,7 @@ extension DockerRouter {
                 )
                 labels.merge(snapshot.spec.labels) { current, _ in current }
             } else {
-                let network = try await runtime.inspectNetwork(
-                    id: segments[1],
-                    context: context
-                )
+                let network = try await resolveNetwork(segments[1], context: context)
                 labels.merge(network.spec.labels) { current, _ in current }
                 resourceKey = network.id
             }
@@ -384,7 +428,7 @@ extension DockerRouter {
         }
         if method == .post,
            segments.first == "containers",
-           ["wait", "attach"].contains(segments.last ?? "")
+           ["wait", "attach", "resize"].contains(segments.last ?? "")
         {
             return false
         }
@@ -533,6 +577,7 @@ extension DockerRouter {
     private func imageResponse(_ route: DockerRoute) async throws -> DockerHTTPResponse? {
         if let response = try await imageReadResponse(
             method: route.request.method,
+            target: route.target,
             path: route.path,
             context: route.context
         ) {
@@ -650,7 +695,7 @@ extension DockerRouter {
             return nil
         }
         let descriptor = try await runtime.descriptor(context: context)
-        return try .json(
+        return try await .json(
             DockerVersionResponse(
                 platform: DockerVersionPlatform(name: "devcontainer Apple runtime bridge"),
                 components: [
@@ -661,7 +706,12 @@ extension DockerRouter {
                             "ApiVersion": descriptor.dockerAPIMaximum,
                             "MinAPIVersion": descriptor.dockerAPIMinimum,
                             "Provider": descriptor.provider.rawValue,
-                            "Distribution": descriptor.distribution
+                            "Distribution": descriptor.distribution,
+                            "ContainerImageReference": "1",
+                            "ContainerExitWaitRegistration":
+                                runtime.supportsContainerExitWaitRegistration ? "1" : "0",
+                            "NativeComposeHealthPolicy":
+                                descriptor.capabilities[.composeHealthPolicy] == .emulated ? "1" : "0"
                         ]
                     )
                 ],
@@ -724,13 +774,20 @@ extension DockerRouter {
 
         if request.method == .post, path == "/containers/create" {
             let name = target.first("name") ?? ""
-            let decoded = try DockerJSON.decode(
-                DockerCreateContainerRequest.self,
-                from: request.body,
-                schema: .createContainer
-            )
-            try validateCreateContainerRequest(decoded)
-            var spec = try containerSpec(from: decoded, requestedName: name)
+            var spec: ContainerSpec
+            do {
+                let decoded = try DockerJSON.decode(
+                    DockerCreateContainerRequest.self, from: request.body, schema: .createContainer
+                )
+                try validateCreateContainerRequest(decoded)
+                try await validateRequestedImageReference(decoded, context: context)
+                spec = try containerSpec(from: decoded, requestedName: name)
+            } catch let error as DevContainerError {
+                var response = errorResponse(error)
+                response.headers[DockerRecoveryBarrier.preflightHeader] = "rejected"
+                return response
+            }
+            spec.networks = try await resolveNetworkAttachments(spec.networks, context: context)
             try applyOwnershipLabels(to: &spec, context: context)
             if spec.labels[RuntimeLabels.dockerID] == nil {
                 spec.labels[RuntimeLabels.dockerID] = Self.dockerIdentifier()
@@ -773,18 +830,18 @@ extension DockerRouter {
             await healthChecks.reset(id: id)
             return .empty(status: 204)
         case (.post, "stop"):
-            let seconds = target.first("t").flatMap(Int64.init)
+            let timeout = try await stopTimeout(id: id, requested: target.first("t"), context: context)
             try await runtime.stopContainer(
                 id: id,
-                timeout: seconds.map(Duration.seconds),
+                timeout: timeout,
                 context: context
             )
             return .empty(status: 204)
         case (.post, "restart"):
-            let seconds = target.first("t").flatMap(Int64.init)
+            let timeout = try await stopTimeout(id: id, requested: target.first("t"), context: context)
             try await runtime.restartContainer(
                 id: id,
-                timeout: seconds.map(Duration.seconds),
+                timeout: timeout,
                 context: context
             )
             await healthChecks.reset(id: id)
@@ -819,11 +876,11 @@ extension DockerRouter {
         let id = segments[1]
         switch (request.method, segments[2]) {
         case (.post, "wait"):
-            return DockerHTTPResponse(
+            return try await DockerHTTPResponse(
                 status: 200,
                 headers: ["Content-Type": "application/json"],
                 body: .stream(
-                    containerWaitStream(
+                    preparedContainerWaitStream(
                         id: id,
                         condition: target.first("condition"),
                         context: context
@@ -880,15 +937,23 @@ extension DockerRouter {
         case (.post, "attach"):
             return try await containerAttachResponse(
                 id: id,
+                target: target,
                 context: context,
                 webSocket: false
             )
         case (.get, "attach") where segments.count == 4 && segments[3] == "ws":
             return try await containerAttachResponse(
                 id: id,
+                target: target,
                 context: context,
                 webSocket: true
             )
+        case (.post, "resize") where segments.count == 3:
+            try await runtime.resizeContainer(
+                id: id, width: unsigned16(target.first("w"), name: "width"),
+                height: unsigned16(target.first("h"), name: "height"), context: context
+            )
+            return .empty(status: 200)
         default:
             return nil
         }
@@ -896,16 +961,21 @@ extension DockerRouter {
 
     private func containerAttachResponse(
         id: String,
+        target: ParsedTarget,
         context: RuntimeRequestContext,
         webSocket: Bool
     ) async throws -> DockerHTTPResponse {
-        let terminal = try await runtime.inspectContainer(id: id, context: context).spec.terminal
-        let session = try await runtime.attachContainer(
-            id: id,
-            terminal: terminal,
-            context: context
+        let options = try DockerAttachmentOptions(target: target)
+        let snapshot = try await runtime.inspectContainer(id: id, context: context)
+        let terminal = snapshot.spec.terminal
+        let identity = snapshot.dockerID.rawValue
+        let prepared = try await runtime.prepareContainerAttachment(
+            id: identity, terminal: terminal, history: options.logs,
+            live: options.needsLiveSession(spec: snapshot.spec), context: context
         )
-        let adaptedSession = DockerRuntimeHijackSession(session)
+        let adaptedSession = DockerContainerAttachment(
+            session: prepared.session, history: prepared.history, options: options, spec: snapshot.spec
+        )
         if webSocket {
             return DockerHTTPResponse(
                 status: 101,
@@ -1149,13 +1219,20 @@ extension DockerRouter {
 
     private func imageReadResponse(
         method: DockerHTTPMethod,
+        target: ParsedTarget,
         path: String,
         context: RuntimeRequestContext
     ) async throws -> DockerHTTPResponse? {
         if method == .get, path == "/images/json" {
-            return try await .json(
-                runtime.listImages(context: context).map(imageSummary)
-            )
+            let labels = try parseFilters(target.first("filters"))["label"] ?? []
+            let images = try await runtime.listImages(context: context)
+            return try .json(images.filter { image in
+                labels.allSatisfy { predicate in
+                    let parts = predicate.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                    guard let actual = image.labels[String(parts[0])] else { return false }
+                    return parts.count == 1 || actual == parts[1]
+                }
+            }.map(imageSummary))
         }
         if method == .get,
            let reference = identifier(in: path, prefix: "/images/", suffix: "/json")
@@ -1275,18 +1352,18 @@ extension DockerRouter {
             let filters = try parseFilters(target.first("filters"))
             let labels = try labelFilters(filters["label"] ?? [])
             let networks = try await runtime.listNetworks(context: context).filter { network in
-                labelsMatch(network.spec.labels, expected: labels)
+                try labelsMatch(RuntimeLabels.projectComposeLabels(network.spec.labels), expected: labels)
                     && (filters["name"]?.contains(where: {
                         network.spec.name.contains($0)
                     }) ?? true)
                     && (filters["id"]?.contains(where: {
-                        network.id.hasPrefix($0)
+                        try RuntimeLabels.networkDockerID(network).hasPrefix($0)
                     }) ?? true)
                     && (filters["driver"]?.contains(network.spec.driver) ?? true)
             }
-            return try .json(
-                networks.map(networkInspect)
-            )
+            let containers = networks.isEmpty
+                ? [] : try await runtime.listContainers(all: true, labels: [:], context: context)
+            return try .json(networks.map { try networkInspect($0, containers: containers) })
         }
         if request.method == .post, path == "/networks/create" {
             let decoded = try DockerJSON.decode(
@@ -1301,10 +1378,14 @@ extension DockerRouter {
                     message: "network driver \(decoded.driver ?? "") is not supported"
                 )
             }
-            let labels = try applyingOwnershipLabels(
+            var labels = try applyingOwnershipLabels(
                 to: decoded.labels ?? [:],
                 context: context
             )
+            guard labels[RuntimeLabels.dockerID] == nil else {
+                throw DevContainerError(.invalidRequest, message: "network identity labels are reserved")
+            }
+            labels[RuntimeLabels.dockerID] = Self.digest(Data(UUID().uuidString.utf8))
             let network = try await runtime.createNetwork(
                 spec: NetworkSpec(
                     name: decoded.name,
@@ -1324,7 +1405,7 @@ extension DockerRouter {
                 )
             }
             return try .json(
-                DockerNetworkCreateResponse(id: network.id, warning: ""),
+                DockerNetworkCreateResponse(id: RuntimeLabels.networkDockerID(network), warning: ""),
                 status: 201
             )
         }
@@ -1339,12 +1420,12 @@ extension DockerRouter {
         guard segments.count >= 2, segments[0] == "networks" else {
             return nil
         }
-        let id = segments[1]
+        let network = try await resolveNetwork(segments[1], context: context)
+        let id = network.id
         switch (request.method, segments.count == 3 ? segments[2] : "") {
         case (.get, ""):
-            return try await .json(
-                networkInspect(runtime.inspectNetwork(id: id, context: context))
-            )
+            let containers = try await runtime.listContainers(all: true, labels: [:], context: context)
+            return try .json(networkInspect(network, containers: containers))
         case (.post, "connect"):
             let decoded = try DockerJSON.decode(
                 DockerNetworkConnectRequest.self,
@@ -1373,7 +1454,6 @@ extension DockerRouter {
             )
             return .empty(status: 200)
         case (.delete, ""):
-            let network = try await runtime.inspectNetwork(id: id, context: context)
             try await runtime.removeNetwork(id: id, context: context)
             try await coordinator?.removeResource(
                 runtimeID: RuntimeID(rawValue: network.id)
@@ -1395,7 +1475,7 @@ extension DockerRouter {
             let filters = try parseFilters(target.first("filters"))
             let labels = try labelFilters(filters["label"] ?? [])
             let volumes = try await runtime.listVolumes(context: context).filter { volume in
-                labelsMatch(volume.spec.labels, expected: labels)
+                try labelsMatch(RuntimeLabels.projectComposeLabels(volume.spec.labels), expected: labels)
                     && (filters["name"]?.contains(where: {
                         volume.name.contains($0)
                     }) ?? true)
@@ -1428,6 +1508,8 @@ extension DockerRouter {
                 to: decoded.labels ?? [:],
                 context: context
             )
+            // Reject contradictory ownership before creating a native resource.
+            _ = try RuntimeLabels.projectComposeLabels(labels)
             let volume = try await runtime.createVolume(
                 spec: VolumeSpec(
                     name: name,

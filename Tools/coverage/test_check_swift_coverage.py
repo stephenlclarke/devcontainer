@@ -230,6 +230,106 @@ diff --git a/README.md b/README.md
 
         self.assertEqual(result, (0, 0, [], ["Sources/Core/Missing.swift"]))
 
+    def test_unreported_protocol_requirements_are_not_missing_executable_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_root = Path(directory)
+            source = source_root / "Sources/Core/Declarations.swift"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "import Foundation\n\n"
+                "public protocol OutputJournal: Sendable {\n"
+                "    func append(_ frame: String) throws\n"
+                "    func captureHistory(\n"
+                "        context: String\n"
+                "    ) async throws -> String\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            report_path = source_root / "coverage.json"
+            report_path.write_text('{"data": []}', encoding="utf-8")
+
+            result = MODULE.changed_coverage(
+                report_path,
+                source_root,
+                {"Sources/Core/Declarations.swift": {4, 5, 6}},
+            )
+
+        self.assertEqual(result, (0, 0, [], []))
+
+    def test_runtime_output_journal_spi_is_declaration_only(self) -> None:
+        source_root = Path(__file__).resolve().parents[2]
+        filename = "Sources/DevContainerRuntimeSPI/RuntimeContainerOutputJournal.swift"
+        source = source_root / filename
+        lines = source.read_text(encoding="utf-8").splitlines()
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "coverage.json"
+            report_path.write_text('{"data": []}', encoding="utf-8")
+            result = MODULE.changed_coverage(
+                report_path,
+                source_root,
+                {filename: set(range(1, len(lines) + 1))},
+            )
+
+        self.assertEqual(result, (0, 0, [], []))
+
+    def test_import_line_cannot_hide_unreported_executable_code(self) -> None:
+        executable_import_lines = (
+            'import Foundation; print("ran")\n',
+            'import Foundation; func execute() { print("ran") }\n',
+        )
+        declaration = (
+            "public protocol OutputJournal {\n"
+            "    func append(_ frame: String) throws\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source_root = Path(directory)
+            source = source_root / "Sources/Core/Declarations.swift"
+            source.parent.mkdir(parents=True)
+            report_path = source_root / "coverage.json"
+            report_path.write_text('{"data": []}', encoding="utf-8")
+
+            for prefix in executable_import_lines:
+                with self.subTest(prefix=prefix):
+                    source.write_text(prefix + declaration, encoding="utf-8")
+                    result = MODULE.changed_coverage(
+                        report_path,
+                        source_root,
+                        {"Sources/Core/Declarations.swift": {1}},
+                    )
+                    self.assertEqual(
+                        result,
+                        (0, 0, [], ["Sources/Core/Declarations.swift"]),
+                    )
+
+    def test_unreported_executable_source_still_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_root = Path(directory)
+            source = source_root / "Sources/Core/Implementation.swift"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "public protocol RuntimeLike {\n"
+                "    func execute()\n"
+                "}\n"
+                "extension RuntimeLike {\n"
+                "    func execute() { print(\"ran\") }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            report_path = source_root / "coverage.json"
+            report_path.write_text('{"data": []}', encoding="utf-8")
+
+            result = MODULE.changed_coverage(
+                report_path,
+                source_root,
+                {"Sources/Core/Implementation.swift": {1}},
+            )
+
+        self.assertEqual(
+            result,
+            (0, 0, [], ["Sources/Core/Implementation.swift"]),
+        )
+
     def test_line_inherits_active_count_from_spanning_llvm_region(self) -> None:
         item = {
             "segments": [

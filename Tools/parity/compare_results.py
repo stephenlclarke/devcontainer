@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,108 @@ from parity_lib import LANES, ParityError, atomic_json, load_manifest
 PERFORMANCE_TARGET_FACTOR = 1.0
 PERFORMANCE_INVESTIGATION_FACTOR = 2.5
 PERFORMANCE_FAILURE_FACTOR = 10.0
+FINALIZED_SHA_FIELDS = (
+    "candidateReceiptSHA256", "finalizationProvenanceSHA256", "trustedStateSHA256",
+    "archiveSHA256", "preparationSHA256", "inventorySHA256", "signatureInventorySHA256",
+)
+FINALIZED_BINARIES = {
+    "bin/devcontainer", "bin/devcontainer-compose", "bin/devcontainer-engine",
+    "bin/devcontainer-docker", "libexec/container/plugins/devcontainer/bin/devcontainer",
+    "libexec/devcontainer/reference/node",
+}
+FINALIZED_REFERENCE = {
+    "node", "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
+    "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
+    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt",
+}
+SIGNAL_STREAM_PREFIX = b"compose-stdout\n"
+SIGNAL_STREAM_USR1 = b"signal:USR1\n"
+SIGNAL_STREAM_TERM = b"signal:TERM\n"
+
+
+def valid_signal_stream(value: Any) -> bool:
+    """Validate the closed, lossless E13 signal-stream measurement."""
+    if not isinstance(value, dict) or set(value) != {"stdoutSHA256", "signals", "counts"}:
+        return False
+    digest = value["stdoutSHA256"]
+    signals = value["signals"]
+    counts = value["counts"]
+    if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or not isinstance(signals, list) or len(signals) < 2
+            or not isinstance(counts, dict) or set(counts) != {"SIGUSR1", "SIGTERM"}
+            or type(counts["SIGUSR1"]) is not int or counts["SIGUSR1"] < 1
+            or type(counts["SIGTERM"]) is not int or counts["SIGTERM"] != 1):
+        return False
+    usr1_count = counts["SIGUSR1"]
+    if usr1_count != len(signals) - 1:
+        return False
+    expected_signals = ["SIGUSR1"] * usr1_count + ["SIGTERM"]
+    if signals != expected_signals:
+        return False
+    expected_stdout = SIGNAL_STREAM_PREFIX + SIGNAL_STREAM_USR1 * usr1_count + SIGNAL_STREAM_TERM
+    return hashlib.sha256(expected_stdout).hexdigest() == digest
+
+
+def compare_finalized_inputs(root: Path, lanes: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, list[str]]:
+    """Require one authenticated stock package identity across all three lanes."""
+
+    selected = {lane: payload.get("finalizedPackage") if isinstance(payload, dict) else None
+                for lane, payload in lanes.items()}
+    if all(value is None for value in selected.values()):
+        return None, []
+    errors: list[str] = []
+    identity = selected.get("docker")
+    if not isinstance(identity, dict):
+        errors.append("Docker oracle lacks the common finalized package identity")
+        return None, errors
+    if (identity.get("scope") != "finalized-native-package-runtime-input"
+            or identity.get("kind") != "signed-notarized-native-package"
+            or identity.get("runtimeProfile") != "stock"
+            or re.fullmatch(r"[0-9a-f]{40}", str(identity.get("sourceCommit", ""))) is None
+            or any(re.fullmatch(r"[0-9a-f]{64}", str(identity.get(key, ""))) is None
+                   for key in FINALIZED_SHA_FIELDS)
+            or type(identity.get("archiveSize")) is not int or identity["archiveSize"] <= 0
+            or not isinstance(identity.get("productionBinarySHA256"), dict)
+            or set(identity["productionBinarySHA256"]) != FINALIZED_BINARIES
+            or any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None
+                   for value in identity["productionBinarySHA256"].values())
+            or not isinstance(identity.get("referenceRuntimeFiles"), dict)
+            or set(identity["referenceRuntimeFiles"]) != FINALIZED_REFERENCE
+            or any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None
+                   for value in identity["referenceRuntimeFiles"].values())):
+        errors.append("common finalized package identity is incomplete")
+    harness = lanes["docker"].get("parityHarnessSHA256")
+    if re.fullmatch(r"[0-9a-f]{64}", str(harness)) is None:
+        errors.append("Docker oracle lacks the finalized parity harness identity")
+    for lane in LANES:
+        if selected.get(lane) != identity:
+            errors.append(f"{lane} finalized package differs from Docker comparison identity")
+            continue
+        path = root / lane / "fingerprint.json"
+        if not path.is_file():
+            errors.append(f"{lane} finalized fingerprint is missing")
+            continue
+        try:
+            fingerprint = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            errors.append(f"{lane} finalized fingerprint is unreadable")
+            continue
+        if not isinstance(fingerprint, dict) or fingerprint.get("backend") != lane or fingerprint.get("finalizedPackage") != identity:
+            errors.append(f"{lane} finalized fingerprint differs from results")
+        provider = lanes[lane].get("providerBinarySHA256")
+        if not isinstance(fingerprint, dict) or fingerprint.get("providerBinarySHA256") != provider:
+            errors.append(f"{lane} provider fingerprint differs from results")
+        if (lanes[lane].get("parityHarnessSHA256") != harness
+                or not isinstance(fingerprint, dict)
+                or fingerprint.get("parityHarnessSHA256") != harness):
+            errors.append(f"{lane} parity harness differs from Docker comparison identity")
+        expected = set() if lane == "docker" else {"DEVCONTAINER_CONTAINER_BIN"}
+        if lane == "container-compose":
+            expected.add("DEVCONTAINER_COMPOSE_BIN")
+        if (not isinstance(provider, dict) or set(provider) != expected
+                or any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None for value in provider.values())):
+            errors.append(f"{lane} qualified provider identity is incomplete")
+    return identity, errors
 
 
 def expected_fixtures(manifest_path: Path, suite: str) -> set[str]:
@@ -78,6 +182,8 @@ def compare(
         raise ParityError("comparison requires at least one expected fixture")
 
     evidence_errors: list[str] = []
+    finalized_identity, finalized_errors = compare_finalized_inputs(root, lane_results)
+    evidence_errors.extend(finalized_errors)
     indexed_results: dict[str, dict[str, dict[str, Any]]] = {}
     for lane, payload in lane_results.items():
         if not isinstance(payload, dict):
@@ -109,6 +215,8 @@ def compare(
                 )
                 continue
             by_id[identifier] = result
+            if identifier != "E13-compose-signals" and "signalStream" in result:
+                evidence_errors.append(f"{lane} {identifier} has unexpected signal-stream evidence")
         actual = set(by_id)
         missing = sorted(expected_fixture_ids - actual)
         unexpected = sorted(actual - expected_fixture_ids)
@@ -171,6 +279,18 @@ def compare(
         candidate_ratios: dict[str, float] = {}
         if missing:
             functional_differences.append(f"missing lanes: {', '.join(missing)}")
+        signal_streams: dict[str, Any] = {}
+        if fixture_id == "E13-compose-signals":
+            for lane, result in by_lane.items():
+                stream = result.get("signalStream") if result is not None else None
+                if not valid_signal_stream(stream):
+                    functional_differences.append(f"{lane} E13 signal-stream evidence is missing or invalid")
+                else:
+                    signal_streams[lane] = stream
+            if "docker" in signal_streams:
+                for lane in ("apple-stock", "container-compose"):
+                    if lane in signal_streams and signal_streams[lane] != signal_streams["docker"]:
+                        functional_differences.append(f"{lane} E13 signal stream differs from docker")
         invalid_timings = [
             lane
             for lane, result in by_lane.items()
@@ -345,6 +465,9 @@ def compare(
         },
         "fixtures": comparisons,
     }
+    if finalized_identity is not None:
+        payload["finalizedPackage"] = finalized_identity
+        payload["parityHarnessSHA256"] = lane_results["docker"].get("parityHarnessSHA256")
     return payload, "\n".join(lines) + "\n"
 
 

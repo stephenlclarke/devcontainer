@@ -1,0 +1,9 @@
+{
+  "expected": {
+    "requested_size_inspected": true,
+    "initial_size_before_input": true,
+    "acknowledged_wait": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}

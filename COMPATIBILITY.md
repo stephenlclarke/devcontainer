@@ -2,6 +2,32 @@
 
 ## Current status
 
+The next native release campaign targets the immutable Apple `container` 1.4.1 and external `container-compose` 0.15.1 assets in the release lock, with the designated macOS 27.0 build 26A428, Xcode 27.0 build 27A266a and Swift 6.4.0.34.1 host. The 28-fixture, three-lane contract requires 84 fresh cells, including actual Compose lifecycle and VS Code sessions. Updated pins and previously released SDK assets are inputs to qualification; they do not establish new supported behavior or permit historical evidence to be relabeled.
+
+E13's complete-release comparison requires measured guest signal output, including its exact hash, signal counts and order, to match the campaign's Docker oracle in both candidate lanes. It does not assume exactly one guest trap per host signal. Missing or unequal stream evidence fails parity; standalone boolean-only cases cannot establish this output contract. Canonical socket paths and CIDR-preserving native network inventory have focused regression coverage, but no complete passing campaign or new release follows from these component fixes.
+
+The E13-only component mode retains exact stream comparison and the full host restoration boundary, but never supplies release authority. Corrected wrapper signal forwarding and explicit native-provider selection require fresh live proof. A measured signal-count difference remains a release blocker; the complete 84-cell campaign is still required.
+
+The unreleased stock-Apple candidate now passes the original C02 dependency fixture, including app-startup DNS, later dependency DNS, health and selected helper service, with verified zero-residue cleanup. [Exact candidate and sealed evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) do not qualify the enhanced lane, quiet benchmarks or a new stable release. Historical C02 failures below describe superseded candidates.
+
+The unreleased gateway candidate preserves bind `CreateMountpoint` as an explicit host-directory creation policy; legacy `Binds` host paths opt in, while structured mounts without the option still require an existing source. Native preparation does not overwrite files or remove caller-owned directories. Apple parser restrictions and unsupported propagation/recursive options still fail explicitly. Component proof does not establish live mount or full C02 parity.
+
+Prepared Compose gateway creation requires the unreleased `ContainerImageReference=1` capability. It preserves historical image spelling separately from immutable launch identity; no new stable or live parity claim follows from its component tests.
+
+Unreleased gateway work preserves finite per-container stop timeouts, including explicit zero, and honors stop/restart query overrides. Indefinite waits remain unsupported, and live Docker stop/restart parity has not been qualified. [Component evidence and bounds](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) do not expand the stable release claims.
+
+The unreleased native gateway distinguishes bare environment-removal keys from empty values through creation, saved metadata and inspection. Legacy CLI creation rejects removal explicitly. [Component proof](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) does not establish live Compose/environment parity.
+
+The unreleased gateway candidate forwards memory bytes, shared-memory size, read-only rootfs, sysctls and stop signal to native creation, with component-tested inspection and recovery. Nonempty settings require native creation; unsupported CLI fallback fails explicitly. VM memory allocation does not establish Docker cgroup accounting parity. Live enforcement and Compose routing remain unqualified; this does not expand the stable matrix. See [component evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
+The unreleased gateway candidate preserves omitted/null versus explicitly cleared entrypoints, including the Engine `[""]` reset form. Descriptor-bound image defaults are resolved before launch and retained in metadata. Native/CLI creation and recovery have component coverage; live process parity remains unqualified. See [the pinned reference and evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
+The unreleased gateway candidate preserves `HostConfig.Dns`, `DnsSearch` and `DnsOptions` through Apple native creation and inspection. Nameservers must be IPv4/IPv6 literals; search domains/options must be nonempty single tokens. Backward-compatible metadata and typed/JSON adoption have component coverage. Live DNS parity and Compose gateway cutover remain unqualified; this does not expand the stable matrix. See [candidate evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
+C02 health-policy projection is an unreleased candidate. It requires a matching Compose stock adapter and an explicitly negotiated gateway capability; unknown gateways or malformed policy fail rather than silently losing health checks. The evaluator uses actual guest probes but remains inspect-driven. Legacy Compose label policy v1 rejects explicit `start_interval`; the candidate direct Engine create API now preserves and applies `StartInterval`, without adding background monitoring or changing first-probe behavior. Managed gateway creation now passes the stock original-command startup lookup as well as running-state DNS, health and service selection. Enhanced/release evidence remains incomplete. This does not expand the stable compatibility matrix. See [C02 evidence and limits](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection).
+
+The unreleased Bazel candidate frontend supports `rm -f/--force` for one complete 64-character hexadecimal or native UUID container ID through the selected private Engine socket. Names, short IDs, multiple targets and volume-removal flags are deliberately rejected. Component, executable/socket and stock live D07 rebuild/cleanup tests pass (`d3a775e0-6b1f-4bc5-ad82-18d86a911e32`); enhanced qualification remains blocked. This narrow command does not claim full Docker CLI compatibility or change the stable baseline below.
+
 > [!IMPORTANT]
 > Version 1.0.1 remains the latest immutable stable compatibility baseline. In
 > its exact tag run, real Docker, stock Apple `container` 1.1.0, and the
@@ -24,6 +50,12 @@ successful compilation, unit tests, or an apparently successful container
 startup are not compatibility evidence.
 
 ## Claim vocabulary
+
+Unreleased D06 port work is `candidate`, not `supported`. The bounded frontend accepts explicit canonical `IPv4:host-port:container-port[/tcp]` with nonzero fixed ports through `-p`/`--publish`. Dynamic ports, ranges, IPv6 and UDP syntax fail before mutation. The pinned Docker reference and stock Apple candidate pass the original loopback fixture, including collision rejection and cleanup; enhanced qualification remains blocked on its exact guest input. These limits describe the new frontend, not the entire Engine API, and do not change the stable matrix.
+
+D07's candidate frontend also accepts explicit named `type=volume` mounts with an absolute target and optional read-only flag. Anonymous volumes, quoted CSV, driver/subpath/propagation options and invalid names are rejected before create. Docker and the corrected stock candidate pass the reuse/rebuild fixture and cleanup; enhanced qualification remains blocked on its published guest input. This does not promote the stable compatibility matrix.
+
+Unreleased Bazel D02 work is `candidate`, not `supported`: the Docker reference and stock Apple candidate pass their unchanged observations and cleanup, while enhanced prerequisites and release qualification remain open. Stock evidence is `3530b684-a77e-42fb-b1a0-11e4c507e401` at `106144a`. The native build frontend currently accepts local contexts, explicit Dockerfile/tag/target/build-argument forms and bounded streamed progress. Existing `.dockerignore` files, remote/stdin contexts, implicit environment arguments, oversized inputs and other unimplemented flags fail explicitly. This does not widen the stable compatibility matrix or certify full Docker-build semantics. Native image-layer inspection is additive; older provider snapshots lacking layer data remain decodable and do not fabricate ancestry.
 
 | State | Meaning |
 | --- | --- |
@@ -60,6 +92,12 @@ or another implementation module.
 
 ## Pinned 1.0.1 release provenance
 
+Current development source separates Compose frontend choice from runtime ownership and rejects missing frontend executables before claiming state. Component tests cover both frontend choices with both runtime backends and reject cross-runtime claim migration. These tests do not certify additional frontend/runtime combinations; the immutable 1.0.1 matrix below remains the release claim.
+
+The candidate native-create path also distinguishes failed local preparation from uncertain runtime submission. Mount/kernel failures do not create pending container intent, while failures after journalling retain it. Component tests do not substitute for live creation/recovery qualification.
+
+The candidate image-build path preserves completed builder progress and emits an in-band Docker build error only after recording failed reconciliation. Preflight, cancellation and abandonment remain failures. Stock/enhanced component checks do not replace live E04 builder/failure-phase qualification or change the historical release matrix below.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each
@@ -82,6 +120,12 @@ component's machine-readable version output.
 
 ## Current source dependency profiles
 
+The September 2026 Bazel requalification has found a specific gap with released devcontainer 1.0.1 and stock Apple Container 1.4.1: inspection by the original OCI configuration digest returns 404 before E02 creates its guest. Configuration-digest lookup and descriptor-bound native creation are implemented in the development branch with focused tests, not release certification. Live SDK transport, alias-safe image mutations and the complete parity cycle remain open. See the [retained attempt evidence](docs/bazel-test-harness.md#approved-helpers-and-first-stock-protocol-pass). Do not extend the historical 1.1.0 matrix above to this newer runtime combination.
+
+Draft creation recovery uses current state schema 6 and requires `RuntimeCreationStore` for direct native creation. It retains uncertain operations and blocks launch/exec/archive/rename of the affected incarnation without unsafe automatic deletion. Schema-2/3/4/5 metadata migration is supported; older binaries cannot open the upgraded state. Legacy output journals retain raw evidence but refuse projected replay/new capture because their natural EOF boundaries are unknown. Operator reconciliation and live interrupted-create proof are still outstanding, so this is not a completed recovery/parity claim. [Native creation recovery](DESIGN.md#native-creation-recovery) specifies the exact scope and rollback rule.
+
+Unreleased native `attach?logs=1` uses schema-6 versioned `json-file` projection for engine-owned process generations. Live output remains raw; saved logical records replace invalid UTF-8 like the pinned Docker driver. Natural source EOF, not cancellation or an active snapshot, flushes an unfinished record. Capture retains independent raw evidence and saved logs across clean restart/reopen, with an atomic log/live subscription boundary. It does not relabel merged native logs. Each raw/projected stream has a 1-GiB payload and 1,048,576-row budget; generation metadata also has a 1,048,576-row bound. Five-minute replay, 256-frame live buffering and refusal of interrupted, legacy or external capture remain explicit development constraints. Inspection advertises the retained logger only when supported native creation/process capture and durable storage selected it. Reopening with an incompatible engine configuration cannot silently discard that policy at start/restart. General `/logs` and complete Docker foreground parity remain unqualified. See [source-aware output history](DESIGN.md#source-aware-output-history).
+
 Current `main` builds two explicit dependency graphs. These are compile and
 hosted-test inputs, not a new runtime-parity claim. The latest source-bearing
 runtime workflow did not produce complete lane evidence, so the release
@@ -99,10 +143,13 @@ That post-release repin is not attributed to the 1.0.1 tag.
 | Stock `apple/container` | 1.4.1 at `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Unmodified Apple dependency selected by `Package.stock.resolved`; compile/test evidence only |
 | Stock `apple/containerization` | 0.45.0 at `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited official Apple dependency in the stock graph |
 | Stock `apple/swift-nio-ssl` | 2.37.4 at `03827c1a9fdb2b6b00a4e93ede8861520263af8c` | Official dependency in the stock graph |
-| Enhanced `stephenlclarke/container` | `228897171d71975988ccdc690f1982e7433952af` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/containerization` | `b404e03bb914904107a6a9305ba1f0e44c79a59c` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/swift-nio-ssl` | `3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Shared `stephenlclarke/container-engine-api` | `84830606abf971110071248e087a80ff4abb86d4` | Selected by both profiles; newer than published tag 0.3.5 and therefore recorded as a revision, not a release version |
+| Enhanced `stephenlclarke/container` | `f86fea2236fab118c0e0c6f8be5eb7672df894e2` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
+| Enhanced `stephenlclarke/containerization` | `6db16197bbad8196a78132f86529daa89125aafb` | Exact nested revision selected by the enhanced Container package and `Package.resolved`; no stock-Apple claim |
+| Enhanced `apple/swift-nio-ssl` | `322f3c2a4a21df31c84ca416bf65ee5e9059e440` | Resolved transitive dependency of the selected enhanced graph; no stock-Apple runtime claim |
+| Enhanced `stephenlclarke/container-engine-api` | `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Exact revision selected by the enhanced Container package and `Package.resolved`; no stock-Apple claim |
+| Stock `stephenlclarke/container-engine-api` | `40436017e1e93012b8dab7cfc3c79783538065c3` | Exact revision selected by the stock graph |
+
+The enhanced source graph now follows the nested revisions selected by its Container package. The replacement enhanced Foundation archive `f4127f90` is published, freshly downloaded and admitted, with 57 CLI and 25 Service cases passing. The older enhanced Foundation, Containerization, Engine API and Container SDK archives cannot qualify this graph. Containerization `0329ac5e` and Engine API `4c249211` are also published, downloaded and admitted against that Foundation release; their full source-mode qualifications pass 287 runtime and 162 API/service cases. The enhanced Container SDK `ea37bb64` is now published, freshly downloaded and admitted against those exact layers, with all 287 required source-mode runtime cases passing at clean producer `07ab7fc`. Final Devcontainer package and live qualification remain pending. Unchanged stock layer archives remain reusable through their authenticated finite compatibility checks.
 
 `Package.resolved` and `Package.stock.resolved` are authoritative for source
 builds. The parity manifest becomes authoritative for a newer runtime claim
@@ -154,10 +201,7 @@ The shared gateway owns the public version and route envelope. In normal mode, `
 The bounded endpoint surface is:
 
 - ping, version, information, and API negotiation;
-- container list, create, inspect, start, stop, kill, wait, remove, logs, raw
-  attach, and binary WebSocket attach; stock running-container resize is
-  deliberately unadvertised because Apple Containerization does not expose the
-  exact active init-process handle;
+- container list, create, inspect, start, stop, kill, wait, remove, logs, raw attach, and binary WebSocket attach; the unreleased candidate also declares running-terminal resize for init processes whose native handle it retained during bootstrap. Externally started/reopened processes are not silently adopted. Stock E08 passes; enhanced and full release qualification remain pending, so this does not extend stable-release support;
 - exec create, start, resize, inspect, cancellation, and TTY/non-TTY streams;
 - archive upload/download and path metadata;
 - image list, inspect, pull, build, tag, and remove;
@@ -271,6 +315,8 @@ terminal, port forwarding, rebuild, reopen, and cleanup smoke tests.
 ## Provider ownership and split-brain prevention
 
 Compose provider selection is durable project state:
+
+New configurations default to Docker Compose for stock Apple and the independently installed `container-compose` frontend for the matched fork, preserving explicit saved selections. Native frontend discovery and mutation receive the resolved Engine socket and Container executable rather than ambient Compose overrides. Focused configuration tests prove this handoff on both backend choices; published compatibility and live stock/enhanced Compose qualification are unchanged.
 
 1. Before the first resource-changing Compose command, the dispatcher consumes every supported global option, fails closed on an option it cannot classify, acquires a project-scoped lease, and records either `stock` or `container-compose`.
 2. The key is based on the local user and canonical Compose project name. An explicit `-p` or `COMPOSE_PROJECT_NAME` is validated directly; otherwise the selected provider's `config --format json` resolves file, top-level `name:`, project-directory, and current-directory precedence. The invocation project directory is retained as diagnostic metadata, not as an independent ownership domain.

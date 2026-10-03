@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "inherited_size": true,
+    "host_resize": true,
+    "tty_selected": true,
+    "stdin_roundtrip": true,
+    "merged_streams": true,
+    "exact_exit": true,
+    "auto_remove": true
+  }
+}

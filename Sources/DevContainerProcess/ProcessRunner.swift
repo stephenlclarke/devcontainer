@@ -14,7 +14,6 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
-import ContainerizationOS
 import Darwin
 import DevContainerModel
 import Foundation
@@ -50,29 +49,48 @@ public enum ProcessRunner {
         input: Data? = nil,
         maximumOutputBytes: Int? = nil
     ) throws -> CapturedProcessResult {
+        try Task.checkCancellation()
+        let context = RuntimeRequestScope.context
         let semaphore = DispatchSemaphore(value: 0)
         let result = SynchronousProcessResult()
-        Task.detached {
+        let operation = Task.detached {
             do {
-                try await result.store(
-                    .success(
-                        captured(
-                            executable: executable,
-                            arguments: arguments,
-                            environment: environment,
-                            workingDirectory: workingDirectory,
-                            input: input,
-                            maximumOutputBytes: maximumOutputBytes
-                        )
+                // Detached work avoids blocking the caller's executor, but must
+                // explicitly retain its request identity and bounded lifetime.
+                let capturedResult = try await withRequestScope(context) {
+                    try await captured(
+                        executable: executable,
+                        arguments: arguments,
+                        environment: environment,
+                        workingDirectory: workingDirectory,
+                        input: input,
+                        maximumOutputBytes: maximumOutputBytes
                     )
-                )
+                }
+                result.store(.success(capturedResult))
             } catch {
                 result.store(.failure(error))
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        // Synchronous callers cannot install an async cancellation handler.
+        // Forward their cancellation while still waiting for owned cleanup.
+        while semaphore.wait(timeout: .now() + .milliseconds(50)) == .timedOut {
+            if Task.isCancelled {
+                operation.cancel()
+            }
+        }
+        try Task.checkCancellation()
         return try result.load().get()
+    }
+
+    private static func withRequestScope<Result: Sendable>(
+        _ context: RuntimeRequestContext?,
+        operation: @escaping @Sendable () async throws -> Result
+    ) async throws -> Result {
+        try await RuntimeRequestScope.$context.withValue(context) {
+            try await RuntimeRequestScope.withDeadline(operation)
+        }
     }
 
     // Launch, drain, cancellation, escalation, and reap form one ownership
@@ -94,7 +112,7 @@ public enum ProcessRunner {
         let standardInput = input.map { _ in Pipe() }
         let standardOutput = Pipe()
         let standardError = Pipe()
-        var command = configuredCommand(
+        let command = configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -139,16 +157,16 @@ public enum ProcessRunner {
         let runningCommand = command
         let waitTask = Task.detached {
             try await performThrowingBlocking {
-                try runningCommand.wait()
+                try runningCommand.waitUntilExit()
             }
         }
         return try await withTaskCancellationHandler {
             do {
                 try await inputTask.value
-                let exitCode = try await waitTask.value
-                termination.didExit()
+                try await waitTask.value
                 let output = await outputTask.value
                 let error = await errorTask.value
+                let exitCode = try termination.reap { try runningCommand.wait() }
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
                 return CapturedProcessResult(
@@ -161,9 +179,9 @@ public enum ProcessRunner {
             } catch {
                 termination.cancel()
                 _ = try? await waitTask.value
-                termination.didExit()
                 _ = await outputTask.value
                 _ = await errorTask.value
+                _ = try? termination.reap { try runningCommand.wait() }
                 throw error
             }
         } onCancel: {
@@ -179,7 +197,7 @@ public enum ProcessRunner {
     ) async throws -> Int32 {
         try Task.checkCancellation()
         try RuntimeRequestScope.checkActive()
-        var command = configuredCommand(
+        let command = configuredCommand(
             executable: executable,
             arguments: arguments,
             environment: environment,
@@ -188,32 +206,67 @@ public enum ProcessRunner {
         command.stdin = FileHandle.standardInput
         command.stdout = FileHandle.standardOutput
         command.stderr = FileHandle.standardError
+        let signalRelay = try ProcessSignalRelay(command: command)
         let ownsTerminal = isatty(STDIN_FILENO) == 1
         let parentProcessGroup = ownsTerminal ? getpgrp() : nil
-        command.attrs.setForegroundPGroup = ownsTerminal
+        defer { restoreForegroundProcessGroup(parentProcessGroup) }
+        command.attributes.setForegroundProcessGroup = ownsTerminal
         let termination = OwnedProcessTermination()
-        try command.start()
+        do {
+            try command.start()
+        } catch {
+            _ = try? signalRelay.finish()
+            throw error
+        }
         termination.didLaunch(processGroup: command.pid)
+        signalRelay.childStarted()
+        return try await waitForInheritedProcess(
+            command: command,
+            signalRelay: signalRelay,
+            termination: termination
+        )
+    }
+
+    private static func waitForInheritedProcess(
+        command: ProcessCommand,
+        signalRelay: ProcessSignalRelay,
+        termination: OwnedProcessTermination
+    ) async throws -> Int32 {
         let runningCommand = command
         let waitTask = Task.detached {
             try await performThrowingBlocking {
-                try runningCommand.wait()
+                try runningCommand.waitUntilExit()
             }
         }
         return try await withTaskCancellationHandler {
-            defer {
-                restoreForegroundProcessGroup(parentProcessGroup)
-            }
             do {
-                let exitCode = try await waitTask.value
-                termination.didExit()
+                try await waitTask.value
+                let relayResult = Result { try signalRelay.finish() }
+                let exitCode = try termination.reap { try runningCommand.wait() }
+                try relayResult.get()
                 try Task.checkCancellation()
                 try RuntimeRequestScope.checkActive()
                 return exitCode
             } catch {
                 termination.cancel()
-                _ = try? await waitTask.value
-                termination.didExit()
+                let exitObserved: Bool
+                do {
+                    try await waitTask.value
+                    exitObserved = true
+                } catch {
+                    exitObserved = false
+                }
+                if exitObserved {
+                    _ = try? signalRelay.finish()
+                    _ = try? termination.reap { try runningCommand.wait() }
+                } else {
+                    // If WNOWAIT failed, keep forwarding installed while wait()
+                    // atomically serializes PID release against exact-child signals.
+                    _ = try? await performThrowingBlocking {
+                        try termination.reap { try runningCommand.wait() }
+                    }
+                    _ = try? signalRelay.finish()
+                }
                 throw error
             }
         } onCancel: {
@@ -226,15 +279,15 @@ public enum ProcessRunner {
         arguments: [String],
         environment: [String: String],
         workingDirectory: URL?
-    ) -> Command {
-        var command = Command(
+    ) -> ProcessCommand {
+        let command = ProcessCommand(
             executable.path,
             arguments: arguments,
             environment: environment.sorted { $0.key < $1.key }
                 .map { "\($0.key)=\($0.value)" },
             directory: workingDirectory?.path
         )
-        command.attrs.setPGroup = true
+        command.attributes.setProcessGroup = true
         return command
     }
 
@@ -271,7 +324,7 @@ public enum ProcessRunner {
         guard let maximumBytes else {
             return chunkBytes
         }
-        return max(0, maximumBytes - retainedBytes)
+        return min(chunkBytes, max(0, maximumBytes - retainedBytes))
     }
 
     private static func performBlocking<Value: Sendable>(
@@ -307,6 +360,153 @@ public enum ProcessRunner {
         let previous = Darwin.signal(SIGTTOU, SIG_IGN)
         _ = tcsetpgrp(STDIN_FILENO, processGroup)
         _ = Darwin.signal(SIGTTOU, previous)
+    }
+}
+
+/// Dispatch sources receive signals while the caller's dispositions are ignored.
+/// Restore those dispositions only after event and cancellation handlers drain.
+/// Forwarding and `waitpid` share the command lock: the normal WNOWAIT path finishes
+/// the relay before reaping, while the WNOWAIT-error path waits under that lock first.
+private final class ProcessSignalRelay: @unchecked Sendable {
+    private static let registry = ProcessSignalRelayRegistry()
+    private static let signals: [Int32] = [SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2, SIGWINCH]
+
+    private let command: ProcessCommand
+    private let queue = DispatchQueue(label: "devcontainer.process.signal-relay")
+    private let cancellationGroup = DispatchGroup()
+    private var sources: [DispatchSourceSignal] = []
+    private var previousActions: [(Int32, sigaction)] = []
+    private var pendingSignals: [Int32] = []
+    private var targetIsReady = false
+    private var isFinished = false
+    private var forwardingError: (any Error)?
+    private var finishError: (any Error)?
+
+    init(command: ProcessCommand) throws {
+        self.command = command
+        guard Self.registry.acquire() else { throw POSIXError(.EBUSY) }
+        do {
+            try installSources()
+        } catch {
+            _ = try? finish()
+            throw error
+        }
+    }
+
+    func childStarted() {
+        queue.sync {
+            targetIsReady = true
+            for signal in pendingSignals {
+                forward(signal)
+            }
+            pendingSignals.removeAll(keepingCapacity: false)
+        }
+    }
+
+    func finish() throws {
+        guard !isFinished else {
+            if let finishError {
+                throw finishError
+            }
+            if let forwardingError {
+                throw forwardingError
+            }
+            return
+        }
+        queue.sync { isFinished = true }
+        for source in sources {
+            source.cancel()
+        }
+        // Cancellation handlers run after queued event handlers on the source queue.
+        // Join them before restoring the process-wide signal dispositions.
+        cancellationGroup.wait()
+        queue.sync {
+            // Drain queued signal handlers before restoring process-wide dispositions.
+        }
+        var firstError: (any Error)?
+        for (number, savedAction) in previousActions.reversed() {
+            var action = savedAction
+            if sigaction(number, &action, nil) < 0, firstError == nil {
+                firstError = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+        for source in sources {
+            source.setEventHandler(handler: nil)
+        }
+        previousActions.removeAll(keepingCapacity: false)
+        sources.removeAll(keepingCapacity: false)
+        Self.registry.release()
+        finishError = firstError
+        if let firstError {
+            throw firstError
+        }
+        if let forwardingError {
+            throw forwardingError
+        }
+    }
+
+    private func installSources() throws {
+        for number in Self.signals {
+            var previous = sigaction()
+            guard sigaction(number, nil, &previous) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            previousActions.append((number, previous))
+
+            var ignored = sigaction()
+            sigemptyset(&ignored.sa_mask)
+            ignored.sa_flags = 0
+            ignored.__sigaction_u.__sa_handler = SIG_IGN
+            guard sigaction(number, &ignored, nil) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+
+            let source = DispatchSource.makeSignalSource(signal: number, queue: queue)
+            source.setEventHandler { [weak self] in self?.receive(number, count: source.data) }
+            cancellationGroup.enter()
+            source.setCancelHandler { [cancellationGroup] in cancellationGroup.leave() }
+            source.resume()
+            sources.append(source)
+        }
+    }
+
+    private func receive(_ signal: Int32, count: UInt) {
+        guard !isFinished else { return }
+        let occurrences = max(1, count)
+        guard targetIsReady else {
+            pendingSignals.append(contentsOf: repeatElement(signal, count: Int(clamping: occurrences)))
+            return
+        }
+        for _ in 0 ..< occurrences {
+            forward(signal)
+        }
+    }
+
+    private func forward(_ signal: Int32) {
+        do {
+            _ = try command.forwardSignal(signal)
+        } catch {
+            if forwardingError == nil {
+                forwardingError = error
+            }
+        }
+    }
+}
+
+private final class ProcessSignalRelayRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOwned = false
+
+    func acquire() -> Bool {
+        lock.withLock {
+            guard !isOwned else { return false }
+            isOwned = true
+            return true
+        }
+    }
+
+    func release() {
+        lock.withLock { isOwned = false }
     }
 }
 
@@ -350,65 +550,65 @@ public final class OwnedProcessTermination: @unchecked Sendable {
     }
 
     public func didLaunch(processGroup: pid_t) {
-        let cancelImmediately = lock.withLock {
+        lock.withLock {
             self.processGroup = processGroup
             running = true
-            return cancellationRequested
-        }
-        if cancelImmediately {
-            beginTermination(processGroup)
+            if cancellationRequested {
+                beginTermination(processGroup)
+            }
         }
     }
 
     public func didExit() {
-        lock.withLock {
-            running = false
-            escalation?.cancel()
-            escalation = nil
-            processGroup = nil
+        lock.withLock { clearOwnership() }
+    }
+
+    /// Caller first observes WNOWAIT exit and finishes draining inherited pipes.
+    /// Reaping and clearing ownership are atomic relative to group signalling.
+    func reap(_ operation: () throws -> Int32) throws -> Int32 {
+        try lock.withLock {
+            guard running else { throw POSIXError(.ECHILD) }
+            defer { clearOwnership() }
+            return try operation()
         }
+    }
+
+    private func clearOwnership() {
+        running = false
+        escalation?.cancel()
+        escalation = nil
+        processGroup = nil
     }
 
     public func cancel() {
-        let processGroup = lock.withLock { () -> pid_t? in
+        lock.withLock {
             guard !cancellationRequested else {
-                return nil
+                return
             }
             cancellationRequested = true
-            return running ? self.processGroup : nil
-        }
-        if let processGroup {
-            beginTermination(processGroup)
+            if running, let processGroup {
+                beginTermination(processGroup)
+            }
         }
     }
 
+    /// Called only while ownership is locked; the leader has not been reaped.
     private func beginTermination(_ processGroup: pid_t) {
         _ = Darwin.kill(-processGroup, SIGTERM)
         let work = DispatchWorkItem { [weak self] in
             self?.forceTerminate(processGroup)
         }
-        let shouldSchedule = lock.withLock {
-            guard running, self.processGroup == processGroup else {
-                return false
-            }
-            escalation = work
-            return true
-        }
-        if shouldSchedule {
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.gracePeriod,
-                execute: work
-            )
-        }
+        escalation = work
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + Self.gracePeriod,
+            execute: work
+        )
     }
 
     private func forceTerminate(_ processGroup: pid_t) {
-        let stillOwned = lock.withLock {
-            running && self.processGroup == processGroup
+        lock.withLock {
+            guard running, self.processGroup == processGroup else { return }
+            _ = Darwin.kill(-processGroup, SIGKILL)
         }
-        guard stillOwned else {
-            return
-        }
-        _ = Darwin.kill(-processGroup, SIGKILL)
     }
 }

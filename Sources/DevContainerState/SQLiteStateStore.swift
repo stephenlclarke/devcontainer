@@ -20,12 +20,11 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-// Schema and statement helpers remain colocated while the v3 migration is the
-// only supported upgrade path.
+// Schema and statement helpers remain colocated for transactional migrations.
 // swiftlint:disable file_length
 
-public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
-    public static let schemaVersion = 3
+public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
+    public static let schemaVersion = 6
 
     private let handle: SQLiteHandle
     private var database: OpaquePointer {
@@ -35,8 +34,16 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
     public let path: URL
 
     public init(path: URL) throws {
-        self.path = path.standardizedFileURL
-        try Self.prepareParentDirectory(for: self.path)
+        try Self.prepareParentDirectory(for: path)
+        // Foundation can rewrite an existing /private/var database path back
+        // through /var. Resolve only the checked parent: the database leaf
+        // must retain its identity for the output connection's NOFOLLOW guard.
+        guard let resolvedParent = realpath(path.deletingLastPathComponent().path, nil) else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { free(resolvedParent) }
+        self.path = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
+            .appendingPathComponent(path.lastPathComponent)
 
         var handle: OpaquePointer?
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
@@ -51,6 +58,11 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
         self.handle = SQLiteHandle(pointer: handle)
 
         do {
+            // Native output uses its own short WAL transactions. Lifecycle
+            // writes must tolerate that bounded contention, not fail at once.
+            guard sqlite3_busy_timeout(handle, 1000) == SQLITE_OK else {
+                throw Self.sqliteError(handle, prefix: "cannot bound state database contention")
+            }
             try Self.execute(handle, sql: "PRAGMA foreign_keys = ON")
             try Self.execute(handle, sql: "PRAGMA journal_mode = WAL")
             try Self.execute(handle, sql: "PRAGMA synchronous = FULL")
@@ -519,6 +531,15 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
     public func recordContainerMetadata(
         _ metadata: RuntimeContainerMetadata
     ) throws {
+        try transaction {
+            guard try pendingContainerCreation(id: metadata.runtimeID.rawValue) == nil else {
+                throw DevContainerError(.conflict, message: "cannot adopt an incomplete container creation")
+            }
+            try writeContainerMetadata(metadata)
+        }
+    }
+
+    private func writeContainerMetadata(_ metadata: RuntimeContainerMetadata) throws {
         let specification = try JSONEncoder().encode(metadata.spec)
         let sql = """
         INSERT INTO runtime_containers (
@@ -543,6 +564,83 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeMetadataStore {
                 to: statement
             )
             try stepDone(statement)
+        }
+    }
+
+    public func beginContainerCreation(_ creation: RuntimeContainerCreation) throws {
+        try transaction {
+            guard try pendingContainerCreation(id: creation.runtimeID) == nil else {
+                throw DevContainerError(.conflict, message: "container creation requires reconciliation")
+            }
+            let data = try JSONEncoder().encode(creation)
+            let sql = "INSERT INTO runtime_container_creations (runtime_id, intent_json) VALUES (?, ?)"
+            try withStatement(sql) { statement in
+                try bind(creation.runtimeID, at: 1, to: statement)
+                try bind(data, at: 2, to: statement)
+                try stepDone(statement)
+            }
+        }
+    }
+
+    public func hasPendingContainerCreations() async throws -> Bool {
+        try withStatement("SELECT 1 FROM runtime_container_creations LIMIT 1") { statement in
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: return true
+            case SQLITE_DONE: return false
+            default: throw Self.sqliteError(database, prefix: "cannot check pending container creation")
+            }
+        }
+    }
+
+    public func pendingContainerCreation(id: String) throws -> RuntimeContainerCreation? {
+        try withStatement("SELECT intent_json FROM runtime_container_creations WHERE runtime_id = ?") { statement in
+            try bind(id, at: 1, to: statement)
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE {
+                return nil
+            }
+            guard status == SQLITE_ROW, let data = blob(statement, 0) else {
+                throw Self.sqliteError(database, prefix: "cannot read container creation intent")
+            }
+            let creation = try JSONDecoder().decode(RuntimeContainerCreation.self, from: data)
+            guard creation.runtimeID == id else {
+                throw DevContainerError(.stateCorruption, message: "container creation intent identity differs")
+            }
+            return creation
+        }
+    }
+
+    public func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) throws {
+        try transaction {
+            guard let creation = try pendingContainerCreation(id: metadata.runtimeID.rawValue),
+                  creation.operationID == operationID,
+                  creation.imageID == metadata.imageID,
+                  creation.spec == metadata.spec,
+                  creation.nativeCreatedAt == metadata.createdAt
+            else {
+                throw DevContainerError(.stateCorruption, message: "container creation completion identity differs")
+            }
+            try writeContainerMetadata(metadata)
+            try discardContainerCreation(id: creation.runtimeID, operationID: operationID)
+        }
+    }
+
+    public func discardContainerCreation(id: String, operationID: UUID) throws {
+        guard let creation = try pendingContainerCreation(id: id) else { return }
+        guard creation.operationID == operationID else {
+            throw DevContainerError(.conflict, message: "container creation intent was replaced")
+        }
+        let sql = """
+        DELETE FROM runtime_container_creations
+        WHERE runtime_id = ? AND json_extract(intent_json, '$.operationID') = ?
+        """
+        try withStatement(sql) { statement in
+            try bind(id, at: 1, to: statement)
+            try bind(operationID.uuidString, at: 2, to: statement)
+            try stepDone(statement)
+            guard sqlite3_changes(database) == 1 else {
+                throw DevContainerError(.conflict, message: "container creation intent was replaced")
+            }
         }
     }
 
@@ -722,6 +820,21 @@ extension SQLiteStateStore {
                     }
                     version = 3
                 }
+                if version == 3 {
+                    // schemaSQL has created the separate write-ahead intent table.
+                    version = 4
+                }
+                if version == 4 {
+                    // Existing containers have no inferred/merged history.
+                    // schemaSQL adds journals only when source capture begins.
+                    version = 5
+                }
+                if version == 5 {
+                    try migrateLogProjection(database)
+                    // Boundaryless legacy bytes cannot establish json-file records.
+                    // Their version stays zero; never infer EOF or upgrade history.
+                    version = 6
+                }
                 guard version == Int64(schemaVersion) else {
                     throw DevContainerError(
                         .stateCorruption,
@@ -738,6 +851,17 @@ extension SQLiteStateStore {
         } catch {
             try? execute(database, sql: "ROLLBACK")
             throw error
+        }
+    }
+
+    private static func migrateLogProjection(_ database: OpaquePointer) throws {
+        let columns = try tableColumns(database, table: "runtime_output_journals")
+        for name in ["log_version", "log_sequence", "log_bytes", "generation_count"] where !columns.contains(name) {
+            try execute(
+                database,
+                sql:
+                "ALTER TABLE runtime_output_journals ADD COLUMN \(name) INTEGER NOT NULL DEFAULT 0"
+            )
         }
     }
 
@@ -803,6 +927,46 @@ extension SQLiteStateStore {
         created_at REAL NOT NULL,
         started_at REAL
     );
+    CREATE TABLE IF NOT EXISTS runtime_container_creations (
+        runtime_id TEXT PRIMARY KEY,
+        intent_json BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_journals (
+        docker_id TEXT PRIMARY KEY REFERENCES runtime_containers(docker_id) ON DELETE CASCADE,
+        created_at REAL NOT NULL,
+        generation TEXT NOT NULL,
+        complete INTEGER NOT NULL CHECK(complete IN (-1, 0, 1)),
+        last_sequence INTEGER NOT NULL CHECK(last_sequence >= 0),
+        stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0),
+        log_version INTEGER NOT NULL DEFAULT 0,
+        log_sequence INTEGER NOT NULL DEFAULT 0,
+        log_bytes INTEGER NOT NULL DEFAULT 0,
+        generation_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_frames (
+        docker_id TEXT NOT NULL REFERENCES runtime_output_journals(docker_id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK(sequence > 0),
+        channel INTEGER NOT NULL CHECK(channel IN (1, 2)),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+        PRIMARY KEY(docker_id, sequence)
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_generations (
+        docker_id TEXT NOT NULL REFERENCES runtime_output_journals(docker_id) ON DELETE CASCADE,
+        generation TEXT NOT NULL,
+        sources INTEGER NOT NULL CHECK(sources IN (1, 3)),
+        ended INTEGER NOT NULL DEFAULT 0 CHECK(ended BETWEEN 0 AND 3),
+        PRIMARY KEY(docker_id, generation)
+    );
+    CREATE TABLE IF NOT EXISTS runtime_output_logs (
+        docker_id TEXT NOT NULL,
+        generation TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence > 0),
+        channel INTEGER NOT NULL CHECK(channel IN (1, 2)),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
+        PRIMARY KEY(docker_id, sequence),
+        FOREIGN KEY(docker_id, generation)
+            REFERENCES runtime_output_generations(docker_id, generation) ON DELETE CASCADE
+    );
     CREATE INDEX IF NOT EXISTS resources_project_idx
         ON resources(project_key);
     CREATE INDEX IF NOT EXISTS operations_phase_idx
@@ -835,7 +999,15 @@ extension SQLiteStateStore {
             "runtime_containers": [
                 "runtime_id", "docker_id", "image_id", "specification_json",
                 "created_at", "started_at"
-            ]
+            ],
+            "runtime_container_creations": ["runtime_id", "intent_json"],
+            "runtime_output_journals": [
+                "docker_id", "created_at", "generation", "complete", "last_sequence", "stored_bytes",
+                "log_version", "log_sequence", "log_bytes", "generation_count"
+            ],
+            "runtime_output_frames": ["docker_id", "sequence", "channel", "payload"],
+            "runtime_output_generations": ["docker_id", "generation", "sources", "ended"],
+            "runtime_output_logs": ["docker_id", "generation", "sequence", "channel", "payload"]
         ]
         for (table, expected) in expectedColumns {
             let actual = try tableColumns(database, table: table)
@@ -1081,6 +1253,33 @@ extension SQLiteStateStore {
         -1,
         to: sqlite3_destructor_type.self
     )
+}
+
+public extension SQLiteStateStore {
+    func pendingContainerCreations() async throws -> [RuntimeContainerCreation] {
+        let sql = "SELECT runtime_id, intent_json FROM runtime_container_creations ORDER BY runtime_id"
+        return try withStatement(sql) { statement in
+            var creations: [RuntimeContainerCreation] = []
+            while true {
+                let status = sqlite3_step(statement)
+                if status == SQLITE_DONE {
+                    return creations
+                }
+                guard status == SQLITE_ROW,
+                      !text(statement, 0).isEmpty,
+                      let data = blob(statement, 1)
+                else {
+                    throw Self.sqliteError(database, prefix: "cannot list pending container creations")
+                }
+                let runtimeID = text(statement, 0)
+                let creation = try JSONDecoder().decode(RuntimeContainerCreation.self, from: data)
+                guard creation.runtimeID == runtimeID else {
+                    throw DevContainerError(.stateCorruption, message: "container creation intent identity differs")
+                }
+                creations.append(creation)
+            }
+        }
+    }
 }
 
 private final class SQLiteHandle: @unchecked Sendable {

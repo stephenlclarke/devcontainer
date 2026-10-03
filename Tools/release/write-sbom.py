@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dependency_metadata import load_dependencies
+from reference_runtime_metadata import packages_from_root
 from versioning import require_commit, require_semantic_version
 
 
@@ -35,6 +36,7 @@ def main() -> int:
         type=Path,
         default=Path("Tools/release/dependency-licenses.json"),
     )
+    parser.add_argument("--reference-runtime-root", type=Path)
     args = parser.parse_args()
     version = require_semantic_version(args.version)
     commit = (
@@ -83,6 +85,15 @@ def main() -> int:
                 "relatedSpdxElement": identifier,
             }
         )
+    if args.reference_runtime_root is not None:
+        for package in packages_from_root(args.reference_runtime_root, version=version,
+                                          commit=commit, resolved=args.resolved):
+            packages.append(package)
+            relationships.append({
+                "spdxElementId": "SPDXRef-Package-devcontainer",
+                "relationshipType": "DEPENDS_ON",
+                "relatedSpdxElement": package["SPDXID"],
+            })
     namespace_hash = hashlib.sha256(
         f"devcontainer:{version}:{commit}".encode()
     ).hexdigest()

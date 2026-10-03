@@ -61,6 +61,16 @@ class ValidateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "docker.cliSHA256"):
             validate_manifest(payload)
 
+    def test_docker_buildx_digest_and_version_are_required(self) -> None:
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["docker"]["buildxSHA256"] = "not-a-digest"
+        with self.assertRaisesRegex(ManifestError, "docker.buildxSHA256"):
+            validate_manifest(payload)
+        payload = copy.deepcopy(self.payload)
+        payload["referencePins"]["docker"]["buildxVersion"] = "latest"
+        with self.assertRaisesRegex(ManifestError, "docker.buildxVersion"):
+            validate_manifest(payload)
+
     def test_devcontainers_cli_commit_is_required(self) -> None:
         payload = copy.deepcopy(self.payload)
         payload["referencePins"]["devcontainersCli"]["commit"] = "not-a-commit"

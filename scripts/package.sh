@@ -35,6 +35,24 @@ if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
+  : "${DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY:?set the internally retained completed native package directory}"
+  : "${DEVCONTAINER_NATIVE_FINALIZATION_SHA256:?set the independently supplied finalization provenance SHA-256}"
+  : "${DEVCONTAINER_NATIVE_SSD_SCRATCH:?set enrolled SSD scratch for archive verification}"
+  adapter_arguments=(
+    --repository "$repository_root"
+    --finalized-directory "$DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY"
+    --finalization-sha256 "$DEVCONTAINER_NATIVE_FINALIZATION_SHA256"
+    --lane "$lane"
+    --profile "${DEVCONTAINER_NATIVE_RELEASE_PROFILE:-stock}"
+    --run-number "$run_number"
+    --publish-sha "${PUBLISH_SHA:-}"
+    --ssd-scratch "$DEVCONTAINER_NATIVE_SSD_SCRATCH"
+  )
+  python3 Tools/release/consume-native-finalized-package.py "${adapter_arguments[@]}"
+  exit 0
+fi
+
 dist="$repository_root/dist"
 context="$dist/package-context.json"
 mkdir -p "$dist"
@@ -101,12 +119,6 @@ python3 Tools/release/write-third-party-notices.py \
   --checkouts .build/checkouts \
   --output "$stage/share/devcontainer/THIRD-PARTY-NOTICES.txt"
 
-if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
-  Tools/release/sign-and-notarize.sh \
-    "$stage" \
-    "$stage/share/devcontainer/notarization.json"
-fi
-
 python3 Tools/release/create-reproducible-archive.py \
   --source "$stage" \
   --output "$archive" \
@@ -121,8 +133,5 @@ verification_arguments=(
   --expected-commit "$commit"
   --output "$archive.verification.json"
 )
-if [[ "${DEVCONTAINER_SIGNING_REQUIRED:-0}" == "1" ]]; then
-  verification_arguments+=(--require-notarization)
-fi
 python3 Tools/release/verify-package.py "${verification_arguments[@]}"
 printf '%s\n' "$archive"

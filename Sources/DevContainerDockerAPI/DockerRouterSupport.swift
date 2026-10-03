@@ -201,6 +201,13 @@ extension DockerRouter {
     func validateCreateContainerRequest(
         _ request: DockerCreateContainerRequest
     ) throws {
+        if let interval = request.healthcheck?.startInterval,
+           interval != 0 && interval < 1_000_000
+        {
+            throw DevContainerError(
+                .invalidRequest, message: "Healthcheck.StartInterval must be zero or at least one millisecond"
+            )
+        }
         if request.domainname?.isEmpty == false {
             try unsupportedCreateField("Domainname")
         }
@@ -219,17 +226,8 @@ extension DockerRouter {
         if request.shell?.isEmpty == false {
             try unsupportedCreateField("Shell")
         }
-        if request.stdinOnce == true {
-            try unsupportedCreateField("StdinOnce")
-        }
-        if let stopSignal = request.stopSignal,
-           !stopSignal.isEmpty,
-           !["SIGTERM", "TERM"].contains(stopSignal.uppercased())
-        {
-            try unsupportedCreateField("StopSignal")
-        }
-        if let stopTimeout = request.stopTimeout, stopTimeout != 0 {
-            try unsupportedCreateField("StopTimeout")
+        if let stopTimeout = request.stopTimeout {
+            try Self.validateStopTimeout(Int64(stopTimeout))
         }
         for (index, mount) in (request.mounts ?? []).enumerated() {
             try validateAdvancedMountOptions(
@@ -243,7 +241,6 @@ extension DockerRouter {
         }
 
         let numericFields: [(String, Int64?)] = [
-            ("HostConfig.Memory", host.memory),
             ("HostConfig.MemorySwap", host.memorySwap),
             ("HostConfig.MemoryReservation", host.memoryReservation),
             ("HostConfig.NanoCpus", host.nanoCPUs),
@@ -254,8 +251,7 @@ extension DockerRouter {
             ("HostConfig.CpuQuota", host.cpuQuota),
             ("HostConfig.CpuRealtimePeriod", host.cpuRealtimePeriod),
             ("HostConfig.CpuRealtimeRuntime", host.cpuRealtimeRuntime),
-            ("HostConfig.PidsLimit", host.pidsLimit),
-            ("HostConfig.ShmSize", host.shmSize)
+            ("HostConfig.PidsLimit", host.pidsLimit)
         ]
         if let field = numericFields.first(where: { ($0.1 ?? 0) != 0 })?.0 {
             try unsupportedCreateField(field)
@@ -285,9 +281,6 @@ extension DockerRouter {
             try unsupportedCreateField(field)
         }
         for (field, values) in [
-            ("HostConfig.Dns", host.dns),
-            ("HostConfig.DnsOptions", host.dnsOptions),
-            ("HostConfig.DnsSearch", host.dnsSearch),
             ("HostConfig.ExtraHosts", host.extraHosts),
             ("HostConfig.GroupAdd", host.groupAdd),
             ("HostConfig.Links", host.links),
@@ -325,7 +318,7 @@ extension DockerRouter {
         {
             try unsupportedCreateField("HostConfig.ConsoleSize")
         }
-        if host.logConfig?.type?.isEmpty == false
+        if (host.logConfig?.type?.isEmpty == false && host.logConfig?.type != "json-file")
             || host.logConfig?.config?.isEmpty == false
         {
             try unsupportedCreateField("HostConfig.LogConfig")
@@ -342,14 +335,8 @@ extension DockerRouter {
         if host.publishAllPorts == true {
             try unsupportedCreateField("HostConfig.PublishAllPorts")
         }
-        if host.sysctls?.isEmpty == false {
-            try unsupportedCreateField("HostConfig.Sysctls")
-        }
         if host.ulimits?.isEmpty == false {
             try unsupportedCreateField("HostConfig.Ulimits")
-        }
-        if host.readOnlyRootFilesystem == true {
-            try unsupportedCreateField("HostConfig.ReadonlyRootfs")
         }
         if host.oomKillDisable == true {
             try unsupportedCreateField("HostConfig.OomKillDisable")
@@ -505,7 +492,7 @@ extension DockerRouter {
         if let options = mount.bindOptions,
            options.propagation?.isEmpty == false
            || options.nonRecursive == true
-           || options.createMountpoint == true
+           || (options.createMountpoint == true && mount.type != "bind")
            || options.readOnlyNonRecursive == true
            || options.readOnlyForceRecursive == true
         {
@@ -664,13 +651,15 @@ extension DockerRouter {
         from request: DockerCreateContainerRequest,
         requestedName: String
     ) throws -> ContainerSpec {
-        try ContainerSpec(
+        let environment = try ContainerEnvironmentOverrides(request.env ?? [])
+        let networkMode = request.hostConfig?.networkMode ?? ""
+        return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
             image: request.image,
             command: request.cmd ?? [],
             entrypoint: request.entrypoint?.values ?? [],
-            environment: environmentDictionary(request.env ?? []),
+            environment: environment.values,
             labels: request.labels ?? [:],
             workingDirectory: request.workingDir,
             user: request.user,
@@ -683,7 +672,7 @@ extension DockerRouter {
             networks: networkAttachments(request),
             terminal: request.tty ?? false,
             openStandardInput: request.openStdin ?? false,
-
+            standardInputOnce: request.stdinOnce,
             privileged: request.hostConfig?.privileged ?? false,
             initProcess: request.hostConfig?.initProcess ?? false,
             autoRemove: request.hostConfig?.autoRemove ?? false,
@@ -696,10 +685,29 @@ extension DockerRouter {
                     intervalNanoseconds: $0.interval ?? 30_000_000_000,
                     timeoutNanoseconds: $0.timeout ?? 30_000_000_000,
                     retries: $0.retries ?? 3,
-                    startPeriodNanoseconds: $0.startPeriod ?? 0
+                    startPeriodNanoseconds: $0.startPeriod ?? 0,
+                    startIntervalNanoseconds: $0.startInterval
                 )
-            }
+            },
+            dns: containerDNS(from: request),
+            inheritImageEntrypoint: request.entrypoint == nil,
+            executionSettings: executionSettings(request),
+            removedEnvironmentKeys: environment.removedKeys,
+            stopTimeoutSeconds: request.stopTimeout,
+            requestedImageReference: request.containerImageReference,
+            requestedNetworkMode: ["", "default"].contains(networkMode) ? "bridge" : networkMode,
+            outputLogFormat: request.hostConfig?.logConfig?.type == "json-file" ? .jsonFileV1 : nil
         )
+    }
+
+    private func containerDNS(from request: DockerCreateContainerRequest) throws -> RuntimeDNSConfiguration? {
+        let dns = request.hostConfig.map {
+            RuntimeDNSConfiguration(
+                nameservers: $0.dns ?? [], searchDomains: $0.dnsSearch ?? [], options: $0.dnsOptions ?? []
+            )
+        }
+        try dns?.validate()
+        return dns
     }
 
     func containerMounts(
@@ -735,7 +743,8 @@ extension DockerRouter {
                 type: Self.bindSourceIsHostPath(String(parts[0])) ? .bind : .volume,
                 source: String(parts[0]),
                 destination: String(parts[1]),
-                readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro")
+                readOnly: parts.count == 3 && parts[2].split(separator: ",").contains("ro"),
+                createSourceDirectory: Self.bindSourceIsHostPath(String(parts[0])) ? true : nil
             )
         }
     }
@@ -756,7 +765,8 @@ extension DockerRouter {
                 source: anonymous ? Self.anonymousVolumeName() : mount.source ?? "",
                 destination: mount.target,
                 readOnly: mount.readOnly ?? false,
-                anonymous: anonymous
+                anonymous: anonymous,
+                createSourceDirectory: type == .bind ? mount.bindOptions?.createMountpoint : nil
             )
         }
     }
@@ -837,12 +847,12 @@ extension DockerRouter {
         return DockerContainerSummary(
             id: snapshot.dockerID.rawValue,
             names: ["/\(snapshot.spec.name)"],
-            image: snapshot.spec.image,
+            image: snapshot.spec.requestedImageReference ?? snapshot.spec.image,
             imageID: snapshot.imageID ?? "",
             command: (snapshot.spec.entrypoint + snapshot.spec.command).joined(separator: " "),
             created: Int64(snapshot.createdAt.timeIntervalSince1970),
-            state: snapshot.state.rawValue,
-            status: snapshot.state.rawValue,
+            state: dockerContainerState(snapshot.state),
+            status: dockerContainerState(snapshot.state),
             ports: snapshot.spec.ports.map {
                 DockerPortSummary(
                     address: $0.hostAddress,
@@ -856,6 +866,11 @@ extension DockerRouter {
         )
     }
 
+    func dockerContainerState(_ state: RuntimeContainerState) -> String {
+        // Keep native state vocabulary internal; Docker clients require exited.
+        state == .stopped ? "exited" : state.rawValue
+    }
+
     func containerInspect(
         _ snapshot: ContainerSnapshot,
         health: DockerContainerHealth?
@@ -863,7 +878,7 @@ extension DockerRouter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let running = snapshot.state == .running
-        let env = environmentList(snapshot.spec.environment)
+        let env = environmentList(snapshot.spec.environment) + (snapshot.spec.removedEnvironmentKeys ?? [])
         let volumeEntries = volumeEntries(snapshot.spec.mounts)
         let networkSettings = networkSettings(snapshot)
         let (executable, args) = containerCommand(snapshot.spec)
@@ -874,7 +889,7 @@ extension DockerRouter {
             args: args,
             name: "/\(snapshot.spec.name)",
             state: DockerContainerState(
-                status: snapshot.state.rawValue,
+                status: dockerContainerState(snapshot.state),
                 running: running,
                 pid: running ? 1 : 0,
                 exitCode: snapshot.exitCode ?? 0,
@@ -891,23 +906,41 @@ extension DockerRouter {
                 attachStderr: true,
                 tty: snapshot.spec.terminal,
                 openStdin: snapshot.spec.openStandardInput,
+                stdinOnce: snapshot.spec.standardInputOnce ?? false,
                 env: env,
                 cmd: snapshot.spec.command,
-                image: snapshot.spec.image,
+                image: snapshot.spec.requestedImageReference ?? snapshot.spec.image,
                 exposedPorts: exposedPorts(snapshot.spec.ports),
                 volumes: volumeEntries,
                 workingDir: snapshot.spec.workingDirectory ?? "",
                 entrypoint: snapshot.spec.entrypoint,
                 labels: RuntimeLabels.projectComposeLabels(snapshot.spec.labels),
-                healthcheck: dockerHealthcheck(snapshot.spec.healthcheck)
+                healthcheck: dockerHealthcheck(snapshot.spec.healthcheck),
+                stopSignal: snapshot.spec.executionSettings?.stopSignal,
+                stopTimeout: snapshot.spec.stopTimeoutSeconds
             ),
-            hostConfig: DockerInspectHostConfig(
-                binds: snapshot.spec.mounts.filter { $0.type == .bind }.map {
-                    "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
-                }
-            ),
+            hostConfig: inspectHostConfig(snapshot.spec),
             mounts: snapshot.spec.mounts.map(mountSummary),
             networkSettings: networkSettings
+        )
+    }
+
+    private func inspectHostConfig(_ spec: ContainerSpec) -> DockerInspectHostConfig {
+        DockerInspectHostConfig(
+            autoRemove: spec.autoRemove,
+            binds: spec.mounts.filter { $0.type == .bind }.map {
+                "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
+            },
+            portBindings: inspectPortBindings(spec.ports),
+            networkMode: spec.requestedNetworkMode ?? (spec.networks.map(\.name) == ["none"] ? "none" : "bridge"),
+            dns: spec.dns?.nameservers ?? [],
+            dnsSearch: spec.dns?.searchDomains ?? [],
+            dnsOptions: spec.dns?.options ?? [],
+            memory: spec.executionSettings?.memoryLimitInBytes ?? 0,
+            shmSize: spec.executionSettings?.sharedMemorySizeInBytes ?? 64 * 1024 * 1024,
+            readOnlyRootFilesystem: spec.executionSettings?.readOnlyRootFilesystem ?? false,
+            sysctls: spec.executionSettings?.sysctls ?? [:],
+            logConfig: spec.outputLogFormat == .jsonFileV1 ? .init() : nil
         )
     }
 
@@ -920,7 +953,8 @@ extension DockerRouter {
                 interval: $0.intervalNanoseconds,
                 timeout: $0.timeoutNanoseconds,
                 retries: $0.retries,
-                startPeriod: $0.startPeriodNanoseconds
+                startPeriod: $0.startPeriodNanoseconds,
+                startInterval: $0.startIntervalNanoseconds
             )
         }
     }
@@ -939,6 +973,15 @@ extension DockerRouter {
                 "\($0.containerPort)/\($0.protocolName)"
             }).sorted().map { ($0, [:]) }
         )
+    }
+
+    func inspectPortBindings(_ ports: [PortBinding]) -> [String: [DockerNetworkPortBinding]] {
+        Dictionary(grouping: ports.filter { $0.published != false }, by: { "\($0.containerPort)/\($0.protocolName)" })
+            .mapValues { values in
+                values.map {
+                    DockerNetworkPortBinding(hostIP: $0.hostAddress, hostPort: $0.hostPort.map(String.init) ?? "")
+                }
+            }
     }
 
     func networkSettings(
@@ -1018,10 +1061,15 @@ extension DockerRouter {
             id: identifier,
             startedAt: snapshot.startedAt,
             healthcheck: healthcheck,
-            now: started
+            now: started,
+            allowProbe: recoveryBarrier.healthProbesAllowed
         )
-        if case let .cached(value) = decision {
+        let reservation: UUID
+        switch decision {
+        case let .cached(value):
             return value
+        case let .check(token):
+            reservation = token
         }
 
         let exitCode = await executeHealthCheck(
@@ -1030,9 +1078,13 @@ extension DockerRouter {
             timeoutNanoseconds: healthcheck.timeoutNanoseconds,
             context: context
         )
+        if exitCode < 0 {
+            await recoveryBarrier.recordUncertainWork()
+        }
         return await healthChecks.record(
             id: identifier,
             startedAt: snapshot.startedAt,
+            reservation: reservation,
             healthcheck: healthcheck,
             observation: ContainerHealthObservation(
                 exitCode: exitCode,
@@ -1165,6 +1217,7 @@ extension DockerRouter {
         DockerImageSummary(
             created: Int64(image.createdAt.timeIntervalSince1970),
             id: image.id,
+            labels: image.labels,
             repoDigests: image.references.filter { $0.contains("@sha256:") },
             repoTags: image.references.filter { !$0.contains("@sha256:") },
             size: image.size,
@@ -1189,32 +1242,16 @@ extension DockerRouter {
                 entrypoint: image.entrypoint.isEmpty ? nil : image.entrypoint,
                 command: image.command.isEmpty ? nil : image.command,
                 labels: image.labels
-            )
+            ),
+            rootFS: image.rootFSLayers.map { DockerImageRootFS(layers: $0) }
         )
     }
 
-    func networkInspect(_ network: NetworkSnapshot) -> DockerNetworkInspect {
-        DockerNetworkInspect(
-            name: network.spec.name,
-            id: network.id,
-            created: ISO8601DateFormatter().string(from: network.createdAt),
-            driver: network.spec.driver,
-            internalNetwork: network.spec.internalNetwork,
-            containers: network.containers.reduce(into: [:]) { result, entry in
-                result[entry.key.rawValue] = DockerNetworkContainer(
-                    name: entry.key.rawValue,
-                    ipv4Address: entry.value
-                )
-            },
-            labels: network.spec.labels
-        )
-    }
-
-    func volumeInspect(_ volume: VolumeSnapshot) -> DockerVolumeInspect {
-        DockerVolumeInspect(
+    func volumeInspect(_ volume: VolumeSnapshot) throws -> DockerVolumeInspect {
+        try DockerVolumeInspect(
             createdAt: ISO8601DateFormatter().string(from: volume.createdAt),
             driver: volume.spec.driver,
-            labels: volume.spec.labels,
+            labels: RuntimeLabels.projectComposeLabels(volume.spec.labels),
             mountpoint: volume.mountpoint,
             name: volume.name
         )

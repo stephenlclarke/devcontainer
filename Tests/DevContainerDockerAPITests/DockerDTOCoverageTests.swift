@@ -83,8 +83,8 @@ func `docker container and exec response defaults encode`() throws {
     #expect(!state.oomKilled)
     #expect(!state.dead)
     #expect(state.error.isEmpty)
-    let hostConfig = DockerInspectHostConfig(binds: [])
-    #expect(hostConfig.networkMode == "default")
+    let hostConfig = DockerInspectHostConfig(autoRemove: false, binds: [])
+    #expect(hostConfig.networkMode == "bridge")
     let processConfig = DockerExecProcessConfig(
         tty: false,
         entrypoint: "printf",
@@ -106,13 +106,14 @@ func `docker image response defaults encode`() throws {
     let summary = DockerImageSummary(
         created: 1,
         id: "sha256:fixture",
+        labels: ["fixture": "true"],
         repoDigests: [],
         repoTags: ["fixture:latest"],
         size: 1,
         virtualSize: 1
     )
     #expect(summary.containers == -1)
-    #expect(summary.labels.isEmpty)
+    #expect(summary.labels == ["fixture": "true"])
     #expect(summary.parentID.isEmpty)
     #expect(summary.sharedSize == -1)
     let config = DockerImageConfig(

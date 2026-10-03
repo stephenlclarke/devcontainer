@@ -7,6 +7,11 @@
 from __future__ import annotations
 
 import signal
+import argparse
+import copy
+import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import unittest
@@ -20,12 +25,204 @@ from unittest import mock
 from parity_lib import Fixture, ParityError
 from run_lane import (
     LaneRunner,
+    PARITY_HARNESS,
+    finalized_selection,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
     run_checked,
     safe_environment,
 )
+
+
+class FinalizedSelectionTests(unittest.TestCase):
+    def test_selection_requires_all_four_explicit_inputs(self) -> None:
+        values = dict(finalized_directory=Path("/final"), finalization_provenance_sha256="a" * 64,
+                      finalization_state=Path("/state"), expected_source_commit="b" * 40)
+        self.assertEqual(finalized_selection(argparse.Namespace(**values)), values)
+        values["finalization_state"] = None
+        invalid_arguments = argparse.Namespace(**values)
+        with self.assertRaisesRegex(ParityError, "all four"):
+            finalized_selection(invalid_arguments)
+
+    def test_release_uses_signed_binaries_and_private_reference(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/repository")
+        runner.finalized_selection = {"expected_source_commit": "b" * 40}
+        runner.finalized = {"executables": {"devcontainer": "/signed/devcontainer",
+                                              "devcontainer-engine": "/signed/engine",
+                                              "devcontainer-compose": "/signed/compose"},
+                            "referenceRuntime": {"paths": {"node": "/signed/node",
+                                                           "cli/devcontainer.js": "/signed/cli.js"}}}
+        runner.provider_paths = {"DEVCONTAINER_COMPOSE_BIN": "/qualified/compose"}
+        self.assertEqual(runner.package_executable("devcontainer-engine"), "/signed/engine")
+        self.assertEqual(runner.compose_command("project", Path("/fixture/compose.yml"))[0], "/signed/compose")
+        self.assertEqual(runner.devcontainers_command(), ["/signed/devcontainer"])
+        self.assertEqual(runner.provider_executable("DEVCONTAINER_COMPOSE_BIN", "ambient"), "/qualified/compose")
+        runner.environment = {"PATH": "/usr/bin"}
+        with mock.patch("run_lane.subprocess.run", return_value=mock.Mock(returncode=0)) as invoke:
+            runner.devcontainer(["up", "--workspace-folder", "/fixture"], 10)
+        self.assertEqual(invoke.call_args.args[0], ["/signed/devcontainer", "up", "--workspace-folder", "/fixture"])
+
+    def test_readmission_rejects_changed_signed_identity(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "docker"
+        runner.repository = Path("/repository")
+        runner.finalized_selection = {"finalized_directory": Path("/final"),
+                                     "finalization_provenance_sha256": "a" * 64,
+                                     "finalization_state": Path("/state"),
+                                     "expected_source_commit": "b" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        admission = {"scope": "finalized-native-package-runtime-input", "kind": "signed-notarized-native-package",
+                     "sourceCommit": "b" * 40, "runtimeProfile": "stock", "candidateReceiptSHA256": "c" * 64,
+                     "finalizationProvenanceSHA256": "a" * 64, "trustedStateSHA256": "d" * 64,
+                     "archiveSHA256": "e" * 64, "archiveSize": 1, "preparationSHA256": "f" * 64,
+                     "inventorySHA256": "1" * 64, "productionBinarySHA256": {},
+                     "signatureInventorySHA256": "2" * 64, "referenceRuntime": {"files": {}},
+                     "signatureEvidenceRoot": "/unique/first"}
+        with (mock.patch("run_lane.load_finalized_admitter", return_value=lambda **_: admission),
+              mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64)):
+            runner.readmit_finalized(first=True)
+            admission["signatureEvidenceRoot"] = "/unique/second"
+            runner.readmit_finalized()
+            admission["archiveSHA256"] = "0" * 64
+            with self.assertRaisesRegex(ParityError, "identity changed"):
+                runner.readmit_finalized()
+
+    def test_native_provider_bytes_must_survive_post_run_readmission(self) -> None:
+        with TemporaryDirectory() as temporary:
+            provider = Path(temporary).resolve() / "container"
+            provider.write_bytes(b"qualified provider")
+            provider.chmod(0o755)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.repository = Path("/repository")
+            runner.finalized_selection = {"finalized_directory": Path("/final"),
+                                         "finalization_provenance_sha256": "a" * 64,
+                                         "finalization_state": Path("/state"),
+                                         "expected_source_commit": "b" * 40}
+            runner.provider_paths = {}
+            runner.provider_hashes = {}
+            runner.harness_sha256 = "f" * 64
+            with (
+                mock.patch.dict("run_lane.os.environ", {"DEVCONTAINER_CONTAINER_BIN": str(provider)}),
+                mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+                mock.patch("run_lane.load_finalized_admitter", return_value=lambda **_: {
+                    "scope": "finalized-native-package-runtime-input", "kind": "signed-notarized-native-package",
+                    "sourceCommit": "b" * 40, "runtimeProfile": "stock", "candidateReceiptSHA256": "c" * 64,
+                    "finalizationProvenanceSHA256": "a" * 64, "trustedStateSHA256": "d" * 64,
+                    "archiveSHA256": "e" * 64, "archiveSize": 1, "preparationSHA256": "f" * 64,
+                    "inventorySHA256": "1" * 64, "productionBinarySHA256": {},
+                    "signatureInventorySHA256": "2" * 64, "referenceRuntime": {"files": {}},
+                }),
+            ):
+                runner.admit_finalized()
+                provider.write_bytes(b"changed provider")
+                with self.assertRaisesRegex(ParityError, "qualified provider changed"):
+                    runner.readmit_finalized()
+
+
+class ComponentBuilderSelectionTests(unittest.TestCase):
+    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str):
+        import sys
+
+        repository = Path(__file__).resolve().parents[2]
+        testing = repository / "Tools/testing"
+        if str(testing) not in sys.path:
+            sys.path.insert(0, str(testing))
+        import owned_guest_fixture
+
+        with TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            manifest = json.loads((repository / "Tests/Parity/manifest.json").read_text())
+            fixtures = [SimpleNamespace(identifier=identifier, runner="engine",
+                                        backends=("docker", "apple-stock", "container-compose"))
+                        for identifier in fixture_ids]
+            events = []
+
+            class Bridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def prepare_native_provider(self):
+                    events.append("provision")
+
+                def attach_endpoint(self):
+                    events.append("attach")
+
+                def prepare(self):
+                    events.append("docker-image-prepare")
+
+                def cleanup(self):
+                    events.append("guest-cleanup")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = lane, repository, manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = base / "evidence" / lane, {}
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            builder = mock.Mock()
+
+            def run_fixture(fixture):
+                events.append("fixture:" + fixture.identifier)
+                return {"id": fixture.identifier, "status": "passed", "durationSeconds": 0.0,
+                        "observations": {}, "differences": [], "diagnostic": ""}
+
+            common_patches = (
+                mock.patch("run_lane.implemented_fixtures", return_value=fixtures),
+                mock.patch.object(owned_guest_fixture, "_retained_root", return_value=base),
+                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value={}),
+                mock.patch.object(owned_guest_fixture, "OwnedGuestFixtureRunner", Bridge),
+                mock.patch.object(runner, "admit_finalized"),
+                mock.patch.object(runner, "configure_docker_oracle",
+                                  side_effect=lambda: events.append("docker-oracle")),
+                mock.patch.object(runner, "prepare_builder", builder),
+                mock.patch.object(runner, "configure_devcontainer_client"),
+                mock.patch.object(runner, "fingerprint", return_value={}),
+                mock.patch.object(runner, "run_fixture", side_effect=run_fixture),
+                mock.patch.object(runner, "stop_builder"),
+                mock.patch.object(runner, "check_runtime_state_cleanup"),
+                mock.patch.object(runner, "readmit_finalized"),
+                mock.patch.object(runner, "start_engine", side_effect=lambda: events.append("engine")),
+                mock.patch.object(runner, "stop_engine"),
+            )
+            with mock.patch.dict("run_lane.os.environ",
+                                 {"DEVCONTAINER_PARITY_FIXTURES": selected}, clear=True):
+                with common_patches[0], common_patches[1], common_patches[2], common_patches[3], \
+                        common_patches[4], common_patches[5], common_patches[6], common_patches[7], \
+                        common_patches[8], common_patches[9], common_patches[10], common_patches[11], \
+                        common_patches[12], common_patches[13], common_patches[14]:
+                    result = runner.run()
+            return result, builder, events
+
+    def test_selected_e13_component_skips_builder_on_docker_and_fork(self) -> None:
+        for lane in ("docker", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("E13-compose-signals", "E04-image-build"), "E13-compose-signals")
+                self.assertEqual(result, 0)
+                builder.assert_not_called()
+                if lane == "container-compose":
+                    self.assertLess(events.index("provision"), events.index("engine"))
+                    self.assertLess(events.index("engine"), events.index("attach"))
+                else:
+                    self.assertLess(events.index("docker-oracle"), events.index("attach"))
+                self.assertIn("attach", events)
+                self.assertLess(events.index("attach"), events.index("fixture:E13-compose-signals"))
+                self.assertLess(events.index("fixture:E13-compose-signals"), events.index("guest-cleanup"))
+                self.assertIn("guest-cleanup", events)
+
+    def test_unfiltered_build_matrix_still_prepares_builder(self) -> None:
+        for lane in ("docker", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, _events = self._run_selection(
+                    lane, ("E13-compose-signals", "E04-image-build"), "")
+                self.assertEqual(result, 0)
+                builder.assert_called_once_with()
 
 
 class SafeEnvironmentTests(unittest.TestCase):
@@ -36,8 +233,16 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_INSTALL_ROOT": "/stable/provider",
+                "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
+                "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
+                "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
+                "DEVCONTAINER_BACKEND": "operator-choice",
+                "DEVCONTAINER_CONFIG": "/operator/config.toml",
                 "DOCKER_CONTEXT": "fixture",
                 "GITHUB_TOKEN": "must-not-leak",
                 "HOME": "/Users/operator",
@@ -47,21 +252,201 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "SONAR_TOKEN": "must-not-leak",
             }
         )
-
         self.assertEqual(
             environment,
             {
                 "CONTAINER_APP_ROOT": "/stable/runtime",
                 "CONTAINER_COMPOSE_BUILD_INFO": "/tmp/build-info.json",
                 "CONTAINER_COMPOSE_CONTAINER": "/tmp/container",
+                "CONTAINER_INSTALL_ROOT": "/stable/provider",
+                "CONTAINER_LOG_ROOT": "/tmp/runtime-logs",
                 "CONTAINER_SERVICE_NAMESPACE": "io.github.example.runtime",
                 "DEVCONTAINER_DOCKER_ORACLE_HOST": "unix:///tmp/docker.sock",
+                "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
+                "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
+                "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
                 "PATH": "/usr/bin:/bin",
                 "RUNNER_TRACKING_ID": "github_fixture",
             },
         )
+
+    def test_runtime_selection_values_are_not_inherited_from_operator_environment(self) -> None:
+        environment = safe_environment({
+            "DEVCONTAINER_BACKEND": "operator-choice",
+            "DEVCONTAINER_CONFIG": "/operator/config.toml",
+            "DEVCONTAINER_STATE": "/operator/state.sqlite",
+            "DEVCONTAINER_SOCKET": "/operator/docker.sock",
+            "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+        })
+        self.assertNotIn("DEVCONTAINER_BACKEND", environment)
+        self.assertNotIn("DEVCONTAINER_CONFIG", environment)
+        self.assertNotIn("DEVCONTAINER_STATE", environment)
+        self.assertNotIn("DEVCONTAINER_SOCKET", environment)
+        self.assertNotIn("DEVCONTAINER_COMPOSE_PROVIDER", environment)
+
+
+class EngineRoutePreflightTests(unittest.TestCase):
+    def test_unknown_engine_route_fails_before_output_or_runtime_admission(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "docker"
+            output.mkdir()
+            sentinel = output / "keep.json"
+            sentinel.write_text("unchanged")
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+            manifest = copy.deepcopy(manifest)
+            manifest["fixtures"].append({"id": "E99-unrouted", "status": "implemented",
+                                         "runner": "engine", "backends": ["docker"]})
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.manifest = manifest
+            runner.docker = "/pinned/docker"
+            runner.node_package_runner = "/pinned/node"
+            runner.output = output
+            with mock.patch.object(runner, "admit_finalized") as admit:
+                with self.assertRaisesRegex(ParityError, "route preflight"):
+                    runner.run()
+            self.assertEqual(sentinel.read_text(), "unchanged")
+            admit.assert_not_called()
+
+    def test_owned_guest_fixture_dispatch_uses_the_lane_scoped_adapter(self) -> None:
+        from types import SimpleNamespace
+
+        runner = LaneRunner.__new__(LaneRunner)
+        adapter = mock.Mock()
+        expected = {"id": "E07-init-attachment", "status": "passed"}
+        adapter.run.return_value = expected
+        runner._owned_guest_runner = adapter
+        fixture = SimpleNamespace(identifier="E07-init-attachment")
+        raw = Path("/tmp/evidence/raw/E07-init-attachment")
+
+        self.assertIs(runner.run_engine_fixture(fixture, raw), expected)
+        adapter.run.assert_called_once_with(fixture, raw)
+
+    def test_runtime_error_during_guest_provisioning_skips_engine_start(self) -> None:
+        import qualify_finalized_package as qualifier
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "apple-stock"
+            fixture = SimpleNamespace(identifier="E07-init-attachment", runner="engine",
+                                      backends=("apple-stock",))
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+
+            class FailingBridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def attach_endpoint(self):
+                    # No endpoint is attached after API-only provisioning fails.
+                    pass
+
+                def prepare_native_provider(self):
+                    raise RuntimeError("guest provision command failed")
+
+                def run(self, row, _raw):
+                    return {"id": row.identifier, "status": "failed", "observations": {},
+                            "durationSeconds": 0.0, "differences": [],
+                            "diagnostic": self.preparation_error}
+
+                def cleanup(self):
+                    raise ParityError("owned guest preparation is incomplete")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = "apple-stock", Path(__file__).resolve().parents[2], manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = evidence, None
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            with (mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
+                  mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
+                  mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
+                  mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", FailingBridge),
+                  mock.patch.object(runner, "admit_finalized"),
+                  mock.patch.object(runner, "start_engine") as start_engine,
+                  mock.patch.object(runner, "configure_devcontainer_client"),
+                  mock.patch.object(runner, "fingerprint", return_value={}),
+                  mock.patch.object(runner, "stop_builder"),
+                  mock.patch.object(runner, "check_runtime_state_cleanup"),
+                  mock.patch.object(runner, "readmit_finalized"),
+                  mock.patch.object(runner, "stop_engine") as stop_engine):
+                result = runner.run()
+
+            payload = json.loads((evidence / "results.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["fixtures"][0]["status"], "failed")
+            self.assertTrue(any("guest input preparation failed" in row
+                                for row in payload["cleanupDifferences"]))
+            self.assertTrue(runner._preserve_engine_on_uncertain_guest_cleanup)
+            start_engine.assert_not_called()
+            stop_engine.assert_not_called()
+            self.assertFalse(qualifier.cli_cleanup_is_complete(root, "apple-stock"))
+
+    def test_native_guest_provisions_before_engine_and_attaches_only_after_ready(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "apple-stock"
+            fixture = SimpleNamespace(identifier="E07-init-attachment", runner="engine",
+                                      backends=("apple-stock",))
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+            events = []
+
+            class Bridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def prepare_native_provider(self):
+                    events.append("provision")
+
+                def attach_endpoint(self):
+                    events.append("attach")
+
+                def run(self, row, _raw):
+                    return {"id": row.identifier, "status": "passed", "observations": {},
+                            "durationSeconds": 0.0, "differences": [], "diagnostic": ""}
+
+                def cleanup(self):
+                    events.append("cleanup")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = "apple-stock", Path(__file__).resolve().parents[2], manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = evidence, None
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            with (mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
+                  mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
+                  mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
+                  mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", Bridge),
+                  mock.patch.object(runner, "admit_finalized"),
+                  mock.patch.object(runner, "start_engine", side_effect=lambda: events.append("engine")),
+                  mock.patch.object(runner, "configure_devcontainer_client"),
+                  mock.patch.object(runner, "run_fixture", side_effect=lambda row: (
+                      events.append("fixture") or {"id": row.identifier, "status": "passed",
+                                                     "durationSeconds": 0.0, "observations": {},
+                                                     "differences": [], "diagnostic": ""})),
+                  mock.patch.object(runner, "fingerprint", return_value={}),
+                  mock.patch.object(runner, "stop_builder"),
+                  mock.patch.object(runner, "check_runtime_state_cleanup"),
+                  mock.patch.object(runner, "readmit_finalized"),
+                  mock.patch.object(runner, "stop_engine")):
+                self.assertEqual(runner.run(), 0)
+
+            self.assertLess(events.index("provision"), events.index("engine"))
+            self.assertLess(events.index("engine"), events.index("attach"))
+            self.assertLess(events.index("attach"), events.index("cleanup"))
+
+    def test_qualifier_and_lane_runner_hash_the_same_harness_closure(self) -> None:
+        import qualify_finalized_package as qualifier
+
+        self.assertEqual(tuple(qualifier.PARITY_HARNESS), PARITY_HARNESS)
 
 
 class RuntimePathTests(unittest.TestCase):
@@ -143,16 +528,15 @@ class BoundedCommandTests(unittest.TestCase):
         self.assertIs(result, completed)
         self.assertEqual(run.call_args.kwargs["timeout"], 1800)
 
-    def test_compatibility_socket_stays_within_darwin_limit(self) -> None:
-        with mock.patch(
-            "run_lane.tempfile.mkdtemp",
-            return_value="/tmp/dc-sock-fixture",
-        ) as make_directory:
-            root = create_socket_root()
-
-        self.assertEqual(root, Path("/tmp/dc-sock-fixture"))
-        self.assertLess(len(str(root / "docker.sock").encode()), 104)
-        make_directory.assert_called_once_with(prefix="dc-sock-", dir="/tmp")
+    def test_compatibility_socket_is_canonical_and_within_darwin_limit(self) -> None:
+        root = create_socket_root()
+        try:
+            self.assertEqual(root, Path("/tmp").resolve(strict=True) / root.name)
+            self.assertEqual(root.resolve(strict=True), root)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+            self.assertLess(len(os.fsencode(root / "docker.sock")), 104)
+        finally:
+            shutil.rmtree(root)
 
 
 class FingerprintTests(unittest.TestCase):

@@ -1,0 +1,23 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+
+exports_files(
+    ["create-reproducible-archive.py"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "native_release_admission_inputs",
+    srcs = [
+        "prepare_finalized_package.py",
+        "native_signing.py",
+        "finalize-native-package.py",
+        "consume-native-finalized-package.py",
+        "create-reproducible-archive.py",
+        "verify-package.py",
+        "dependency_metadata.py",
+        "reference_runtime_metadata.py",
+        "versioning.py",
+        "//Tools/bazel:package_checks/cli_process.py",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -24,43 +24,38 @@ import Foundation
 import Testing
 
 struct AppleDirectProcessSessionTests {
-    @Test
-    func `XPC transfer copies cannot close reused descriptors`() throws {
-        let pipe = Pipe()
-        var copies: [FileHandle?]? = try AppleXPCFileHandleTransfer.copies(
-            of: [pipe.fileHandleForReading, nil]
-        )
-        let copiedDescriptor = try #require(copies?[0]?.fileDescriptor)
-        #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
-        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+    #if !DEVCONTAINER_ENHANCED_RUNTIME
+        @Test
+        func `XPC transfer copies cannot close reused descriptors`() throws {
+            let pipe = Pipe()
+            var copies: [FileHandle?]? = try AppleXPCFileHandleTransfer.copies(
+                of: [pipe.fileHandleForReading, nil]
+            )
+            let copiedDescriptor = try #require(copies?[0]?.fileDescriptor)
+            #expect(copiedDescriptor != pipe.fileHandleForReading.fileDescriptor)
+            #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
 
-        Darwin.close(copiedDescriptor)
-        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
-        #expect(nullDescriptor >= 0)
-        if nullDescriptor != copiedDescriptor {
+            let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
+            try #require(nullDescriptor >= 0)
+            // Atomically replace the still-owned descriptor: closing it first lets
+            // another concurrent test claim that number before dup2 overwrites it.
             #expect(dup2(nullDescriptor, copiedDescriptor) == copiedDescriptor)
             Darwin.close(nullDescriptor)
-        }
 
-        copies = nil
-        #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
-        Darwin.close(copiedDescriptor)
-        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
-    }
+            copies = nil
+            #expect(fcntl(copiedDescriptor, F_GETFD) >= 0)
+            Darwin.close(copiedDescriptor)
+            #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) >= 0)
+        }
+    #endif
 
     @Test
     func `XPC transfer closes earlier copies when a later descriptor is invalid`() throws {
         let valid = Pipe()
-        let nullDescriptor = open("/dev/null", O_RDONLY | O_CLOEXEC)
-        #expect(nullDescriptor >= 0)
-        let invalidDescriptor = fcntl(nullDescriptor, F_DUPFD_CLOEXEC, 1024)
-        #expect(invalidDescriptor >= 0)
-        Darwin.close(nullDescriptor)
         let invalid = FileHandle(
-            fileDescriptor: invalidDescriptor,
+            fileDescriptor: Int32.max,
             closeOnDealloc: false
         )
-        Darwin.close(invalidDescriptor)
 
         #expect(throws: POSIXError.self) {
             _ = try AppleXPCFileHandleTransfer.copies(
@@ -107,7 +102,7 @@ struct AppleDirectProcessSessionTests {
                 standardIO: standardIO
             )
             for case let handle? in standardIO {
-                Darwin.close(handle.fileDescriptor)
+                try handle.close()
             }
             return process
         }
@@ -174,7 +169,7 @@ struct AppleDirectProcessSessionTests {
     }
 
     @Test
-    func `direct session uses nonblocking input and blocking output drains`() async throws {
+    func `direct session uses nonblocking host IO without changing child output`() async throws {
         let input = Pipe()
         let output = Pipe()
         let process = EchoClientProcess(input: input, output: output)
@@ -185,12 +180,24 @@ struct AppleDirectProcessSessionTests {
             standardError: nil
         )
 
+        // Receiving a real frame proves the reader has configured its handle.
+        let payload = Data(repeating: 42, count: 16 * 1024)
+        try await session.write(payload)
+        var frames = session.frames.makeAsyncIterator()
+        var received = Data()
+        while received.count < payload.count, let frame = try await frames.next() {
+            received.append(frame.data)
+        }
+        #expect(received == payload)
         let inputFlags = fcntl(input.fileHandleForWriting.fileDescriptor, F_GETFL)
         #expect(inputFlags >= 0)
         #expect(inputFlags & O_NONBLOCK == O_NONBLOCK)
         let outputFlags = fcntl(output.fileHandleForReading.fileDescriptor, F_GETFL)
         #expect(outputFlags >= 0)
-        #expect(outputFlags & O_NONBLOCK == 0)
+        #expect(outputFlags & O_NONBLOCK == O_NONBLOCK)
+        let childOutputFlags = fcntl(process.outputDescriptor, F_GETFL)
+        #expect(childOutputFlags >= 0)
+        #expect(childOutputFlags & O_NONBLOCK == 0)
 
         try await session.closeStandardInput()
         #expect(try await session.wait() == 0)
@@ -234,6 +241,43 @@ struct AppleDirectProcessSessionTests {
             echoed.append(frame.data)
         }
 
+        #expect(try await session.wait() == 0)
+        #expect(echoed == payload)
+    }
+
+    @Test
+    func `direct exec creation preserves large input and EOF using the client transport`() async throws {
+        let session = try await AppleDirectProcessSession.create(
+            containerID: "large-duplex",
+            spec: ExecSpec(
+                command: ["cat"],
+                attachStandardInput: true,
+                attachStandardOutput: true,
+                attachStandardError: false
+            ),
+            inheritedConfiguration: ProcessConfiguration(executable: "cat", arguments: [], environment: [])
+        ) { _, _, _, handles in
+            let input = try #require(handles[0])
+            let output = try #require(handles[1])
+            var status = stat()
+            #expect(fstat(input.fileDescriptor, &status) == 0)
+            #expect(status.st_mode & S_IFMT == S_IFSOCK)
+            let process = EchoClientProcess(input: input, output: output)
+            #if !DEVCONTAINER_ENHANCED_RUNTIME
+                // The stock XPC sender consumes transferred descriptors.
+                try input.close()
+                try output.close()
+            #endif
+            return process
+        }
+        let payload = Data((0 ..< 4 * 1024 * 1024).lazy.map { UInt8($0 & 0xFF) })
+        try await session.write(payload)
+        try await session.closeStandardInput()
+        var echoed = Data()
+        for try await frame in session.frames {
+            #expect(frame.channel == .standardOutput)
+            echoed.append(frame.data)
+        }
         #expect(try await session.wait() == 0)
         #expect(echoed == payload)
     }
@@ -415,13 +459,21 @@ private final class EchoClientProcess: ClientProcess, @unchecked Sendable {
     private let input: FileHandle
     private let output: FileHandle
 
-    init(input: Pipe, output: Pipe) {
+    var outputDescriptor: Int32 {
+        output.fileDescriptor
+    }
+
+    convenience init(input: Pipe, output: Pipe) {
+        self.init(input: input.fileHandleForReading, output: output.fileHandleForWriting)
+    }
+
+    init(input: FileHandle, output: FileHandle) {
         self.input = FileHandle(
-            fileDescriptor: Darwin.dup(input.fileHandleForReading.fileDescriptor),
+            fileDescriptor: Darwin.dup(input.fileDescriptor),
             closeOnDealloc: true
         )
         self.output = FileHandle(
-            fileDescriptor: Darwin.dup(output.fileHandleForWriting.fileDescriptor),
+            fileDescriptor: Darwin.dup(output.fileDescriptor),
             closeOnDealloc: true
         )
     }

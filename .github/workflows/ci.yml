@@ -47,6 +47,8 @@ jobs:
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer context --format value | grep '^unix://'
+          DEVCONTAINER_COMPOSE_PROVIDER=docker \
+          DEVCONTAINER_DOCKER_COMPOSE_BIN='' \
           DEVCONTAINER_DOCKER_BIN="$PWD/Tools/ci/docker-compose-smoke-fixture.sh" \
             DEVCONTAINER_STATE="${RUNNER_TEMP}/devcontainer-smoke-state.sqlite" \
             .build/debug/devcontainer-compose version \
@@ -84,11 +86,23 @@ jobs:
           swift package resolve
           cmp /tmp/devcontainer-stock-Package.resolved Package.resolved
       - name: Test against unmodified Apple packages
-        run: swift test --disable-automatic-resolution -Xswiftc -warnings-as-errors
+        env:
+          SWIFT_TEST_ATTEMPTS: "1"
+          SWIFT_TEST_TIMEOUT_SECONDS: "300"
+          SWIFT_TEST_ACCEPT_SIGNAL_13: "0"
+        run: make test
       - name: Smoke test stock-profile products
         run: |
           .build/debug/devcontainer version --format json | jq -e '.version'
           .build/debug/devcontainer-engine --help | grep 'Apple container'
+      - name: Upload stock test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stock-test-evidence
+          path: .build/swift-test.log
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   validate:
     name: Validate

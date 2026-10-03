@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from engine_fixture_routes import validate_engine_fixture_routes
+
 REQUIRED_BACKENDS = {"docker", "apple-stock", "container-compose"}
 IMPLEMENTED_STATUS = "implemented"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -60,11 +62,16 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         "engineSHA256",
         "composeSHA256",
         "composeBottleSHA256",
+        "buildxSHA256",
     ):
         _require(
             SHA256.fullmatch(str(docker.get(field, ""))) is not None,
             f"referencePins.docker.{field} must be a SHA-256 digest",
         )
+    _require(
+        re.fullmatch(r"\d+\.\d+\.\d+", str(docker.get("buildxVersion", ""))) is not None,
+        "referencePins.docker.buildxVersion must be a pinned semantic version",
+    )
 
     release_host = references.get("releaseHost")
     _require(
@@ -192,6 +199,10 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         isinstance(forbidden, list) and forbidden,
         "normalization.forbidden is required",
     )
+    try:
+        validate_engine_fixture_routes(payload)
+    except ValueError as error:
+        raise ManifestError(str(error)) from error
 
 
 def parse_args() -> argparse.Namespace:

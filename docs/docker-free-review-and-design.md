@@ -24,7 +24,7 @@ The application opened this session in `/Users/sclarke/Documents/devcontainer`, 
 | `container-compose` local checkout | `dbbf85d8afbefd6156b5692c9801ad14b3706cad`, branch `docs/refresh-apple-handoff-map`; reuse inspection, not a release certification |
 | Stephen's `container` local main | `e653616e62ab7763c3a7d10e88c365d6dca7e0c4` |
 | Stephen's `containerization` local main | `bd8130fea851f6ee264f00fc684e2543a7d2faa3` |
-| `container-engine-api` local checkout | `84830606abf971110071248e087a80ff4abb86d4`, also the devcontainer dependency pin |
+| `container-engine-api` local checkout | `84830606abf971110071248e087a80ff4abb86d4`, the review-time devcontainer dependency pin |
 | `container-builder-shim` local checkout | `5373d9b4363c6e536dc6401199da269c7045abf9` |
 | Latest official Apple Container release checked | [1.4.1](https://github.com/apple/container/releases/tag/1.4.1), published 9 September; tag commit `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` |
 | Current parity manifest | Apple `1.1.0`, Compose `0.10.1`, Dev Containers CLI `0.88.0`; these are older certification inputs, not the current source graph |
@@ -47,7 +47,7 @@ P0 means a blocker for the requested Docker-free/stock-first deliverable or a ga
 
 ### DF-01 - P0: Docker is still a product dependency
 
-**Evidence:** [`Tools/release/devcontainer.rb.in`](../Tools/release/devcontainer.rb.in), lines 8-10, declares `docker` and `docker-compose`. [`DevContainerConfiguration.swift`](../Sources/DevContainerCore/DevContainerConfiguration.swift), lines 21-36, defaults Compose to `.docker`. [`DevContainerComposeCommand.swift`](../Sources/DevContainerComposeCLI/DevContainerComposeCommand.swift), lines 323-345, dispatches that path to `DockerComposeCommand`. Selecting `container-compose` replaces orchestration but does not replace the Docker CLI used by the official Dev Containers client.
+**Audit evidence and current delta:** [`Tools/release/devcontainer.rb.in`](../Tools/release/devcontainer.rb.in) still declares Docker client dependencies. The audited source defaulted Compose to `.docker`; current unreleased [`DevContainerConfiguration.swift`](../Sources/DevContainerCore/DevContainerConfiguration.swift) defaults omitted choices to `.containerCompose` while preserving explicit saved selections. The packaged native client and selected socket/executable handoff now have focused proof, but complete Docker-free Compose runtime and installation qualification remain outstanding. An explicit Docker choice still dispatches to `DockerComposeCommand`.
 
 **Fix design:** ship a `devcontainer-docker` compatibility executable and a `devcontainer-compose` frontend backed by reusable Compose planning. Configure the reference CLI and VS Code to use these exact executables. Remove Homebrew Docker dependencies only after real client tests pass without either Docker executable. Never replace them with a wrapper that invokes Docker internally.
 
@@ -96,6 +96,8 @@ The engine, context, doctor, diagnostics, and Compose wrapper now use one
 fail-closed resolver with command, environment, configuration, and default
 precedence. Separating enhanced runtime naming from Compose orchestration
 remains outstanding.
+
+The Compose wrapper uses the resolved backend for ownership instead of deriving it from frontend choice. Cross-product tests exercise both frontends with both backends, reject claim migration and prove missing-native failure without state or Docker fallback. Omitted provider selection now defaults to native Compose. Configuration/environment tests prove the native child receives the selected socket and Container executable despite conflicting ambient Compose settings. Runtime-distribution binding and full DF-01 qualification remain unfinished; Homebrew Docker dependencies are unchanged until the complete client path is qualified.
 
 **Acceptance:** configure a non-default socket and enhanced executable, then confirm every public command and service reports the same effective selection. Switching distributions with owned resources fails until the designed down/recreate or migration procedure completes. A mislabeled fork cannot enter the stock test lane.
 
@@ -213,6 +215,8 @@ so the release-binding portion of this finding remains open.
 **Acceptance:** public `devcontainer up/build/exec/read-configuration/run-user-commands` works in a clean shell without global npm or Docker installations; existing management subcommands still work. The bundled CLI/runtime/native modules have reproducible versions, notices, SBOM entries and applicable macOS signatures. VS Code's embedded CLI is tested independently from this bundle.
 
 ## Target architecture
+
+Development update, 19 September: the native Bazel branch implements metadata, non-TTY exec, foreground startup and event streaming in its project frontend, plus the public lifecycle forwarding boundary. Unsigned candidate archives now include the exact checksum-pinned prebuilt Node/reference CLI, licences and fourth native frontend executable. Package tests execute real private Node/CLI configuration reading through the frontend against an isolated empty-inventory socket and plugin help. Schema-2 admission binds the bundle to captured source while preserving historical schema-1 identities. Candidate D01 execution, signed production distribution, complete compatibility matrix and release gates remain outstanding. This does not replace the historical published-source evidence above or close DF-01/DF-16.
 
 ### Components and ownership
 

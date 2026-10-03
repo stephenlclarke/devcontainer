@@ -19,15 +19,16 @@ import ContainerEngineRuntimeSPI
 import ContainerEngineWire
 import Darwin
 @testable import DevContainerService
+import DevContainerTestStorage
 import Foundation
-import Security
 import Testing
 
 @Suite(.serialized)
 struct ServiceCommandIntegrationTests {
-    @Test
-    func `engine executable starts serves and terminates cleanly`() async throws {
-        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+    @Test(arguments: [false, true])
+    func `engine executable starts serves and terminates cleanly`(rejectRecovery: Bool) async throws {
+        try requireHostIntegrationOptIn()
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
                 "dcs-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
@@ -37,7 +38,9 @@ struct ServiceCommandIntegrationTests {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        defer { try? FileManager.default.removeItem(at: root) }
+        let process = Process()
+        let keychain = try ServiceTestKeychain(root: root)
+        defer { keychain.cleanup(after: process) }
 
         let container = root.appendingPathComponent("container")
         try Data(fakeContainerCLI.utf8).write(to: container)
@@ -48,9 +51,8 @@ struct ServiceCommandIntegrationTests {
         let socket = root.appendingPathComponent("docker.sock").path
         let state = root.appendingPathComponent("state.sqlite").path
         let executable = try engineExecutable()
-        let process = Process()
         let log = root.appendingPathComponent("engine.log")
-        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        try Data().write(to: log)
         let output = try FileHandle(forWritingTo: log)
         defer { try? output.close() }
         process.executableURL = executable
@@ -63,23 +65,23 @@ struct ServiceCommandIntegrationTests {
             container.path
         ]
         process.environment = try engineEnvironment(executable: executable)
+        process.environment?["HOME"] = root.path
         process.standardOutput = output
         process.standardError = output
         try process.run()
 
-        try await exerciseEngineProcess(
-            process,
-            socket: socket,
-            log: log,
-            providerSelection: root.appendingPathComponent("engine-provider.json")
+        try await exerciseEngineWithRecoveryFailure(
+            process, socket: socket, log: log,
+            selection: root.appendingPathComponent("engine-provider.json"), rejectRecovery: rejectRecovery
         )
     }
 
     @Test
     func `engine executable serves a private provider session`() async throws {
-        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        try requireHostIntegrationOptIn()
+        let root = TestStorage.temporaryDirectory
             .appendingPathComponent(
-                "dcs-provider-\(UUID().uuidString.prefix(8))",
+                "dcp-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
             )
         try FileManager.default.createDirectory(
@@ -87,7 +89,9 @@ struct ServiceCommandIntegrationTests {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: 0o700]
         )
-        defer { try? FileManager.default.removeItem(at: root) }
+        let process = Process()
+        let keychain = try ServiceTestKeychain(root: root)
+        defer { keychain.cleanup(after: process) }
 
         let container = root.appendingPathComponent("container")
         try Data(fakeContainerCLI.utf8).write(to: container)
@@ -98,9 +102,8 @@ struct ServiceCommandIntegrationTests {
         let providerSocket = root.appendingPathComponent("provider.sock").path
         let state = root.appendingPathComponent("state.sqlite").path
         let executable = try engineExecutable()
-        let process = Process()
         let log = root.appendingPathComponent("provider.log")
-        #expect(FileManager.default.createFile(atPath: log.path, contents: nil))
+        try Data().write(to: log)
         let output = try FileHandle(forWritingTo: log)
         defer { try? output.close() }
         process.executableURL = executable
@@ -113,6 +116,7 @@ struct ServiceCommandIntegrationTests {
             container.path
         ]
         process.environment = try engineEnvironment(executable: executable)
+        process.environment?["HOME"] = root.path
         process.standardOutput = output
         process.standardError = output
         try process.run()
@@ -126,8 +130,22 @@ struct ServiceCommandIntegrationTests {
     }
 }
 
+private func requireHostIntegrationOptIn() throws {
+    if ProcessInfo.processInfo.environment["BAZEL_TEST"] == "1" {
+        try #require(
+            ProcessInfo.processInfo.environment["DEVCONTAINER_HOST_INTEGRATION"] == "1",
+            "This test uses the macOS Keychain; explicitly enable the host-integration lane."
+        )
+    }
+}
+
 private func engineEnvironment(executable: URL) throws -> [String: String] {
     var environment = ProcessInfo.processInfo.environment
+    if environment["BAZEL_TEST"] == "1" {
+        // Keep the inherited per-test LLVM profile path; the native collector
+        // merges the child process profile from the same test execution.
+        return environment
+    }
     guard environment["LLVM_PROFILE_FILE"] != nil else {
         return environment
     }
@@ -145,24 +163,44 @@ private func engineEnvironment(executable: URL) throws -> [String: String] {
     return environment
 }
 
+private func exerciseEngineWithRecoveryFailure(
+    _ process: Process, socket: String, log: URL, selection: URL, rejectRecovery: Bool
+) async throws {
+    if rejectRecovery {
+        await #expect(throws: ServiceTestHTTP.Failure.httpStatus(404)) {
+            try await exerciseEngineProcess(
+                process, socket: socket, log: log, providerSelection: selection,
+                recoveryPath: "/_container-family/missing-recovery"
+            )
+        }
+        #expect(!process.isRunning)
+    } else {
+        try await exerciseEngineProcess(process, socket: socket, log: log, providerSelection: selection)
+    }
+}
+
 private func exerciseEngineProcess(
     _ process: Process,
     socket: String,
     log: URL,
-    providerSelection: URL
+    providerSelection: URL,
+    recoveryPath: String = "/v1.53/_container-family/recovery"
 ) async throws {
     do {
         try await waitForSocket(socket, process: process)
-        let ping = try runCurl(socket: socket, path: "/_ping")
-        #expect(ping == "OK")
-        let version = try runCurl(socket: socket, path: "/version")
-        #expect(version.contains("\"Version\":\"1.1.0\""))
         let selectionData = try Data(contentsOf: providerSelection)
         let selection = try #require(
             JSONSerialization.jsonObject(with: selectionData) as? [String: Any]
         )
         let fingerprint = try #require(selection["digest"] as? String)
-        defer { removeProviderIdentity(fingerprint: fingerprint) }
+        let ping = try ServiceTestHTTP.get(socket: socket, path: "/_ping")
+        #expect(ping == "OK")
+        let version = try ServiceTestHTTP.get(socket: socket, path: "/version")
+        #expect(version.contains("\"Version\":\"1.1.0\""))
+        let recovery = try ServiceTestHTTP.get(socket: socket, path: recoveryPath)
+        let recoveryValue = try JSONDecoder().decode([String: String].self, from: Data(recovery.utf8))
+        #expect(recoveryValue["protocol"] == "1")
+        #expect(try UUID(uuidString: #require(recoveryValue["epoch"])) != nil)
         #expect(fingerprint.hasPrefix("sha256:"))
         #expect(selection["stateRootUUID"] is String)
         var selectionStatus = stat()
@@ -170,13 +208,13 @@ private func exerciseEngineProcess(
         #expect(selectionStatus.st_mode & (S_IRWXG | S_IRWXO) == 0)
         let providerArtifacts = inspectProviderArtifacts(publicSocket: socket)
 
-        let unsupportedResize = try runCurlResponse(
+        let unsupportedPause = try ServiceTestHTTP.request(
             socket: socket,
-            path: "/v1.53/containers/missing/resize?h=24&w=80",
+            path: "/v1.53/containers/missing/pause",
             method: "POST"
         )
-        #expect(unsupportedResize.status == 501)
-        #expect(unsupportedResize.body.contains("ContainerResize"))
+        #expect(unsupportedPause.status == 501)
+        #expect(unsupportedPause.body.contains("ContainerPause"))
 
         #expect(kill(process.processIdentifier, SIGTERM) == 0)
         try await waitForExit(process, log: log)
@@ -186,6 +224,10 @@ private func exerciseEngineProcess(
         #expect(!FileManager.default.fileExists(atPath: providerArtifacts.lock.path))
         #expect(!FileManager.default.fileExists(atPath: providerArtifacts.directory.path))
     } catch {
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGTERM)
+            try? await waitForExit(process, log: log, timeout: .seconds(2))
+        }
         if process.isRunning {
             _ = kill(process.processIdentifier, SIGKILL)
             try? await waitForExit(process, log: log, timeout: .seconds(2))
@@ -269,19 +311,17 @@ private func exerciseProviderProcess(
                 == "engine.handoff.part.identity-lifecycle-events.v1"
                 && $0.status == .native
         })
-        #expect(!descriptor.fingerprint.declaration.capabilities.contains {
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
             $0.identifier == "engine.route.ContainerResize"
-                && $0.status != .unavailable
+                && $0.status == .native
+        })
+        #expect(descriptor.fingerprint.declaration.capabilities.contains {
+            $0.identifier == "engine.control.recovery" && $0.version == 1 && $0.status == .native
         })
         let client = ContainerEngineProviderSessionClient(
             socketPath: socket,
             expectedFingerprint: descriptor.fingerprint
         )
-        defer {
-            removeProviderIdentity(
-                fingerprint: descriptor.fingerprint.digest
-            )
-        }
         let stateRoot = descriptor.fingerprint.stateRootUUID.uuidString
             .lowercased()
         let snapshotBody = try ProviderHandoffProviderKeyControlCodec
@@ -353,17 +393,6 @@ private func exerciseProviderProcess(
     }
 }
 
-private func removeProviderIdentity(fingerprint: String) {
-    let accountSuffix = String(fingerprint.dropFirst("sha256:".count))
-    SecItemDelete([
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService:
-            "io.github.stephenlclarke.devcontainer.provider-handoff",
-        kSecAttrAccount: "provider-\(accountSuffix)",
-        kSecAttrSynchronizable: kCFBooleanFalse as Any
-    ] as CFDictionary)
-}
-
 private func waitForExit(
     _ process: Process,
     log: URL,
@@ -388,69 +417,25 @@ private func engineExecutable() throws -> URL {
     if let executable = try configuredEngineExecutable() {
         return executable
     }
-
-    var startingPoints = [URL(fileURLWithPath: CommandLine.arguments[0])]
-    startingPoints += Bundle.allBundles.compactMap(\.executableURL)
-    if let profile = ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] {
-        startingPoints.append(URL(fileURLWithPath: profile))
-    }
-    for startingPoint in startingPoints {
-        var candidate = startingPoint
-        for _ in 0 ..< 12 {
-            let sibling = candidate
-                .deletingLastPathComponent()
-                .appendingPathComponent("devcontainer-engine")
-            if FileManager.default.isExecutableFile(atPath: sibling.path) {
-                return sibling
-            }
-            candidate.deleteLastPathComponent()
-        }
-    }
-
-    let repository = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let build = repository.appendingPathComponent(".build", isDirectory: true)
-    let enumerator = FileManager.default.enumerator(
-        at: build,
-        includingPropertiesForKeys: [.isExecutableKey],
-        options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    )
-    let expectsCoverageBuild = startingPoints.contains {
-        $0.path.contains("/coverage/")
-    }
-    let matches = (enumerator?.allObjects as? [URL] ?? [])
-        .filter {
-            $0.lastPathComponent == "devcontainer-engine"
-                && FileManager.default.isExecutableFile(atPath: $0.path)
-        }
-        .sorted {
-            executableCandidatePrecedes(
-                $0,
-                $1,
-                expectsCoverageBuild: expectsCoverageBuild
-            )
-        }
-    if let match = matches.first {
-        return match
-    }
-    throw ServiceIntegrationError("could not locate the built devcontainer-engine")
-}
-
-private func executableCandidatePrecedes(
-    _ left: URL,
-    _ right: URL,
-    expectsCoverageBuild: Bool
-) -> Bool {
-    let leftMatchesBuild = left.path.contains("/coverage/") == expectsCoverageBuild
-    let rightMatchesBuild = right.path.contains("/coverage/") == expectsCoverageBuild
-    return leftMatchesBuild == rightMatchesBuild
-        ? left.path < right.path
-        : leftMatchesBuild && !rightMatchesBuild
+    return try ServiceTestExecutable.resolve(beside: Bundle(for: ServiceIntegrationBundle.self).bundleURL)
 }
 
 private func configuredEngineExecutable() throws -> URL? {
+    let environment = ProcessInfo.processInfo.environment
+    if environment["BAZEL_TEST"] == "1" {
+        guard let runfile = environment["DEVCONTAINER_ENGINE_TEST_RUNFILE"],
+              let root = environment["TEST_SRCDIR"],
+              let workspace = environment["TEST_WORKSPACE"]
+        else {
+            throw ServiceIntegrationError("Bazel must declare the engine test executable")
+        }
+        let executable = URL(fileURLWithPath: root).appendingPathComponent(workspace)
+            .appendingPathComponent(runfile)
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw ServiceIntegrationError("Bazel engine runfile is not executable")
+        }
+        return executable
+    }
     guard let configured = ProcessInfo.processInfo.environment[
         "DEVCONTAINER_ENGINE_TEST_EXECUTABLE"
     ] else {
@@ -492,63 +477,6 @@ private func waitForSocket(
         try await Task.sleep(for: .milliseconds(20))
     }
     throw ServiceIntegrationError("devcontainer-engine did not create its socket")
-}
-
-private func runCurl(socket: String, path: String) throws -> String {
-    let response = try runCurlResponse(socket: socket, path: path)
-    guard response.status >= 200, response.status < 300 else {
-        throw ServiceIntegrationError(
-            "GET \(path) returned HTTP \(response.status): \(response.body)"
-        )
-    }
-    return response.body
-}
-
-private func runCurlResponse(
-    socket: String,
-    path: String,
-    method: String = "GET"
-) throws -> (status: Int, body: String) {
-    let process = Process()
-    let output = Pipe()
-    let error = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-    process.arguments = [
-        "--silent",
-        "--show-error",
-        "--unix-socket",
-        socket,
-        "--request",
-        method,
-        "--write-out",
-        "\n%{http_code}",
-        "http://localhost\(path)"
-    ]
-    process.standardOutput = output
-    process.standardError = error
-    try process.run()
-    process.waitUntilExit()
-    let data = try output.fileHandleForReading.readToEnd() ?? Data()
-    let diagnostic = try error.fileHandleForReading.readToEnd() ?? Data()
-    guard process.terminationStatus == 0 else {
-        let response = String(data: data, encoding: .utf8) ?? "non-UTF-8 response body"
-        let curlDiagnostic =
-            String(data: diagnostic, encoding: .utf8)
-                ?? "non-UTF-8 service diagnostic"
-        throw ServiceIntegrationError(
-            "\(curlDiagnostic.trimmingCharacters(in: .whitespacesAndNewlines)): \(response)"
-        )
-    }
-    let text = String(data: data, encoding: .utf8)
-        ?? "non-UTF-8 service response"
-    guard let newline = text.lastIndex(of: "\n"),
-          let status = Int(text[text.index(after: newline)...])
-    else {
-        throw ServiceIntegrationError(
-            "curl response did not contain an HTTP status: \(text)"
-        )
-    }
-    return (status, String(text[..<newline]))
 }
 
 private let fakeContainerCLI = """

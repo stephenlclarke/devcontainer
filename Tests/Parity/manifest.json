@@ -17,15 +17,18 @@
       "engineApiVersion": "1.54",
       "composeVersion": "5.3.1",
       "composeSHA256": "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3",
-      "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608"
+      "composeBottleSHA256": "9df565543164437312a50347eb2785b59b0f35e9fc1c044aaea5b6fa78952608",
+      "buildxVersion": "0.37.1",
+      "buildxSHA256": "a3fe0d81584f0fb40bd5941b20c0e7e35ae548144860821a0f6a43e8de47f7b5"
     },
     "appleContainer": {
-      "stableVersion": "1.1.0",
-      "stableCommit": "5973b9cc626a3e7a499bb316a958237ebe14e2ed"
+      "stableVersion": "1.4.1",
+      "stableCommit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
     },
     "containerCompose": {
-      "stableVersion": "0.10.1",
-      "stableCommit": "77d2191a75f3a15092bbead1991b0d6a37fafa91"
+      "source": "stephenlclarke/container-compose",
+      "stableVersion": "0.15.1",
+      "stableCommit": "2ef7e13532481351f9ec216e43b353c113b50f5c"
     },
     "vscode": {
       "version": "1.131.0",
@@ -48,11 +51,15 @@
     },
     "releaseHost": {
       "architecture": "arm64",
-      "macOSProductVersion": "26.5.2",
-      "macOSBuildVersion": "25F84",
-      "xcodeVersion": "26.6",
-      "xcodeBuildVersion": "17F113",
-      "swiftVersion": "6.3.3"
+      "macOSProductVersion": "27.0",
+      "macOSBuildVersion": "26A428",
+      "xcodeVersion": "27.0",
+      "xcodeBuildVersion": "27A266a",
+      "swiftVersion": "6.4.0.34.1"
+    },
+    "containerRuntime": {
+      "repository": "stephenlclarke/container",
+      "stableCommit": "f86fea2236fab118c0e0c6f8be5eb7672df894e2"
     }
   },
   "releasePolicy": {
@@ -142,6 +149,69 @@
       "assertions": ["network lifecycle", "volume lifecycle", "bind read-only and tmpfs mounts"]
     },
     {
+      "id": "E07-init-attachment",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["pre-start init attachment", "4 MiB binary stdin and EOF", "separate stdout and stderr", "real exit status", "source-aware history across two init generations"]
+    },
+    {
+      "id": "E08-foreground-terminal",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["raw TTY stdout and stderr", "post-start terminal resize", "detach preserves init", "reconnected stdin", "acknowledged next-exit wait and auto-removal"]
+    },
+    {
+      "id": "E09-compose-foreground",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["immutable Compose CLI run", "piped stdin roundtrip", "separate stdout and stderr", "real exit status", "automatic removal"]
+    },
+    {
+      "id": "E10-compose-quiet",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["immutable Compose CLI run with --quiet", "piped stdin roundtrip", "separate guest stdout and stderr", "real exit status", "automatic removal"]
+    },
+    {
+      "id": "E11-compose-redirected",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["redirected CLI overrides service tty without -T", "piped stdin roundtrip", "separate guest stdout and stderr", "real exit status", "automatic removal"]
+    },
+    {
+      "id": "E12-compose-tty-input",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["piped interactive TTY input fails with exact error and exit", "dependency starts before validation", "one-off job is not created", "missing job image remains absent", "exact owned dependency cleanup"]
+    },
+    {
+      "id": "E13-compose-signals",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["host SIGUSR1 reaches guest through admitted Compose CLI", "same guest continues after nonterminal signal", "host SIGTERM reaches guest", "guest trap exit status and exact output", "automatic removal"]
+    },
+    {
+      "id": "E14-compose-terminal-size",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["actual host PTY selects guest TTY", "first guest size query retained without a pre-entrypoint size guarantee", "bounded unassisted convergence to inherited host dimensions", "one host SIGWINCH propagates new PTY dimensions", "terminal stdin roundtrip", "exact merged guest streams", "real exit status", "automatic removal"]
+    },
+    {
+      "id": "E15-initial-terminal-size",
+      "status": "implemented",
+      "runner": "engine",
+      "backends": ["docker", "apple-stock", "container-compose"],
+      "assertions": ["explicit Engine ConsoleSize retained in inspection", "first guest command observes requested rows and columns before any input or resize", "acknowledged next-exit subscription", "real exit status", "automatic removal"]
+    },
+    {
       "id": "D01-image-config",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
@@ -193,7 +263,7 @@
       "id": "C02-compose-dependencies",
       "status": "implemented",
       "backends": ["docker", "apple-stock", "container-compose"],
-      "assertions": ["runServices", "health-gated dependencies", "service DNS"]
+      "assertions": ["runServices", "health-gated dependencies", "service DNS", "first application-command DNS lookup"]
     },
     {
       "id": "C03-compose-resources",

@@ -71,7 +71,19 @@ struct AppleContainerRuntimeRecoveryTests {
         )
         let log = try fixture.log()
         #expect(!log.contains("stop --time 0 fixture"))
+        try await restarted.killContainer(id: snapshot.runtimeID.rawValue, signal: "SIGUSR1", context: context)
+        #expect(await restarted.portForwarding.hasListeners(containerID: snapshot.runtimeID.rawValue))
+        try fixture.setState("stopped")
+        await expectListenerClosed(restarted, id: snapshot.runtimeID.rawValue)
         await restarted.shutdown()
+    }
+
+    private func expectListenerClosed(_ runtime: AppleContainerRuntime, id: String) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while await runtime.portForwarding.hasListeners(containerID: id), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await !runtime.portForwarding.hasListeners(containerID: id))
     }
 
     private func reserveHostPort() async throws -> UInt16 {

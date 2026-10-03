@@ -23,6 +23,16 @@ public enum ComposeProviderKind: String, Codable, CaseIterable, Sendable {
     case containerCompose = "container-compose"
 }
 
+public struct DevContainerConfigurationLoadResult: Equatable, Sendable {
+    public let configuration: DevContainerConfiguration
+    public let composeProviderWasExplicit: Bool
+
+    public init(configuration: DevContainerConfiguration, composeProviderWasExplicit: Bool) {
+        self.configuration = configuration
+        self.composeProviderWasExplicit = composeProviderWasExplicit
+    }
+}
+
 public struct DevContainerConfiguration: Codable, Equatable, Sendable {
     public var backend: BackendProvider
     public var composeProvider: ComposeProviderKind
@@ -33,18 +43,25 @@ public struct DevContainerConfiguration: Codable, Equatable, Sendable {
 
     public init(
         backend: BackendProvider = .stock,
-        composeProvider: ComposeProviderKind = .docker,
+        composeProvider: ComposeProviderKind? = nil,
         containerExecutable: String = DevContainerPathDefaults.containerExecutable,
         socket: String,
         stateDatabase: String = DevContainerPathDefaults.stateDatabase,
         strictCompatibility: Bool = true
     ) {
         self.backend = backend
-        self.composeProvider = composeProvider
+        self.composeProvider = composeProvider ?? Self.defaultComposeProvider(for: backend)
         self.containerExecutable = containerExecutable
         self.socket = socket
         self.stateDatabase = stateDatabase
         self.strictCompatibility = strictCompatibility
+    }
+
+    public static func defaultComposeProvider(for backend: BackendProvider) -> ComposeProviderKind {
+        switch backend {
+        case .stock: .docker
+        case .containerCompose: .containerCompose
+        }
     }
 }
 
@@ -110,24 +127,22 @@ public enum DevContainerRuntimeSelectionResolver {
         socket: String? = nil,
         stateDatabase: String? = nil
     ) throws -> DevContainerRuntimeSelection {
-        let configurationURL = URL(
-            fileURLWithPath: nonempty(configuration)
-                ?? nonempty(environment["DEVCONTAINER_CONFIG"])
-                ?? defaultConfiguration(environment: environment)
-        )
-        let stored = try DevContainerConfigurationStore.load(
+        let configurationURL = resolvedConfigurationURL(configuration, environment: environment)
+        let storedLoad = try DevContainerConfigurationStore.loadResult(
             from: configurationURL,
             defaultSocket: DevContainerPathDefaults.socket
         )
+        let stored = storedLoad.configuration
         let selectedBackend = try selectBackend(
             backend,
             environment: environment,
             stored: stored.backend
         )
-        let selectedCompose = try selectComposeProvider(
+        let selectedCompose = try selectedComposeProvider(
             composeProvider,
             environment: environment,
-            stored: stored.composeProvider
+            storedLoad: storedLoad,
+            backend: selectedBackend
         )
         let selectedSocket = try nonempty(socket)
             ?? socketFromEnvironment(environment)
@@ -192,6 +207,18 @@ public enum DevContainerRuntimeSelectionResolver {
         return result
     }
 
+    private static func selectedComposeProvider(
+        _ explicit: String?,
+        environment: [String: String],
+        storedLoad: DevContainerConfigurationLoadResult,
+        backend: BackendProvider
+    ) throws -> ComposeProviderKind {
+        let stored = storedLoad.composeProviderWasExplicit
+            ? storedLoad.configuration.composeProvider
+            : DevContainerConfiguration.defaultComposeProvider(for: backend)
+        return try selectComposeProvider(explicit, environment: environment, stored: stored)
+    }
+
     private static func absolutePath(_ value: String, name: String) throws -> String {
         let expanded = expandHome(value)
         guard expanded.hasPrefix("/") else {
@@ -236,6 +263,17 @@ public enum DevContainerRuntimeSelectionResolver {
             .path
     }
 
+    private static func resolvedConfigurationURL(
+        _ explicit: String?,
+        environment: [String: String]
+    ) -> URL {
+        URL(
+            fileURLWithPath: nonempty(explicit)
+                ?? nonempty(environment["DEVCONTAINER_CONFIG"])
+                ?? defaultConfiguration(environment: environment)
+        )
+    }
+
     private static func nonempty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else {
             return nil
@@ -257,13 +295,24 @@ public enum DevContainerConfigurationStore {
         from url: URL,
         defaultSocket: String
     ) throws -> DevContainerConfiguration {
+        try loadResult(from: url, defaultSocket: defaultSocket).configuration
+    }
+
+    public static func loadResult(
+        from url: URL,
+        defaultSocket: String
+    ) throws -> DevContainerConfigurationLoadResult {
         guard FileManager.default.fileExists(atPath: url.path) else {
-            return DevContainerConfiguration(socket: defaultSocket)
+            return DevContainerConfigurationLoadResult(
+                configuration: DevContainerConfiguration(socket: defaultSocket),
+                composeProviderWasExplicit: false
+            )
         }
         let text = try String(contentsOf: url, encoding: .utf8)
-        return try configuration(
-            values: parse(text),
-            defaultSocket: defaultSocket
+        let values = try parse(text)
+        return try DevContainerConfigurationLoadResult(
+            configuration: configuration(values: values, defaultSocket: defaultSocket),
+            composeProviderWasExplicit: values["compose.provider"] != nil
         )
     }
 
@@ -328,7 +377,8 @@ public enum DevContainerConfigurationStore {
         guard let backend = BackendProvider(rawValue: backendText) else {
             throw DevContainerError(.invalidRequest, message: "invalid backend \(backendText)")
         }
-        let composeText = values["compose.provider"] ?? ComposeProviderKind.docker.rawValue
+        let composeText = values["compose.provider"]
+            ?? DevContainerConfiguration.defaultComposeProvider(for: backend).rawValue
         guard let compose = ComposeProviderKind(rawValue: composeText) else {
             throw DevContainerError(
                 .invalidRequest,
@@ -384,7 +434,7 @@ public enum DevContainerConfigurationStore {
         [compatibility]
         strict = \(configuration.strictCompatibility ? "true" : "false")
         """
-        try Data((text + "\n").utf8).write(to: url, options: .atomic)
+        try AtomicFile.write(Data((text + "\n").utf8), to: url)
         guard chmod(url.path, S_IRUSR | S_IWUSR) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }

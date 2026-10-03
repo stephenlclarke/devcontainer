@@ -14,11 +14,13 @@
 // limitations under the License.
 //===----------------------------------------------------------------------===//
 
+import ContainerAPIClient
 import ContainerResource
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
+import DevContainerTestStorage
 import Foundation
 import Testing
 
@@ -166,6 +168,7 @@ struct AppleContainerRuntimeTests {
         #expect(descriptor.providerVersion == "1.1.0")
         #expect(descriptor.providerCommit == "fixture-commit")
         #expect(descriptor.capabilities[.events] == .emulated)
+        #expect(descriptor.capabilities[.composeHealthPolicy] == .emulated)
 
         try await assertContainerInventory(runtime, context: context)
         try await assertImageInventory(runtime, context: context)
@@ -792,6 +795,29 @@ struct AppleContainerRuntimeTests {
     }
 }
 
+@Suite(.serialized)
+struct AppleContainerRuntimeNetworkAddressTests {
+    @Test
+    func `native inventory preserves IPv4 prefix for Docker network inspection`() throws {
+        let attachmentJSON = """
+        {
+          "network": "fixture-network",
+          "hostname": "fixture",
+          "ipv4Address": "192.168.65.2/24",
+          "ipv4Gateway": "192.168.65.1"
+        }
+        """
+        let attachment = try JSONDecoder().decode(
+            Attachment.self,
+            from: Data(attachmentJSON.utf8)
+        )
+
+        #expect(AppleContainerRuntime.networkAddresses([attachment]) == [
+            "fixture-network": "192.168.65.2/24"
+        ])
+    }
+}
+
 struct FakeAppleCLI {
     let root: URL
     let executable: URL
@@ -807,7 +833,7 @@ struct FakeAppleCLI {
     ) throws {
         self.enhancedCreateOptions = enhancedCreateOptions
         self.distribution = distribution
-        root = FileManager.default.temporaryDirectory
+        root = TestStorage.temporaryDirectory
             .appendingPathComponent("devcontainer-apple-runtime-tests-\(UUID().uuidString)")
         executable = root.appendingPathComponent("container")
         logURL = root.appendingPathComponent("commands.log")
@@ -829,15 +855,36 @@ struct FakeAppleCLI {
 
     func runtime(
         metadataStore: (any RuntimeMetadataStore)? = nil,
-        useDirectProcessAPI: Bool = false
+        useDirectProcessAPI: Bool = false,
+        images: any AppleImageIdentityClient = FakeAppleImageIdentityClient(),
+        creator: (any AppleContainerCreateClient)? = nil,
+        bootstrap: (any AppleContainerBootstrapClient)? = nil,
+        networks: any AppleNetworkClient = AppleNetworkClientAdapter(),
+        allocations: any AppleNetworkAllocationClient = LiveAppleNetworkAllocationClient(),
+        files: any AppleContainerFileClient = LiveAppleContainerFileClient(client: ContainerClient()),
+        inventory: (any AppleContainerInventoryClient)? = nil
     ) throws -> AppleContainerRuntime {
         try AppleContainerRuntime(
             executable: executable,
             environment: [:],
             useDirectProcessAPI: useDirectProcessAPI,
-            useDirectContainerAPI: false,
-            metadataStore: metadataStore,
-            volumeRoot: root.appendingPathComponent("volumes", isDirectory: true)
+            useDirectContainerAPI: creator != nil,
+            metadataStore: metadataStore ?? (creator == nil ? nil : TestMetadataStore()),
+            storageRoots: AppleContainerRuntime.StorageRoots(
+                volumes: root.appendingPathComponent("volumes", isDirectory: true),
+                transfers: root.appendingPathComponent("transfers", isDirectory: true)
+            ),
+            clients: AppleContainerRuntime.DirectClients(
+                api: ContainerClient(),
+                inventory: inventory ?? (creator as? any AppleContainerInventoryClient)
+                    ?? LiveAppleContainerInventoryClient(client: ContainerClient()),
+                files: files,
+                networks: networks,
+                overrides: .init(
+                    allocatedNetworks: allocations, bootstrap: bootstrap,
+                    images: images, creator: creator
+                )
+            )
         )
     }
 
@@ -853,10 +900,20 @@ struct FakeAppleCLI {
         try Data(value.utf8).write(to: modeURL)
     }
 
+    func setImageInventory(_ values: [[String: Any]]) throws {
+        try JSONSerialization.data(withJSONObject: values).write(to: root.appendingPathComponent("images.json"))
+    }
+
+    func setContainerInventory(_ values: [[String: Any]]) throws {
+        try JSONSerialization.data(withJSONObject: values).write(to: root.appendingPathComponent("containers.json"))
+    }
+
     private var script: String {
         let log = shellQuote(logURL.path)
         let state = shellQuote(stateURL.path)
         let mode = shellQuote(modeURL.path)
+        let images = shellQuote(root.appendingPathComponent("images.json").path)
+        let containers = shellQuote(root.appendingPathComponent("containers.json").path)
         let createHelp = enhancedCreateOptions
             ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
@@ -890,6 +947,10 @@ struct FakeAppleCLI {
             printf '%b\\n' '\(createHelp)'
             ;;
           "list --all"|"list --format")
+            if [ -f \(containers) ]; then
+              cat \(containers)
+              exit 0
+            fi
             if [ "$mode" = slow-list ]; then
               sleep 0.3
             fi
@@ -1008,10 +1069,19 @@ struct FakeAppleCLI {
             }]'
             ;;
           "image list")
+            if [ -f \(images) ]; then
+              cat \(images)
+              exit 0
+            fi
             printf '%s\\n' '[{
               "id":"abc123",
               "configuration":{
                 "name":"fixture:latest",
+                "descriptor":{
+                  "mediaType":"application/vnd.oci.image.index.v1+json",
+                  "digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size":123
+                },
                 "creationDate":"2026-07-26T12:34:56Z"
               },
               "variants":[
@@ -1083,6 +1153,10 @@ struct FakeAppleCLI {
               printf '%s\n' prepared-feature-context >> "$LOG"
             fi
             printf '%s\\n' 'build-progress'
+            if [ "$mode" = build-failure ]; then
+              printf '%s\\n' 'build command failed' >&2
+              exit 17
+            fi
             ;;
           "start fixture")
             if [ "$state" = created ]; then

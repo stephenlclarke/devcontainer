@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
 import platform
+import pwd
 import shlex
 import shutil
 import signal
@@ -37,10 +40,96 @@ from parity_lib import (
     load_manifest,
     parse_observations,
 )
+from engine_fixture_routes import (
+    ENGINE_FIXTURE_ROUTES,
+    validate_engine_fixture_routes,
+)
 
 
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
+FINALIZED_SCRATCH = Path("/Volumes/SSD/cf/finalized-admission")
+FINALIZED_RETAINED = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
+
+
+def finalized_selection(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Require one complete, explicit signed-package selection."""
+
+    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state", "expected_source_commit")
+    values = {field: getattr(args, field, None) for field in fields}
+    if any(value is not None for value in values.values()) and not all(value is not None for value in values.values()):
+        raise ParityError("all four finalized package inputs are required together")
+    return values if all(value is not None for value in values.values()) else None
+
+
+def load_finalized_admitter(repository: Path):
+    """Load the maintained release admission by its selected repository path."""
+
+    path = repository / "Tools/release/prepare_finalized_package.py"
+    spec = importlib.util.spec_from_file_location("parity_finalized_admission", path)
+    if spec is None or spec.loader is None:
+        raise ParityError("finalized package admission helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.admit_finalized_package
+
+
+def file_sha256(path: Path) -> str:
+    """Bind an explicitly selected provider executable to its exact bytes."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+PARITY_HARNESS = (
+    "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
+    "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
+    "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
+    "Tools/parity/vscode-driver-extension/extension.js",
+    "Tools/parity/vscode-driver-extension/package.json",
+    "Tools/release/prepare_finalized_package.py",
+    "Tools/testing/guest_runtime.py", "Tools/testing/guest_fixture.py",
+    "Tools/testing/released_engine.py",
+    "Tools/testing/service_journal.py", "Tools/testing/service_switch.py",
+    "Tools/testing/case_evidence.py", "Tools/testing/host_runtime.py",
+    "Tools/testing/lifecycle_probe.py", "Tools/testing/exec_probe.py",
+    "Tools/testing/archive_probe.py", "Tools/testing/network_volume_probe.py",
+    "Tools/testing/build_fixture.py", "Tools/testing/build_runtime.py",
+    "Tools/testing/fault_probe.py", "Tools/testing/attachment_probe.py",
+    "Tools/testing/foreground_probe.py", "Tools/testing/initial_terminal_probe.py",
+    "Tools/testing/compose_foreground_probe.py", "Tools/testing/compose_terminal_probe.py",
+    "Tools/testing/json_file_oracle.py", "Tools/testing/private_keychain.py",
+    "Tools/testing/engine_probe.py", "Tools/bazel/prepare_guest_images.py",
+    "Tools/bazel/prepare_releases.py", "Tools/bazel/release_inputs.py",
+    "Tools/bazel/oci_image_layout.py", "Tools/testing/build_images.py",
+    "Tools/testing/build_probe.py", "Tools/testing/runtime_services.py",
+    "Tools/testing/runtime_probe.py", "Tools/testing/background_items.py",
+    "Tools/testing/devcontainer_candidate.py",
+    "Tools/testing/devcontainer_build_reference.py",
+    "Tools/testing/devcontainer_compose_reference.py",
+    "Tools/testing/devcontainer_dependencies_reference.py",
+    "Tools/testing/devcontainer_features_reference.py",
+    "Tools/testing/devcontainer_lifecycle_reference.py",
+    "Tools/testing/devcontainer_ports_reference.py",
+    "Tools/testing/devcontainer_reference.py",
+    "Tools/testing/devcontainer_resources_reference.py",
+    "Tools/testing/devcontainer_reuse_reference.py",
+    "Tools/testing/devcontainer_users_reference.py",
+)
+
+
+def parity_harness_sha256(repository: Path) -> str:
+    """Bind the same C04/V01 runner and comparison sources in every lane."""
+
+    digest = hashlib.sha256()
+    for relative in PARITY_HARNESS:
+        digest.update(relative.encode("utf-8") + b"\0")
+        digest.update(bytes.fromhex(file_sha256(repository / relative)))
+    return digest.hexdigest()
 
 
 def resolver_nameservers(configuration: str) -> list[str]:
@@ -65,7 +154,7 @@ def resolver_nameservers(configuration: str) -> list[str]:
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
-    def __init__(self, lane: str, repository: Path, evidence_root: Path) -> None:
+    def __init__(self, lane: str, repository: Path, evidence_root: Path, selection: dict[str, Any] | None = None) -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -87,7 +176,90 @@ class LaneRunner:
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
+        self.finalized_selection = selection
+        self.finalized: dict[str, Any] | None = None
+        self.finalized_identity: dict[str, Any] | None = None
+        self.provider_paths: dict[str, str] = {}
+        self.provider_hashes: dict[str, str] = {}
+        self.harness_sha256: str | None = None
         self.configure_runtime_path()
+
+    def admit_finalized(self) -> None:
+        """Authenticate the shared stock package before any native runtime starts."""
+
+        if self.finalized_selection is None:
+            return
+        self.harness_sha256 = parity_harness_sha256(self.repository)
+        if self.lane != "docker":
+            names = ("DEVCONTAINER_CONTAINER_BIN", "DEVCONTAINER_COMPOSE_BIN") if self.lane == "container-compose" else ("DEVCONTAINER_CONTAINER_BIN",)
+            for name in names:
+                value = os.environ.get(name)
+                path = Path(value) if value else None
+                if path is None or not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK) or path.resolve() != path:
+                    raise ParityError(f"finalized native lane requires an exact qualified {name}")
+                self.provider_paths[name] = str(path)
+                self.provider_hashes[name] = file_sha256(path)
+        self.readmit_finalized(first=True)
+
+    def readmit_finalized(self, *, first: bool = False) -> None:
+        """Reject changed signed inputs or provider binaries after the fixture."""
+
+        if self.finalized_selection is None:
+            return
+        if self.harness_sha256 != parity_harness_sha256(self.repository):
+            raise ParityError("parity harness changed during finalized package run")
+        for name, expected in self.provider_hashes.items():
+            if os.environ.get(name) != self.provider_paths[name] or file_sha256(Path(self.provider_paths[name])) != expected:
+                raise ParityError(f"qualified provider changed during parity: {name}")
+        selection = self.finalized_selection
+        try:
+            admission = load_finalized_admitter(self.repository)(
+                repository=self.repository.resolve(),
+                finalized=selection["finalized_directory"],
+                trusted_provenance_sha256=selection["finalization_provenance_sha256"],
+                expected_source_commit=selection["expected_source_commit"],
+                provider_lane="apple-stock" if self.lane == "docker" else self.lane,
+                state=selection["finalization_state"],
+                scratch_root=FINALIZED_SCRATCH,
+                retained_root=FINALIZED_RETAINED,
+                evidence_root=FINALIZED_RETAINED / "signature-evidence",
+            )
+        except (OSError, ValueError) as error:
+            raise ParityError(f"finalized package admission failed: {error}") from error
+        if admission.get("scope") != "finalized-native-package-runtime-input" or admission.get("runtimeProfile") != "stock":
+            raise ParityError("finalized package has an unsupported runtime scope")
+        identity = {key: admission[key] for key in (
+            "scope", "kind", "sourceCommit", "runtimeProfile", "candidateReceiptSHA256",
+            "finalizationProvenanceSHA256", "trustedStateSHA256", "archiveSHA256", "archiveSize",
+            "preparationSHA256", "inventorySHA256", "productionBinarySHA256", "signatureInventorySHA256",
+        )}
+        identity["referenceRuntimeFiles"] = admission["referenceRuntime"]["files"]
+        if first:
+            self.finalized = admission
+            self.finalized_identity = identity
+        elif identity != self.finalized_identity:
+            raise ParityError("finalized package identity changed during parity")
+
+    def package_executable(self, name: str) -> str:
+        """Select an admitted signed executable or the development build."""
+
+        if getattr(self, "finalized_selection", None) is not None:
+            if self.finalized is None:
+                raise ParityError("finalized package was not admitted")
+            return self.finalized["executables"][name]
+        return str(self.repository / ".build" / "debug" / name)
+
+    def provider_executable(self, name: str, fallback: str) -> str:
+        """Keep the qualified external provider separate from the package adapter."""
+
+        return self.provider_paths.get(name) or os.environ.get(name) or fallback
+
+    def devcontainers_command(self) -> list[str]:
+        """Use the signed installation-owned Node and pinned CLI in release mode."""
+
+        if getattr(self, "finalized_selection", None) is not None and self.lane != "docker":
+            return [self.package_executable("devcontainer")]
+        return [self.node_package_runner, "--yes", f"@devcontainers/cli@{self.cli_version}"]
 
     def configure_runtime_path(self) -> None:
         """Prefer explicitly selected provider binaries throughout the lane."""
@@ -113,14 +285,15 @@ class LaneRunner:
     def run(self) -> int:
         if self.lane not in LANES:
             raise ParityError(f"unknown lane {self.lane!r}")
+        try:
+            validate_engine_fixture_routes(self.manifest)
+        except ValueError as error:
+            raise ParityError(f"engine fixture route preflight failed: {error}") from error
         if not self.docker:
             raise ParityError("docker CLI is required")
-        if not self.node_package_runner:
+        if not self.node_package_runner and (self.lane == "docker" or self.finalized_selection is None):
             raise ParityError("npx is required for the pinned @devcontainers/cli")
 
-        if self.output.exists():
-            shutil.rmtree(self.output)
-        self.output.mkdir(parents=True)
         fixtures = implemented_fixtures(self.repository, self.manifest)
         fixtures = [
             fixture
@@ -148,25 +321,82 @@ class LaneRunner:
                 for fixture in fixtures
                 if fixture.identifier in selected
             ]
-        if self.lane != "docker":
-            self.start_engine()
-        else:
+
+        self.admit_finalized()
+        owned_fixtures = [fixture for fixture in fixtures
+                          if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"]
+        if owned_fixtures:
+            from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
+
+            retained = _retained_root(self)
+            self._owned_guest_inputs = admit_guest_inputs(self.repository, self.lane, retained)
+            self._owned_guest_runner = OwnedGuestFixtureRunner(
+                self, owned_fixtures, admitted_inputs=self._owned_guest_inputs)
+        if self.output.exists():
+            shutil.rmtree(self.output)
+        self.output.mkdir(parents=True)
+        native_preparation_failed = False
+        if self.lane == "docker":
             self.configure_docker_oracle()
+        elif owned_fixtures:
+            try:
+                self._owned_guest_runner.prepare_native_provider()
+            except (OSError, ValueError, RuntimeError, ParityError,
+                    subprocess.SubprocessError, TimeoutError) as error:
+                native_preparation_failed = True
+                self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
+                self._preserve_engine_on_uncertain_guest_cleanup = True
+                self._owned_guest_runner.preparation_error = str(error)
+        if self.lane != "docker" and not native_preparation_failed:
+            self.start_engine()
+
+        if owned_fixtures and not native_preparation_failed:
+            try:
+                self._owned_guest_runner.attach_endpoint()
+                if self.lane == "docker":
+                    self._owned_guest_runner.prepare()
+            except (OSError, ValueError, RuntimeError, ParityError,
+                    subprocess.SubprocessError, TimeoutError) as error:
+                self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
+                self._preserve_engine_on_uncertain_guest_cleanup = True
+                self._owned_guest_runner.preparation_error = str(error)
 
         results: list[dict[str, Any]] = []
+        component_e13_only = (
+            selected == {"E13-compose-signals"}
+            and len(fixtures) == 1
+            and fixtures[0].identifier == "E13-compose-signals"
+        )
         try:
-            self.configure_devcontainer_client()
-            if self.lane != "apple-stock":
-                self.prepare_builder()
-            atomic_json(self.output / "fingerprint.json", self.fingerprint())
-            for fixture in fixtures:
-                results.append(self.run_fixture(fixture))
+            if native_preparation_failed:
+                results = [{"id": fixture.identifier, "status": "failed", "durationSeconds": 0.0,
+                            "observations": {}, "differences": [],
+                            "diagnostic": "native guest provisioning failed before Engine startup"}
+                           for fixture in fixtures]
+            else:
+                self.configure_devcontainer_client()
+                if self.lane != "apple-stock" and not component_e13_only:
+                    self.prepare_builder()
+                atomic_json(self.output / "fingerprint.json", self.fingerprint())
+                for fixture in fixtures:
+                    results.append(self.run_fixture(fixture))
         finally:
             try:
+                if getattr(self, "_owned_guest_runner", None) is not None:
+                    try:
+                        self._owned_guest_runner.cleanup()
+                    except (OSError, ValueError, RuntimeError, ParityError,
+                            subprocess.SubprocessError, TimeoutError) as error:
+                        self.cleanup_differences.append(f"owned guest lane cleanup failed: {error}")
+                        self._preserve_engine_on_uncertain_guest_cleanup = True
                 self.stop_builder()
                 self.check_runtime_state_cleanup()
             finally:
-                self.stop_engine()
+                try:
+                    if not getattr(self, "_preserve_engine_on_uncertain_guest_cleanup", False):
+                        self.stop_engine()
+                finally:
+                    self.readmit_finalized()
 
         success = (
             all(result["status"] == "passed" for result in results)
@@ -179,6 +409,10 @@ class LaneRunner:
             "fixtures": results,
             "cleanupDifferences": self.cleanup_differences,
         }
+        if getattr(self, "finalized_identity", None) is not None:
+            payload["finalizedPackage"] = self.finalized_identity
+            payload["providerBinarySHA256"] = self.provider_hashes
+            payload["parityHarnessSHA256"] = self.harness_sha256
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -191,8 +425,8 @@ class LaneRunner:
     def start_engine(self) -> None:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise ParityError("Apple lanes require an arm64 Mac")
-        engine = self.repository / ".build" / "debug" / "devcontainer-engine"
-        if not engine.is_file():
+        engine = Path(self.package_executable("devcontainer-engine"))
+        if self.finalized_selection is None and not engine.is_file():
             run_checked(
                 ["swift", "build", "--disable-automatic-resolution"],
                 cwd=self.repository,
@@ -205,9 +439,7 @@ class LaneRunner:
         self.socket_root = create_socket_root()
         socket_path = self.socket_root / "docker.sock"
         state_path = self.runtime_root / "state.sqlite"
-        container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or shutil.which(
-            "container"
-        )
+        container = self.provider_executable("DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "")
         if not container:
             raise ParityError("Apple container CLI is required")
         self.engine_log = (self.output / "engine.log").open("wb")
@@ -281,7 +513,7 @@ class LaneRunner:
                 raise ParityError(
                     "container-compose Docker client wrapper requires a live engine"
                 )
-            compose = self.repository / ".build" / "debug" / "devcontainer-compose"
+            compose = Path(self.package_executable("devcontainer-compose"))
             if not compose.is_file() or not os.access(compose, os.X_OK):
                 raise ParityError(
                     f"container-compose wrapper is not executable at {compose}"
@@ -613,15 +845,10 @@ class LaneRunner:
     def fingerprint(self) -> dict[str, Any]:
         commands: dict[str, Sequence[str]] = {
             "docker": [self.docker, "version", "--format", "{{json .}}"],
-            "devcontainers": [
-                self.node_package_runner,
-                "--yes",
-                f"@devcontainers/cli@{self.cli_version}",
-                "--version",
-            ],
+            "devcontainers": [*self.devcontainers_command(), "--version"],
         }
         if self.lane != "docker":
-            container = os.environ.get("DEVCONTAINER_CONTAINER_BIN") or "container"
+            container = self.provider_executable("DEVCONTAINER_CONTAINER_BIN", "container")
             commands["container"] = [
                 container,
                 "system",
@@ -631,7 +858,7 @@ class LaneRunner:
             ]
         if self.lane == "container-compose":
             commands["containerCompose"] = [
-                os.environ.get("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
+                self.provider_executable("DEVCONTAINER_COMPOSE_BIN", "container-compose"),
                 "version",
                 "--format",
                 "json",
@@ -643,6 +870,10 @@ class LaneRunner:
             "devcontainersReference": self.cli_reference,
             "commands": {},
         }
+        if getattr(self, "finalized_identity", None) is not None:
+            fingerprints["finalizedPackage"] = self.finalized_identity
+            fingerprints["providerBinarySHA256"] = self.provider_hashes
+            fingerprints["parityHarnessSHA256"] = self.harness_sha256
         for name, command in commands.items():
             result = subprocess.run(
                 command,
@@ -679,7 +910,7 @@ class LaneRunner:
             fingerprints["containerDistribution"] = distribution
             if (
                 distribution != "apple"
-                and os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1"
+                and (self.finalized_selection is not None or os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1")
             ):
                 raise ParityError(
                     "apple-stock lane requires Apple's stock distribution; "
@@ -1179,10 +1410,7 @@ class LaneRunner:
         if self.lane != "docker":
             container_inventory = subprocess.run(
                 [
-                    os.environ.get(
-                        "DEVCONTAINER_CONTAINER_BIN",
-                        shutil.which("container") or "container",
-                    ),
+                    self.provider_executable("DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "container"),
                     "list",
                     "--all",
                     "--format",
@@ -1311,9 +1539,8 @@ class LaneRunner:
         environment = dict(self.environment)
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
-            environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
-                "DEVCONTAINER_COMPOSE_BIN",
-                shutil.which("container-compose") or "container-compose",
+            environment["DEVCONTAINER_COMPOSE_BIN"] = self.provider_executable(
+                "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         return environment
 
@@ -1323,9 +1550,7 @@ class LaneRunner:
         if self.lane == "docker":
             command = [self.docker, "compose"]
         else:
-            command = [
-                str(self.repository / ".build" / "debug" / "devcontainer-compose")
-            ]
+            command = [self.package_executable("devcontainer-compose")]
         return [
             *command,
             "--project-name",
@@ -1335,6 +1560,11 @@ class LaneRunner:
         ]
 
     def run_engine_fixture(self, fixture: Any, raw: Path) -> dict[str, Any]:
+        if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest":
+            guest_runner = getattr(self, "_owned_guest_runner", None)
+            if guest_runner is None:
+                raise ParityError("owned guest fixture reached execution without admitted lane inputs")
+            return guest_runner.run(fixture, raw)
         started = time.monotonic()
         status = "failed"
         observations: dict[str, str] = {}
@@ -1382,23 +1612,14 @@ class LaneRunner:
         environment = dict(self.environment)
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
-            environment["DEVCONTAINER_COMPOSE_BIN"] = os.environ.get(
-                "DEVCONTAINER_COMPOSE_BIN",
-                shutil.which("container-compose") or "container-compose",
+            environment["DEVCONTAINER_COMPOSE_BIN"] = self.provider_executable(
+                "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         command_arguments = list(arguments)
-        if self.lane != "docker" and command_arguments:
-            compose_wrapper = (
-                self.repository / ".build" / "debug" / "devcontainer-compose"
-            )
-            command_arguments += ["--docker-compose-path", str(compose_wrapper)]
+        if self.lane != "docker" and command_arguments and self.finalized_selection is None:
+            command_arguments += ["--docker-compose-path", self.package_executable("devcontainer-compose")]
         return subprocess.run(
-            [
-                self.node_package_runner,
-                "--yes",
-                f"@devcontainers/cli@{self.cli_version}",
-                *command_arguments,
-            ],
+            [*self.devcontainers_command(), *command_arguments],
             cwd=self.repository,
             env=environment,
             capture_output=True,
@@ -1456,14 +1677,7 @@ class LaneRunner:
             if self.lane == "docker":
                 compose_command = [self.docker, "compose"]
             else:
-                compose_command = [
-                    str(
-                        self.repository
-                        / ".build"
-                        / "debug"
-                        / "devcontainer-compose"
-                    )
-                ]
+                compose_command = [self.package_executable("devcontainer-compose")]
             down = subprocess.run(
                 [
                     *compose_command,
@@ -1542,16 +1756,25 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "CONTAINER_COMPOSE_BUILD_INFO",
         "CONTAINER_COMPOSE_CONTAINER",
         "CONTAINER_HOST",
+        "CONTAINER_INSTALL_ROOT",
         "CONTAINER_INSTALLATION_ROOT",
+        "CONTAINER_LOG_ROOT",
         "CONTAINER_REGISTRY_CONFIG",
         "CONTAINER_RUNTIME_CONFIG",
         "CONTAINER_SERVICE_NAMESPACE",
         "DEVELOPER_DIR",
         "DEVCONTAINER_ALLOW_CUSTOM_STOCK",
+        "DEVCONTAINER_API_DEFINITION_SHA256",
+        "DEVCONTAINER_API_SERVER_SHA256",
+        "DEVCONTAINER_API_SERVICE_PID",
         "DEVCONTAINER_COMPOSE_BIN",
+        "DEVCONTAINER_COMPOSE_PROVIDER_SHA256",
         "DEVCONTAINER_CONTAINER_BIN",
         "DEVCONTAINER_DOCKER_BIN",
+        "DEVCONTAINER_DOCKER_COMPOSE_BIN",
         "DEVCONTAINER_DOCKER_ORACLE_HOST",
+        "DEVCONTAINER_PARITY_RETAINED_ROOT",
+        "DEVCONTAINER_PARITY_GUARD",
         "DEVCONTAINER_PARITY_FIXTURES",
         "DEVCONTAINER_TRACE_PROCESS",
         "DOCKER_CERT_PATH",
@@ -1591,7 +1814,11 @@ def safe_environment(source: Mapping[str, str]) -> dict[str, str]:
 def create_socket_root() -> Path:
     """Create a private root whose Docker socket fits Darwin's path limit."""
 
-    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir="/tmp"))
+    socket_parent = Path("/tmp").resolve(strict=True)
+    root = Path(tempfile.mkdtemp(prefix="dc-sock-", dir=str(socket_parent)))
+    if root.resolve(strict=True) != root:
+        shutil.rmtree(root)
+        raise ParityError("compatibility socket root is not canonical")
     socket_path = root / "docker.sock"
     if len(os.fsencode(socket_path)) >= 104:
         shutil.rmtree(root)
@@ -1698,6 +1925,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=LANES)
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--finalized-directory", type=Path)
+    parser.add_argument("--finalization-provenance-sha256")
+    parser.add_argument("--finalization-state", type=Path)
+    parser.add_argument("--expected-source-commit")
     return parser.parse_args()
 
 
@@ -1707,7 +1938,7 @@ def main() -> int:
     evidence = args.evidence.resolve()
     try:
         install_cancellation_handlers()
-        return LaneRunner(args.lane, repository, evidence).run()
+        return LaneRunner(args.lane, repository, evidence, finalized_selection(args)).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

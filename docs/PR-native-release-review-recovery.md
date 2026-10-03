@@ -1,0 +1,38 @@
+# Pull request: preserve exact identity during native release recovery
+
+## Summary
+
+This PR 83 follow-up addresses the related release-review comments for native create recovery, process ownership, evidence identity, build-stream parsing, and retained reporting. It preserves the original review identities rather than creating replacement issue or discussion IDs. The recovery contract is conservative: reconciliation is allowed only for the exact durable create, and ambiguous or replaced state remains quarantined without deletion or intent clearing.
+
+The Q runtime `f86fea2236fab118c0e0c6f8be5eb7672df894e2`, full signed Compose product `2ef7e13532481351f9ec216e43b353c113b50f5c`, enhanced Foundation `f4127f90`, Containerization `0329ac5e`, Engine API `4c249211` and Container SDK `ea37bb64` releases are published and verified after fresh download. Compose passes 27 live and 66 parity cases and remains a qualified external prerelease with its vendor/header notice closure open. Dev now consumes these exact provider and lower-layer inputs; final Dev source freeze, exact-head quality admission, native package finalization and full 84-observation qualification remain required. Unchanged stock archives and baseline benchmarks are preserved under authenticated reuse. Performance optimization remains deferred.
+
+## Recovery and admission contract
+
+After an interrupted native create, recovery may reconcile only when the exact runtime ID, strictly verified persisted native configuration and native creation timestamp match the durable intent. The successful path atomically publishes compatibility metadata and clears that exact intent. Absence, replacement, unavailable inventory and any mismatch preserve the journal, operation ID, timestamp and quarantine. Diagnostics direct the operator not to delete or clear by ID, name or owner label alone. Recovery does not retry the original create.
+
+Related mutation and shutdown paths must continue to reject writes while a matching create is pending and must require the complete captured PID-role set plus refreshed process identity before stopping owned processes. The release harness fingerprints the executed launcher and its maintained Bazel target definition; build-stream parsing rejects non-JSON constants at every nested position. Retained `parity-report` admits only campaign, fixture and format arguments, reads the private canonical internal database, and starts without SSD, Bazel, Xcode or build scratch. Its actual Make entry point supports the repository's joined `--fixture=…` and `--format=…` spellings as well as split arguments.
+
+## Original PR 83 review identities and current evidence
+
+| Comment | Current disposition |
+| --- | --- |
+| [18](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4041089799) — merge image labels | The complete enhanced source-mode Apple runtime target passes at clean commit `3990ecc52898434fdfee04e67e3abf5dd9552389` (287 tests / 35 suites). It includes image-default/request-label precedence and create/list/inspect/bridge-restart label persistence. This does not qualify a finalized package or release. |
+| [19](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4041089809) — reconcile failed identity verification | The same full source-mode run passes exact-incarnation atomic reconciliation, cancellation, and all eight ambiguous absent/replaced/unavailable/mismatched cases. Ambiguous intent remains retained without ID-only deletion. Final package, E13, and complete campaign gates remain open. |
+| [21](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4041284542) — protect `-D` defines | Launcher guard rejects all four reserved keys in joined and split `--define` and `-D` forms. Focused launcher tests pass under Python 3.9 and 3.12. |
+| [22](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4041457516) — guard pending creates from internal mutation | The same full source-mode run passes pending-create mounted-host and archive-transfer protection. A matching pending incarnation is rejected; a timestamp-distinct replacement can be copied without clearing the prior intent. |
+| [23](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4042086988) — require complete PID roles | `Tools/testing/docker_vm.py` validates the full captured PID-role set before cleanup. The Python evidence/recovery subset now reports 100 focused tests passing after the BuildKit configuration-ID regression was added; final exact-head source and receipt admission remain required. |
+| [24](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4042161166) — fingerprint the executed launcher | The final Python evidence/recovery subset reports 100 focused tests passing (the earlier 97-test result predates the BuildKit configuration-ID regression); final exact-head source and receipt admission remain required. |
+| [25](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4042237278) — report before SSD enrollment | Retained reporting passes focused tests without SSD/Xcode. The actual Make target uses default JSON and joined `CASE_FIXTURE`; its empty fixture correctly returns an incomplete, non-passing report. |
+| [26](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4042618475) — fingerprint the maintained Bazel target | The final Python evidence/recovery subset reports 100 focused tests passing (earlier 97-test result superseded); final exact-head harness receipt re-admission remains required. |
+| [27](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4043690293) — reject non-JSON numeric constants | The final Python evidence/recovery subset reports 100 focused tests passing (earlier 97-test result superseded). Full source qualification remains pending. |
+| [28](https://github.com/stephenlclarke/devcontainer/pull/83#discussion_r4043815766) — preserve replacement images | The final Python evidence/recovery subset reports 100 focused tests passing (earlier 97-test result superseded). Ambiguous or unjournalled replacement ownership remains a fail-closed recovery boundary. |
+
+## Validation
+
+The enhanced source-mode Bazel target `//:DevContainerAppleRuntimeTests` passed all 287 test cases in 35 suites at clean commit `3990ecc52898434fdfee04e67e3abf5dd9552389`. BEP records one run and one attempt; there was no test filter, failure, error, or skip. Before/after input snapshots are both clean at this commit and have zero changed tracked inputs. The retained source graph records enhanced Container f86fea2, Containerization 6db1619, and Engine API 48e44d7. This evidence is for that exact source snapshot only. Earlier failed runtime evidence remains unchanged and unqualified; final dependency-lock source QA, finalized-package and signing QA, E13, and full 84-observation qualification are still required.
+
+## Remaining gates
+
+Complete final-lock exact-head QA and review the full source diff. Freeze the final Dev `main` source before running its exact-head source QA and native package gates. Produce and admit the finalized package, run the maintained E13 component and complete unchanged 84-observation qualification with verified cleanup/restoration, then complete publication checks. Full Compose product qualification is complete for the separately installed qualified prerelease; its notice limitation remains explicit. No existing failed evidence is rewritten, no ambiguous resource is removed to make a test pass, and no performance or GA claim follows from these focused checks.
+
+Tracks [PR 83](https://github.com/stephenlclarke/devcontainer/pull/83) and the requirements in [the issue handoff](ISSUE-native-release-review-recovery.md).

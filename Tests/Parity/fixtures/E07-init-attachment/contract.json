@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "combined_history_live": true,
+    "prestart_attach": true,
+    "binary_duplex": true,
+    "source_separation": true,
+    "stdin_eof": true,
+    "exact_exit": true,
+    "history": true,
+    "restart_history": true
+  }
+}

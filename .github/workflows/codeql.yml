@@ -17,11 +17,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  require-main-push-enabled:
+    name: Require CodeQL for main release checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed when CodeQL is disabled
+        env:
+          CODEQL_ENABLED: ${{ vars.CODEQL_ENABLED }}
+        run: |
+          if [[ "${CODEQL_ENABLED}" != "true" ]]; then
+            printf 'CodeQL is required for main release authority; set CODEQL_ENABLED=true.\n' >&2
+            exit 1
+          fi
+
   analyze:
     name: CodeQL
-    # CODEQL_ENABLED is intentionally unset/false while analysis is paused.
-    # When re-enabled, draft pull requests remain outside the iterative cycle
-    # and ready_for_review starts the analysis without another source change.
+    # Draft pull requests remain outside the iterative analysis cycle.
+    # Main release authority requires enabled analysis; ready_for_review starts
+    # PR analysis without another source change.
     if: >-
       vars.CODEQL_ENABLED == 'true' &&
       (github.event_name != 'pull_request' ||
@@ -36,6 +50,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare exact enhanced dependency patches
+        run: make swiftpm-prepare
       - name: Prime resolved SwiftPM dependencies
         run: >-
           swift build --disable-automatic-resolution --arch arm64
