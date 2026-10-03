@@ -17,6 +17,8 @@ SWIFT_COVERAGE_HEAD ?= HEAD
 SWIFT_COVERAGE_SCRATCH_PATH ?= .build/coverage
 SWIFT_ASAN_SCRATCH_PATH ?= .build/asan
 SWIFT_TSAN_SCRATCH_PATH ?= .build/tsan
+DOCS_SCRATCH_PATH ?= .build/docc
+export DOCS_SCRATCH_PATH
 SWIFT_TEST_RESULT_LOG ?= .build/swift-test.log
 SWIFT_TEST_ATTEMPTS ?= 2
 SWIFT_TEST_RUNNER_FLAGS ?= --no-parallel
@@ -80,6 +82,7 @@ SONAR_QUALITYGATE_WAIT ?= true
 .PHONY: all workflow ci bootstrap resolve build build-release test test-unit
 .PHONY: test-contract test-integration swift-test coverage coverage-check
 .PHONY: asan tsan test-asan test-tsan check lint format format-check docs
+.PHONY: swiftpm-prepare swiftpm-prepare-coverage swiftpm-prepare-asan swiftpm-prepare-tsan swiftpm-prepare-docs
 .PHONY: serve-docs parity-manifest parity-docker parity-apple-stock
 .PHONY: parity-container-compose parity parity-vscode-docker
 .PHONY: parity-vscode-apple-stock parity-vscode-container-compose parity-vscode
@@ -325,10 +328,27 @@ bootstrap:
 resolve:
 	$(SWIFT) package resolve
 
-build:
+# Apply exact enhanced-only dependency patches to the selected SwiftPM scratch tree.
+swiftpm-prepare:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path ".build" --swift "$(SWIFT)"
+swiftpm-prepare-coverage:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-asan:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-tsan:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" --swift "$(SWIFT)"
+swiftpm-prepare-docs:
+	$(PYTHON) Tools/ci/prepare-swiftpm-dependencies.py \
+		--repository "$(CURDIR)" --scratch-path "$(DOCS_SCRATCH_PATH)" --swift "$(SWIFT)"
+
+build: swiftpm-prepare
 	$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS)
 
-build-release:
+build-release: swiftpm-prepare
 	GIT_COMMIT="$$(git rev-parse HEAD)" DEVCONTAINER_BUILD_LANE=release \
 		$(SWIFT) build $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) -c release
 
@@ -341,7 +361,7 @@ test-contract: swift-test
 test-integration:
 	DEVCONTAINER_HOST_INTEGRATION=1 $(MAKE) swift-test
 
-swift-test:
+swift-test: swiftpm-prepare
 	@mkdir -p .build
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--build-tests
@@ -357,7 +377,7 @@ swift-test:
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
 		$(SWIFT_TEST_RUNNER_FLAGS)
 
-coverage:
+coverage: swiftpm-prepare-coverage
 	@worktree_changes="$$(git status --porcelain --untracked-files=all)"; \
 	if [[ -n "$$worktree_changes" ]]; then \
 		printf 'Coverage evidence requires a clean worktree:\n%s\n' \
@@ -501,7 +521,7 @@ sonar-scan:
 		((attempt += 1)); \
 	done
 
-asan:
+asan: swiftpm-prepare-asan
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_ASAN_SCRATCH_PATH)" \
 		--sanitize=address --build-tests
@@ -520,7 +540,7 @@ asan:
 		"$$TEST_BIN_PATH/devcontainerPackageTests.xctest/Contents/MacOS/devcontainerPackageTests" \
 		--sanitize=address $(SWIFT_TEST_RUNNER_FLAGS)
 
-tsan:
+tsan: swiftpm-prepare-tsan
 	@$(SWIFT) build --quiet $(SWIFT_RESOLVED_FLAGS) $(SWIFT_STRICT_FLAGS) \
 		--scratch-path "$(SWIFT_TSAN_SCRATCH_PATH)" \
 		--sanitize=thread -Xswiftc -DDEVCONTAINER_TSAN --build-tests
@@ -652,7 +672,7 @@ native-parity-release:
 
 runtime-check: test-integration test-asan test-tsan parity-release
 
-package:
+package: $(if $(filter 1,$(DEVCONTAINER_SIGNING_REQUIRED)),,swiftpm-prepare)
 	DEVCONTAINER_PACKAGE_LANE="$(DEVCONTAINER_PACKAGE_LANE)" \
 	DEVCONTAINER_PACKAGE_RUN_NUMBER="$(DEVCONTAINER_PACKAGE_RUN_NUMBER)" \
 	DEVCONTAINER_SIGNING_REQUIRED="$(DEVCONTAINER_SIGNING_REQUIRED)" \
@@ -730,13 +750,13 @@ release-check: check test-asan test-tsan parity-release homebrew-formula
 
 release-gate-hosted: check homebrew-formula
 
-docs:
+docs: swiftpm-prepare-docs
 	scripts/make-docs.sh "$(DOCS_OUTPUT_DIR)" "$(DOCS_HOSTING_BASE_PATH)"
 
 serve-docs: docs
 	$(PYTHON) -m http.server 8000 --directory "$(DOCS_OUTPUT_DIR)"
 
-demo:
+demo: swiftpm-prepare
 	Tools/release/record-vhs-live-demo.sh \
 		docs/devcontainer-demo.tape \
 		docs/images/devcontainer-demo.gif

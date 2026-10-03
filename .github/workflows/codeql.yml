@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare exact enhanced dependency patches
+        run: make swiftpm-prepare
       - name: Prime resolved SwiftPM dependencies
         run: >-
           swift build --disable-automatic-resolution --arch arm64

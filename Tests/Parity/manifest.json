@@ -28,7 +28,7 @@
     "containerCompose": {
       "source": "stephenlclarke/container-compose",
       "stableVersion": "0.15.1",
-      "stableCommit": "91aa4632688ffa5d8b32af3cc8ddfb40169c36d4"
+      "stableCommit": "2ef7e13532481351f9ec216e43b353c113b50f5c"
     },
     "vscode": {
       "version": "1.131.0",
@@ -59,7 +59,7 @@
     },
     "containerRuntime": {
       "repository": "stephenlclarke/container",
-      "stableCommit": "a1effeeaf8c7c1d48b4773262a2d5218dcd5817d"
+      "stableCommit": "f86fea2236fab118c0e0c6f8be5eb7672df894e2"
     }
   },
   "releasePolicy": {
