@@ -96,7 +96,9 @@ let package = Package(
             name: "container-engine-api",
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
-            revision: "40436017e1e93012b8dab7cfc3c79783538065c3"
+            revision: enhancedRuntime
+                ? "48e44d74d738ca3d24351ba02c4869be1a3e6998"
+                : "40436017e1e93012b8dab7cfc3c79783538065c3"
         ),
         runtimeDependency(
             name: "container",
@@ -112,7 +114,7 @@ let package = Package(
             stockURL: "https://github.com/apple/containerization.git",
             stockVersion: "0.45.0",
             enhancedURL: "https://github.com/stephenlclarke/containerization.git",
-            enhancedRevision: "b404e03bb914904107a6a9305ba1f0e44c79a59c"
+            enhancedRevision: "6db16197bbad8196a78132f86529daa89125aafb"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -282,6 +283,93 @@ class LauncherTests(unittest.TestCase):
                           ("--define=DEVCONTAINER_SOURCE_DIRTY=false",), ("--define", "DEVCONTAINER_SOURCE_DIRTY=false")]:
             with self.subTest(arguments=arguments):
                 self.assertEqual(invoke("validate_arguments", *arguments).returncode, 2)
+
+    def test_all_protected_defines_reject_long_and_short_joined_and_split_forms(self) -> None:
+        protected = ("DEVCONTAINER_COMMIT", "DEVCONTAINER_BUILD_LANE",
+                     "DEVCONTAINER_SOURCE_DIRTY", "runtime_profile")
+        spellings = (lambda key: ("--define=" + key + "=forged",),
+                     lambda key: ("--define", key + "=forged"),
+                     lambda key: ("-D" + key + "=forged",),
+                     lambda key: ("-D", key + "=forged"))
+        for key in protected:
+            for spelling in spellings:
+                arguments = spelling(key)
+                with self.subTest(key=key, arguments=arguments):
+                    result = invoke("validate_arguments", *arguments)
+                    self.assertEqual(result.returncode, 2)
+        for arguments in (("-DUSER_DIAGNOSTIC=enabled",), ("-D", "USER_DIAGNOSTIC=enabled"),
+                          ("--define=USER_DIAGNOSTIC=enabled",),
+                          ("--define", "USER_DIAGNOSTIC=enabled")):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(invoke("validate_arguments", *arguments).returncode, 0)
+
+    def test_parity_report_routes_without_build_prerequisites_or_scratch(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
+            home = Path(directory).resolve()
+            retained = home / "Library/Application Support/ContainerFamily/retained/workflow"
+            retained.mkdir(parents=True)
+            database = retained / "runtime-cases.sqlite"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE cases (id TEXT, identity BLOB, result BLOB, sha256 TEXT)")
+                db.execute("CREATE TABLE artifacts (case_id TEXT, name TEXT, bytes BLOB)")
+            database.chmod(0o600)
+            before = sorted(path.name for path in retained.iterdir())
+            result = subprocess.run(
+                ["/bin/bash", str(SCRIPT), "parity-report", "empty-readonly-fixture"],
+                env={"HOME": str(home), "PATH": "/usr/bin:/bin", "DEVELOPER_DIR": "/missing/xcode"},
+                capture_output=True, text=True, check=False, timeout=15,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('"campaign": "empty-readonly-fixture"', result.stdout)
+            self.assertEqual(sorted(path.name for path in retained.iterdir()), before)
+
+    def test_make_parity_report_target_uses_default_json_and_joined_fixture(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
+            home = Path(directory).resolve()
+            retained = home / "Library/Application Support/ContainerFamily/retained/workflow"
+            retained.mkdir(parents=True)
+            database = retained / "runtime-cases.sqlite"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE cases (id TEXT, identity BLOB, result BLOB, sha256 TEXT)")
+                db.execute("CREATE TABLE artifacts (case_id TEXT, name TEXT, bytes BLOB)")
+            database.chmod(0o600)
+            result = subprocess.run(
+                ["/usr/bin/make", "bazel-parity-report", "CAMPAIGN=make-readonly-fixture",
+                 "CASE_FIXTURE=E01-engine-negotiation"],
+                cwd=SCRIPT.parents[2],
+                env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+                capture_output=True, text=True, check=False, timeout=15,
+            )
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('"campaign": "make-readonly-fixture"', result.stdout)
+            self.assertIn('"requestedFixtures": [\n    "E01-engine-negotiation"', result.stdout)
+
+    def test_parity_report_rejects_symlinked_retained_storage(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
+            home = Path(directory) / "home"
+            home.mkdir()
+            elsewhere = Path(directory) / "elsewhere"
+            elsewhere.mkdir()
+            library = home / "Library"
+            library.symlink_to(elsewhere, target_is_directory=True)
+            result = subprocess.run(
+                ["/bin/bash", str(SCRIPT), "parity-report", "campaign"],
+                env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Retained report storage is unavailable", result.stderr)
+
+    def test_parity_report_argument_admission_is_bounded(self) -> None:
+        self.assertEqual(invoke("validate_parity_report_arguments", "campaign", "--fixture", "fixture",
+                                "--format", "junit").returncode, 0)
+        for arguments in (("campaign", "--output", "/tmp/report"), ("campaign", "--format", "jsonl"),
+                          ("campaign", "--format=jsonl"), ("campaign", "--fixture=bad/name"),
+                          ("bad/campaign",), ("campaign", "--fixture")):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(invoke("validate_parity_report_arguments", *arguments).returncode, 2)
+        self.assertEqual(invoke("validate_parity_report_arguments", "campaign", "--fixture=fixture",
+                                "--format=json").returncode, 0)
 
     def test_host_opt_in_is_preserved_only_as_a_boolean(self) -> None:
         for value, expected in [("1", 0), ("0", 0), ("not-a-boolean", 2)]:

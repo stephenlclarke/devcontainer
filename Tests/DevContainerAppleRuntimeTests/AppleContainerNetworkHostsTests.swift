@@ -20,11 +20,37 @@ import ContainerResource
 import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
 struct AppleContainerNetworkHostsTests {
     #if !DEVCONTAINER_ENHANCED_RUNTIME
+        @Test
+        func `container hosts upload is blocked by an unresolved creation intent`() async throws {
+            let fixture = try FakeAppleCLI()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let snapshot = try nativeNetworkSnapshot(id: "app", service: "app", address: "192.0.2.2")
+            let store = TestMetadataStore()
+            let intent = RuntimeContainerCreation(
+                runtimeID: "app", nativeCreatedAt: snapshot.configuration.creationDate,
+                imageID: snapshot.configuration.image.digest,
+                spec: ContainerSpec(name: "app", image: snapshot.configuration.image.reference),
+                nativeConfiguration: try JSONEncoder().encode(snapshot.configuration)
+            )
+            try await store.beginContainerCreation(intent)
+            let files = FakeContainerFileClient()
+            let runtime = try directRuntime(
+                fixture: fixture, inventory: FakeContainerInventory(snapshots: [snapshot]),
+                files: files, metadataStore: store
+            )
+            await #expect(throws: DevContainerError.self) {
+                try await runtime.synchronizeNetworkHosts(context: RuntimeRequestContext())
+            }
+            #expect(await files.copyInCallCount() == 0)
+            #expect(await store.pendingContainerCreation(id: "app") == intent)
+        }
+
         @Test(arguments: ["SIGUSR1", "SIGUSR2", "SIGTERM"])
         func `signal delivery preserves forwarding until actual process exit`(_ signal: String) async throws {
             let fixture = try FakeAppleCLI()

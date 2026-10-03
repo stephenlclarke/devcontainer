@@ -176,7 +176,7 @@ enum AppleContainerCreateProjection {
             cpus: nil, memory: nil,
             defaultCPUs: system.container.cpus, defaultMemory: system.container.memory
         )
-        configuration.labels = spec.labels
+        configuration.labels = (imageConfig?.labels ?? [:]).merging(spec.labels) { _, requested in requested }
         configuration.useInit = spec.initProcess
         configuration.stopSignal = imageConfig?.stopSignal
         try AppleContainerExecutionSettings.apply(spec.executionSettings, to: &configuration)
@@ -262,6 +262,13 @@ enum AppleContainerCreateProjection {
         else {
             throw DevContainerError(
                 .providerProtocolMismatch, message: "Created container does not match selected image identity"
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard try encoder.encode(actual) == encoder.encode(expected) else {
+            throw DevContainerError(
+                .providerProtocolMismatch, message: "Created configuration differs from submitted configuration"
             )
         }
     }

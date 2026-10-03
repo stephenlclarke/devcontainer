@@ -185,6 +185,8 @@ filegroup(
     name = "released_engine_inputs",
     srcs = [
         "//Tools/release:native_release_admission_inputs",
+        "BUILD.bazel",
+        "released-engine.sh",
         "build_probe.py",
         "build_images.py",
         "build_fixture.py",

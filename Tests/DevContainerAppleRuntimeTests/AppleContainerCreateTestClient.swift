@@ -3,6 +3,7 @@
 import ContainerAPIClient
 import Containerization
 import ContainerizationError
+import ContainerizationOCI
 import ContainerizationOS
 import ContainerResource
 @testable import DevContainerAppleRuntime
@@ -21,6 +22,7 @@ extension AppleContainerCreateTests {
         let failCreate: Bool
         let failAfterCreate: Bool
         let replacement: Bool
+        let imageLabels: [String: String]?
         var starts = 0
         var bootstraps = 0
         var hostsAtBootstrap: String?
@@ -29,11 +31,13 @@ extension AppleContainerCreateTests {
         var running = false
 
         init(
-            failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false
+            failCreate: Bool = false, failAfterCreate: Bool = false, replacement: Bool = false,
+            imageLabels: [String: String]? = nil
         ) {
             self.failCreate = failCreate
             self.failAfterCreate = failAfterCreate
             self.replacement = replacement
+            self.imageLabels = imageLabels
         }
 
         func prepare(
@@ -42,7 +46,7 @@ extension AppleContainerCreateTests {
             try context.checkActive()
             let (description, platform) = try image.nativeIdentity()
             let configuration = try AppleContainerCreateProjection.configuration(
-                spec: spec, identity: (description, platform), imageConfig: nil,
+                spec: spec, identity: (description, platform), imageConfig: ImageConfig(labels: imageLabels),
                 system: .init(), builtinNetwork: "default"
             )
             prepared.append(configuration)

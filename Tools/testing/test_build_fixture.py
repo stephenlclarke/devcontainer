@@ -34,7 +34,10 @@ class Handler(images.Handler):
                                                          "devcontainer.parity": server.label}}}
         if failing:
             stream = failure_marker(images.OWNER) if server.executed else "RUN false"
-            return 200, canonical({"stream": stream + "\n"}) + b'\n' + canonical({"error": "exit code: 1"}) + b'\n'
+            payload = canonical({"stream": stream + "\n"}) + b'\n' + canonical({"error": "exit code: 1"}) + b'\n'
+            if server.failed_output:
+                payload += canonical({"aux": {"ID": "sha256:" + "e" * 64}}) + b'\n'
+            return 200, payload
         return 200, images.SUCCESS
 
 
@@ -121,13 +124,13 @@ class BuildFixtureTests(unittest.TestCase):
         self.fixture.cleanup()
 
     def test_positive_build_error_does_not_become_a_successful_result(self):
-        with patch.object(images, 'SUCCESS', b'{"error":"builder failed"}\n'):
+        with patch.object(images, 'SUCCESS', b'{"error":"builder failed"}\n{"aux":{"ID":"sha256:' + b'd' * 64 + b'"}}\n'):
             with self.assertRaisesRegex(ValueError, 'successful progress'):
                 self.fixture.operation()
         self.fixture.cleanup()
 
     def test_positive_build_without_progress_does_not_pass(self):
-        with patch.object(images, 'SUCCESS', b'{"aux":{"ID":"sha256:abc"}}\n'):
+        with patch.object(images, 'SUCCESS', b'{"aux":{"ID":"sha256:' + b'd' * 64 + b'"}}\n'):
             with self.assertRaisesRegex(ValueError, 'successful progress'):
                 self.fixture.operation()
         self.fixture.cleanup()

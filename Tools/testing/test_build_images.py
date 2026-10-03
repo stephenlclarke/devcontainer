@@ -20,8 +20,15 @@ import test_guest_fixture as helpers
 
 OWNER = "a" * 64
 BASE = "docker.io/library/alpine@sha256:" + "b" * 64
-SUCCESS = b'{"stream":"Step 4/4 done"}\n'
+SUCCESS = b'{"stream":"Step 4/4 done"}\n{"aux":{"ID":"sha256:' + b'd' * 64 + b'"}}\n'
 FAILURE = b'{"stream":"RUN false"}\n{"error":"exit 1"}\n'
+
+
+def buildkit_success(config_id: str) -> bytes:
+    manifest = 'sha256:' + 'e' * 64
+    return (f'{{"stream":"#6 exporting manifest {manifest} done\\n'
+            f'#6 exporting config {config_id} done\\n'
+            f'#6 exporting manifest list {manifest} done\\n"}}\n').encode()
 
 
 class Handler(helpers.Handler):
@@ -336,6 +343,65 @@ class BuildImagesTests(unittest.TestCase):
         self.reopen().cleanup()
         self.assertEqual(list(self.server.images), [BASE])
 
+    def test_output_without_response_identity_is_preserved(self):
+        self.fixture.prepare()
+        self.fixture.start()
+        self.output()
+        with self.assertRaisesRegex(ValueError, "matching durable image identity"):
+            self.fixture.response(200, b'{"stream":"Step 4/4 done"}\n')
+        with self.assertRaisesRegex(ValueError, "durable response identity"):
+            self.reopen().cleanup()
+        self.assert_no_delete()
+        self.assertIn(tag_for(OWNER), self.server.images)
+
+    def test_buildkit_config_identity_recovers_and_cleans_up_without_aux_id(self):
+        self.fixture.prepare()
+        self.fixture.start()
+        self.output()
+        result = self.fixture.response(200, buildkit_success('sha256:' + 'd' * 64))
+        self.assertEqual(result.image_id, 'sha256:' + 'd' * 64)
+        self.assertEqual(json.loads(self.journal.records()['e04-built-created.json'])['id'],
+                         'sha256:' + 'd' * 64)
+        self.reopen().cleanup()
+        self.assertEqual(list(self.server.images), [BASE])
+
+    def test_unjournalled_completion_cannot_adopt_or_delete_tag_replacement(self):
+        self.fixture.prepare()
+        self.fixture.start()
+        self.output()
+        put = self.fixture.journal.put
+
+        def lose_creation_receipt(name, payload):
+            if name == "e04-built-created.json":
+                raise OSError("simulated lost creation receipt")
+            return put(name, payload)
+
+        with patch.object(self.fixture.journal, "put", side_effect=lose_creation_receipt), \
+                self.assertRaisesRegex(OSError, "lost creation receipt"):
+            self.fixture.response(200, buildkit_success('sha256:' + 'd' * 64))
+        records = self.journal.records()
+        self.assertIn("e04-built-completed.json", records)
+        self.assertNotIn("e04-built-created.json", records)
+        tag = tag_for(OWNER)
+        replacement = copy.deepcopy(self.server.images[tag])
+        replacement["Id"] = "sha256:" + "f" * 64
+        self.server.images[tag] = replacement
+        recovered = self.reopen()
+        with self.assertRaisesRegex(ValueError, "durable response identity"):
+            recovered.recovery_plan()
+        with self.assertRaisesRegex(ValueError, "durable response identity"):
+            recovered.cleanup()
+        # A replacement must not become deletable by editing only the retained
+        # response to claim its otherwise-valid ID; the durable completion hash
+        # binds the response bytes before any identity fallback is considered.
+        tampered = dict(records)
+        tampered["e04-built-response.jsonl"] = buildkit_success('sha256:' + 'f' * 64)
+        with patch.object(recovered.journal, "records", return_value=tampered), \
+                self.assertRaisesRegex(ValueError, "completion does not match"):
+            recovered.recovery_plan()
+        self.assert_no_delete()
+        self.assertIs(self.server.images[tag], replacement)
+
     def test_cleanup_without_any_submission_only_closes_empty_output_names(self):
         self.fixture.prepare()
         self.fixture.cleanup()
@@ -369,7 +435,9 @@ class BuildImagesTests(unittest.TestCase):
                 'Containers': 0, 'Parent': parent, 'ParentId': parent, 'Descriptor': {'digest': identifier},
                 'Config': {'Labels': {OWNER_LABEL: OWNER}}}
             parent = identifier
-        payload = b'\n \n{"stream":" ---> eeeeeeeeeeee\\n"}\n\n{"stream":" ---> ffffffffffff\\n"}\n\n'
+        payload = (b'\n \n{"stream":" ---> eeeeeeeeeeee\\n"}\n'
+                   b'{"stream":" ---> ffffffffffff\\n"}\n'
+                   b'{"aux":{"ID":"sha256:' + b'd' * 64 + b'"}}\n')
         self.fixture.response(200, payload)
 
     def test_classic_intermediates_are_reported_read_only_and_removed_child_first(self):

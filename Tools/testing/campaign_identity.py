@@ -67,6 +67,7 @@ RUNTIME_HELPERS = (
     "runtime_services.py", "runtime_probe.py", "service_journal.py", "service_switch.py",
     "native_activation.py", "background_items.py",
 )
+RUNTIME_EXECUTION_INPUTS = (*RUNTIME_HELPERS, "released-engine.sh", "BUILD.bazel")
 
 
 def published_fingerprints(repository: Path) -> dict[str, str]:
@@ -80,7 +81,7 @@ def published_fingerprints(repository: Path) -> dict[str, str]:
     # Python resolves imported modules through runfile symlinks, whereas the
     # entry script can retain its runfiles path. Hash the explicit execution
     # closure, not whichever tests/recovery helpers happen to share that folder.
-    sources = [*[repository / "Tools/testing" / name for name in RUNTIME_HELPERS],
+    sources = [*[repository / "Tools/testing" / name for name in RUNTIME_EXECUTION_INPUTS],
                *[repository / "Tools/bazel" / name for name in PREPARATION_HELPERS],
                *[repository / "Tools/release" / name for name in RELEASE_HELPERS],
                repository / "Tools/bazel/package_checks/cli_process.py"]

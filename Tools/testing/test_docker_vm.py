@@ -267,9 +267,12 @@ class DockerVMTests(unittest.TestCase):
         self.vm.configure()
         self.journal.put("docker-vm-start-intent.json", b"{}")
         self.journal.put("docker-vm-start-exit.json", b"{}")
-        self.journal.put("docker-vm-pids.json", b"{}")
+        pids = {name: self.process() for name in docker_vm.pid_roles(self.root, self.tools)}
+        self.journal.put("docker-vm-pids.json", canonical(pids))
+        self.inventory.return_value = {321: self.process()}
         with patch.object(self.vm, "command", side_effect=[b"", canonical(self.instance("Stopped"))]), \
                 patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "verify_pid_files", return_value=pids), \
                 patch.object(docker_vm, "require_unreachable_socket"), patch.object(self.vm, "retain_logs"):
             self.vm.stop()
         self.assertEqual(json.loads(self.journal.records()["docker-vm-closed.json"]), {"verifiedStopped": True})
@@ -284,6 +287,22 @@ class DockerVMTests(unittest.TestCase):
                 patch.object(self.vm, "command") as command, self.assertRaisesRegex(ValueError, "incarnation"):
             self.vm.stop()
         command.assert_not_called()
+
+    def test_shutdown_requires_every_captured_pid_role_before_running_stop(self):
+        self.vm.configure()
+        self.journal.put("docker-vm-start-intent.json", b"{}")
+        self.journal.put("docker-vm-start-exit.json", b"{}")
+        complete = {name: self.process() for name in docker_vm.pid_roles(self.root, self.tools)}
+        self.journal.put("docker-vm-pids.json", canonical(complete))
+        for missing in complete:
+            current = {name: value for name, value in complete.items() if name != missing}
+            with self.subTest(missing=missing), \
+                    patch.object(docker_vm, "scoped_processes", return_value={"321": self.process()}), \
+                    patch.object(docker_vm, "verify_pid_files", return_value=current), \
+                    patch.object(self.vm, "command") as command, \
+                    self.assertRaisesRegex(ValueError, "PID incarnation changed"):
+                self.vm.stop()
+            command.assert_not_called()
 
     def test_process_identity_survives_exec_but_not_pid_reuse(self):
         old = self.process()
@@ -325,17 +344,21 @@ class DockerVMTests(unittest.TestCase):
         self.vm.configure()
         self.journal.put("docker-vm-start-intent.json", b"{}")
         self.journal.put("docker-vm-start-exit.json", b"{}")
-        self.journal.put("docker-vm-pids.json", b"{}")
+        pids = {name: self.process() for name in docker_vm.pid_roles(self.root, self.tools)}
+        self.journal.put("docker-vm-pids.json", canonical(pids))
         self.journal.put("docker-vm-processes.json", canonical({"321": self.process()}))
         survivor = dict(self.process(), program="/bin/changed", group=1)
-        self.inventory.side_effect = [{}, {}, {321: survivor}]
+        self.inventory.side_effect = [{321: self.process()}, {321: self.process()}, {321: survivor}]
         with patch.object(self.vm, "command", side_effect=[b"", canonical(self.instance("Stopped"))]), \
                 patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "verify_pid_files", return_value=pids), \
                 self.assertRaisesRegex(ValueError, "processes remain"):
             self.vm.stop()
-        self.inventory.side_effect = [{}, {}, {321: dict(survivor, started="later")}]
+        self.inventory.side_effect = [{321: self.process()}, {321: self.process()},
+                                       {321: dict(survivor, started="later")}]
         with patch.object(self.vm, "command", side_effect=[b"", canonical(self.instance("Stopped"))]), \
                 patch.object(docker_vm, "scoped_processes", return_value={}), \
+                patch.object(docker_vm, "verify_pid_files", return_value=pids), \
                 patch.object(docker_vm, "require_unreachable_socket"), patch.object(self.vm, "retain_logs"):
             self.vm.stop()
         self.assertIn("docker-vm-closed.json", self.journal.records())

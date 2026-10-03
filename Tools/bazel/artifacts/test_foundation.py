@@ -17,10 +17,16 @@
 
 """Focused sealing and no-source-fallback checks for the foundation layer."""
 
+from __future__ import annotations
+
+import ast
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -67,6 +73,65 @@ LEGACY_LOCK_FIXTURES = {
 
 
 class FoundationTests(unittest.TestCase):
+    def test_legacy_producer_ast_guard_is_stable_across_python_ast_versions(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        interpreters = [sys.executable]
+        system_python = Path("/usr/bin/python3")
+        path_python = shutil.which("python3")
+        for candidate in (str(system_python) if system_python.is_file() else None, path_python):
+            if candidate and candidate not in interpreters:
+                interpreters.append(candidate)
+        code = """
+import json
+from pathlib import Path
+from artifacts import foundation
+root = Path.cwd()
+assert foundation._legacy_upper_pin_delta(root, 'enhanced')
+assert foundation._legacy_producer_ast_unchanged(root)
+for profile in ('stock', 'enhanced'):
+    for group in foundation.GROUPS:
+        path = foundation.layer_lock_path(root, group, profile)
+        lock = json.loads(path.read_text())
+        admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
+        assert admitted == (profile == 'stock'), (profile, group)
+"""
+        environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
+        for executable in interpreters:
+            with self.subTest(interpreter=executable):
+                subprocess.run([executable, "-c", code], cwd=root, env=environment,
+                               check=True, capture_output=True, text=True)
+
+    def test_legacy_producer_ast_guard_does_not_normalize_string_literals(self) -> None:
+        source = (Path(__file__).resolve().parent / "foundation.py").read_text()
+        self.assertIn('PRODUCT_ROOT = "//:products"', source)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "Tools/bazel/artifacts/foundation.py"
+            path.parent.mkdir(parents=True)
+            path.write_text(source.replace(
+                'PRODUCT_ROOT = "//:products"',
+                'PRODUCT_ROOT = "//:products, type_params=[]"',
+                1,
+            ))
+            self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
+
+    def test_legacy_producer_ast_guard_rejects_nonempty_type_parameters(self) -> None:
+        if "type_params" not in ast.FunctionDef._fields:
+            self.skipTest("This Python AST version has no function type_params field")
+        source = (Path(__file__).resolve().parent / "foundation.py").read_text()
+        original = 'def source_pins(root: Path, profile: str = "enhanced") -> dict[str, str]:'
+        self.assertIn(original, source)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "Tools/bazel/artifacts/foundation.py"
+            path.parent.mkdir(parents=True)
+            path.write_text(source.replace(
+                original,
+                'def source_pins[T](root: Path, profile: str = "enhanced") -> dict[str, str]:',
+                1,
+            ))
+            self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
+
     def _layer_fixture(self, directory: str, source_root: Path | None = None) -> Path:
         """Copy package inputs and immutable archived locks used by the verifier."""
         source_root = source_root or Path(__file__).resolve().parents[3]
@@ -93,28 +158,56 @@ class FoundationTests(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
 
-        old_pin = "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
+        old_pins = {
+            "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+            "containerization": "b404e03bb914904107a6a9305ba1f0e44c79a59c",
+            "container-engine-api": "40436017e1e93012b8dab7cfc3c79783538065c3",
+            "swift-nio-ssl": "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285",
+        }
+        current_pins = foundation.source_pins(root, "enhanced")
+        expected_current = {
+            "container": "f86fea2236fab118c0e0c6f8be5eb7672df894e2",
+            "containerization": "6db16197bbad8196a78132f86529daa89125aafb",
+            "container-engine-api": "48e44d74d738ca3d24351ba02c4869be1a3e6998",
+            "swift-nio-ssl": "322f3c2a4a21df31c84ca416bf65ee5e9059e440",
+        }
+        self.assertEqual({name: current_pins[name] for name in old_pins}, expected_current)
         manifest_path = root / "Package.swift"
         manifest = manifest_path.read_bytes()
         resolved_path = root / "Package.resolved"
         resolved = resolved_path.read_bytes()
         baseline_manifest_sha = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
         baseline_lock_sha = "f9ba00f315a3f74a5dd5440c76dd092e98a4ac41bda1339227e9b4967bb9a562"
-        selected_pin = foundation.source_pins(root, "enhanced")["container"]
         self.assertEqual(json.loads(resolved)["originHash"], foundation.digest(manifest))
-        manifest_pattern = re.compile(rb'(enhancedRevision:\s*")' + selected_pin.encode() + rb'(")')
-        manifest, count = manifest_pattern.subn(
-            lambda match: match.group(1) + old_pin.encode() + match.group(2), manifest)
-        self.assertEqual(count, 1)
+        for name in ("container", "containerization"):
+            manifest_pattern = re.compile(
+                rb'(enhancedRevision:\s*")' + current_pins[name].encode() + rb'(")')
+            manifest, count = manifest_pattern.subn(
+                lambda match, pin=old_pins[name].encode(): match.group(1) + pin + match.group(2),
+                manifest)
+            self.assertEqual(count, 1, name)
+        current_engine_block = (
+            b'revision: enhancedRuntime\n                ? "' + current_pins["container-engine-api"].encode()
+            + b'"\n                : "' + old_pins["container-engine-api"].encode() + b'"'
+        )
+        self.assertEqual(manifest.count(current_engine_block), 1)
+        manifest = manifest.replace(
+            current_engine_block, b'revision: "' + old_pins["container-engine-api"].encode() + b'"', 1)
         self.assertEqual(foundation.digest(manifest), baseline_manifest_sha)
         origin_pattern = re.compile(rb'("originHash"\s*:\s*")' + foundation.digest(
             manifest_path.read_bytes()).encode() + rb'(")')
         resolved, count = origin_pattern.subn(
             lambda match: match.group(1) + baseline_manifest_sha.encode() + match.group(2), resolved)
         self.assertEqual(count, 1)
-        revision_pattern = re.compile(rb'("revision"\s*:\s*")' + selected_pin.encode() + rb'(")')
-        resolved, count = revision_pattern.subn(
-            lambda match: match.group(1) + old_pin.encode() + match.group(2), resolved)
+        for name, current_pin in expected_current.items():
+            revision_pattern = re.compile(rb'("revision"\s*:\s*")' + current_pin.encode() + rb'(")')
+            resolved, count = revision_pattern.subn(
+                lambda match, pin=old_pins[name].encode(): match.group(1) + pin + match.group(2),
+                resolved)
+            self.assertEqual(count, 1, name)
+        resolved, count = re.subn(
+            rb'("location"\s*:\s*")https://github.com/apple/swift-nio-ssl\.git(")',
+            rb'\1https://github.com/stephenlclarke/swift-nio-ssl.git\2', resolved)
         self.assertEqual(count, 1)
         self.assertEqual(foundation.digest(resolved), baseline_lock_sha)
         manifest_path.write_bytes(manifest)
@@ -122,26 +215,52 @@ class FoundationTests(unittest.TestCase):
         return root
 
     def _q_pin_fixture(self, directory: str) -> Path:
-        """Seed a synthetic Q revision from the immutable archived 00a6549 inputs."""
+        """Seed the reviewed source transition from immutable archived inputs."""
         root = self._layer_fixture(directory)
-        old_pin = "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
-        new_pin = "f" * 40
+        old_pins = {
+            "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+            "containerization": "b404e03bb914904107a6a9305ba1f0e44c79a59c",
+            "container-engine-api": "40436017e1e93012b8dab7cfc3c79783538065c3",
+            "swift-nio-ssl": "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285",
+        }
+        new_pins = {
+            "container": "f86fea2236fab118c0e0c6f8be5eb7672df894e2",
+            "containerization": "6db16197bbad8196a78132f86529daa89125aafb",
+            "container-engine-api": "48e44d74d738ca3d24351ba02c4869be1a3e6998",
+            "swift-nio-ssl": "322f3c2a4a21df31c84ca416bf65ee5e9059e440",
+        }
         manifest_path = root / "Package.swift"
         manifest = manifest_path.read_bytes()
-        self.assertEqual(manifest.count(old_pin.encode()), 1)
-        manifest = manifest.replace(old_pin.encode(), new_pin.encode())
+        for name in ("container", "containerization"):
+            pattern = re.compile(rb'(enhancedRevision:\s*")' + old_pins[name].encode() + rb'(")')
+            manifest, count = pattern.subn(
+                lambda match, pin=new_pins[name].encode(): match.group(1) + pin + match.group(2), manifest)
+            self.assertEqual(count, 1, name)
+        baseline_engine_block = b'revision: "' + old_pins["container-engine-api"].encode() + b'"'
+        reviewed_engine_block = (
+            b'revision: enhancedRuntime\n                ? "' + new_pins["container-engine-api"].encode()
+            + b'"\n                : "' + old_pins["container-engine-api"].encode() + b'"'
+        )
+        self.assertEqual(manifest.count(baseline_engine_block), 1)
+        manifest = manifest.replace(baseline_engine_block, reviewed_engine_block, 1)
         manifest_path.write_bytes(manifest)
         resolved_path = root / "Package.resolved"
         resolved = resolved_path.read_bytes()
-        self.assertEqual(resolved.count(old_pin.encode()), 1)
-        resolved = resolved.replace(old_pin.encode(), new_pin.encode())
         baseline_origin = json.loads(resolved)["originHash"]
         self.assertEqual(baseline_origin,
                          "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a")
+        for name, old_pin in old_pins.items():
+            pattern = re.compile(rb'("revision"\s*:\s*")' + old_pin.encode() + rb'(")')
+            resolved, count = pattern.subn(
+                lambda match, pin=new_pins[name].encode(): match.group(1) + pin + match.group(2), resolved)
+            self.assertEqual(count, 1, name)
+        resolved, count = re.subn(
+            rb'("location"\s*:\s*")https://github.com/stephenlclarke/swift-nio-ssl\.git(")',
+            rb'\1https://github.com/apple/swift-nio-ssl.git\2', resolved)
+        self.assertEqual(count, 1)
         resolved, count = re.subn(
             rb'("originHash"\s*:\s*")' + baseline_origin.encode() + rb'(")',
-            lambda match: match.group(1) + foundation.digest(manifest).encode() + match.group(2),
-            resolved)
+            lambda match: match.group(1) + foundation.digest(manifest).encode() + match.group(2), resolved)
         self.assertEqual(count, 1)
         resolved_path.write_bytes(resolved)
         return root
@@ -183,20 +302,19 @@ class FoundationTests(unittest.TestCase):
                   patch.object(foundation, "file_digest", side_effect=file_digest)):
                 foundation.verify_consumer(lock_path, root, None, {}, profile, group)
 
-    def test_exact_enhanced_container_pin_delta_reuses_only_unchanged_lower_groups(self) -> None:
+    def test_exact_runtime_and_resolved_pin_transition_reuses_only_stock_groups(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._q_pin_fixture(directory)
-            for group in ("foundation", "containerization", "engine-api"):
+            for group in foundation.GROUPS:
                 lock = json.loads((root / f"Tools/bazel/artifacts/{group}-enhanced.lock.json").read_text())
                 with self.subTest(group=group):
-                    self._verify_archived_consumer(root, "enhanced", group)
-            sdk = json.loads((root / "Tools/bazel/artifacts/container-sdk-enhanced.lock.json").read_text())
-            self.assertFalse(foundation._legacy_recipe_compatible(root, sdk, "enhanced", "container-sdk"))
-            with self.assertRaisesRegex(ValueError, "source pins or lower layer"):
-                foundation.verify_consumer(root / "Tools/bazel/artifacts/container-sdk-enhanced.lock.json",
-                                           root, None, {}, "enhanced", "container-sdk")
+                    self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "enhanced", group))
+                    with self.assertRaisesRegex(ValueError, "source pins or lower layer"):
+                        foundation.verify_consumer(
+                            root / f"Tools/bazel/artifacts/{group}-enhanced.lock.json",
+                            root, None, {}, "enhanced", group)
 
-    def test_all_archived_groups_accept_producer_only_delta_at_exact_baseline_pins(self) -> None:
+    def test_all_archived_groups_accept_exact_legacy_inputs_at_baseline_pins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._layer_fixture(directory)
             for profile in ("stock", "enhanced"):
@@ -233,28 +351,15 @@ class FoundationTests(unittest.TestCase):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / relative, destination)
 
-            manifest_path = current / "Package.swift"
-            manifest = manifest_path.read_bytes()
-            old_pin = foundation.source_pins(current, "enhanced")["container"]
+            manifest = (current / "Package.swift").read_bytes()
             self.assertEqual(json.loads((current / "Package.resolved").read_text())["originHash"],
                              foundation.digest(manifest))
-            new_q = "e" * 40
-            self.assertNotEqual(new_q, old_pin)
-            self.assertEqual(manifest.count(old_pin.encode()), 1)
-            manifest = manifest.replace(old_pin.encode(), new_q.encode())
-            manifest_path.write_bytes(manifest)
-            resolved_path = current / "Package.resolved"
-            resolved = resolved_path.read_bytes()
-            self.assertEqual(resolved.count(old_pin.encode()), 1)
-            resolved = resolved.replace(old_pin.encode(), new_q.encode())
-            resolved, count = re.subn(
-                rb'("originHash"\s*:\s*")[0-9a-f]{64}("\s*,)',
-                lambda match: match.group(1) + foundation.digest(manifest).encode() + match.group(2),
-                resolved,
-            )
-            self.assertEqual(count, 1)
-            resolved_path.write_bytes(resolved)
-            self.assertEqual(json.loads(resolved)["originHash"], foundation.digest(manifest))
+            current_pins = foundation.source_pins(current, "enhanced")
+            self.assertEqual(current_pins["container"], "f86fea2236fab118c0e0c6f8be5eb7672df894e2")
+            self.assertEqual(current_pins["containerization"], "6db16197bbad8196a78132f86529daa89125aafb")
+            self.assertEqual(current_pins["container-engine-api"], "48e44d74d738ca3d24351ba02c4869be1a3e6998")
+            self.assertEqual(current_pins["swift-nio-ssl"], "322f3c2a4a21df31c84ca416bf65ee5e9059e440")
+            new_q = current_pins["container"]
 
             replaced_sdk_lock = current / "Tools/bazel/artifacts/container-sdk-enhanced.lock.json"
             candidate_sdk = json.loads(replaced_sdk_lock.read_text())
@@ -313,6 +418,17 @@ class FoundationTests(unittest.TestCase):
             path.write_text(json.dumps(changed, sort_keys=True) + "\n")
             self.assertFalse(foundation._legacy_recipe_compatible(root, changed, "stock", "foundation"))
 
+    def test_legacy_recipe_admits_only_the_exact_reviewed_launcher_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._q_pin_fixture(directory)
+            lock_path = root / "Tools/bazel/artifacts/foundation-stock.lock.json"
+            lock = json.loads(lock_path.read_text())
+            self.assertTrue(foundation._legacy_recipe_compatible(root, lock, "stock", "foundation"))
+            launcher = root / "Tools/bazel/run.sh"
+            original = launcher.read_bytes()
+            launcher.write_bytes(original + b"\n# unreviewed launcher edit\n")
+            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "stock", "foundation"))
+
     def test_q_pin_compatibility_rejects_other_manifest_and_stock_lock_changes(self) -> None:
         for relative, mutate in (
             ("Package.swift", lambda data: data.replace(b".macOS(.v15)", b".macOS(.v14)")),
@@ -322,6 +438,18 @@ class FoundationTests(unittest.TestCase):
                 root = self._q_pin_fixture(directory)
                 path = root / relative
                 path.write_bytes(mutate(path.read_bytes()))
+                self.assertFalse(foundation._legacy_upper_pin_delta(root, "enhanced"))
+
+    def test_q_pin_compatibility_rejects_unreviewed_runtime_and_foundation_pins(self) -> None:
+        for identity in ("container", "containerization", "container-engine-api",
+                         "swift-nio-ssl", "swift-collections"):
+            with self.subTest(identity=identity), tempfile.TemporaryDirectory() as directory:
+                root = self._q_pin_fixture(directory)
+                resolved_path = root / "Package.resolved"
+                parsed = json.loads(resolved_path.read_text())
+                row = next(item for item in parsed["pins"] if item["identity"] == identity)
+                row["state"]["revision"] = "a" * 40
+                resolved_path.write_text(json.dumps(parsed, indent=2) + "\n")
                 self.assertFalse(foundation._legacy_upper_pin_delta(root, "enhanced"))
 
     def test_q_pin_compatibility_rejects_duplicate_pin_and_untrue_origin_hash(self) -> None:
@@ -342,26 +470,27 @@ class FoundationTests(unittest.TestCase):
     def test_q_pin_compatibility_rejects_lower_recipe_production_and_header_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._q_pin_fixture(directory)
-            lock_path = root / "Tools/bazel/artifacts/containerization-enhanced.lock.json"
+            lock_path = root / "Tools/bazel/artifacts/containerization-stock.lock.json"
             lock = json.loads(lock_path.read_text())
+            self.assertTrue(foundation._legacy_recipe_compatible(root, lock, "stock", "containerization"))
 
-            foundation_lock = root / "Tools/bazel/artifacts/foundation-enhanced.lock.json"
+            foundation_lock = root / "Tools/bazel/artifacts/foundation-stock.lock.json"
             changed_lower = json.loads(foundation_lock.read_text())
             changed_lower["archiveSHA256"] = "0" * 64
             foundation_lock.write_text(json.dumps(changed_lower))
-            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "enhanced", "containerization"))
+            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "stock", "containerization"))
             archived_foundation_lock = (Path(__file__).resolve().parent / "fixtures/legacy-00a6549" /
-                                        "foundation-enhanced.lock.json")
+                                        "foundation-stock.lock.json")
             foundation_lock.write_bytes(archived_foundation_lock.read_bytes())
 
             changed_recipe = json.loads(json.dumps(lock))
             changed_recipe["recipeSHA256"]["rootBuild"] = "0" * 64
-            self.assertFalse(foundation._legacy_recipe_compatible(root, changed_recipe, "enhanced", "containerization"))
+            self.assertFalse(foundation._legacy_recipe_compatible(root, changed_recipe, "stock", "containerization"))
 
             dependency = root / "Tools/bazel/dependencies.bzl"
             original_dependency = dependency.read_bytes()
             dependency.write_bytes(original_dependency + b"\n# changed input\n")
-            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "enhanced", "containerization"))
+            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "stock", "containerization"))
             dependency.write_bytes(original_dependency)
 
             source = root / "Tools/bazel/artifacts/foundation.py"

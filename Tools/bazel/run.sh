@@ -73,17 +73,55 @@ ensure_directory() {
 }
 
 # Keep storage and evidence flags under launcher authority, not caller overrides.
+protected_define_key() {
+    case "$1" in
+        DEVCONTAINER_COMMIT|DEVCONTAINER_BUILD_LANE|DEVCONTAINER_SOURCE_DIRTY|runtime_profile) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_arguments() {
-    local argument
-    for argument in "$@"; do
+    local argument index=1 define key next
+    local arguments=("$@")
+    while ((index <= $#)); do
+        argument="${arguments[index - 1]}"
         case "$argument" in
             --flagfile*|--target_pattern_file*)
                 error 'Indirect Bazel argument files are not supported.'; return 2 ;;
-            --define=DEVCONTAINER_COMMIT*|DEVCONTAINER_COMMIT=*|--define=DEVCONTAINER_BUILD_LANE*|DEVCONTAINER_BUILD_LANE=*)
+            --define|-D)
+                if ((index < $#)); then
+                    next="${arguments[index]}"
+                    key="${next%%=*}"
+                    if protected_define_key "$key"; then
+                        case "$key" in
+                            DEVCONTAINER_COMMIT|DEVCONTAINER_BUILD_LANE)
+                                error 'Build source identity is supplied by the captured invocation, not caller overrides.'; return 2 ;;
+                            DEVCONTAINER_SOURCE_DIRTY)
+                                error 'Build cleanliness is supplied by the captured invocation, not caller overrides.'; return 2 ;;
+                            runtime_profile)
+                                error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
+                        esac
+                    fi
+                fi ;;
+            --define=*|-D*)
+                define="${argument#--define=}"
+                [[ "$argument" == --define=* ]] || define="${argument#-D}"
+                key="${define%%=*}"
+                if protected_define_key "$key"; then
+                    case "$key" in
+                        DEVCONTAINER_COMMIT|DEVCONTAINER_BUILD_LANE)
+                            error 'Build source identity is supplied by the captured invocation, not caller overrides.'; return 2 ;;
+                        DEVCONTAINER_SOURCE_DIRTY)
+                            error 'Build cleanliness is supplied by the captured invocation, not caller overrides.'; return 2 ;;
+                        runtime_profile)
+                            error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
+                    esac
+                fi ;;
+            DEVCONTAINER_COMMIT=*|DEVCONTAINER_BUILD_LANE=*)
                 error 'Build source identity is supplied by the captured invocation, not caller overrides.'; return 2 ;;
-            --define=DEVCONTAINER_SOURCE_DIRTY*|DEVCONTAINER_SOURCE_DIRTY=*)
+            DEVCONTAINER_SOURCE_DIRTY=*)
                 error 'Build cleanliness is supplied by the captured invocation, not caller overrides.'; return 2 ;;
-            --define=runtime_profile*|runtime_profile=*)
+            runtime_profile=*)
                 error 'Select the dependency and compile profile together with --config=stock or --config=enhanced.'; return 2 ;;
             --override_module*|--override_repository*|--inject_repository*|--lockfile_mode*|--registry*|--module_mirrors*|--experimental_downloader_config*|--enable_bzlmod*|--noenable_bzlmod*|--enable_workspace*|--noenable_workspace*)
                 error "Dependency override is not supported: ${argument%%=*}"; return 2 ;;
@@ -91,7 +129,63 @@ validate_arguments() {
                 error "Storage/environment override is not supported: ${argument%%=*}"; return 2 ;;
             *) : ;; # Other target and diagnostic options remain Bazel's responsibility.
         esac
+        ((index += 1))
     done
+}
+
+# Admit retained parity output without creating build scratch or requiring the
+# enrolled SSD, Bazel bootstrap, or Xcode installation.
+validate_parity_report_arguments() {
+    local campaign="${1:-}" argument value
+    [[ "$campaign" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+        error 'parity-report requires one retained campaign identifier.'; return 2;
+    }
+    shift
+    while (($# > 0)); do
+        argument="$1"
+        shift
+        case "$argument" in
+            --fixture|--fixture=*)
+                if [[ "$argument" == --fixture ]]; then
+                    (($# > 0)) || { error 'parity-report --fixture requires an identifier.'; return 2; }
+                    value="$1"; shift
+                else
+                    value="${argument#--fixture=}"
+                fi
+                [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+                    error 'parity-report fixture identifier is invalid.'; return 2;
+                } ;;
+            --format|--format=*)
+                if [[ "$argument" == --format ]]; then
+                    (($# > 0)) || { error 'parity-report --format requires json, markdown, or junit.'; return 2; }
+                    value="$1"; shift
+                else
+                    value="${argument#--format=}"
+                fi
+                [[ "$value" == json || "$value" == markdown || "$value" == junit ]] || {
+                    error 'parity-report format must be json, markdown, or junit.'; return 2;
+                } ;;
+            *) error 'Unsupported parity-report option.'; return 2 ;;
+        esac
+    done
+}
+
+run_parity_report() {
+    local retained="$HOME/Library/Application Support/ContainerFamily/retained/workflow"
+    local canonical_retained home_device retained_device
+    [[ "$HOME" == /* && -d "$HOME" ]] || { error 'A canonical home directory is required for retained reports.'; return 2; }
+    [[ -d "$retained" && ! -L "$retained" ]] || { error 'Retained report storage is unavailable.'; return 2; }
+    canonical_retained="$(cd "$retained" && pwd -P)" || return
+    [[ "$canonical_retained" == "$retained" ]] || { error 'Retained report storage must be canonical.'; return 2; }
+    home_device="$(/usr/bin/stat -f %d "$HOME")" || return
+    retained_device="$(/usr/bin/stat -f %d "$retained")" || return
+    [[ "$retained_device" == "$home_device" ]] || { error 'Retained reports must remain on internal home storage.'; return 2; }
+    [[ -f "$retained/runtime-cases.sqlite" && ! -L "$retained/runtime-cases.sqlite" ]] || {
+        error 'Retained report database is unavailable.'; return 2;
+    }
+    /usr/bin/env -i HOME="$HOME" USER="$(/usr/bin/id -un)" LOGNAME="$(/usr/bin/id -un)" \
+        PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+        PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$TOOL_DIRECTORY/../testing/campaign_report.py" "$@"
 }
 
 # Resolve only the two coherent dependency profiles, rejecting ambiguous requests.
@@ -448,6 +542,12 @@ main() {
         configure|test-tools|activate-runtime|recover-runtime|parity-report|release-comparison|cleanup|restore-candidate|prepare-candidate|coverage-report|build-timings|acquire-releases|prepare-releases|prepare-guest-images|prepare-docker-cli|prepare-devcontainers-cli|build|test|coverage|query|cquery|aquery|info|shutdown) shift ;;
         *) usage >&2; error 'Unsupported command.'; return 2 ;;
     esac
+    if [[ "$command" == parity-report ]]; then
+        [[ -z "$workspace" ]] || { error 'parity-report reads the maintained repository contracts and does not accept --workspace.'; return 2; }
+        validate_parity_report_arguments "$@" || return
+        run_parity_report "$@"
+        return
+    fi
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { error 'This qualification launcher requires Apple silicon macOS.'; return 2; }
     validate_arguments "$@" || return
     profile="$(runtime_profile "$@")" || return
@@ -499,10 +599,6 @@ main() {
     fi
     if [[ "$command" == recover-runtime ]]; then
         clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/recover_runtime.py" "$@"
-        return
-    fi
-    if [[ "$command" == parity-report ]]; then
-        clean_environment /usr/bin/python3 "$TOOL_DIRECTORY/../testing/campaign_report.py" "$@"
         return
     fi
     if [[ "$command" == release-comparison ]]; then

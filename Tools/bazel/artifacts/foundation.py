@@ -87,13 +87,24 @@ def source_pins(root: Path, profile: str = "enhanced") -> dict[str, str]:
 
 
 def _legacy_upper_pin_delta(root: Path, profile: str) -> bool:
-    """Accept only the archived 00a6549 manifest with one enhanced Container pin update."""
+    """Accept only the archived inputs with the reviewed enhanced runtime pins."""
     if profile not in {"enhanced", "stock"}:
         return False
     baseline_manifest = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
     baseline_lock = "f9ba00f315a3f74a5dd5440c76dd092e98a4ac41bda1339227e9b4967bb9a562"
     baseline_stock_lock = "f7186c61b9e1571021ae2b1f58ef05f901043bfa872829e49546f766e41da37d"
-    baseline_container = "4bf4750989138800d65abbbe7f9ff8d7b286bd16"
+    baseline_pins = {
+        "container": "4bf4750989138800d65abbbe7f9ff8d7b286bd16",
+        "containerization": "b404e03bb914904107a6a9305ba1f0e44c79a59c",
+        "container-engine-api": "40436017e1e93012b8dab7cfc3c79783538065c3",
+        "swift-nio-ssl": "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285",
+    }
+    reviewed_pins = {
+        "container": "f86fea2236fab118c0e0c6f8be5eb7672df894e2",
+        "containerization": "6db16197bbad8196a78132f86529daa89125aafb",
+        "container-engine-api": "48e44d74d738ca3d24351ba02c4869be1a3e6998",
+        "swift-nio-ssl": "322f3c2a4a21df31c84ca416bf65ee5e9059e440",
+    }
     manifest_path = root / "Package.swift"
     lock_path = root / "Package.resolved"
     stock_lock_path = root / "Package.stock.resolved"
@@ -104,36 +115,75 @@ def _legacy_upper_pin_delta(root: Path, profile: str) -> bool:
         if file_digest(stock_lock_path) != baseline_stock_lock:
             return False
         selected = source_records(root, "enhanced")
-        revision = selected["container"]["revision"]
-        if (not re.fullmatch(r"[0-9a-f]{40}", revision)
-                or selected["container"]["location"] != "https://github.com/stephenlclarke/container.git"):
+        locations = {
+            "container": "https://github.com/stephenlclarke/container.git",
+            "containerization": "https://github.com/stephenlclarke/containerization.git",
+            "container-engine-api": "https://github.com/stephenlclarke/container-engine-api.git",
+            "swift-nio-ssl": "https://github.com/apple/swift-nio-ssl.git",
+        }
+        if any(not re.fullmatch(r"[0-9a-f]{40}", selected.get(name, {}).get("revision", ""))
+               for name in locations):
             return False
-        if (revision == baseline_container and current_manifest_sha == baseline_manifest
+        if (all(selected[name]["revision"] == pin for name, pin in baseline_pins.items())
+                and all(selected[name]["location"] == (
+                    "https://github.com/stephenlclarke/swift-nio-ssl.git"
+                    if name == "swift-nio-ssl" else location)
+                         for name, location in locations.items())
+                and current_manifest_sha == baseline_manifest
                 and file_digest(lock_path) == baseline_lock):
             return True
-        if revision == baseline_container:
+        if (any(selected[name]["revision"] != pin for name, pin in reviewed_pins.items())
+                or any(selected[name]["location"] != location for name, location in locations.items())):
             return False
 
-        manifest_pattern = re.compile(rb'(enhancedRevision:\s*")' + revision.encode() + rb'(")')
-        changed_manifest, manifest_count = manifest_pattern.subn(
-            lambda match: match.group(1) + baseline_container.encode() + match.group(2), manifest)
-        if manifest_count != 1 or digest(changed_manifest) != baseline_manifest:
+        normalized_manifest = manifest
+        for name in ("container", "containerization"):
+            current_pin = reviewed_pins[name].encode()
+            baseline_pin = baseline_pins[name].encode()
+            manifest_pattern = re.compile(rb'(enhancedRevision:\s*")' + current_pin + rb'(")')
+            normalized_manifest, count = manifest_pattern.subn(
+                lambda match, pin=baseline_pin: match.group(1) + pin + match.group(2),
+                normalized_manifest)
+            if count != 1:
+                return False
+        # Normalize only the exact enhanced Engine API conditional. Stock keeps
+        # the historical revision and every other manifest byte stays pinned.
+        current_engine_block = (
+            b'revision: enhancedRuntime\n                ? "' + reviewed_pins["container-engine-api"].encode()
+            + b'"\n                : "' + baseline_pins["container-engine-api"].encode() + b'"'
+        )
+        baseline_engine_block = b'revision: "' + baseline_pins["container-engine-api"].encode() + b'"'
+        if normalized_manifest.count(current_engine_block) != 1:
+            return False
+        normalized_manifest = normalized_manifest.replace(current_engine_block, baseline_engine_block, 1)
+        if digest(normalized_manifest) != baseline_manifest:
             return False
 
         parsed = json.loads(lock)
-        container_rows = [row for row in parsed.get("pins", []) if row.get("identity") == "container"]
-        if (len(container_rows) != 1
-                or container_rows[0].get("location") != "https://github.com/stephenlclarke/container.git"
-                or container_rows[0].get("state", {}).get("revision") != revision
+        rows = {row.get("identity"): row for row in parsed.get("pins", [])}
+        if (len(rows) != len(parsed.get("pins", []))
+                or any(rows.get(name, {}).get("location") != locations[name]
+                       or rows.get(name, {}).get("state", {}).get("revision") != reviewed_pins[name]
+                       for name in reviewed_pins)
                 or parsed.get("originHash") != current_manifest_sha):
             return False
         origin_pattern = re.compile(rb'("originHash"\s*:\s*")[0-9a-f]{64}(")')
         normalized_lock, origin_count = origin_pattern.subn(
             lambda match: match.group(1) + baseline_manifest.encode() + match.group(2), lock)
-        revision_pattern = re.compile(rb'("revision"\s*:\s*")' + revision.encode() + rb'(")')
-        normalized_lock, revision_count = revision_pattern.subn(
-            lambda match: match.group(1) + baseline_container.encode() + match.group(2), normalized_lock)
-        return (origin_count == 1 and revision_count == 1
+        revision_counts = []
+        for name, current_pin in reviewed_pins.items():
+            revision_pattern = re.compile(rb'("revision"\s*:\s*")' + current_pin.encode() + rb'(")')
+            normalized_lock, revision_count = revision_pattern.subn(
+                lambda match, pin=baseline_pins[name].encode(): match.group(1) + pin + match.group(2),
+                normalized_lock)
+            revision_counts.append(revision_count)
+        old_nio_location = b"https://github.com/stephenlclarke/swift-nio-ssl.git"
+        current_nio_location = b"https://github.com/apple/swift-nio-ssl.git"
+        normalized_lock, nio_location_count = re.subn(
+            rb'("location"\s*:\s*")' + re.escape(current_nio_location) + rb'(")',
+            lambda match: match.group(1) + old_nio_location + match.group(2), normalized_lock)
+        return (origin_count == 1 and revision_counts == [1, 1, 1, 1]
+                and nio_location_count == 1
                 and digest(normalized_lock) == baseline_lock)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
@@ -142,18 +192,35 @@ def _legacy_upper_pin_delta(root: Path, profile: str) -> bool:
 def _legacy_producer_ast_unchanged(root: Path) -> bool:
     """Pin every production node outside the five narrowly reviewed verifier nodes."""
     import ast
+    import copy
 
-    expected_module = "d8cb209b5a2b33fe387da058fe5575c155948d73f63de717862c69fa718f417a"
+    expected_module = "a4a341a1bc56dbe435497e16be7b31c8b3d48e8d13ab039a457b4582e992a7e8"
     expected_heads = {
-        "_legacy_upper_pin_delta": "33cd281d4de94e22c2092fcd7d0d203d06194ba3b9646709e23c303364fcd990",
-        "_legacy_producer_ast_unchanged": "e5376c24b4671f51a8be1b6cd2da704ebd0e1f65605ce8852dc78ab3826262ad",
-        "_legacy_recipe_compatible": "bdbdb924efa3084b107a14bfaf933c73fcdf8ef011a8c39328da2869514f5714",
-        "verify_consumer": "1a82944c23078e7f3b8f42129f0ad36946aff8d41f053f9c4ede758c2c094d77",
-        "verify_source_graph": "cc26f0c3334e47879b3e84f75184176fda8369a297d1a04265dd497ba0e60fbc",
+        "_legacy_upper_pin_delta": "69158214437f3aaa765dfdf2ca3f582de6761c42db65ef5f1ea5700702fe1586",
+        "_legacy_producer_ast_unchanged": "1076a2c55d65304bdbbccfb893a53f2fffa76a466877989fd65fb28f637be3a8",
+        "_legacy_recipe_compatible": "390cffd6b160a83ef96cdd881774d0690ab5885d25247ff7b1968de48e0ffc50",
+        "verify_consumer": "e691381bb64617c7fc5c7ca2e7c155f3daccbd3bb508174bb806734b27420512",
+        "verify_source_graph": "6beeacddf79ad572b66c260451f1401990e52bb0ef37224b47ed56ea0c64e01d",
     }
     try:
         source = (root / "Tools/bazel/artifacts/foundation.py").read_text()
         tree = ast.parse(source)
+        if any(getattr(node, "type_params", ()) for node in ast.walk(tree)):
+            return False
+
+        def version_neutral_dump(node: ast.AST) -> str:
+            # Python 3.12 added empty FunctionDef.type_params to ast.dump;
+            # the producer's maintained /usr/bin/python3 may be Python 3.9.
+            # Remove that empty field from a deep copy only; all other AST
+            # values, including string constants, remain part of the dump.
+            normalized = copy.deepcopy(node)
+            for current in ast.walk(normalized):
+                if hasattr(current, "type_params"):
+                    if current.type_params:
+                        raise ValueError("generic production function is outside the pinned AST contract")
+                    delattr(current, "type_params")
+            return ast.dump(normalized, include_attributes=False)
+
         permitted = {"_legacy_upper_pin_delta", "_legacy_producer_ast_unchanged",
                      "_legacy_recipe_compatible", "verify_consumer", "verify_source_graph"}
         counts = {name: 0 for name in permitted}
@@ -169,8 +236,7 @@ def _legacy_producer_ast_unchanged(root: Path) -> bool:
         retained = [node for node in tree.body
                     if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                             and node.name in excluded)]
-        fingerprint = digest(ast.dump(ast.Module(body=retained, type_ignores=[]),
-                                      include_attributes=False).encode())
+        fingerprint = digest(version_neutral_dump(ast.Module(body=retained, type_ignores=[])).encode())
         if fingerprint != expected_module:
             return False
         for name, expected in expected_heads.items():
@@ -180,8 +246,10 @@ def _legacy_producer_ast_unchanged(root: Path) -> bool:
                                      decorator_list=node.decorator_list, returns=node.returns,
                                      type_comment=node.type_comment)
             if hasattr(node, "type_params"):
+                if node.type_params:
+                    return False
                 header.type_params = node.type_params
-            if digest(ast.dump(header, include_attributes=False).encode()) != expected:
+            if digest(version_neutral_dump(header).encode()) != expected:
                 return False
         return True
     except (OSError, SyntaxError, StopIteration, ValueError):
@@ -189,9 +257,11 @@ def _legacy_producer_ast_unchanged(root: Path) -> bool:
 
 
 def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) -> bool:
-    """Permit only the eight archived packages across a producer-only code change."""
+    """Permit only the eight archived packages across reviewed producer and dispatcher edits."""
     baseline_producer = "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014"
     baseline_manifest = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
+    baseline_launcher = "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987"
+    reviewed_launcher = "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923"
     archived_locks = {
         ("enhanced", "foundation"): "5383f27b335a66de065102515bf7ff3644b8ad784f409c15a8d3b5be6c908956",
         ("enhanced", "containerization"): "75010ab0b5e69f67e3d5aa4aa9e152bc7b0a3f26477af4fc501d8afc024da57f",
@@ -213,6 +283,12 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         if (file_digest(canonical_lock) != archived_locks[(profile, group)]
                 or json.loads(canonical_lock.read_text()) != lock):
             return False
+        # recipe_identity includes run.sh. Normalize only the original launcher
+        # digest, and only when the complete current file is the reviewed guarded
+        # dispatcher. Archived lock bytes above pin each pre-edit package.
+        if (file_digest(root / "Tools/bazel/run.sh") != reviewed_launcher
+                or lock.get("recipeSHA256", {}).get("launcher") != baseline_launcher):
+            return False
         if (profile == "enhanced" and group == "container-sdk"
                 and source_pins(root, profile).get("container") != "4bf4750989138800d65abbbe7f9ff8d7b286bd16"):
             return False
@@ -221,6 +297,7 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
             return False
         expected = recipe_identity(root, profile, group)
         expected["producer"] = baseline_producer
+        expected["launcher"] = baseline_launcher
         expected["swiftPackageManifest"] = baseline_manifest
         return lock.get("recipeSHA256") == expected
     except (OSError, ValueError, KeyError, TypeError):
@@ -246,7 +323,7 @@ def verify_source_graph(root: Path, profile: str, graph: object) -> None:
         return
     # The existing stock SDK archive was produced from the 00a6549 Devcontainer
     # manifest and enhanced lock. Permit only that archived identity when the
-    # enhanced Q pin is the sole normalized source delta; all loaded stock graph
+    # reviewed enhanced dependency selections are the only normalized deltas; all loaded stock graph
     # and stock-lock hashes remain exact.
     baseline_manifest = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
     baseline_lock = "f9ba00f315a3f74a5dd5440c76dd092e98a4ac41bda1339227e9b4967bb9a562"

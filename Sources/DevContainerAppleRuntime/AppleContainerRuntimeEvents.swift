@@ -706,6 +706,7 @@ extension AppleContainerRuntime {
             if useDirectContainerAPI {
                 do {
                     try context.checkActive()
+                    try await requireCompletedCreation(id: targetID)
                     try await fileClient.copyIn(
                         id: targetID,
                         source: localHosts.path,
@@ -724,6 +725,7 @@ extension AppleContainerRuntime {
                     throw directAPIError(error, operation: "container hosts upload")
                 }
             } else {
+                try await requireCompletedCreation(id: targetID)
                 let upload = try await command([
                     "cp",
                     localHosts.path,

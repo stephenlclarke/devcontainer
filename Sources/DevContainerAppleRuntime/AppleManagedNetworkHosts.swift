@@ -91,6 +91,7 @@ extension AppleContainerRuntime {
               try managedNetworkHostsIdentity(configuration: current.configuration) == identity
         else { throw DevContainerError(.conflict, message: "Managed hosts container changed during preparation") }
         try context.checkActive()
+        try await requireCompletedCreation(id: configuration.id)
         try managedNetworkHosts.update(identity: identity) { Self.replacingManagedHosts(in: $0, with: hosts) }
     }
 
@@ -106,6 +107,7 @@ extension AppleContainerRuntime {
               let identity = try managedNetworkHostsIdentity(configuration: native.configuration)
         else { throw DevContainerError(.conflict, message: "Managed hosts target incarnation changed") }
         try context.checkActive()
+        try await requireCompletedCreation(id: target.runtimeID.rawValue)
         try managedNetworkHosts.update(identity: identity) { Self.replacingManagedHosts(in: $0, with: hosts) }
         return true
     }

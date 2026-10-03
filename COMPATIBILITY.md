@@ -143,10 +143,13 @@ That post-release repin is not attributed to the 1.0.1 tag.
 | Stock `apple/container` | 1.4.1 at `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Unmodified Apple dependency selected by `Package.stock.resolved`; compile/test evidence only |
 | Stock `apple/containerization` | 0.45.0 at `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited official Apple dependency in the stock graph |
 | Stock `apple/swift-nio-ssl` | 2.37.4 at `03827c1a9fdb2b6b00a4e93ede8861520263af8c` | Official dependency in the stock graph |
-| Enhanced `stephenlclarke/container` | `228897171d71975988ccdc690f1982e7433952af` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/containerization` | `b404e03bb914904107a6a9305ba1f0e44c79a59c` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Enhanced `stephenlclarke/swift-nio-ssl` | `3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
-| Shared `stephenlclarke/container-engine-api` | `f32e1829d0f0293bd68a69a7a6f93f67953c31e9` | Selected by both profiles; draft [PR 45](https://github.com/stephenlclarke/container-engine-api/pull/45) adds bounded cancellable full-duplex transport concurrent-client fixes and diagnostic-only HTTP error bodies. Development revision, not a released dependency or full-stack certification |
+| Enhanced `stephenlclarke/container` | `f86fea2236fab118c0e0c6f8be5eb7672df894e2` | Exact revision selected by `Package.resolved`; no stock-Apple claim |
+| Enhanced `stephenlclarke/containerization` | `6db16197bbad8196a78132f86529daa89125aafb` | Exact nested revision selected by the enhanced Container package and `Package.resolved`; no stock-Apple claim |
+| Enhanced `apple/swift-nio-ssl` | `322f3c2a4a21df31c84ca416bf65ee5e9059e440` | Resolved transitive dependency of the selected enhanced graph; no stock-Apple runtime claim |
+| Enhanced `stephenlclarke/container-engine-api` | `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Exact revision selected by the enhanced Container package and `Package.resolved`; no stock-Apple claim |
+| Stock `stephenlclarke/container-engine-api` | `40436017e1e93012b8dab7cfc3c79783538065c3` | Exact revision selected by the stock graph |
+
+The enhanced source graph now follows the nested revisions selected by its Container package. Existing enhanced Foundation (which includes the old NIO-SSL input), Containerization, Engine API, and Container SDK layer archives were produced for older revisions and cannot be reused for this graph; matching source-bound lower layers must be produced before enhanced package qualification.
 
 `Package.resolved` and `Package.stock.resolved` are authoritative for source
 builds. The parity manifest becomes authoritative for a newer runtime claim

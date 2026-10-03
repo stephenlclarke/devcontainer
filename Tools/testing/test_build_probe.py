@@ -79,13 +79,41 @@ class BuildProbeTests(unittest.TestCase):
         self.assertTrue(build_output(200, b'{"error":"build failed"}\n').failed)
 
     def test_aux_only_is_not_progress_and_blank_lines_are_not_records(self):
-        result = build_output(200, b'\n{"aux":{"ID":"sha256:abc"}}\r\n\n')
+        result = build_output(200, b'\n{"aux":{"ID":"sha256:' + b'c' * 64 + b'"}}\r\n\n')
         self.assertFalse(result.progress)
         self.assertFalse(result.failed)
         self.assertEqual(result.records, 1)
-        result = build_output(200, b'{"stream":"Step 1"}\n{"aux":{"ID":"sha256:abc"}}\n')
+        result = build_output(200, b'{"stream":"Step 1"}\n{"aux":{"ID":"sha256:' + b'c' * 64 + b'"}}\n')
         self.assertTrue(result.progress)
         self.assertFalse(result.failed)
+
+    def test_buildkit_config_digest_is_image_identity_not_manifest_digest(self):
+        config = 'sha256:' + 'c' * 64
+        manifest = 'sha256:' + 'd' * 64
+        payload = (f'{{"stream":"#6 exporting manifest {manifest} done\\n"}}\n'
+                   f'{{"stream":"#6 exporting manifest list {manifest} done\\n"}}\n'
+                   f'{{"stream":"#6 exporting config {config} done\\n"}}\n').encode()
+        self.assertEqual(build_output(200, payload).image_id, config)
+        manifest_only = (f'{{"stream":"#6 exporting manifest {manifest} done\\n"}}\n'
+                         f'{{"stream":"#6 exporting manifest list {manifest} done\\n"}}\n').encode()
+        self.assertIsNone(build_output(200, manifest_only).image_id)
+        combined = payload + f'{{"aux":{{"ID":"{config}"}}}}\n'.encode()
+        self.assertEqual(build_output(200, combined).image_id, config)
+        with self.assertRaisesRegex(ValueError, "conflicting image identities"):
+            build_output(200, payload + f'{{"aux":{{"ID":"{manifest}"}}}}\n'.encode())
+
+    def test_buildkit_identity_rejects_ambiguous_or_malformed_config_records(self):
+        config = 'sha256:' + 'c' * 64
+        other = 'sha256:' + 'd' * 64
+        for line in (f'#6 exporting config {config} done extra',
+                     f'#6 exporting config {config[:20]} done',
+                     f'#6 exporting config {config} 0.1s done'):
+            with self.subTest(line=line), self.assertRaisesRegex(ValueError, "config identity is malformed"):
+                build_output(200, json.dumps({"stream": line}).encode() + b'\n')
+        distinct = (f'{{"stream":"#6 exporting config {config} done\\n"}}\n'
+                    f'{{"stream":"#7 exporting config {other} done\\n"}}\n').encode()
+        with self.assertRaisesRegex(ValueError, "conflicting image identities"):
+            build_output(200, distinct)
 
     def test_http_rejection_cannot_count_as_expected_failed_run(self):
         for status in (400, 404, 500):
@@ -105,6 +133,18 @@ class BuildProbeTests(unittest.TestCase):
                 build_output(200, payload)
         with patch("build_probe.MAX_BUILD_OUTPUT", 4), self.assertRaisesRegex(ValueError, "bound"):
             build_output(200, b'{"stream":"long"}')
+
+    def test_non_json_numeric_constants_are_rejected_at_every_depth(self):
+        for token in (b"NaN", b"Infinity", b"-Infinity"):
+            for record in (b'{"stream":"ok","aux":{"value":' + token + b'}}',
+                           b'{"stream":"ok","aux":[{"nested":' + token + b'}]}'):
+                payload = record + b'\n'
+                with self.subTest(token=token, record=record), self.assertRaises(ValueError):
+                    build_output(200, payload)
+                failed_stream = (b'{"stream":"cf-e04-executed-' + OWNER.encode()
+                    + b'"}\n{"error":"exit code: 1","aux":{"value":' + token + b'}}\n')
+                with self.subTest(token=token), self.assertRaises(ValueError):
+                    require_failed_run(failed_stream, OWNER)
 
     def image(self):
         return {"Id": "sha256:" + "c" * 64, "RepoTags": [tag_for(OWNER)],

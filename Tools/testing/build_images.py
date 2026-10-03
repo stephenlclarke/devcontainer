@@ -96,7 +96,10 @@ class BuildImages:
             "progress": result.progress, "failed": result.failed, "records": result.records}))
         actual = self.inspect(tag_for(self.owner, failing=failing))
         if actual is not None:
-            self.journal.put(self.key(failing, "created"), canonical(self.identity(actual, failing)))
+            observed = self.identity(actual, failing)
+            if result.image_id is None or result.image_id != observed["id"]:
+                raise ValueError("Build response has no matching durable image identity; preserving quarantine")
+            self.journal.put(self.key(failing, "created"), canonical(observed))
         return result
 
     def identity(self, value, failing):
@@ -162,6 +165,10 @@ class BuildImages:
                 self.key(failing, "removed") in records or "e04-images-removed.json" in records):
             raise ValueError("Unsubmitted or removed build output appeared")
         observed = self.identity(actual, failing)
+        response_identity = self.completed_result(failing, records).image_id
+        expected_id = known["id"] if known is not None else response_identity
+        if expected_id is None or observed["id"] != expected_id:
+            raise ValueError("Build output differs from its durable response identity; preserving quarantine")
         if known is not None and known != observed:
             raise ValueError("Build output identity changed during cleanup")
         by_id = self.inspect(observed["id"])
@@ -173,26 +180,31 @@ class BuildImages:
                 raise ValueError("Build tag and manifest disagree")
         return observed
 
+    def completed_result(self, failing: bool, records):
+        """Re-admit the durable request, response bytes, and parsed completion fields."""
+        started = records.get(self.key(failing, "started"))
+        completed = records.get(self.key(failing, "completed"))
+        if started is None:
+            if completed is not None:
+                raise ValueError("Build completion has no submission intent")
+            return None
+        if completed is None:
+            raise ValueError("Build completion is uncertain; preserve runtime")
+        if started != canonical({"contextSHA256": self.intent["contexts"][self.role(failing)]}):
+            raise ValueError("Build submission context changed")
+        payload = records.get(f"e04-{self.role(failing)}-response.jsonl", b"")
+        result = build_output(200, payload)
+        expected = {"status": 200, "responseSHA256": digest(payload), "progress": result.progress,
+                    "failed": result.failed, "records": result.records}
+        if completed != canonical(expected):
+            raise ValueError("Build completion does not match its retained response")
+        return result
+
     def recovery_plan(self):
         """Authenticate complete responses without deleting or writing receipts."""
         records = self.records()
         for failing in (False, True):
-            started = records.get(self.key(failing, "started"))
-            completed = records.get(self.key(failing, "completed"))
-            if started is None:
-                if completed is not None:
-                    raise ValueError("Build completion has no submission intent")
-                continue
-            if completed is None:
-                raise ValueError("Build completion is uncertain; preserve runtime")
-            if started != canonical({"contextSHA256": self.intent["contexts"][self.role(failing)]}):
-                raise ValueError("Build submission context changed")
-            payload = records.get(f"e04-{self.role(failing)}-response.jsonl", b"")
-            result = build_output(200, payload)
-            expected = {"status": 200, "responseSHA256": digest(payload), "progress": result.progress,
-                        "failed": result.failed, "records": result.records}
-            if completed != canonical(expected):
-                raise ValueError("Build completion does not match its retained response")
+            self.completed_result(failing, records)
         return [value for failing in (False, True)
                 if (value := self.removal_identity(failing, records)) is not None]
 

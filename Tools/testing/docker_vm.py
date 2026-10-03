@@ -371,7 +371,9 @@ class DockerVM:
         current = scoped_processes(self.root, self.tools, inventory)
         pids = verify_pid_files(self.root, self.tools, inventory)
         captured = json.loads(records["docker-vm-pids.json"])
-        if any(name not in captured or captured[name] != value for name, value in pids.items()):
+        expected_roles = set(pid_roles(self.root, self.tools))
+        if (not isinstance(captured, dict) or set(captured) != expected_roles
+                or set(pids) != expected_roles or captured != pids):
             raise ValueError("Docker VM PID incarnation changed before shutdown")
         # Recheck identities after reading arguments/PID files, before Lima can signal.
         refreshed = self.inventory()

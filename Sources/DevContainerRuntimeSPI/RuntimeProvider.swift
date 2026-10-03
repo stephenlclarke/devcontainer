@@ -105,6 +105,7 @@ public struct RuntimeContainerCreation: Codable, Equatable, Sendable {
 /// to clear intent merely because name-based deletion or lookup succeeded.
 public protocol RuntimeCreationStore: RuntimeMetadataStore {
     func hasPendingContainerCreations() async throws -> Bool
+    func pendingContainerCreations() async throws -> [RuntimeContainerCreation]
     func beginContainerCreation(_ creation: RuntimeContainerCreation) async throws
     func pendingContainerCreation(id: String) async throws -> RuntimeContainerCreation?
     func finishContainerCreation(_ metadata: RuntimeContainerMetadata, operationID: UUID) async throws
@@ -114,6 +115,10 @@ public protocol RuntimeCreationStore: RuntimeMetadataStore {
 public extension RuntimeCreationStore {
     func hasPendingContainerCreations() async throws -> Bool {
         throw DevContainerError(.unsupportedCapability, message: "Creation quiescence is unavailable")
+    }
+
+    func pendingContainerCreations() async throws -> [RuntimeContainerCreation] {
+        throw DevContainerError(.unsupportedCapability, message: "Creation reconciliation is unavailable")
     }
 }
 

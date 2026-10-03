@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from campaign_identity import PREPARATION_HELPERS, RELEASE_HELPERS, RELEASE_INPUTS, RUNTIME_HELPERS, published_fingerprints
+from campaign_identity import (PREPARATION_HELPERS, RELEASE_HELPERS, RELEASE_INPUTS,
+                               RUNTIME_EXECUTION_INPUTS, RUNTIME_HELPERS, published_fingerprints)
 from case_evidence import canonical, compare_cases, digest
 
 
@@ -19,7 +20,7 @@ class CampaignIdentityTests(unittest.TestCase):
         self.root = Path(temporary.name)
         (self.root / "Tools/testing").mkdir(parents=True)
         for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_EXECUTION_INPUTS],
                      *["Tools/release/" + name for name in RELEASE_HELPERS],
                      "Tools/bazel/package_checks/cli_process.py"):
             path = self.root / name
@@ -48,7 +49,7 @@ class CampaignIdentityTests(unittest.TestCase):
             self.assertNotEqual(published_fingerprints(self.root)["releaseSetSHA256"], before["releaseSetSHA256"])
             path.write_bytes(b"{}\n")
         for name in (*["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_EXECUTION_INPUTS],
                      *["Tools/release/" + name for name in RELEASE_HELPERS],
                      "Tools/bazel/package_checks/cli_process.py"):
             path = self.root / name
@@ -65,7 +66,7 @@ class CampaignIdentityTests(unittest.TestCase):
     def test_runfiles_and_resolved_workspace_have_identical_execution_closure(self):
         runfiles = self.root / "runfiles"
         for name in (*RELEASE_INPUTS, *["Tools/bazel/" + name for name in PREPARATION_HELPERS],
-                     *["Tools/testing/" + name for name in RUNTIME_HELPERS],
+                     *["Tools/testing/" + name for name in RUNTIME_EXECUTION_INPUTS],
                      *["Tools/release/" + name for name in RELEASE_HELPERS],
                      "Tools/bazel/package_checks/cli_process.py"):
             path = runfiles / name
@@ -73,9 +74,24 @@ class CampaignIdentityTests(unittest.TestCase):
             path.symlink_to(self.root / name)
         (self.root / "Tools/testing/test_extra.py").write_bytes(b"# not executed by the runtime\n")
         self.assertEqual(published_fingerprints(self.root), published_fingerprints(runfiles))
-        (runfiles / "Tools/testing/docker_vm.py").unlink()
-        with self.assertRaises(FileNotFoundError):
-            published_fingerprints(runfiles)
+        for missing in ("released-engine.sh", "BUILD.bazel"):
+            with self.subTest(missing=missing):
+                path = runfiles / "Tools/testing" / missing
+                path.unlink()
+                try:
+                    with self.assertRaises(FileNotFoundError):
+                        published_fingerprints(runfiles)
+                finally:
+                    path.symlink_to(self.root / "Tools/testing" / missing)
+
+    def test_launcher_and_runtime_target_definition_invalidate_shared_identity(self):
+        before = published_fingerprints(self.root)
+        for name in ("released-engine.sh", "BUILD.bazel"):
+            path = self.root / "Tools/testing" / name
+            path.write_bytes(b"# changed execution policy\n")
+            self.assertNotEqual(published_fingerprints(self.root)["harnessSHA256"],
+                                before["harnessSHA256"])
+            path.write_bytes(b"{}\n")
 
 
 if __name__ == "__main__":

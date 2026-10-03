@@ -100,6 +100,7 @@ struct SQLiteStateStoreTests {
             let recoveryStore: any RuntimeCreationStore = reopened
             #expect(try await recoveryStore.hasPendingContainerCreations())
             #expect(try await reopened.pendingContainerCreation(id: "pending") == intent)
+            #expect(try await recoveryStore.pendingContainerCreations() == [intent])
             #expect(try await reopened.containerMetadata(id: "pending") == nil)
             await #expect(throws: DevContainerError.self) { try await reopened.beginContainerCreation(intent) }
             try await reopened.finishContainerCreation(completed(intent), operationID: intent.operationID)

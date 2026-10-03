@@ -60,7 +60,8 @@ def require_failed_run(payload: bytes, owner: str) -> None:
     for line in payload.splitlines():
         if not line.strip():
             continue
-        record = json.loads(line, object_pairs_hook=unique_object)
+        record = json.loads(line, object_pairs_hook=unique_object,
+                            parse_constant=reject_json_constant)
         # Classic builder emits the bare line; BuildKit prefixes step/time.
         # Do not accept a command listing, cached step, or marker in an error.
         for output in record.get("stream", "").splitlines():
@@ -88,11 +89,16 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def reject_json_constant(value: str):
+    raise ValueError("Non-JSON numeric constant in build response: " + value)
+
+
 @dataclass(frozen=True)
 class BuildOutput:
     progress: bool
     failed: bool
     records: int
+    image_id: str | None = None
 
 
 def progress_record(value: dict) -> bool:
@@ -123,19 +129,48 @@ def build_output(status: int, payload: bytes) -> BuildOutput:
     if not payload or len(payload) > MAX_BUILD_OUTPUT:
         raise ValueError("Build response is empty or exceeds the fixture bound")
     progress, failed, count = False, False, 0
+    image_id = None
     for line in payload.splitlines():
         if not line.strip():
             continue
-        value = json.loads(line, object_pairs_hook=unique_object)
+        value = json.loads(line, object_pairs_hook=unique_object,
+                           parse_constant=reject_json_constant)
         if not isinstance(value, dict) or not value:
             raise ValueError("Build response record is not a nonempty object")
         count += 1
         # Validate every record even after progress or failure has been observed.
         progress = progress_record(value) or progress
         failed = error_record(value) or failed
+        if "aux" in value:
+            auxiliary = value["aux"]
+            if not isinstance(auxiliary, dict):
+                raise ValueError("Build response auxiliary data is malformed")
+            if "ID" in auxiliary:
+                image_id = merge_image_id(image_id, auxiliary["ID"])
+        stream = value.get("stream")
+        if isinstance(stream, str):
+            for output in stream.splitlines():
+                if "exporting config" not in output.lower():
+                    continue
+                # BuildKit emits the full image config ID separately from the
+                # manifest and manifest-list digests; only this record binds
+                # to inspect's image ID when aux.ID is absent.
+                match = re.fullmatch(
+                    r"\s*(?:#[0-9]+ )?exporting config (sha256:[0-9a-f]{64}) done\s*", output)
+                if match is None:
+                    raise ValueError("Build response config identity is malformed")
+                image_id = merge_image_id(image_id, match.group(1))
     if count == 0:
         raise ValueError("Build response has no records")
-    return BuildOutput(progress, failed, count)
+    return BuildOutput(progress, failed, count, image_id)
+
+
+def merge_image_id(current: str | None, candidate: object) -> str:
+    if not isinstance(candidate, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", candidate) is None:
+        raise ValueError("Build response image identity is malformed")
+    if current is not None and current != candidate:
+        raise ValueError("Build response contains conflicting image identities")
+    return candidate
 
 
 def owned_image(value: dict, owner: str, *, failing: bool = False) -> dict:

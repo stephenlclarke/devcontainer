@@ -1255,6 +1255,31 @@ extension SQLiteStateStore {
     )
 }
 
+extension SQLiteStateStore {
+    public func pendingContainerCreations() async throws -> [RuntimeContainerCreation] {
+        let sql = "SELECT runtime_id, intent_json FROM runtime_container_creations ORDER BY runtime_id"
+        return try withStatement(sql) { statement in
+            var creations: [RuntimeContainerCreation] = []
+            while true {
+                let status = sqlite3_step(statement)
+                if status == SQLITE_DONE { return creations }
+                guard status == SQLITE_ROW,
+                      !text(statement, 0).isEmpty,
+                      let data = blob(statement, 1)
+                else {
+                    throw Self.sqliteError(database, prefix: "cannot list pending container creations")
+                }
+                let runtimeID = text(statement, 0)
+                let creation = try JSONDecoder().decode(RuntimeContainerCreation.self, from: data)
+                guard creation.runtimeID == runtimeID else {
+                    throw DevContainerError(.stateCorruption, message: "container creation intent identity differs")
+                }
+                creations.append(creation)
+            }
+        }
+    }
+}
+
 private final class SQLiteHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 

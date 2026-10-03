@@ -43,6 +43,10 @@ actor TestMetadataStore: RuntimeCreationStore {
         creations[id]
     }
 
+    func pendingContainerCreations() -> [RuntimeContainerCreation] {
+        creations.values.sorted { $0.runtimeID < $1.runtimeID }
+    }
+
     func hasPendingContainerCreations() async -> Bool {
         !creations.isEmpty
     }
