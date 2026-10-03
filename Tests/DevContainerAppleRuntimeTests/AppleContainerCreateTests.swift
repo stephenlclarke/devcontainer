@@ -45,7 +45,9 @@ struct AppleContainerCreateTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let creator = Creator(failAfterCreate: true)
         let store = TestMetadataStore()
-        let runtime = try fixture.runtime(metadataStore: store, creator: creator)
+        let runtime = try fixture.runtime(
+            metadataStore: store, creator: creator, inventory: Inventory(snapshot: nil, unavailable: true)
+        )
         try await runtime.requireRecoveryQuiescence(context: .init())
         let spec = ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"])
         await #expect(throws: DevContainerError.self) {

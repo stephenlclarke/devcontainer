@@ -55,7 +55,9 @@ struct AppleContainerCreationRecoveryTests {
         let original = try fixture.runtime(metadataStore: store, creator: creator)
         await #expect(throws: DevContainerError.self) {
             try await original.createContainer(
-                spec: ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest),
+                spec: ContainerSpec(
+                    name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"]
+                ),
                 context: RuntimeRequestContext()
             )
         }
@@ -98,7 +100,9 @@ struct AppleContainerCreationRecoveryTests {
         let original = try fixture.runtime(metadataStore: store, creator: creator)
         await #expect(throws: DevContainerError.self) {
             try await original.createContainer(
-                spec: ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest),
+                spec: ContainerSpec(
+                    name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"]
+                ),
                 context: RuntimeRequestContext()
             )
         }
@@ -126,7 +130,9 @@ struct AppleContainerCreationRecoveryTests {
         let original = try fixture.runtime(metadataStore: store, creator: creator)
         await #expect(throws: DevContainerError.self) {
             try await original.createContainer(
-                spec: ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest),
+                spec: ContainerSpec(
+                    name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"]
+                ),
                 context: RuntimeRequestContext()
             )
         }
@@ -156,7 +162,7 @@ struct AppleContainerCreationRecoveryTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let archive = try await makeArchive(in: fixture.root)
 
-        let spec = ContainerSpec(name: "fixture", image: digest)
+        let spec = ContainerSpec(name: "fixture", image: digest, command: ["/bin/true"])
         let image = ImageDescription(
             reference: spec.image,
             descriptor: Descriptor(mediaType: "application/vnd.oci.image.index.v1+json", digest: digest, size: 123)
@@ -223,7 +229,7 @@ struct AppleContainerCreationRecoveryTests {
         let runtime = try fixture.runtime(metadataStore: store, creator: creator)
         let spec = ContainerSpec(
             name: "fixture", image: FakeAppleImageIdentityClient.digest,
-            labels: ["request.label": "value", "shared.label": "request"]
+            command: ["/bin/true"], labels: ["request.label": "value", "shared.label": "request"]
         )
         let created = try await runtime.createContainer(spec: spec, context: RuntimeRequestContext())
         #expect(created.spec.labels == [
@@ -251,7 +257,9 @@ struct AppleContainerCreationRecoveryTests {
     private func expectProjectedLabels(
         image: [String: String], requested: [String: String], expected: [String: String]
     ) throws {
-        let spec = ContainerSpec(name: "fixture", image: FakeAppleImageIdentityClient.digest, labels: requested)
+        let spec = ContainerSpec(
+            name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"], labels: requested
+        )
         let imageConfig = ImageConfig(labels: image)
         let descriptor = Descriptor(
             mediaType: "application/vnd.oci.image.index.v1+json", digest: digest, size: 123
