@@ -75,6 +75,11 @@ def _dependencies_impl(ctx):
                         strip_prefix = group + "/" + name,
                     )
                     continue
+                patches = []
+                if profile == "enhanced" and pin["identity"] == "containerization":
+                    patches = ["//Tools/bazel:containerization-ext4-unaligned.patch"]
+                if profile == "enhanced" and pin["identity"] == "zstd":
+                    patches = ["//Tools/bazel:zstd-public-module.patch"]
                 swift_package(
                     name = name,
                     bazel_package_name = name,
@@ -82,6 +87,8 @@ def _dependencies_impl(ctx):
                     commit = revision,
                     version = pin["state"].get("version", ""),
                     publicly_expose_all_targets = True,
+                    patches = patches,
+                    patch_args = ["-p1"],
                 )
     # The watched lockfile and profile fully determine immutable rule attributes.
     # Do not write a different generated-repository snapshot into the tracked

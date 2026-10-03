@@ -236,6 +236,23 @@ def _legacy_producer_ast_unchanged(root: Path) -> bool:
         retained = [node for node in tree.body
                     if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                             and node.name in excluded)]
+        recipe_functions = [node for node in retained
+                            if isinstance(node, ast.FunctionDef) and node.name == "recipe_identity"]
+        patch_bindings = ast.parse('''
+if profile == "enhanced" and group == "foundation":
+    result["zstdPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")
+if profile == "enhanced" and group == "containerization":
+    result["ext4Patch"] = file_digest(root / "Tools/bazel/containerization-ext4-unaligned.patch")
+''').body
+        if len(recipe_functions) != 1 or len(recipe_functions[0].body) < 3:
+            return False
+        recipe_body = recipe_functions[0].body
+        if (version_neutral_dump(ast.Module(body=recipe_body[-3:-1], type_ignores=[])) !=
+                version_neutral_dump(ast.Module(body=patch_bindings, type_ignores=[]))):
+            return False
+        # These are the only source-code additions allowed for the new patch
+        # recipe inputs. All other recipe_identity nodes remain fingerprinted.
+        del recipe_body[-3:-1]
         fingerprint = digest(version_neutral_dump(ast.Module(body=retained, type_ignores=[])).encode())
         if fingerprint != expected_module:
             return False
@@ -289,6 +306,23 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         if (file_digest(root / "Tools/bazel/run.sh") != reviewed_launcher
                 or lock.get("recipeSHA256", {}).get("launcher") != baseline_launcher):
             return False
+        if profile == "stock":
+            # The exact extension adds enhancement-only patch application. Keep
+            # old stock archives reusable only for this reviewed extension and
+            # its exact two exported patch inputs; the stock source path remains
+            # unpatched. Normalize no other recipe input.
+            reviewed_inputs = {
+                root / "Tools/bazel/dependencies.bzl":
+                    "ba6174fec9ba9b68e18adcfca97d1e61ea9a8b52e21d8b8c6c3a4ccc9045987c",
+                root / "Tools/bazel/zstd-public-module.patch":
+                    "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927",
+                root / "Tools/bazel/containerization-ext4-unaligned.patch":
+                    "960284f67cca0ba416da98f624934454e092d204b4525daf9902e0a0bbe7038d",
+                root / "Tools/bazel/BUILD.bazel":
+                    "ef274202529f104d4725fe99cee906515c2c33063fe2a010053a78f4455abcf1",
+            }
+            if any(file_digest(path) != expected for path, expected in reviewed_inputs.items()):
+                return False
         if (profile == "enhanced" and group == "container-sdk"
                 and source_pins(root, profile).get("container") != "4bf4750989138800d65abbbe7f9ff8d7b286bd16"):
             return False
@@ -299,6 +333,8 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         expected["producer"] = baseline_producer
         expected["launcher"] = baseline_launcher
         expected["swiftPackageManifest"] = baseline_manifest
+        if profile == "stock":
+            expected["dependencyExtension"] = "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99"
         return lock.get("recipeSHA256") == expected
     except (OSError, ValueError, KeyError, TypeError):
         return False
@@ -392,6 +428,10 @@ def recipe_identity(root: Path, profile: str = "enhanced", group: str = "foundat
               "dependencyExtension": file_digest(root / "Tools/bazel/dependencies.bzl")}
     result["swiftSandboxPatch"] = file_digest(root / "Tools/bazel/rules-swift-sandbox-output.patch")
     result["rulesLicensePatch"] = file_digest(root / "Tools/bazel/rules-license-empty-provider.patch")
+    if profile == "enhanced" and group == "foundation":
+        result["zstdPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")
+    if profile == "enhanced" and group == "containerization":
+        result["ext4Patch"] = file_digest(root / "Tools/bazel/containerization-ext4-unaligned.patch")
     return result
 
 

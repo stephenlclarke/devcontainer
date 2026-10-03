@@ -132,6 +132,21 @@ for profile in ('stock', 'enhanced'):
             ))
             self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
 
+    def test_legacy_producer_ast_guard_normalizes_only_exact_patch_binding_block(self) -> None:
+        source = (Path(__file__).resolve().parent / "foundation.py").read_text()
+        self.assertTrue(foundation._legacy_producer_ast_unchanged(Path(__file__).resolve().parents[3]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "Tools/bazel/artifacts/foundation.py"
+            path.parent.mkdir(parents=True)
+            path.write_text(source.replace(
+                'if profile == "enhanced" and group == "foundation":\n'
+                '        result["zstdPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")',
+                'if profile == "enhanced" and group == "foundation":\n'
+                '        result["unreviewedPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")',
+                1))
+            self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
+
     def _layer_fixture(self, directory: str, source_root: Path | None = None) -> Path:
         """Copy package inputs and immutable archived locks used by the verifier."""
         source_root = source_root or Path(__file__).resolve().parents[3]
@@ -141,7 +156,9 @@ for profile in ('stock', 'enhanced'):
         files = (
             "Package.swift", "Package.resolved", "Package.stock.resolved", ".bazelrc",
             ".bazelversion", "MODULE.bazel", "MODULE.bazel.lock", "BUILD.bazel",
-            "Tools/bazel/run.sh", "Tools/bazel/input_identity.py", "Tools/bazel/source_graph.py",
+            "Tools/bazel/BUILD.bazel", "Tools/bazel/run.sh", "Tools/bazel/input_identity.py",
+            "Tools/bazel/source_graph.py", "Tools/bazel/zstd-public-module.patch",
+            "Tools/bazel/containerization-ext4-unaligned.patch",
             "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
             "Tools/bazel/rules-license-empty-provider.patch",
             "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
@@ -314,14 +331,17 @@ for profile in ('stock', 'enhanced'):
                             root / f"Tools/bazel/artifacts/{group}-enhanced.lock.json",
                             root, None, {}, "enhanced", group)
 
-    def test_all_archived_groups_accept_exact_legacy_inputs_at_baseline_pins(self) -> None:
+    def test_only_stock_archives_accept_exact_legacy_inputs_at_baseline_pins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._layer_fixture(directory)
             for profile in ("stock", "enhanced"):
                 for group in ("foundation", "containerization", "engine-api", "container-sdk"):
                     lock = json.loads((root / f"Tools/bazel/artifacts/{group}-{profile}.lock.json").read_text())
                     with self.subTest(profile=profile, group=group):
-                        self._verify_archived_consumer(root, profile, group)
+                        if profile == "stock":
+                            self._verify_archived_consumer(root, profile, group)
+                        else:
+                            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
 
     def test_all_stock_archived_groups_accept_only_the_exact_enhanced_q_pin_delta(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -339,7 +359,9 @@ for profile in ('stock', 'enhanced'):
             source_files = (
                 "Package.swift", "Package.resolved", "Package.stock.resolved", ".bazelrc",
                 ".bazelversion", "MODULE.bazel", "MODULE.bazel.lock", "BUILD.bazel",
-                "Tools/bazel/run.sh", "Tools/bazel/input_identity.py", "Tools/bazel/source_graph.py",
+                "Tools/bazel/BUILD.bazel", "Tools/bazel/run.sh", "Tools/bazel/input_identity.py",
+                "Tools/bazel/source_graph.py", "Tools/bazel/zstd-public-module.patch",
+                "Tools/bazel/containerization-ext4-unaligned.patch",
                 "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
                 "Tools/bazel/rules-license-empty-provider.patch",
                 "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
@@ -428,6 +450,25 @@ for profile in ('stock', 'enhanced'):
             original = launcher.read_bytes()
             launcher.write_bytes(original + b"\n# unreviewed launcher edit\n")
             self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "stock", "foundation"))
+
+    def test_stock_legacy_reuse_requires_exact_enhancement_patch_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._q_pin_fixture(directory)
+            lock_path = root / "Tools/bazel/artifacts/foundation-stock.lock.json"
+            lock = json.loads(lock_path.read_text())
+            self.assertTrue(foundation._legacy_recipe_compatible(root, lock, "stock", "foundation"))
+            for relative in (
+                    "Tools/bazel/dependencies.bzl",
+                    "Tools/bazel/BUILD.bazel",
+                    "Tools/bazel/zstd-public-module.patch",
+                    "Tools/bazel/containerization-ext4-unaligned.patch"):
+                with self.subTest(relative=relative):
+                    path = root / relative
+                    original = path.read_bytes()
+                    path.write_bytes(original + b"\n# unreviewed patch wiring\n")
+                    self.assertFalse(foundation._legacy_recipe_compatible(
+                        root, lock, "stock", "foundation"))
+                    path.write_bytes(original)
 
     def test_q_pin_compatibility_rejects_other_manifest_and_stock_lock_changes(self) -> None:
         for relative, mutate in (
@@ -620,7 +661,9 @@ cc_library(
             (root / "Tools/bazel/artifacts").mkdir(parents=True)
             for name in ("foundation.py", "foundation_import.bzl", "compiled_outputs.bzl", "BUILD.bazel"):
                 (root / "Tools/bazel/artifacts" / name).write_text("recipe\n")
-            for name in ("run.sh", "input_identity.py", "dependencies.bzl", "source_graph.py", "rules-license-empty-provider.patch"):
+            for name in ("BUILD.bazel", "run.sh", "input_identity.py", "dependencies.bzl", "source_graph.py",
+                         "rules-license-empty-provider.patch", "zstd-public-module.patch",
+                         "containerization-ext4-unaligned.patch"):
                 (root / "Tools/bazel" / name).write_text("recipe\n")
             (root / "BUILD.bazel").write_text("binary\n")
             (root / "Package.swift").write_text("package\n")
@@ -633,6 +676,31 @@ cc_library(
             patch = root / "Tools/bazel/rules-swift-sandbox-output.patch"
             patch.write_text("before\n")
             first = recipe_identity(root)
+            enhanced_foundation = recipe_identity(root, "enhanced", "foundation")
+            enhanced_containerization = recipe_identity(root, "enhanced", "containerization")
+            stock_foundation = recipe_identity(root, "stock", "foundation")
+            stock_containerization = recipe_identity(root, "stock", "containerization")
+            self.assertEqual(enhanced_foundation["zstdPatch"], digest(b"recipe\n"))
+            self.assertNotIn("ext4Patch", enhanced_foundation)
+            self.assertEqual(enhanced_containerization["ext4Patch"], digest(b"recipe\n"))
+            self.assertNotIn("zstdPatch", enhanced_containerization)
+            self.assertNotIn("zstdPatch", stock_foundation)
+            self.assertNotIn("ext4Patch", stock_containerization)
+
+            zstd_patch = root / "Tools/bazel/zstd-public-module.patch"
+            zstd_patch.write_text("changed zstd\n")
+            self.assertNotEqual(enhanced_foundation, recipe_identity(root, "enhanced", "foundation"))
+            self.assertEqual(stock_foundation, recipe_identity(root, "stock", "foundation"))
+            self.assertEqual(enhanced_containerization,
+                             recipe_identity(root, "enhanced", "containerization"))
+            zstd_patch.write_text("recipe\n")
+            ext4_patch = root / "Tools/bazel/containerization-ext4-unaligned.patch"
+            ext4_patch.write_text("changed ext4\n")
+            self.assertNotEqual(enhanced_containerization,
+                                recipe_identity(root, "enhanced", "containerization"))
+            self.assertEqual(stock_containerization, recipe_identity(root, "stock", "containerization"))
+            self.assertEqual(enhanced_foundation, recipe_identity(root, "enhanced", "foundation"))
+
             patch.write_text("after\n")
             self.assertNotEqual(first, recipe_identity(root))
             patch.write_text("before\n")

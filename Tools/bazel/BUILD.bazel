@@ -30,6 +30,8 @@ exports_files([
     "build_identity.bzl",
     "rules-swift-sandbox-output.patch",
     "rules-license-empty-provider.patch",
+    "zstd-public-module.patch",
+    "containerization-ext4-unaligned.patch",
     "tests/FrameworkTests.swift",
 ])
 

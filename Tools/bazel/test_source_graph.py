@@ -114,6 +114,25 @@ class SourceGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "disagree"):
             self.verify()
 
+    def test_enhanced_only_swiftpm_patches_are_exported_and_applied(self) -> None:
+        bazel_dir = source_graph.ROOT / "Tools/bazel"
+        dependencies = (bazel_dir / "dependencies.bzl").read_text()
+        build = (bazel_dir / "BUILD.bazel").read_text()
+        zstd_patch = (bazel_dir / "zstd-public-module.patch").read_text()
+        ext4_patch = (bazel_dir / "containerization-ext4-unaligned.patch").read_text()
+
+        self.assertIn('profile == "enhanced" and pin["identity"] == "zstd"', dependencies)
+        self.assertIn('profile == "enhanced" and pin["identity"] == "containerization"', dependencies)
+        self.assertIn('patches = ["//Tools/bazel:zstd-public-module.patch"]', dependencies)
+        self.assertIn('patches = ["//Tools/bazel:containerization-ext4-unaligned.patch"]', dependencies)
+        self.assertIn('patch_args = ["-p1"]', dependencies)
+        self.assertIn('"zstd-public-module.patch"', build)
+        self.assertIn('"containerization-ext4-unaligned.patch"', build)
+        self.assertIn('+            publicHeadersPath: "include",', zstd_patch)
+        self.assertIn('+#include "../zstd.h"', zstd_patch)
+        self.assertIn('+            return self.loadUnaligned(as: T.self)', ext4_patch)
+        self.assertIn('+                ptr.loadUnaligned(as: T.self)', ext4_patch)
+
 
 if __name__ == "__main__":
     unittest.main()
