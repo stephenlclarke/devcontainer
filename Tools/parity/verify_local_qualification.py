@@ -273,7 +273,7 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
         "finalizationProvenanceSHA256", "archiveSHA256", "trustedStateSHA256",
         "submissionID", "fixtureCounts", "restoration", "guardCleared", "enginePins",
         "providerTools", "laneResults", "comparisons", "cleanup",
-        "serviceJournalReceipts", "inputFiles",
+        "serviceJournalReceipts", "activeRuntimeProofs", "startupPreflights", "inputFiles",
     }
     require(set(receipt) == required, "qualification receipt fields do not match schema 1")
     require(receipt.get("schemaVersion") == 1
@@ -505,6 +505,19 @@ def validate_receipt(receipt: dict[str, Any], repository: Path,
     for lane, journal in journals.items():
         validate_file_reference({"path": journal["path"], "sha256": journal["sha256"]},
                                 f"{lane} service journal")
+    proofs = receipt.get("activeRuntimeProofs")
+    preflights = receipt.get("startupPreflights")
+    native_lanes = {"apple-stock", "container-compose"}
+    require(isinstance(proofs, dict) and set(proofs) == native_lanes
+            and isinstance(preflights, dict) and set(preflights) == native_lanes,
+            "qualification native startup or activation proof is incomplete")
+    for lane in native_lanes:
+        validate_file_reference(proofs[lane], f"{lane} activation proof")
+        row = preflights[lane]
+        require(isinstance(row, dict) and set(row) == {"startup", "journal"},
+                f"{lane} startup proof references are incomplete")
+        for kind in ("startup", "journal"):
+            validate_file_reference(row[kind], f"{lane} {kind} proof")
 
     return cli_fixtures, vscode_fixtures
 
@@ -557,19 +570,23 @@ def provider_helper_identity(repository: Path, lane: str) -> dict[str, Any]:
             "provider inventory helpers resolved outside the checked-in source")
     lock = load_json(bazel / "releases.lock.json", "checked-in provider release lock")
     try:
-        asset = released_engine.provider_runtime_selection(lock, lane)
-        if lane == "container-compose":
-            selected = prepare_releases.select_compose_runtime_assets(lock)
-            if selected["format"] == "signed-compose-q-runtime":
-                asset = selected["containerRuntime"]
-        if lane == "container-compose":
-            selection = prepare_releases.select_compose_runtime_assets(lock)
-            if selection["format"] == "signed-compose-q-runtime":
-                asset = selection["containerRuntime"]
         retained = ACCOUNT_HOME / "Library/Application Support/ContainerFamily/retained/workflow"
+        # Historical CAS replay must not depend on whichever runtime is active
+        # today. The checked-in lock and immutable preparation are its authority.
+        selected = released_engine.admit_provider_runtime_source(lock, lane, retained)
+        asset = selected["asset"]
         prepared = prepare_releases.require_retained(
             asset, retained / "release-objects" / asset["sha256"],
             retained / "prepared-releases", retained / "prepared-receipts")
+        require(selected["prepared"] == prepared,
+                f"{lane} prepared runtime differs from its authenticated release")
+        native_activation = importlib.import_module("native_activation")
+        require(Path(native_activation.__file__).resolve() ==
+                (testing / "native_activation.py").resolve(strict=True),
+                "activation identity helper resolved outside the checked-in source")
+        activation_spec = native_activation.specification(prepared, lane)
+        activation_receipt = digest_bytes(json.dumps(
+            activation_spec, sort_keys=True, separators=(",", ":")).encode())
         specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
                          "layout": prepare_releases.layout(asset)}
         preparation = prepared["preparationSHA256"]
@@ -603,6 +620,9 @@ def provider_helper_identity(repository: Path, lane: str) -> dict[str, Any]:
             "preparationSHA256": preparation,
             "preparedReceiptSHA256": digest_file(receipt_path),
             "inventorySHA256": prepared["inventorySHA256"],
+            "activationReceiptSHA256": activation_receipt,
+            "activeInventorySHA256": digest_bytes(json.dumps(
+                activation_spec["inventory"], sort_keys=True, separators=(",", ":")).encode()),
             "helperExecutables": helper_evidence,
         }
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -624,6 +644,73 @@ def locked_provider_format(repository: Path) -> tuple[dict, dict]:
         raise QualificationError("could not select locked Compose/runtime input schema") from error
     finally:
         sys.path.remove(str(bazel))
+
+
+def authenticate_active_runtime_preflights(receipt: dict[str, Any], inventory: dict[str, bytes],
+                                                  repository: Path) -> None:
+    """Replay sealed startup and activation proof from immutable prepared releases."""
+    tools = receipt["providerTools"]
+    for lane in ("apple-stock", "container-compose"):
+        helper = provider_helper_identity(repository, lane)
+        proof_path = receipt["activeRuntimeProofs"][lane]["path"]
+        startup_path = receipt["startupPreflights"][lane]["startup"]["path"]
+        journal_path = receipt["startupPreflights"][lane]["journal"]["path"]
+        require(all(path in inventory for path in (proof_path, startup_path, journal_path)),
+                f"{lane} startup or activation proof is missing")
+        proof = parse_json_object(inventory[proof_path],
+                                  f"{lane} activation proof")
+        expected = {"schemaVersion": 1, "lane": lane,
+                    "archiveSHA256": helper["assetSHA256"],
+                    "preparationSHA256": helper["preparationSHA256"],
+                    "preparedInventorySHA256": helper["inventorySHA256"],
+                    "activationReceiptSHA256": helper["activationReceiptSHA256"],
+                    "activeInventorySHA256": helper["activeInventorySHA256"],
+                    "preparedReceiptSHA256": helper["preparedReceiptSHA256"]}
+        require(set(proof) == set(expected) | {"sourceCommit"}
+                and all(proof.get(key) == value for key, value in expected.items())
+                and COMMIT.fullmatch(str(proof.get("sourceCommit", ""))) is not None,
+                f"{lane} activation proof differs from immutable prepared release")
+        startup = parse_json_object(inventory[startup_path],
+                                    f"{lane} startup preflight")
+        journal = parse_json_object(inventory[journal_path],
+                                    f"{lane} startup journal")
+        provider = tools["appleStock" if lane == "apple-stock" else
+                         ("containerRuntime" if "containerRuntime" in tools else "containerCompose")]
+        require(proof["sourceCommit"] == provider["commit"],
+                f"{lane} activation source commit differs from the pinned provider")
+        require(set(startup) == {"schemaVersion", "lane", "status", "sourceCommit",
+                                 "providerRuntimeActivation", "apiServerSHA256",
+                                 "containerSHA256", "apiReadiness", "serviceState",
+                                 "serviceRestored", "primaryFailureType", "primaryFailureSHA256",
+                                 "primaryFailureRetentionErrorType", "cleanupFailureType",
+                                 "startupJournalSHA256"}
+                and startup.get("schemaVersion") == 1 and startup.get("lane") == lane
+                and startup.get("status") == "passed"
+                and startup.get("sourceCommit") == receipt["sourceCommit"]
+                and startup.get("providerRuntimeActivation") == {
+                    key: proof[key] for key in ("archiveSHA256", "sourceCommit", "preparationSHA256",
+                                                "preparedInventorySHA256", "activationReceiptSHA256",
+                                                "activeInventorySHA256")}
+                and startup.get("apiServerSHA256") == provider["apiServerSHA256"]
+                and startup.get("containerSHA256") == provider["containerSHA256"]
+                and startup.get("apiReadiness") == "passed"
+                and startup.get("serviceState") == "restored"
+                and startup.get("serviceRestored") is True
+                and startup.get("startupJournalSHA256") == receipt["startupPreflights"][lane]["journal"]["sha256"]
+                and startup.get("primaryFailureType") is None
+                and startup.get("primaryFailureSHA256") is None
+                and startup.get("primaryFailureRetentionErrorType") is None
+                and startup.get("cleanupFailureType") is None,
+                f"{lane} startup preflight did not prove restored readiness")
+        require(set(journal) == {"schemaVersion", "lane", "status", "ownerSHA256", "records", "seal"}
+                and journal.get("schemaVersion") == 1 and journal.get("lane") == lane
+                and journal.get("status") == "restored"
+                and isinstance(journal.get("ownerSHA256"), str)
+                and SHA256.fullmatch(journal["ownerSHA256"]) is not None
+                and type(journal.get("records")) is int and journal["records"] > 0
+                and isinstance(journal.get("seal"), str)
+                and SHA256.fullmatch(journal["seal"]) is not None,
+                f"{lane} startup journal proof is incomplete")
 
 
 def authenticate_provider_evidence(receipt: dict[str, Any], inventory: dict[str, bytes],
@@ -1035,6 +1122,7 @@ def verify_local_qualification(repository: Path, qualification_directory: Path,
     cli_ids, vscode_ids = validate_receipt(receipt, repository, expected_source_commit)
     inventory = inventory_files(qualification_directory, receipt)
     authenticate_provider_evidence(receipt, inventory, repository)
+    authenticate_active_runtime_preflights(receipt, inventory, repository)
     authenticate_finalization(repository, finalized_directory,
                              finalization_provenance_sha256, accepted_state,
                              expected_source_commit, receipt)

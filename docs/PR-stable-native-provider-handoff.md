@@ -1,0 +1,15 @@
+# PR: require current activated providers before native qualification
+
+## Implementation
+
+Finalized-package qualification now authenticates the current stock release and full signed Compose/Q pair, requires each exact source to match its explicit stable activation, and rejects stale or mixed executable paths. It runs API startup/readiness and restoration checks for both providers before the Docker lane, retains failure identity and owner evidence, and records activation receipt and active-inventory digests in qualification inputs. Provider-helper bytes execute from the active projection but are checked against the immutable prepared-release inventory. The activation CLI now uses the same Q-aware source admission as qualification.
+
+The foreground-probe module defers evaluation of type annotations so the maintained activation command can import its service helpers with the macOS Python 3.9 interpreter. Its help smoke check failed on the unchanged module and passes with this correction.
+
+The API preflight uses the existing controlled-service lifecycle, private SSD case root, retained internal journal, and keychain cleanup under the caller's runtime lease and host guard. It does not inspect or modify TCC, does not automatically activate providers, and grants no macOS privacy permission. Uncertain service restoration, cleanup, or owner-marker verification preserves the root and leaves the host guard quarantined. Startup and journal summaries are durably written and linked by digest in the preflight record. API preflight is startup evidence only; it does not count as a parity fixture. The final CAS receipt includes sanitized activation, source preparation, startup, and restoration journal descriptors. The sealer applies the historical replay validator to staged proof before publishing the CAS, so a failed readiness or uncertain journal cannot produce a passed receipt. Historical replay checks the same proof against immutable prepared packages without requiring the old active slot after a later update.
+
+## Validation and remaining gates
+
+All 128 focused pure tests pass with canonical SSD temporary storage. They cover active-source/Q-pair admission, stale activation rejection, mixed-path rejection, activation receipt identity, helper verification against prepared bytes, startup restoration, injected preflight/cleanup and missing/unreadable/malformed owner-marker failures, and both sealer and replay rejection of missing or mismatched startup and activation evidence. The finalized-entrypoint fixture now supplies provider image references at its mocked admission boundary; independent reproduction confirmed its missing fake also failed on the unchanged parent. Independent source review found no remaining source blocker. No live provider, Docker lane, guest, VM, build, signing, or publication was run for this change. Actual SSD startup/readiness/restoration, final exact-head 84-observation parity and release qualification remain pending.
+
+Linked issue: [stable native provider handoff](ISSUE-stable-native-provider-handoff.md).

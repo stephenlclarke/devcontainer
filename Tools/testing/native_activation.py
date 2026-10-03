@@ -222,7 +222,7 @@ def main():
     parser = argparse.ArgumentParser(description="Activate verified native release bytes at stable paths; never launch services")
     parser.add_argument("--lane", required=True, choices=sorted(LANES))
     args = parser.parse_args()
-    from released_engine import RETAINED, admit
+    from released_engine import RETAINED, admit_provider_runtime_source
     private_directory(RETAINED)
     if RETAINED.stat().st_dev != Path.home().stat().st_dev:
         raise ValueError("Activated executables require internal storage")
@@ -230,7 +230,7 @@ def main():
     guard = HostGuard(RETAINED / "runtime-admission.json")
     os.umask(0o077)
     with runtime_lease(Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"), guard), cancellation():
-        selected = lambda: admit(lock, args.lane, RETAINED)[1]
+        selected = lambda: admit_provider_runtime_source(lock, args.lane, RETAINED)["prepared"]
         result = activate(selected(), RETAINED, args.lane, selected)
     print(json.dumps({"lane": args.lane, "root": result["root"], "receiptSHA256": result["activation"]["receiptSHA256"],
                       "servicesStarted": False, "authorizationVerified": False}, sort_keys=True))
