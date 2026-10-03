@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "99b5f10537ee6c8c3a1a97e3367f71035e7d70bc9e44e7b983e0d8c0c08deca1",
+  "archiveSHA256": "f4127f90bdf789c726486ae198abef6a1a63ff85cbb36aff75f492f63ea1b133",
   "asset": "foundation-enhanced-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "bf8f653d75dfd5657ccb5829dff360a6b5a7514f7ca01ede4dbfbe14b6ac67a8",
+    "eventsSHA256": "d527d3eece548fc0d1fe2db3c12f84b034f472c8986ae717bac6b879c9020a81",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_swift_configuration_toml/ConfigurationTOML.swiftdoc": {
         "sha256": "156cc91e502fd1e26da5b052b167cb6ac80dbea2c8111fe8c6a9486e9aed3c7c",
@@ -713,8 +713,8 @@
         "size": 118812
       },
       "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/NIOSSL.swiftmodule": {
-        "sha256": "42a02eb7ffa9a20dee26a8ecc8dd05308810f0871ce638685cb26c1f3e627ab5",
-        "size": 792224
+        "sha256": "e8eaf75895c65231964eb7f022190545de0abe651f691619db72e92200308883",
+        "size": 791876
       },
       "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libCNIOBoringSSL.rspm_assembly.lo": {
         "sha256": "03aafbfd877bd759330dfb0c18cd272274f4253b1214adf8216b04f6baf803d7",
@@ -725,12 +725,12 @@
         "size": 3389248
       },
       "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libCNIOBoringSSLShims.rspm_c.lo": {
-        "sha256": "0b9475f36032e6f4603fd108504edcee58d5c0969127180be86926ed743d0526",
-        "size": 2216
+        "sha256": "e14a401a770dcdc532b38d7b52f3c88563ecd8ba8b65504b3392b542c48fdd94",
+        "size": 2056
       },
       "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libNIOSSL.rspm.__impl.a": {
-        "sha256": "bf079e8c4fb6d99aaea77d964d23aba33ba542c70946293a06718bd2710b7b52",
-        "size": 1669984
+        "sha256": "e679474ad7f74fd488881370af85ee5b5b5820e8a991a50bb16e1874a2af407f",
+        "size": 1669400
       },
       "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_transport_services/NIOTransportServices.swiftdoc": {
         "sha256": "d706d512ca187d38b52b4eb327cd56ea1600e9a3d79dad4b380eb87ea9052a1e",
@@ -877,7 +877,7 @@
   "configuredRoot": "//:products",
   "developmentProof": false,
   "evidenceAsset": "foundation-enhanced-evidence.json",
-  "evidenceSHA256": "cbcc6ed9612238e789fd99f7b59e8fe1bf7cba186a8454bd75963010feb638b7",
+  "evidenceSHA256": "beb4e2d3f13c276449932f69739994ba6e9067cbc62fa9b6c4846d338c6c1b6b",
   "group": "foundation",
   "lower": {
     "argument-parser": {
@@ -886,7 +886,7 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     }
   },
-  "producerCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
+  "producerCommit": "12e9a820c69c8fe05fbdd38f19b0fd3e789a94f8",
   "profile": "enhanced",
   "reachedSources": {
     "async-http-client": {
@@ -991,8 +991,8 @@
     },
     "swift-nio-ssl": {
       "repository": "swiftpkg_swift_nio_ssl",
-      "sourceCommit": "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285",
-      "sourceLocation": "https://github.com/stephenlclarke/swift-nio-ssl.git"
+      "sourceCommit": "322f3c2a4a21df31c84ca416bf65ee5e9059e440",
+      "sourceLocation": "https://github.com/apple/swift-nio-ssl.git"
     },
     "swift-nio-transport-services": {
       "repository": "swiftpkg_swift_nio_transport_services",
@@ -1044,18 +1044,19 @@
     "artifactBuild": "0b135d42637b994c24ce79f9b83c5708bcca1d4f2f415bef2d2e0f200eb8a0c2",
     "bazelConfiguration": "eaa82a266098e27996a8ba20b3cf53c2360bc45e47e0646a71a9035b2f0b4eec",
     "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
-    "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
+    "dependencyExtension": "4a8cfa7026cdaec28ab6fd97ba480024a747c2c797eff42b822e4efd71f3fea1",
     "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
-    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
+    "launcher": "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923",
     "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
     "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
-    "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
+    "producer": "29872c70f5aa696a2be65998de9bd484a7629a4176808877d9fe9e6f0fcec114",
     "rootBuild": "f82ba9db41fce5694f865c33aa56e5fcb8cae1305ca5b5be367d1a5f23e562f3",
     "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
     "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
     "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
-    "swiftPackageManifest": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
-    "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
+    "swiftPackageManifest": "f7ad97c42070afded8f7c3b8f98a6960b40b88d1f5e46d289f032d381a520eb0",
+    "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2",
+    "zstdPatch": "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927"
   },
   "repository": "stephenlclarke/devcontainer",
   "schema": 1,
@@ -1174,7 +1175,7 @@
     "swift-nio": "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b",
     "swift-nio-extras": "88a51340f59cf181ebde888bd1b749296b3ec029",
     "swift-nio-http2": "45bdf670248be5f16ec0340e125dca285536f0fb",
-    "swift-nio-ssl": "3e13ce5f6dd5b7e89fff9ab55ab7caed39fe7285",
+    "swift-nio-ssl": "322f3c2a4a21df31c84ca416bf65ee5e9059e440",
     "swift-nio-transport-services": "67787bb645a5e67d2edcdfbe48a216cc549222d5",
     "swift-numerics": "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
     "swift-protobuf": "55d7a1cc5666b85c13464aea1c4b4a90feccb4c8",
@@ -1186,8 +1187,8 @@
     "yams": "a27b21e0c81c5bf42049b897a62aaf387e80f279",
     "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
   },
-  "tag": "layer-foundation-enhanced-99b5f10537ee6c8c3a1a",
-  "targetCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
+  "tag": "layer-foundation-enhanced-f4127f90bdf789c72648",
+  "targetCommit": "12e9a820c69c8fe05fbdd38f19b0fd3e789a94f8",
   "toolchain": {
     "bazelVersion": "8.8.0",
     "sdkSettingsSHA256": "7b93ad7e534cc4b31c6a4e39d19b5e0288acf2168c2649479a796d1cb51939fb",

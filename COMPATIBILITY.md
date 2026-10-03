@@ -149,7 +149,7 @@ That post-release repin is not attributed to the 1.0.1 tag.
 | Enhanced `stephenlclarke/container-engine-api` | `48e44d74d738ca3d24351ba02c4869be1a3e6998` | Exact revision selected by the enhanced Container package and `Package.resolved`; no stock-Apple claim |
 | Stock `stephenlclarke/container-engine-api` | `40436017e1e93012b8dab7cfc3c79783538065c3` | Exact revision selected by the stock graph |
 
-The enhanced source graph now follows the nested revisions selected by its Container package. Existing enhanced Foundation (which includes the old NIO-SSL input), Containerization, Engine API, and Container SDK layer archives were produced for older revisions and cannot be reused for this graph; matching source-bound lower layers must be produced before enhanced package qualification.
+The enhanced source graph now follows the nested revisions selected by its Container package. The replacement enhanced Foundation archive `f4127f90` is published, freshly downloaded and admitted, with 57 CLI and 25 Service cases passing. The older enhanced Foundation, Containerization, Engine API and Container SDK archives cannot qualify this graph. Matching Containerization and Engine API layers must now consume the new Foundation release before the enhanced Container SDK and final package can be qualified. Unchanged stock layer archives remain reusable through their authenticated finite compatibility checks.
 
 `Package.resolved` and `Package.stock.resolved` are authoritative for source
 builds. The parity manifest becomes authoritative for a newer runtime claim
