@@ -177,6 +177,7 @@ struct AppleContainerCreationRecoveryTests {
         if mode == "replacement" {
             native.creationDate = native.creationDate.addingTimeInterval(1)
         }
+        try setArchiveInventory(fixture: fixture, native: native)
         let store = TestMetadataStore()
         try await store.beginContainerCreation(intent)
         let files = FakeContainerFileClient()
@@ -204,6 +205,23 @@ struct AppleContainerCreationRecoveryTests {
             #expect(await files.copyInCallCount() == 0)
         }
         #expect(await store.pendingContainerCreation(id: "fixture") == intent)
+    }
+
+    private func setArchiveInventory(fixture: FakeAppleCLI, native: ContainerConfiguration) throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try fixture.setContainerInventory([[
+            "id": native.id,
+            "configuration": [
+                "creationDate": formatter.string(from: native.creationDate),
+                "labels": native.labels,
+                "image": [
+                    "reference": native.image.reference,
+                    "descriptor": ["digest": native.image.descriptor.digest]
+                ]
+            ],
+            "status": ["state": "running"]
+        ]])
     }
 
     private func makeArchive(in root: URL) async throws -> Data {
