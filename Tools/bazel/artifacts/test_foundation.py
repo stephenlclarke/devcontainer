@@ -159,6 +159,7 @@ for profile in ('stock', 'enhanced'):
             "Tools/bazel/BUILD.bazel", "Tools/bazel/run.sh", "Tools/bazel/input_identity.py",
             "Tools/bazel/source_graph.py", "Tools/bazel/zstd-public-module.patch",
             "Tools/bazel/containerization-ext4-unaligned.patch",
+            "Tools/bazel/gateway-recovery-capability.patch",
             "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
             "Tools/bazel/rules-license-empty-provider.patch",
             "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
@@ -362,6 +363,7 @@ for profile in ('stock', 'enhanced'):
                 "Tools/bazel/BUILD.bazel", "Tools/bazel/run.sh", "Tools/bazel/input_identity.py",
                 "Tools/bazel/source_graph.py", "Tools/bazel/zstd-public-module.patch",
                 "Tools/bazel/containerization-ext4-unaligned.patch",
+                "Tools/bazel/gateway-recovery-capability.patch",
                 "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
                 "Tools/bazel/rules-license-empty-provider.patch",
                 "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
@@ -461,7 +463,8 @@ for profile in ('stock', 'enhanced'):
                     "Tools/bazel/dependencies.bzl",
                     "Tools/bazel/BUILD.bazel",
                     "Tools/bazel/zstd-public-module.patch",
-                    "Tools/bazel/containerization-ext4-unaligned.patch"):
+                    "Tools/bazel/containerization-ext4-unaligned.patch",
+                    "Tools/bazel/gateway-recovery-capability.patch"):
                 with self.subTest(relative=relative):
                     path = root / relative
                     original = path.read_bytes()
@@ -663,7 +666,7 @@ cc_library(
                 (root / "Tools/bazel/artifacts" / name).write_text("recipe\n")
             for name in ("BUILD.bazel", "run.sh", "input_identity.py", "dependencies.bzl", "source_graph.py",
                          "rules-license-empty-provider.patch", "zstd-public-module.patch",
-                         "containerization-ext4-unaligned.patch"):
+                         "containerization-ext4-unaligned.patch", "gateway-recovery-capability.patch"):
                 (root / "Tools/bazel" / name).write_text("recipe\n")
             (root / "BUILD.bazel").write_text("binary\n")
             (root / "Package.swift").write_text("package\n")
@@ -678,14 +681,22 @@ cc_library(
             first = recipe_identity(root)
             enhanced_foundation = recipe_identity(root, "enhanced", "foundation")
             enhanced_containerization = recipe_identity(root, "enhanced", "containerization")
+            enhanced_engine_api = recipe_identity(root, "enhanced", "engine-api")
             stock_foundation = recipe_identity(root, "stock", "foundation")
             stock_containerization = recipe_identity(root, "stock", "containerization")
+            stock_engine_api = recipe_identity(root, "stock", "engine-api")
             self.assertEqual(enhanced_foundation["zstdPatch"], digest(b"recipe\n"))
             self.assertNotIn("ext4Patch", enhanced_foundation)
+            self.assertNotIn("gatewayRecoveryPatch", enhanced_foundation)
             self.assertEqual(enhanced_containerization["ext4Patch"], digest(b"recipe\n"))
             self.assertNotIn("zstdPatch", enhanced_containerization)
+            self.assertNotIn("gatewayRecoveryPatch", enhanced_containerization)
+            self.assertEqual(enhanced_engine_api["gatewayRecoveryPatch"], digest(b"recipe\n"))
+            self.assertNotIn("zstdPatch", enhanced_engine_api)
+            self.assertNotIn("ext4Patch", enhanced_engine_api)
             self.assertNotIn("zstdPatch", stock_foundation)
             self.assertNotIn("ext4Patch", stock_containerization)
+            self.assertNotIn("gatewayRecoveryPatch", stock_engine_api)
 
             zstd_patch = root / "Tools/bazel/zstd-public-module.patch"
             zstd_patch.write_text("changed zstd\n")
@@ -700,6 +711,15 @@ cc_library(
                                 recipe_identity(root, "enhanced", "containerization"))
             self.assertEqual(stock_containerization, recipe_identity(root, "stock", "containerization"))
             self.assertEqual(enhanced_foundation, recipe_identity(root, "enhanced", "foundation"))
+            ext4_patch.write_text("recipe\n")
+            self.assertEqual(enhanced_engine_api, recipe_identity(root, "enhanced", "engine-api"))
+            gateway_patch = root / "Tools/bazel/gateway-recovery-capability.patch"
+            gateway_patch.write_text("changed gateway\n")
+            self.assertNotEqual(enhanced_engine_api, recipe_identity(root, "enhanced", "engine-api"))
+            self.assertEqual(stock_engine_api, recipe_identity(root, "stock", "engine-api"))
+            self.assertEqual(enhanced_foundation, recipe_identity(root, "enhanced", "foundation"))
+            self.assertEqual(enhanced_containerization,
+                             recipe_identity(root, "enhanced", "containerization"))
 
             patch.write_text("after\n")
             self.assertNotEqual(first, recipe_identity(root))

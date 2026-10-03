@@ -243,16 +243,18 @@ if profile == "enhanced" and group == "foundation":
     result["zstdPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")
 if profile == "enhanced" and group == "containerization":
     result["ext4Patch"] = file_digest(root / "Tools/bazel/containerization-ext4-unaligned.patch")
+if profile == "enhanced" and group == "engine-api":
+    result["gatewayRecoveryPatch"] = file_digest(root / "Tools/bazel/gateway-recovery-capability.patch")
 ''').body
-        if len(recipe_functions) != 1 or len(recipe_functions[0].body) < 3:
+        if len(recipe_functions) != 1 or len(recipe_functions[0].body) < 4:
             return False
         recipe_body = recipe_functions[0].body
-        if (version_neutral_dump(ast.Module(body=recipe_body[-3:-1], type_ignores=[])) !=
+        if (version_neutral_dump(ast.Module(body=recipe_body[-4:-1], type_ignores=[])) !=
                 version_neutral_dump(ast.Module(body=patch_bindings, type_ignores=[]))):
             return False
-        # These are the only source-code additions allowed for the new patch
+        # These are the only source-code additions allowed for the new patches
         # recipe inputs. All other recipe_identity nodes remain fingerprinted.
-        del recipe_body[-3:-1]
+        del recipe_body[-4:-1]
         fingerprint = digest(version_neutral_dump(ast.Module(body=retained, type_ignores=[])).encode())
         if fingerprint != expected_module:
             return False
@@ -309,17 +311,19 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         if profile == "stock":
             # The exact extension adds enhancement-only patch application. Keep
             # old stock archives reusable only for this reviewed extension and
-            # its exact two exported patch inputs; the stock source path remains
+            # its exact three exported patch inputs; the stock source path remains
             # unpatched. Normalize no other recipe input.
             reviewed_inputs = {
                 root / "Tools/bazel/dependencies.bzl":
-                    "ba6174fec9ba9b68e18adcfca97d1e61ea9a8b52e21d8b8c6c3a4ccc9045987c",
+                    "4a8cfa7026cdaec28ab6fd97ba480024a747c2c797eff42b822e4efd71f3fea1",
                 root / "Tools/bazel/zstd-public-module.patch":
                     "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927",
                 root / "Tools/bazel/containerization-ext4-unaligned.patch":
                     "960284f67cca0ba416da98f624934454e092d204b4525daf9902e0a0bbe7038d",
+                root / "Tools/bazel/gateway-recovery-capability.patch":
+                    "be69369a63c8c372b79ef83931125790881d057719846ca5499539c99df8bfb7",
                 root / "Tools/bazel/BUILD.bazel":
-                    "ef274202529f104d4725fe99cee906515c2c33063fe2a010053a78f4455abcf1",
+                    "77e562e70c4cb2fe632fa7317d5a500c99e8334f541a44ef8aa703c04539d216",
             }
             if any(file_digest(path) != expected for path, expected in reviewed_inputs.items()):
                 return False
@@ -432,6 +436,8 @@ def recipe_identity(root: Path, profile: str = "enhanced", group: str = "foundat
         result["zstdPatch"] = file_digest(root / "Tools/bazel/zstd-public-module.patch")
     if profile == "enhanced" and group == "containerization":
         result["ext4Patch"] = file_digest(root / "Tools/bazel/containerization-ext4-unaligned.patch")
+    if profile == "enhanced" and group == "engine-api":
+        result["gatewayRecoveryPatch"] = file_digest(root / "Tools/bazel/gateway-recovery-capability.patch")
     return result
 
 

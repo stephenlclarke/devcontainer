@@ -120,18 +120,28 @@ class SourceGraphTests(unittest.TestCase):
         build = (bazel_dir / "BUILD.bazel").read_text()
         zstd_patch = (bazel_dir / "zstd-public-module.patch").read_text()
         ext4_patch = (bazel_dir / "containerization-ext4-unaligned.patch").read_text()
+        gateway_patch = (bazel_dir / "gateway-recovery-capability.patch").read_text()
 
         self.assertIn('profile == "enhanced" and pin["identity"] == "zstd"', dependencies)
         self.assertIn('profile == "enhanced" and pin["identity"] == "containerization"', dependencies)
+        self.assertIn('profile == "enhanced" and pin["identity"] == "container-engine-api"', dependencies)
         self.assertIn('patches = ["//Tools/bazel:zstd-public-module.patch"]', dependencies)
         self.assertIn('patches = ["//Tools/bazel:containerization-ext4-unaligned.patch"]', dependencies)
+        self.assertIn('patches = ["//Tools/bazel:gateway-recovery-capability.patch"]', dependencies)
         self.assertIn('patch_args = ["-p1"]', dependencies)
         self.assertIn('"zstd-public-module.patch"', build)
         self.assertIn('"containerization-ext4-unaligned.patch"', build)
+        self.assertIn('"gateway-recovery-capability.patch"', build)
         self.assertIn('+            publicHeadersPath: "include",', zstd_patch)
         self.assertIn('+#include "../zstd.h"', zstd_patch)
         self.assertIn('+            return self.loadUnaligned(as: T.self)', ext4_patch)
         self.assertIn('+                ptr.loadUnaligned(as: T.self)', ext4_patch)
+        self.assertIn('recoveryCapabilityIdentifier = "engine.control.recovery"', gateway_patch)
+        self.assertIn('recoveryCapabilityVersion: UInt32 = 1', gateway_patch)
+        self.assertIn('$0.identifier == Self.recoveryCapabilityIdentifier', gateway_patch)
+        self.assertIn('$0.status != .unavailable', gateway_patch)
+        self.assertIn('(.get, "ContainerFamilyRecoveryInspect")', gateway_patch)
+        self.assertIn('(.post, "ContainerFamilyRecoveryFreeze")', gateway_patch)
 
 
 if __name__ == "__main__":

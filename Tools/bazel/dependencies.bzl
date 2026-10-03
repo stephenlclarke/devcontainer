@@ -78,6 +78,8 @@ def _dependencies_impl(ctx):
                 patches = []
                 if profile == "enhanced" and pin["identity"] == "containerization":
                     patches = ["//Tools/bazel:containerization-ext4-unaligned.patch"]
+                if profile == "enhanced" and pin["identity"] == "container-engine-api":
+                    patches = ["//Tools/bazel:gateway-recovery-capability.patch"]
                 if profile == "enhanced" and pin["identity"] == "zstd":
                     patches = ["//Tools/bazel:zstd-public-module.patch"]
                 swift_package(
