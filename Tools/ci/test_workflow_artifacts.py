@@ -543,7 +543,12 @@ jobs:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors", makefile)
         self.assertIn("test: swift-test", makefile)
-        swift_test = makefile[makefile.index("swift-test:\n"):makefile.index("\ncoverage:\n")]
+        self.assertIn("swift-test: swiftpm-prepare\n", makefile)
+        self.assertIn("coverage: swiftpm-prepare-coverage\n", makefile)
+        swift_test = makefile[
+            makefile.index("swift-test: swiftpm-prepare\n"):
+            makefile.index("\ncoverage: swiftpm-prepare-coverage\n")
+        ]
         self.assertIn("$(SWIFT_STRICT_FLAGS)", swift_test)
         self.assertIn("Tools/ci/run-swift-test.sh", swift_test)
         self.assertIn("Tools/ci/run-swift-testing-bundle.sh", swift_test)
