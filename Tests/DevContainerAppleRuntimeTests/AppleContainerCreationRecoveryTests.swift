@@ -32,6 +32,20 @@ struct AppleContainerCreationRecoveryTests {
         }
     }
 
+    private actor ArchiveClient: AppleContainerFileClient {
+        private(set) var copyInCalls = 0
+
+        func copyIn(id _: String, source: String, destination _: String) throws {
+            let payload = URL(fileURLWithPath: source).appendingPathComponent("payload.txt")
+            #expect(try Data(contentsOf: payload) == Data("archive payload".utf8))
+            copyInCalls += 1
+        }
+
+        func copyOut(id _: String, source _: String, destination _: String) throws {
+            throw DevContainerError(.unsupportedCapability, message: "Unexpected archive download")
+        }
+    }
+
     private func composeSpec() -> ContainerSpec {
         var labels = ["com.apple.container.compose.version": "1"]
         for prefix in ["com.apple.container.compose.", "com.docker.compose."] {
@@ -180,7 +194,7 @@ struct AppleContainerCreationRecoveryTests {
         try setArchiveInventory(fixture: fixture, native: native)
         let store = TestMetadataStore()
         try await store.beginContainerCreation(intent)
-        let files = FakeContainerFileClient()
+        let files = ArchiveClient()
         let runtime = try fixture.runtime(
             metadataStore: store,
             useDirectProcessAPI: true,
@@ -194,7 +208,7 @@ struct AppleContainerCreationRecoveryTests {
                 id: "fixture", path: "/work", archive: archive,
                 context: RuntimeRequestContext()
             )
-            #expect(await files.copyInCallCount() == 1)
+            #expect(await files.copyInCalls == 1)
         } else {
             await #expect(throws: DevContainerError.self) {
                 try await runtime.copyArchiveToContainer(
@@ -202,7 +216,7 @@ struct AppleContainerCreationRecoveryTests {
                     context: RuntimeRequestContext()
                 )
             }
-            #expect(await files.copyInCallCount() == 0)
+            #expect(await files.copyInCalls == 0)
         }
         #expect(await store.pendingContainerCreation(id: "fixture") == intent)
     }
