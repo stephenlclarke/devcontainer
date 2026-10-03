@@ -385,9 +385,12 @@ coverage: swiftpm-prepare-coverage
 		exit 2; \
 	fi
 	@mkdir -p .build
-	@find "$(SWIFT_COVERAGE_SCRATCH_PATH)" -type f \
-		\( -name '*.profraw' -o -name '*.profdata' -o -name 'devcontainer.json' \) \
-		-delete 2>/dev/null || true
+	@TEST_BIN_PATH="$$($(SWIFT) build $(SWIFT_RESOLVED_FLAGS) \
+		--scratch-path "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--show-bin-path)"; \
+		$(PYTHON) Tools/ci/clean-swift-coverage.py \
+		--scratch-root "$(SWIFT_COVERAGE_SCRATCH_PATH)" \
+		--bin-directory "$$TEST_BIN_PATH"
 	@PROFILE_SPOOL="$$(mktemp -d "$${TMPDIR:-/tmp}/devcontainer-swift-profile.XXXXXX")"; \
 		trap 'rm -rf "$$PROFILE_SPOOL"' EXIT; \
 		LLVM_PROFILE_FILE="$$PROFILE_SPOOL/swift-build-%m-%p.profraw" \
