@@ -1,21 +1,20 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import ContainerEngineWire
-import ContainerUnixHTTPClient
 import Foundation
 
 public protocol DockerFrontendTransport: Sendable {
     func send(_ request: DockerHTTPRequest) async throws -> Data
 }
 
-/// Reuses the shared current-user-only socket client; never discovers or launches Docker.
+/// Uses bounded current-user-only Unix HTTP clients; never discovers or launches Docker.
 public struct UnixDockerFrontendTransport: DockerFrontendTransport {
-    let client: ContainerUnixHTTPClient
-    let duplexClient: ContainerUnixHTTPClient
+    let client: DockerFrontendUnixHTTPClient
+    let duplexClient: DockerFrontendUnixHTTPClient
 
     public init(socketPath: String, timeoutSeconds: Int = 30) throws {
-        client = try ContainerUnixHTTPClient(socketPath: socketPath, timeoutSeconds: min(30, timeoutSeconds))
-        duplexClient = try ContainerUnixHTTPClient(socketPath: socketPath, timeoutSeconds: timeoutSeconds)
+        client = try DockerFrontendUnixHTTPClient(socketPath: socketPath, timeoutSeconds: min(30, timeoutSeconds))
+        duplexClient = try DockerFrontendUnixHTTPClient(socketPath: socketPath, timeoutSeconds: timeoutSeconds)
     }
 
     public func send(_ request: DockerHTTPRequest) async throws -> Data {

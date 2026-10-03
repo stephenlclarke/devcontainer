@@ -15,9 +15,9 @@ extension AppleContainerRuntime: RuntimeRecoveryProbe {
         }
         try await reconcilePendingContainerCreations(context: context)
         guard
-              try await !requireCreationStore().hasPendingContainerCreations(),
-              containerLifecycleMutationRegistrations.isEmpty, containerIOClosures.isEmpty,
-              revision == containerLifecycleMutationRevision
+            try await !requireCreationStore().hasPendingContainerCreations(),
+            containerLifecycleMutationRegistrations.isEmpty, containerIOClosures.isEmpty,
+            revision == containerLifecycleMutationRevision
         else {
             throw DevContainerError(.conflict, message: "Native container creation changed during recovery")
         }

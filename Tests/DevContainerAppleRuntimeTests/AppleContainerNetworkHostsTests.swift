@@ -32,11 +32,11 @@ struct AppleContainerNetworkHostsTests {
             defer { try? FileManager.default.removeItem(at: fixture.root) }
             let snapshot = try nativeNetworkSnapshot(id: "app", service: "app", address: "192.0.2.2")
             let store = TestMetadataStore()
-            let intent = RuntimeContainerCreation(
+            let intent = try RuntimeContainerCreation(
                 runtimeID: "app", nativeCreatedAt: snapshot.configuration.creationDate,
                 imageID: snapshot.configuration.image.digest,
                 spec: ContainerSpec(name: "app", image: snapshot.configuration.image.reference),
-                nativeConfiguration: try JSONEncoder().encode(snapshot.configuration)
+                nativeConfiguration: JSONEncoder().encode(snapshot.configuration)
             )
             try await store.beginContainerCreation(intent)
             let files = FakeContainerFileClient()

@@ -11,7 +11,7 @@ public protocol DockerFrontendConnection: Sendable {
     func close()
 }
 
-extension ContainerUnixHTTPConnection: DockerFrontendConnection {}
+extension DockerFrontendUnixHTTPConnection: DockerFrontendConnection {}
 
 public protocol DockerFrontendExecTransport: DockerFrontendTransport {
     func open(_ request: DockerHTTPRequest) async throws -> any DockerFrontendConnection
