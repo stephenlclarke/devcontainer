@@ -46,18 +46,14 @@ FINALIZED_RETAINED = Path.home() / "Library/Application Support/ContainerFamily/
 
 def release_selection(lock: dict, lane: str) -> list[dict]:
     assets = validate_lock(lock)
-    runtime = ("apple/container", "container-1.4.1-installer-signed.pkg") if lane == "apple-stock" else (
-        "stephenlclarke/container-compose", "container-release-arm64.tar.gz")
-    required = [("stephenlclarke/devcontainer", "devcontainer-release-arm64.tar.gz"), runtime]
-    selected = []
-    for repository, name in required:
-        matches = [asset for asset in assets if (asset["repository"], asset["name"]) == (repository, name)]
-        if len(matches) != 1:
-            raise ValueError("Required released runtime is missing or ambiguous")
-        selected.append(matches[0])
-    if lane not in {"apple-stock", "container-compose"} or selected[0]["tag"] != "1.0.1":
+    products = [asset for asset in assets if (asset["repository"], asset["name"]) ==
+                ("stephenlclarke/devcontainer", "devcontainer-release-arm64.tar.gz")]
+    if len(products) != 1:
+        raise ValueError("Required released Dev Containers product is missing or ambiguous")
+    product = products[0]
+    if lane not in {"apple-stock", "container-compose"} or product["tag"] != "1.0.1":
         raise ValueError("This released-service adapter requires reviewed devcontainer 1.0.1 arguments")
-    return selected
+    return [product, provider_runtime_selection(lock, lane)]
 
 
 def provider_runtime_selection(lock: dict, lane: str) -> dict:
@@ -75,6 +71,42 @@ def provider_runtime_selection(lock: dict, lane: str) -> dict:
     if len(matches) != 1:
         raise ValueError("Required released provider runtime is missing or ambiguous")
     return matches[0]
+
+
+def admit_provider_runtime_source(lock: dict, lane: str, retained: Path) -> dict:
+    """Authenticate the current provider source, including the full Compose/Q association."""
+    asset = provider_runtime_selection(lock, lane)
+    q_identity = None
+    if lane == "container-compose":
+        import prepare_releases
+
+        selection = prepare_releases.select_compose_runtime_assets(lock)
+        if selection["format"] == "signed-compose-q-runtime":
+            q_identity = prepare_releases.admit_locked_compose_runtime(
+                lock, retained / "release-objects", retained / "prepared-releases",
+                retained / "prepared-receipts")
+            runtime = q_identity.get("containerRuntime", {})
+            if (q_identity.get("format") != selection["format"]
+                    or runtime.get("archiveSHA256") != asset.get("sha256")
+                    or q_identity.get("executables", {}).get("container") is None
+                    or q_identity["executables"].get("container-apiserver") is None):
+                raise ValueError("Authenticated Compose/Q runtime identity differs from its selected release")
+
+    prepared = require_retained(
+        asset, retained / "release-objects" / asset["sha256"],
+        retained / "prepared-releases", retained / "prepared-receipts")
+    if q_identity is not None:
+        for executable in ("container", "container-apiserver"):
+            if prepared.get("executables", {}).get(executable) != q_identity["executables"].get(executable):
+                raise ValueError("Prepared Q runtime paths differ from their authenticated release identity")
+    return {"asset": asset, "prepared": prepared, "qIdentity": q_identity}
+
+
+def admit_active_provider_runtime(lock: dict, lane: str, retained: Path) -> dict:
+    """Require an explicitly activated copy of the exact current provider release."""
+    selected = admit_provider_runtime_source(lock, lane, retained)
+    selected["active"] = require_active(selected["prepared"], retained, lane)
+    return selected
 
 
 def provider_image_references(lock: dict, lane: str, retained: Path) -> dict | None:
@@ -99,9 +131,12 @@ def provider_image_references(lock: dict, lane: str, retained: Path) -> dict | N
 def admit(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
     assets = release_selection(lock, lane)
     local = [admit_candidate(retained, candidate, "stock" if lane == "apple-stock" else "enhanced")] if candidate else []
-    return local + [require_retained(asset, retained / "release-objects" / asset["sha256"],
-                             retained / "prepared-releases", retained / "prepared-receipts")
-                    for asset in (assets[1:] if candidate else assets)]
+    provider = admit_provider_runtime_source(lock, lane, retained)["prepared"]
+    if candidate:
+        return local + [provider]
+    product = require_retained(assets[0], retained / "release-objects" / assets[0]["sha256"],
+                               retained / "prepared-releases", retained / "prepared-receipts")
+    return [product, provider]
 
 
 def admit_runtime(lock: dict, lane: str, retained: Path, candidate: str | None = None) -> list[dict]:
@@ -126,11 +161,9 @@ def admit_finalized_package(repository: Path, finalized_inputs: dict, lane: str)
 def finalized_runtime(lock: dict, lane: str, retained: Path, repository: Path,
                       finalized_inputs: dict) -> list[dict]:
     """Use the stock signed archive with the independently selected provider."""
-    asset = provider_runtime_selection(lock, lane)
     package = admit_finalized_package(repository, finalized_inputs, lane)
-    active = require_retained(asset, retained / "release-objects" / asset["sha256"],
-                              retained / "prepared-releases", retained / "prepared-receipts")
-    return [package, require_active(active, retained, lane)]
+    active = admit_active_provider_runtime(lock, lane, retained)["active"]
+    return [package, active]
 
 
 def legacy_frontend(lock: dict, lane: str, product: dict, repository: Path, scratch: Path, retained: Path) -> dict:

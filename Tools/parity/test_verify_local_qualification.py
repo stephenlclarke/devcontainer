@@ -21,12 +21,14 @@ from unittest.mock import patch
 
 from compare_results import compare, expected_fixtures
 from parity_lib import LANES
+import qualify_finalized_package as qualify
 from qualify_finalized_package import seal_qualification
 from run_lane import parity_harness_sha256
 from verify_local_qualification import (
     QualificationError,
     authenticate_result,
     authenticate_provider_evidence,
+    authenticate_active_runtime_preflights,
     inventory_files,
     expected_provider_hashes,
     provider_tool_fields,
@@ -166,6 +168,15 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             "serviceJournalReceipts": {
                 lane: {"path": f"inputs/{lane}-journal.json",
                       "sha256": digest}
+                for lane in ("apple-stock", "container-compose")
+            },
+            "activeRuntimeProofs": {
+                lane: {"path": f"inputs/{lane}-runtime-proof.json", "sha256": digest}
+                for lane in ("apple-stock", "container-compose")
+            },
+            "startupPreflights": {
+                lane: {kind: {"path": f"inputs/{lane}-{kind}-preflight.json", "sha256": digest}
+                       for kind in ("startup", "journal")}
                 for lane in ("apple-stock", "container-compose")
             },
             "inputFiles": [],
@@ -368,6 +379,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             "apple-stock": {
                 "assetSHA256": "1" * 64, "preparationSHA256": "2" * 64,
                 "preparedReceiptSHA256": "3" * 64, "inventorySHA256": "4" * 64,
+                "activationReceiptSHA256": "d" * 64, "activeInventorySHA256": "e" * 64,
                 "helperExecutables": {
                     "container-core-images": {
                         "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
@@ -380,6 +392,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
             "container-compose": {
                 "assetSHA256": "7" * 64, "preparationSHA256": "8" * 64,
                 "preparedReceiptSHA256": "9" * 64, "inventorySHA256": "a" * 64,
+                "activationReceiptSHA256": "f" * 64, "activeInventorySHA256": "0" * 64,
                 "helperExecutables": {
                     "container-core-images": {
                         "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
@@ -471,6 +484,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                                     "containerCompose": compose}
         helper = {"assetSHA256": "e" * 64, "preparationSHA256": "f" * 64,
                   "preparedReceiptSHA256": "0" * 64, "inventorySHA256": "1" * 64,
+                  "activationReceiptSHA256": "2" * 64, "activeInventorySHA256": "3" * 64,
                   "helperExecutables": {}}
         runtime_doc = {"schemaVersion": 1, "lane": "container-compose",
                        "providerRepository": runtime["repository"],
@@ -549,6 +563,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 sys.path.insert(0, entry)
         prepare_releases = importlib.import_module("prepare_releases")
         released_engine = importlib.import_module("released_engine")
+        native_activation = importlib.import_module("native_activation")
         lock = json.loads((REPOSITORY / "Tools/bazel/releases.lock.json").read_text())
         asset = released_engine.provider_runtime_selection(lock, "apple-stock")
         specification = {"schemaVersion": 1, "assetSHA256": asset["sha256"],
@@ -576,7 +591,17 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "assetSHA256": asset["sha256"], "preparationSHA256": preparation,
                 "inventorySHA256": "b" * 64,
             }
+            activation_spec = {"inventory": inventory}
+            activation_digest = sha(json.dumps(activation_spec, sort_keys=True,
+                                               separators=(",", ":")).encode())
+            inventory_digest = sha(json.dumps(inventory, sort_keys=True,
+                                              separators=(",", ":")).encode())
             with (patch("verify_local_qualification.ACCOUNT_HOME", account),
+                  patch.object(released_engine, "admit_provider_runtime_source",
+                               return_value={"asset": asset, "prepared": retained_object}),
+                  patch.object(released_engine, "admit_active_provider_runtime",
+                               side_effect=AssertionError("historical replay accessed active slot")),
+                  patch.object(native_activation, "specification", return_value=activation_spec),
                   patch.object(prepare_releases, "require_retained", return_value=retained_object)):
                 observed = __import__("verify_local_qualification").provider_helper_identity(
                     REPOSITORY, "apple-stock")
@@ -584,6 +609,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         self.assertEqual(observed, {
             "assetSHA256": asset["sha256"], "preparationSHA256": preparation,
             "preparedReceiptSHA256": sha(receipt_bytes), "inventorySHA256": "b" * 64,
+            "activationReceiptSHA256": activation_digest, "activeInventorySHA256": inventory_digest,
             "helperExecutables": {
                 name: {"path": path, "sha256": str(index) * 64}
                 for index, (name, path) in enumerate(helpers.items(), start=1)
@@ -595,6 +621,7 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         expected = {
             "assetSHA256": "1" * 64, "preparationSHA256": "2" * 64,
             "preparedReceiptSHA256": "3" * 64, "inventorySHA256": "4" * 64,
+            "activationReceiptSHA256": "7" * 64, "activeInventorySHA256": "8" * 64,
             "helperExecutables": {
                 "container-core-images": {
                     "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
@@ -642,7 +669,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
         with patch("verify_local_qualification.provider_helper_identity",
                    return_value=expected):
             authenticate_provider_evidence(self.receipt, inventory, REPOSITORY)
-            for field in ("assetSHA256", "preparationSHA256", "preparedReceiptSHA256", "inventorySHA256"):
+            for field in ("assetSHA256", "preparationSHA256", "preparedReceiptSHA256", "inventorySHA256",
+                          "activationReceiptSHA256", "activeInventorySHA256"):
                 changed = dict(expected, **{field: "0" * 64})
                 tampered = dict(rows["apple-stock"], preparedProvider=changed)
                 modified = dict(inventory)
@@ -819,6 +847,8 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                     "preparationSHA256": str(index + 2) * 64,
                     "preparedReceiptSHA256": str(index + 4) * 64,
                     "inventorySHA256": str(index + 6) * 64,
+                    "activationReceiptSHA256": str(index + 8) * 64,
+                    "activeInventorySHA256": str(index + 9) * 64,
                     "helperExecutables": {
                         "container-core-images": {
                             "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
@@ -1001,7 +1031,43 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "colima": tools["colima"],
                 "vscode": tools["vscode"],
             }
+            active_providers = {}
+            for lane in ("apple-stock", "container-compose"):
+                helper = helper_admissions[lane]
+                active_providers[lane] = {
+                    "asset": {"sha256": helper["assetSHA256"],
+                              "commit": tools["appleStock" if lane == "apple-stock" else "containerCompose"]["commit"]},
+                    "prepared": {"preparationSHA256": helper["preparationSHA256"],
+                                 "inventorySHA256": helper["inventorySHA256"]},
+                    "active": {"root": str(root / "active-runtimes" / lane / "payload"),
+                               "inventorySHA256": helper["activeInventorySHA256"],
+                               "activation": {"receiptSHA256": helper["activationReceiptSHA256"]}},
+                }
+                activation = {"archiveSHA256": helper["assetSHA256"],
+                              "sourceCommit": active_providers[lane]["asset"]["commit"],
+                              "preparationSHA256": helper["preparationSHA256"],
+                              "preparedInventorySHA256": helper["inventorySHA256"],
+                              "activationReceiptSHA256": helper["activationReceiptSHA256"],
+                              "activeInventorySHA256": helper["activeInventorySHA256"]}
+                startup_root = evidence / "native-api-startup-preflight"
+                journal_bytes = write_json(startup_root / f"{lane}-startup-preflight-journal.json", {
+                    "schemaVersion": 1, "lane": lane, "status": "restored",
+                    "ownerSHA256": "a" * 64, "records": 2, "seal": "b" * 64,
+                })
+                write_json(startup_root / f"{lane}-startup-preflight.json", {
+                    "schemaVersion": 1, "lane": lane, "status": "passed",
+                    "sourceCommit": self.commit, "providerRuntimeActivation": activation,
+                    "apiServerSHA256": tools["appleStock" if lane == "apple-stock" else "containerCompose"]["apiServerSHA256"],
+                    "containerSHA256": tools["appleStock" if lane == "apple-stock" else "containerCompose"]["containerSHA256"],
+                    "apiReadiness": "passed", "serviceState": "restored", "serviceRestored": True,
+                    "primaryFailureType": None, "primaryFailureSHA256": None,
+                    "primaryFailureRetentionErrorType": None, "cleanupFailureType": None,
+                    "startupJournalSHA256": sha(journal_bytes),
+                })
             args = SimpleNamespace(
+                repository=REPOSITORY, _guest_retained_root=root / "workflow",
+                _active_provider_runtimes=active_providers,
+                _provider_helper_evidence=helper_admissions,
                 qualification_directory=retained / "qualifications", source_commit=self.commit,
                 _source_tree=source_tree, _parity_harness_sha256=harness,
                 provenance_sha256="2" * 64, _manifest=manifest,
@@ -1012,10 +1078,50 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 "trustedStateSHA256": proof["trustedStateSHA256"],
                 "submissionID": proof["submissionID"],
             }
-            qualification_directory, receipt_digest = seal_qualification(
-                args, evidence, self.receipt["cleanup"], host_payload, comparisons,
-                provider_tools, package_proof,
-            )
+            with (patch.object(qualify, "active_provider_runtime_inputs", return_value=active_providers),
+                  patch("verify_local_qualification.provider_helper_identity",
+                        side_effect=lambda _repository, lane: helper_admissions[lane])):
+                for lane, kind, field, value in (
+                    ("apple-stock", "startup", "status", "failed"),
+                    ("apple-stock", "startup", "apiReadiness", "failed"),
+                    ("apple-stock", "startup", "apiServerSHA256", "0" * 64),
+                    ("apple-stock", "startup", "sourceCommit", "0" * 40),
+                    ("apple-stock", "startup", "serviceRestored", False),
+                    ("container-compose", "startup", "providerRuntimeActivation", {}),
+                    ("container-compose", "journal", "status", "uncertain"),
+                ):
+                    source = evidence / "native-api-startup-preflight" / f"{lane}-startup-preflight"
+                    if kind == "journal":
+                        source = Path(str(source) + "-journal.json")
+                    else:
+                        source = Path(str(source) + ".json")
+                    original = source.read_bytes()
+                    row = json.loads(original)
+                    row[field] = value
+                    write_json(source, row)
+                    try:
+                        with self.subTest(seal_lane=lane, kind=kind, field=field), self.assertRaises(QualificationError):
+                            seal_qualification(args, evidence, self.receipt["cleanup"],
+                                               host_payload, comparisons, provider_tools, package_proof)
+                        self.assertFalse(any(len(path.name) == 64
+                                             for path in args.qualification_directory.iterdir()))
+                    finally:
+                        source.write_bytes(original)
+                missing_journal = evidence / "native-api-startup-preflight/container-compose-startup-preflight-journal.json"
+                saved_journal = missing_journal.read_bytes()
+                missing_journal.unlink()
+                try:
+                    with self.assertRaises(FileNotFoundError):
+                        seal_qualification(args, evidence, self.receipt["cleanup"],
+                                           host_payload, comparisons, provider_tools, package_proof)
+                    self.assertFalse(any(len(path.name) == 64
+                                         for path in args.qualification_directory.iterdir()))
+                finally:
+                    missing_journal.write_bytes(saved_journal)
+                qualification_directory, receipt_digest = seal_qualification(
+                    args, evidence, self.receipt["cleanup"], host_payload, comparisons,
+                    provider_tools, package_proof,
+                )
             fake_home = root / "account-home"
             fake_home.mkdir(mode=0o700)
             finalized = root / "finalized"
@@ -1055,6 +1161,28 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                 item["path"]: (qualification_directory / item["path"]).read_bytes()
                 for item in sealed_receipt["inputFiles"]
             }
+            with patch("verify_local_qualification.provider_helper_identity",
+                       side_effect=lambda _repository, lane: helper_admissions[lane]):
+                authenticate_active_runtime_preflights(
+                    sealed_receipt, authenticated_inventory, REPOSITORY)
+                for lane, kind, field, value in (
+                    ("apple-stock", "startup", "apiReadiness", "failed"),
+                    ("container-compose", "startup", "serviceRestored", False),
+                    ("apple-stock", "journal", "status", "uncertain"),
+                    ("container-compose", "proof", "activationReceiptSHA256", "0" * 64),
+                ):
+                    replay = dict(authenticated_inventory)
+                    ref = (sealed_receipt["activeRuntimeProofs"][lane] if kind == "proof" else
+                           sealed_receipt["startupPreflights"][lane][kind])
+                    row = json.loads(replay[ref["path"]])
+                    row[field] = value
+                    replay[ref["path"]] = (json.dumps(row, sort_keys=True) + "\n").encode()
+                    with self.subTest(lane=lane, kind=kind, field=field), self.assertRaises(QualificationError):
+                        authenticate_active_runtime_preflights(sealed_receipt, replay, REPOSITORY)
+                missing = dict(authenticated_inventory)
+                missing.pop(sealed_receipt["startupPreflights"]["apple-stock"]["startup"]["path"])
+                with self.assertRaisesRegex(QualificationError, "proof is missing"):
+                    authenticate_active_runtime_preflights(sealed_receipt, missing, REPOSITORY)
             for index, stream in enumerate((None, {
                     "stdoutSHA256": hashlib.sha256(
                         b"compose-stdout\nsignal:USR1\nsignal:TERM\n").hexdigest(),

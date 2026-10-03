@@ -749,6 +749,315 @@ class TimeoutOwnershipTests(unittest.TestCase):
 
 
 class AdmissionBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def _native_preflight_fixture(root: Path):
+        scratch = root / "ssd"
+        retained = root / "retained"
+        evidence = root / "evidence"
+        for directory in (scratch, retained, evidence):
+            directory.mkdir(mode=0o700)
+        providers = {}
+        hashes = {}
+        for lane, prefix in (("apple-stock", "a"), ("container-compose", "b")):
+            payload = root / "active-runtimes" / lane / "payload"
+            bin_dir = payload / "bin"
+            bin_dir.mkdir(parents=True, mode=0o700)
+            container = bin_dir / "container"
+            api = bin_dir / "container-apiserver"
+            container.write_bytes((prefix + "-container").encode())
+            api.write_bytes((prefix + "-api").encode())
+            providers[lane] = {
+                "asset": {"sha256": prefix * 64, "commit": prefix * 40},
+                "prepared": {"preparationSHA256": ("c" if prefix == "a" else "d") * 64,
+                             "inventorySHA256": ("e" if prefix == "a" else "f") * 64},
+                "active": {"root": str(payload), "executables": {
+                    "container": str(container), "container-apiserver": str(api)},
+                    "inventorySHA256": ("1" if prefix == "a" else "2") * 64,
+                    "activation": {"receiptSHA256": ("3" if prefix == "a" else "4") * 64}}}
+            cli_key = "stockContainer" if lane == "apple-stock" else "composeContainer"
+            api_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
+            hashes[cli_key], hashes[api_key] = qualify.sha256(container), qualify.sha256(api)
+        args = argparse.Namespace(
+            _active_provider_runtimes=providers, _provider_hashes=hashes,
+            campaign="preflight-fixture", source_commit="1" * 40)
+        return scratch, retained, evidence, args
+
+    def test_native_startup_preflights_both_providers_before_docker_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "evidence"
+            evidence.mkdir(mode=0o700)
+            cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+            calls = []
+
+            def lane_probe(_args, lane, _evidence, _cleanup):
+                calls.append(lane)
+                return {"status": "passed", "lane": lane}
+
+            with mock.patch.object(qualify, "preflight_native_api_startup", side_effect=lane_probe):
+                qualify.preflight_native_providers_before_docker(
+                    argparse.Namespace(), evidence, cleanup, lambda: calls.append("docker"))
+            self.assertEqual(calls, ["apple-stock", "container-compose", "docker"])
+
+            calls.clear()
+
+            def failed_probe(_args, lane, _evidence, _cleanup):
+                calls.append(lane)
+                raise RuntimeError("preflight failed")
+
+            failed_arguments = argparse.Namespace()
+            failed_evidence = evidence / "failed"
+            docker_callback = lambda: calls.append("docker")
+            with mock.patch.object(qualify, "preflight_native_api_startup", side_effect=failed_probe):
+                with self.assertRaisesRegex(RuntimeError, "preflight failed"):
+                    qualify.preflight_native_providers_before_docker(
+                        failed_arguments, failed_evidence, cleanup, docker_callback)
+            self.assertEqual(calls, ["apple-stock"])
+
+    def test_native_api_preflight_restores_service_after_bounded_ready_probe(self) -> None:
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            scratch = root / "ssd"
+            scratch.mkdir(mode=0o700)
+            retained = root / "retained"
+            retained.mkdir(mode=0o700)
+            evidence = root / "evidence"
+            evidence.mkdir(mode=0o700)
+            binaries = {}
+            providers = {}
+            for lane, prefix in (("apple-stock", "a"), ("container-compose", "b")):
+                payload = root / "active-runtimes" / lane / "payload"
+                bin_dir = payload / "bin"
+                bin_dir.mkdir(parents=True, mode=0o700)
+                container = bin_dir / "container"
+                api = bin_dir / "container-apiserver"
+                container.write_bytes((prefix + "-container").encode())
+                api.write_bytes((prefix + "-api").encode())
+                api_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
+                cli_key = "stockContainer" if lane == "apple-stock" else "composeContainer"
+                binaries[api_key] = qualify.sha256(api)
+                binaries[cli_key] = qualify.sha256(container)
+                providers[lane] = {
+                    "asset": {"sha256": prefix * 64, "commit": prefix * 40},
+                    "prepared": {"preparationSHA256": ("c" if prefix == "a" else "d") * 64,
+                                 "inventorySHA256": ("e" if prefix == "a" else "f") * 64},
+                    "active": {"root": str(payload),
+                               "executables": {"container": str(container),
+                                               "container-apiserver": str(api)},
+                               "inventorySHA256": ("1" if prefix == "a" else "2") * 64,
+                               "activation": {"receiptSHA256": ("3" if prefix == "a" else "4") * 64}}}
+
+            events = []
+
+            class FakeRuntime:
+                def __init__(self, case_root, owner, executable, journal_parent, *, home):
+                    self.root, self.owner, self.executable = case_root, owner, executable
+                    self.switch = None
+                    self.host_mutation_started = False
+                    self.journal = object()
+
+                def start(self, *, prepare_home):
+                    events.append("start")
+                    prepare_home(self.journal)
+                    self.switch = object()
+                    self.host_mutation_started = True
+
+                def verify(self):
+                    events.append("verify")
+
+                def restore(self):
+                    events.append("restore")
+
+                def preserve_logs(self):
+                    events.append("preserve")
+
+                def receipt(self):
+                    return {"ownerSHA256": "a" * 64, "records": 2, "seal": "b" * 64}
+
+            args = argparse.Namespace(_active_provider_runtimes=providers,
+                                      _provider_hashes=binaries,
+                                      campaign="preflight-fixture", source_commit="f" * 40)
+            cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+            with (mock.patch.object(qualify, "SSD", scratch),
+                  mock.patch.object(qualify, "JOURNAL_PARENT", retained),
+                  mock.patch.object(qualify, "ACCOUNT_HOME", root),
+                  mock.patch("runtime_services.ControlledRuntime", FakeRuntime),
+                  mock.patch("private_keychain.run_keychain",
+                             side_effect=lambda _root, action, _journal: events.append(action))):
+                record = qualify.preflight_native_api_startup(args, "apple-stock", evidence, cleanup)
+
+            self.assertEqual(record["status"], "passed")
+            self.assertEqual(events, ["start", "create", "verify", "restore", "delete", "preserve"])
+            self.assertTrue(record["serviceRestored"])
+            self.assertFalse(list(scratch.iterdir()))
+
+    def test_native_api_preflight_retains_failures_and_attempts_exact_restore(self) -> None:
+        from types import SimpleNamespace
+
+        for mode in ("constructor-error", "before-mutation", "during-start", "retention-error",
+                     "restore-error", "keychain-delete-error", "journal-incomplete",
+                     "owner-missing", "owner-unreadable", "owner-malformed"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                scratch, retained, evidence, args = self._native_preflight_fixture(root)
+                events = []
+
+                class FakeRuntime:
+                    def __init__(self, case_root, owner, executable, journal_parent, *, home):
+                        self.root, self.owner, self.executable = case_root, owner, executable
+                        self.switch = None
+                        self.host_mutation_started = False
+                        self.journal = None
+
+                    def start(self, *, prepare_home):
+                        events.append("start")
+                        if mode == "before-mutation":
+                            raise ValueError("preflight rejected provider")
+                        prepare_home(SimpleNamespace())
+                        self.switch = object()
+                        self.host_mutation_started = True
+                        self.journal = object()
+                        if mode == "owner-missing":
+                            (self.root / "owner.json").unlink()
+                        elif mode == "owner-unreadable":
+                            (self.root / "owner.json").unlink()
+                            (self.root / "owner.json").mkdir()
+                        elif mode == "owner-malformed":
+                            (self.root / "owner.json").write_text("{")
+                        if mode in {"during-start", "retention-error"}:
+                            raise RuntimeError("service startup failed")
+
+                    def failure_disposition(self):
+                        return {"status": "uncertain" if self.host_mutation_started else "not-started",
+                                "phase": "fixture", "hostMutationStarted": self.host_mutation_started}
+
+                    def retain_primary_failure(self, _error):
+                        events.append("retain")
+                        if mode == "retention-error":
+                            raise OSError("private failure write failed")
+                        return {"location": "private-journal", "sha256": "a" * 64}
+
+                    def verify(self):
+                        events.append("verify")
+
+                    def restore(self):
+                        events.append("restore")
+                        if mode == "restore-error":
+                            raise OSError("service restoration failed")
+
+                    def preserve_logs(self):
+                        events.append("preserve")
+
+                    def receipt(self):
+                        return {"ownerSHA256": "b" * 64,
+                                "records": [] if mode == "journal-incomplete" else 2,
+                                "seal": "c" * 64}
+
+                def keychain(_root, action, _journal):
+                    events.append(action)
+                    if mode == "keychain-delete-error" and action == "delete":
+                        raise OSError("private Keychain removal failed")
+
+                cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+                runtime_factory = FakeRuntime
+                if mode == "constructor-error":
+                    runtime_factory = mock.Mock(side_effect=OSError("journal volume unavailable"))
+                with (mock.patch.object(qualify, "SSD", scratch),
+                      mock.patch.object(qualify, "JOURNAL_PARENT", retained),
+                      mock.patch.object(qualify, "ACCOUNT_HOME", root),
+                      mock.patch("runtime_services.ControlledRuntime", runtime_factory),
+                      mock.patch("private_keychain.run_keychain", side_effect=keychain)):
+                    with self.assertRaisesRegex(RuntimeError,
+                                                "preflight failed|restoration failed|retention failed|setup failed|cleanup failed"):
+                        qualify.preflight_native_api_startup(args, "apple-stock", evidence, cleanup)
+
+                record = json.loads((evidence / "apple-stock-startup-preflight.json").read_text())
+                self.assertEqual(record["status"], "failed")
+                self.assertTrue(Path(record["scratchRoot"]).is_dir())
+                if mode in {"owner-missing", "owner-unreadable"}:
+                    self.assertNotIn("ownerSHA256", record)
+                else:
+                    self.assertEqual(qualify.sha256(Path(record["scratchRoot"]) / "owner.json"),
+                                     record["ownerSHA256"])
+                if mode in {"owner-missing", "owner-unreadable", "owner-malformed"}:
+                    journal = evidence / "apple-stock-startup-preflight-journal.json"
+                    self.assertEqual(record["startupJournalSHA256"], qualify.sha256(journal))
+                if mode == "constructor-error":
+                    self.assertEqual(record["serviceState"], "not-started")
+                    self.assertEqual(events, [])
+                    self.assertEqual(record["primaryFailureType"], "builtins.OSError")
+                    self.assertEqual(cleanup["apple-stock"]["status"], "not-started")
+                elif mode == "before-mutation":
+                    self.assertEqual(record["serviceState"], "not-started")
+                    self.assertEqual(events, ["start", "retain"])
+                    self.assertEqual(cleanup["apple-stock"]["status"], "not-started")
+                elif mode == "restore-error":
+                    self.assertEqual(events, ["start", "create", "verify", "restore", "preserve"])
+                    self.assertEqual(record["serviceState"], "uncertain")
+                    self.assertEqual(cleanup["apple-stock"]["status"], "uncertain")
+                else:
+                    self.assertIn("restore", events)
+                    self.assertEqual(record["serviceState"], "restored")
+                    self.assertTrue(record["serviceRestored"])
+                    if mode == "keychain-delete-error":
+                        self.assertIn("delete", events)
+                        self.assertEqual(cleanup["apple-stock"]["status"], "uncertain")
+                    elif mode == "journal-incomplete":
+                        self.assertEqual(record["cleanupFailureType"], "builtins.ValueError")
+                        self.assertEqual(cleanup["apple-stock"]["status"], "uncertain")
+                    elif mode in {"owner-missing", "owner-unreadable", "owner-malformed"}:
+                        self.assertIsNotNone(record["cleanupFailureType"])
+                        self.assertEqual(cleanup["apple-stock"]["status"], "uncertain")
+                    elif mode == "retention-error":
+                        self.assertIn("restore", events)
+                        self.assertEqual(record["primaryFailureRetentionErrorType"], "builtins.OSError")
+                        self.assertEqual(cleanup["apple-stock"]["status"], "uncertain")
+                    else:
+                        self.assertIn("delete", events)
+                        self.assertEqual(cleanup["apple-stock"]["status"], "not-started")
+
+    def test_native_cli_and_api_paths_must_share_each_exact_active_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            providers = {}
+            for lane in ("apple-stock", "container-compose"):
+                payload = root / "active-runtimes" / lane / "payload"
+                providers[lane] = {"active": {"root": str(payload), "executables": {
+                    "container": str(payload / "bin/container"),
+                    "container-apiserver": str(payload / "bin/container-apiserver")}}}
+            args = argparse.Namespace(
+                stock_container_bin=Path(providers["apple-stock"]["active"]["executables"]["container"]),
+                compose_container_bin=Path(providers["container-compose"]["active"]["executables"]["container"]))
+            qualify.require_active_provider_cli_paths(args, providers)
+            args.compose_container_bin = root / "prepared-releases/34db/bin/container"
+            with self.assertRaisesRegex(ValueError, "exact active runtime payload"):
+                qualify.require_active_provider_cli_paths(args, providers)
+            args.compose_container_bin = Path(
+                providers["container-compose"]["active"]["executables"]["container"])
+            providers["apple-stock"]["active"]["executables"]["container-apiserver"] = str(
+                root / "other/container-apiserver")
+            with self.assertRaisesRegex(ValueError, "exact active runtime payload"):
+                qualify.require_active_provider_cli_paths(args, providers)
+
+    def test_active_provider_receipt_is_part_of_private_qualification_identity(self) -> None:
+        providers = {}
+        for lane, prefix in (("apple-stock", "a"), ("container-compose", "b")):
+            providers[lane] = {
+                "asset": {"sha256": prefix * 64, "commit": prefix * 40},
+                "prepared": {"preparationSHA256": ("c" if prefix == "a" else "d") * 64,
+                             "inventorySHA256": ("e" if prefix == "a" else "f") * 64},
+                "active": {"root": f"/retained/active-runtimes/{lane}/payload",
+                           "inventorySHA256": ("1" if prefix == "a" else "2") * 64,
+                           "activation": {"receiptSHA256": ("3" if prefix == "a" else "4") * 64}}}
+        result = qualify.active_provider_runtime_receipts(providers)
+        self.assertEqual(result["container-compose"]["activationReceiptSHA256"], "4" * 64)
+        self.assertEqual(result["apple-stock"]["archiveSHA256"], "a" * 64)
+        providers["container-compose"]["active"]["activation"].pop("receiptSHA256")
+        with self.assertRaisesRegex(ValueError, "receipt identity has missing"):
+            qualify.active_provider_runtime_receipts(providers)
+
     def test_provider_helper_hashes_come_from_validated_locked_receipt(self) -> None:
         sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
         sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
@@ -761,12 +1070,20 @@ class AdmissionBoundaryTests(unittest.TestCase):
             for relative in ("release-objects", "prepared-releases", "prepared-receipts"):
                 (retained / relative).mkdir(parents=True, mode=0o700)
             prepared_root = retained / "prepared-releases/key"
-            provider_root = prepared_root / "Payload"
-            core = provider_root / "libexec/container/plugins/container-core-images/bin/container-core-images"
-            machine = provider_root / "libexec/container/plugins/machine-apiserver/bin/machine-apiserver"
-            for path, data in ((core, b"locked core helper"), (machine, b"locked API helper")):
+            package_root = prepared_root / "Payload"
+            provider_root = base / "active-runtimes/apple-stock/payload"
+            package_helpers = (
+                package_root / "libexec/container/plugins/container-core-images/bin/container-core-images",
+                package_root / "libexec/container/plugins/machine-apiserver/bin/machine-apiserver")
+            core, machine = package_helpers
+            active_helpers = tuple(provider_root / path.relative_to(package_root) for path in package_helpers)
+            for path, data in zip(package_helpers, (b"locked core helper", b"locked API helper")):
                 path.parent.mkdir(parents=True, mode=0o700)
                 path.write_bytes(data)
+                path.chmod(0o755)
+            for source, path in zip(package_helpers, active_helpers):
+                path.parent.mkdir(parents=True, mode=0o700)
+                path.write_bytes(source.read_bytes())
                 path.chmod(0o755)
             container = provider_root / "bin/container"
             container.parent.mkdir(mode=0o700)
@@ -784,7 +1101,15 @@ class AdmissionBoundaryTests(unittest.TestCase):
                 "Payload/libexec/container/plugins/machine-apiserver/bin/machine-apiserver": {
                     "kind": "file", "mode": 0o755, "sha256": hashlib.sha256(machine.read_bytes()).hexdigest()},
             }
-            arguments = argparse.Namespace(_guest_retained_root=retained, stock_container_bin=container)
+            active = {"root": str(provider_root),
+                      "executables": {"container": str(container),
+                                      "container-apiserver": str(container.parent / "container-apiserver")},
+                      "activation": {"receiptSHA256": "f" * 64},
+                      "inventorySHA256": "1" * 64}
+            (container.parent / "container-apiserver").write_bytes(b"provider API")
+            (container.parent / "container-apiserver").chmod(0o755)
+            arguments = argparse.Namespace(_guest_retained_root=retained, stock_container_bin=container,
+                                           _active_provider_runtimes={"apple-stock": {"active": active}})
             with (mock.patch.object(released_engine, "provider_runtime_selection", return_value=asset),
                   mock.patch.object(prepare_releases, "layout", return_value=specification["layout"]),
                   mock.patch.object(prepare_releases, "require_retained", return_value={
@@ -795,12 +1120,14 @@ class AdmissionBoundaryTests(unittest.TestCase):
                     helpers = qualify.admit_provider_helper_programs("apple-stock", arguments)
 
             self.assertEqual(helpers["com.apple.container.container-core-images"],
-                             {"program": core, "sha256": inventory[
+                             {"program": active_helpers[0], "sha256": inventory[
                                  "Payload/libexec/container/plugins/container-core-images/bin/container-core-images"]["sha256"]})
             self.assertEqual(arguments._provider_helper_evidence["apple-stock"], {
                 "assetSHA256": asset["sha256"], "preparationSHA256": preparation_sha,
                 "preparedReceiptSHA256": qualify.sha256(receipt_path),
                 "inventorySHA256": "e" * 64,
+                "activationReceiptSHA256": "f" * 64,
+                "activeInventorySHA256": "1" * 64,
                 "helperExecutables": {
                     "container-core-images": {
                         "path": "libexec/container/plugins/container-core-images/bin/container-core-images",
@@ -812,7 +1139,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
                             "Payload/libexec/container/plugins/machine-apiserver/bin/machine-apiserver"]["sha256"]},
                 },
             })
-            core.write_bytes(b"changed helper bytes")
+            active_helpers[0].write_bytes(b"changed helper bytes")
             with (mock.patch.object(released_engine, "provider_runtime_selection", return_value=asset),
                   mock.patch.object(prepare_releases, "layout", return_value=specification["layout"]),
                   mock.patch.object(prepare_releases, "require_retained", return_value={

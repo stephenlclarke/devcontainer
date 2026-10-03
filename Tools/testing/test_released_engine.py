@@ -201,6 +201,42 @@ class ReleasedEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires locked Q runtime"):
             released_engine.provider_image_references(lock, "container-compose", self.root)
 
+    def test_current_compose_source_requires_full_q_pair_and_matching_prepared_runtime(self):
+        import prepare_releases
+
+        lock = {"schemaVersion": 1, "assets": [{"repository": "fixture", "name": "runtime"}]}
+        asset = {"repository": "stephenlclarke/container", "name": "container-homebrew-arm64.tar.gz",
+                 "sha256": "a" * 64, "commit": "b" * 40}
+        prepared = {"root": "/retained/prepared/q", "archiveSHA256": asset["sha256"],
+                    "preparationSHA256": "c" * 64,
+                    "executables": {"container": "/retained/prepared/q/bin/container",
+                                    "container-apiserver": "/retained/prepared/q/bin/container-apiserver"}}
+        identity = {"format": "signed-compose-q-runtime",
+                    "containerRuntime": {"archiveSHA256": asset["sha256"]},
+                    "executables": dict(prepared["executables"])}
+        selection = {"format": "signed-compose-q-runtime", "containerRuntime": asset}
+        with (patch.object(released_engine, "provider_runtime_selection", return_value=asset),
+              patch.object(prepare_releases, "select_compose_runtime_assets", return_value=selection),
+              patch.object(prepare_releases, "admit_locked_compose_runtime", return_value=identity) as q_admit,
+              patch.object(released_engine, "require_retained", return_value=prepared) as retain):
+            selected = released_engine.admit_provider_runtime_source(lock, "container-compose", self.root)
+
+        self.assertIs(selected["prepared"], prepared)
+        self.assertIs(selected["qIdentity"], identity)
+        q_admit.assert_called_once_with(lock, self.root / "release-objects",
+                                        self.root / "prepared-releases", self.root / "prepared-receipts")
+        retain.assert_called_once_with(asset, self.root / "release-objects" / asset["sha256"],
+                                       self.root / "prepared-releases", self.root / "prepared-receipts")
+
+        mismatched = dict(identity, executables={**identity["executables"],
+                                                 "container-apiserver": "/different/container-apiserver"})
+        with (patch.object(released_engine, "provider_runtime_selection", return_value=asset),
+              patch.object(prepare_releases, "select_compose_runtime_assets", return_value=selection),
+              patch.object(prepare_releases, "admit_locked_compose_runtime", return_value=mismatched),
+              patch.object(released_engine, "require_retained", return_value=prepared)):
+            with self.assertRaisesRegex(ValueError, "Prepared Q runtime paths"):
+                released_engine.admit_provider_runtime_source(lock, "container-compose", self.root)
+
     def test_runtime_admission_requires_selected_stable_payload_without_fallback(self):
         source = {"native": "original"}
         with patch("released_engine.admit", return_value=[{"client": "unchanged"}, source]), \
@@ -295,6 +331,18 @@ class ReleasedEngineTests(unittest.TestCase):
         runtime = {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}
         guard = HostGuard(self.root / "admission.json")
         selected_packages = []
+        locked = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
+        q_images = {
+            "guest": {"reference": "fixture/q-guest", "archiveSHA256": "1" * 64,
+                      "source": "2" * 40},
+            "builder": {"reference": "fixture/q-builder", "archiveSHA256": "3" * 64,
+                        "source": "4" * 40},
+        }
+
+        def selected_provider_references(selected_lock, selected_lane, selected_retained):
+            self.assertEqual(selected_lock, locked)
+            self.assertEqual(selected_retained, Path.home())
+            return None if selected_lane == "apple-stock" else q_images
 
         def selected(_lock, lane, _retained, _repository, inputs):
             product = {**package, "providerLane": lane}
@@ -311,7 +359,9 @@ class ReleasedEngineTests(unittest.TestCase):
                     patch("released_engine.SSD", self.root), patch("released_engine.RETAINED", Path.home()), \
                     patch("released_engine.require_owned_volume", return_value={"ownersEnabled": True}), \
                     patch("released_engine.finalized_runtime", side_effect=selected), \
-                    patch("released_engine.admit_guest", return_value={"workload": "fixture"}), \
+                    patch("released_engine.provider_image_references",
+                          side_effect=selected_provider_references) as image_references, \
+                    patch("released_engine.admit_guest", return_value={"workload": "fixture"}) as guest_admission, \
                     patch("released_engine.version", return_value="fixture"), \
                     patch("released_engine.CaseStore", return_value=self.store), \
                     patch("released_engine.HostGuard", return_value=guard), \
@@ -330,8 +380,11 @@ class ReleasedEngineTests(unittest.TestCase):
                 self.assertEqual(admission["runtime"]["finalizedPackageInputs"], admission["finalizedPackageInputs"])
                 self.assertEqual(factory.call_args.kwargs["guest_inputs"]["devcontainerCandidate"],
                                  {**package, "providerLane": lane})
+                self.assertEqual(guest_admission.call_args.kwargs["provider_image_references"],
+                                 None if lane == "apple-stock" else q_images)
                 release_sets.append(factory.call_args.args[1]["releaseSetSHA256"])
                 self.assertEqual(factory.call_args.args[4](), [{**package, "providerLane": lane}, runtime])
+                self.assertEqual(image_references.call_count, 2)
         self.assertEqual([item[0] for item in selected_packages],
                          ["apple-stock", "apple-stock", "container-compose", "container-compose"])
         self.assertEqual(selected_packages[0][1], selected_packages[2][1])
@@ -354,12 +407,12 @@ class ReleasedEngineTests(unittest.TestCase):
         lock = json.loads((Path(__file__).parents[1] / "bazel/releases.lock.json").read_text())
         for lane, profile in [("apple-stock", "stock"), ("container-compose", "enhanced")]:
             with patch("released_engine.admit_candidate", return_value={"scope": "local-candidate-integration-only"}) as local, \
-                    patch("released_engine.require_retained", return_value={"released": True}) as prepared:
+                    patch("released_engine.admit_provider_runtime_source",
+                          return_value={"prepared": {"released": True}}) as provider:
                 selected = released_engine.admit(lock, lane, self.root, "candidate-invocation")
                 local.assert_called_once_with(self.root, "candidate-invocation", profile)
                 self.assertEqual(selected, [{"scope": "local-candidate-integration-only"}, {"released": True}])
-                self.assertEqual(prepared.call_count, 1)
-                self.assertNotEqual(prepared.call_args.args[0]["repository"], "stephenlclarke/devcontainer")
+                provider.assert_called_once_with(lock, lane, self.root)
 
     def test_native_compose_options_fail_before_any_admission_when_incomplete(self):
         cases = [(["--fixture=C01-compose-service"], "prepared native Compose"),

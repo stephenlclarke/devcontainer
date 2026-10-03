@@ -84,6 +84,15 @@ class NativeActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "link or special"):
             activation.require_active(self.source, self.retained, self.lane)
 
+    def test_stale_legacy_compose_slot_is_not_a_fallback_for_current_q_source(self):
+        self.lane = "container-compose"
+        self.slot = self.retained / "active-runtimes" / self.lane
+        legacy = self.release("legacy-34db")
+        current_q = self.release("current-q-f86")
+        self.activate(legacy)
+        with self.assertRaisesRegex(ValueError, "differs; run activate-runtime"):
+            activation.require_active(current_q, self.retained, self.lane)
+
     def test_resume_copy_interruption_preserves_prior_until_success(self):
         self.activate()
         next_source = self.release("two")
@@ -214,7 +223,8 @@ class NativeActivationTests(unittest.TestCase):
 
     def test_cli_takes_family_lease_and_emits_no_permission_claim(self):
         with patch("released_engine.RETAINED", self.retained), patch("pathlib.Path.home", return_value=self.root), \
-                patch("released_engine.admit", return_value=[{}, self.source]), \
+                patch("released_engine.admit_provider_runtime_source",
+                      return_value={"prepared": self.source}) as admitted, \
                 patch("native_activation.runtime_lease", return_value=nullcontext()) as lease, \
                 patch("native_activation.cancellation", return_value=nullcontext()) as cancel, \
                 patch("sys.argv", ["activate-runtime", "--lane", self.lane]), \
@@ -222,6 +232,9 @@ class NativeActivationTests(unittest.TestCase):
             activation.main()
         self.assertEqual(lease.call_args.args[0], Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock"))
         self.assertEqual(lease.call_args.args[1].path, self.retained / "runtime-admission.json")
+        # Activation repeatedly re-admits the exact source while copying and
+        # sealing it, so every revalidation must take the new Q-aware path.
+        self.assertGreaterEqual(admitted.call_count, 2)
         cancel.assert_called_once()
         result = json.loads(output.getvalue())
         self.assertFalse(result["servicesStarted"])

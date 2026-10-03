@@ -213,12 +213,17 @@ def admit_locked_native_compose_inputs(args: argparse.Namespace, manifest: dict,
     identity = release.admit_locked_compose_runtime(
         lock, retained / "release-objects", retained / "prepared-releases",
         retained / "prepared-receipts")
-    expected_paths = {
+    prepared_paths = {
         "composeContainer": Path(identity["executables"]["container"]),
         "composeProvider": Path(identity["executables"]["compose"]),
         "composeAPIServer": Path(identity["executables"]["container-apiserver"]),
     }
-    for key, expected_path in expected_paths.items():
+    active = args._active_provider_runtimes["container-compose"]["active"]
+    active_paths = {
+        "composeContainer": Path(active["executables"]["container"]),
+        "composeAPIServer": Path(active["executables"]["container-apiserver"]),
+    }
+    for key, expected_path in prepared_paths.items():
         actual_path = getattr(args, {
             "composeContainer": "compose_container_bin",
             "composeProvider": "compose_provider_bin",
@@ -226,13 +231,16 @@ def admit_locked_native_compose_inputs(args: argparse.Namespace, manifest: dict,
         }[key])
         if key == "composeAPIServer":
             actual_path = actual_path.parent / "container-apiserver"
-        if actual_path != expected_path:
-            raise ValueError(f"{key} path differs from the exact lock-selected prepared release")
+        selected_path = active_paths.get(key, expected_path)
+        if actual_path != selected_path:
+            raise ValueError(f"{key} path differs from the exact active runtime or locked Compose package")
     runtime = identity["containerRuntime"]
     compose = identity["containerCompose"]
-    if (sha256(expected_paths["composeContainer"]) != runtime["containerSHA256"]
-            or sha256(expected_paths["composeAPIServer"]) != runtime["apiServerSHA256"]
-            or sha256(expected_paths["composeProvider"]) != identity["composeProviderSHA256"]
+    if (sha256(prepared_paths["composeContainer"]) != runtime["containerSHA256"]
+            or sha256(prepared_paths["composeAPIServer"]) != runtime["apiServerSHA256"]
+            or sha256(active_paths["composeContainer"]) != runtime["containerSHA256"]
+            or sha256(active_paths["composeAPIServer"]) != runtime["apiServerSHA256"]
+            or sha256(prepared_paths["composeProvider"]) != identity["composeProviderSHA256"]
             or runtime["commit"] != manifest.get("referencePins", {}).get(
                 "containerRuntime", {}).get("stableCommit")
             or compose["commit"] != manifest.get("referencePins", {}).get(
@@ -240,6 +248,92 @@ def admit_locked_native_compose_inputs(args: argparse.Namespace, manifest: dict,
         raise ValueError("locked Compose/runtime identities differ from selected bytes or manifest pins")
     validate_native_provider_manifest_identity(manifest, identity)
     return identity
+
+
+def active_provider_runtime_inputs(lock: dict, retained: Path) -> dict[str, dict]:
+    """Authenticate both package sources and require their exact stable projections."""
+    sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+    import released_engine
+    import native_activation
+
+    if (Path(released_engine.__file__).resolve() !=
+            (REPOSITORY / "Tools/testing/released_engine.py").resolve(strict=True)
+            or Path(native_activation.__file__).resolve() !=
+            (REPOSITORY / "Tools/testing/native_activation.py").resolve(strict=True)):
+        raise ValueError("active provider helpers resolved outside the selected source checkout")
+    selected = {}
+    for lane in ("apple-stock", "container-compose"):
+        provider = released_engine.admit_active_provider_runtime(lock, lane, retained)
+        active = provider.get("active")
+        if (not isinstance(active, dict) or not isinstance(active.get("activation"), dict)
+                or active["activation"].get("lane") != lane
+                or active["activation"].get("source") != provider["prepared"]):
+            raise ValueError(f"{lane} runtime activation does not bind its exact admitted source")
+        selected[lane] = provider
+    return selected
+
+
+def require_active_provider_cli_paths(args: argparse.Namespace,
+                                      providers: dict[str, dict]) -> None:
+    """Reject any prepared/stable path mix before hashing or launching providers."""
+    for lane, argument in (("apple-stock", "stock_container_bin"),
+                           ("container-compose", "compose_container_bin")):
+        provider = providers.get(lane)
+        if not isinstance(provider, dict) or not isinstance(provider.get("active"), dict):
+            raise ValueError(f"{lane} active runtime admission is unavailable")
+        executables = provider["active"].get("executables", {})
+        expected = Path(executables.get("container", ""))
+        api = Path(executables.get("container-apiserver", ""))
+        actual = getattr(args, argument)
+        if (not expected.is_absolute() or not api.is_absolute()
+                or actual != expected or api != expected.parent / "container-apiserver"):
+            raise ValueError(f"{lane} CLI/API paths must both use its exact active runtime payload")
+
+
+def active_provider_runtime_receipts(providers: dict[str, dict]) -> dict[str, dict]:
+    """Project package and stable-slot identities into retained qualification evidence."""
+    result = {}
+    for lane in ("apple-stock", "container-compose"):
+        provider = providers.get(lane, {})
+        asset, prepared, active = (provider.get("asset"), provider.get("prepared"),
+                                   provider.get("active"))
+        if (not isinstance(asset, dict) or not isinstance(prepared, dict)
+                or not isinstance(active, dict) or not isinstance(active.get("activation"), dict)):
+            raise ValueError(f"{lane} active runtime receipt identity is incomplete")
+        result[lane] = {
+            "archiveSHA256": asset.get("sha256"),
+            "sourceCommit": asset.get("commit"),
+            "preparationSHA256": prepared.get("preparationSHA256"),
+            "preparedInventorySHA256": prepared.get("inventorySHA256"),
+            "activationReceiptSHA256": active["activation"].get("receiptSHA256"),
+            "activeInventorySHA256": active.get("inventorySHA256"),
+            "root": active.get("root"),
+        }
+        if any(not isinstance(value, str) or not value for value in result[lane].values()):
+            raise ValueError(f"{lane} active runtime receipt identity has missing fields")
+    return result
+
+
+def qualification_provider_runtime_identities(providers: dict[str, dict]) -> dict[str, dict]:
+    """Keep the release and activation digests while excluding local stable-slot paths."""
+    identities = active_provider_runtime_receipts(providers)
+    return {lane: {key: value for key, value in receipt.items() if key != "root"}
+            for lane, receipt in identities.items()}
+
+
+def sanitized_provider_runtime_proof(providers: dict[str, dict], helpers: dict[str, dict],
+                                     lane: str) -> dict:
+    """Retain release and active-slot identities without local paths or private logs."""
+    selected = qualification_provider_runtime_identities(providers)[lane]
+    helper = helpers[lane]
+    if (helper.get("assetSHA256") != selected["archiveSHA256"]
+            or helper.get("preparationSHA256") != selected["preparationSHA256"]
+            or helper.get("inventorySHA256") != selected["preparedInventorySHA256"]
+            or helper.get("activationReceiptSHA256") != selected["activationReceiptSHA256"]
+            or helper.get("activeInventorySHA256") != selected["activeInventorySHA256"]):
+        raise ValueError(f"{lane} active runtime and prepared helper proof differ")
+    return {"schemaVersion": 1, "lane": lane, **selected,
+            "preparedReceiptSHA256": helper["preparedReceiptSHA256"]}
 
 
 def run(command: list[str], *, env: dict[str, str], cwd: Path = REPOSITORY,
@@ -550,6 +644,22 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
+def write_durable_preflight_json(path: Path, value: dict) -> None:
+    """Keep startup and restoration evidence after a failed owned transaction."""
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    payload = (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+    descriptor_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor_fd, "wb") as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def descriptor(root: Path, source: Path, relative: str) -> dict[str, str]:
     """Copy one bounded regular JSON file into the immutable public-safe input closure."""
     info = source.lstat()
@@ -583,6 +693,14 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
                        host_payload: dict, comparisons: dict, provider_tools: dict,
                        package_proof: dict) -> tuple[Path, str]:
     """Create a bounded internal CAS receipt after all comparisons/restoration pass."""
+    def require_current_activation() -> None:
+        lock = json.loads((args.repository / "Tools/bazel/releases.lock.json").read_bytes())
+        current = active_provider_runtime_inputs(lock, args._guest_retained_root)
+        if active_provider_runtime_receipts(current) != active_provider_runtime_receipts(
+                args._active_provider_runtimes):
+            raise ValueError("current active provider changed before qualification seal")
+
+    require_current_activation()
     parent = args.qualification_directory
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if parent.is_symlink() or parent.resolve() != parent or parent.stat().st_dev != ACCOUNT_HOME.stat().st_dev:
@@ -671,6 +789,26 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
             **host_ref,
         }
 
+        active_runtime_proofs = {}
+        startup_preflights = {}
+        for lane in ("apple-stock", "container-compose"):
+            proof = sanitized_provider_runtime_proof(
+                args._active_provider_runtimes, args._provider_helper_evidence, lane)
+            proof_source = evidence / "providers" / f"{lane}-runtime-proof.json"
+            write_json(proof_source, proof)
+            relative = f"inputs/providers/{lane}-runtime-proof.json"
+            ref = descriptor(staging, proof_source, relative)
+            references[relative] = ref
+            active_runtime_proofs[lane] = ref
+            startup_preflights[lane] = {}
+            for kind, source_name in (("startup", f"{lane}-startup-preflight.json"),
+                                      ("journal", f"{lane}-startup-preflight-journal.json")):
+                source = evidence / "native-api-startup-preflight" / source_name
+                relative = f"inputs/preflight/{lane}-{kind}.json"
+                ref = descriptor(staging, source, relative)
+                references[relative] = ref
+                startup_preflights[lane][kind] = ref
+
         for tool in ("appleStock",):
             relative = f"inputs/providers/{tool}.json"
             source = evidence / "providers" / f"{tool}.json"
@@ -714,6 +852,8 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
             "providerTools": provider_tools, "laneResults": lane_results,
             "comparisons": comparison_rows, "cleanup": cleanup_rows,
             "serviceJournalReceipts": service_journals,
+            "activeRuntimeProofs": active_runtime_proofs,
+            "startupPreflights": startup_preflights,
             "inputFiles": [{"path": path, "sha256": ref["sha256"],
                             "size": (staging / path).stat().st_size}
                            for path, ref in sorted(references.items())],
@@ -725,6 +865,11 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
             raise ValueError("Not all local parity comparisons passed")
         require_host_restoration(cleanup, host_payload["initialColima"],
                                  host_payload["finalColima"], True)
+        import verify_local_qualification as verifier
+        if Path(verifier.__file__).resolve() != (args.repository / "Tools/parity/verify_local_qualification.py").resolve(strict=True):
+            raise ValueError("qualification replay validator resolved outside the selected source")
+        verifier.authenticate_active_runtime_preflights(
+            receipt, verifier.inventory_files(staging, receipt), args.repository)
         payload = (json.dumps(receipt, sort_keys=True, indent=2) + "\n").encode()
         receipt_path = staging / "qualification.json"
         with receipt_path.open("xb") as stream:
@@ -736,6 +881,7 @@ def seal_qualification(args: argparse.Namespace, evidence: Path, cleanup: dict,
         final = parent / digest
         if final.exists():
             raise ValueError(f"Qualification CAS leaf already exists: {final}")
+        require_current_activation()
         os.rename(staging, final)
         directory_fd = os.open(parent, os.O_RDONLY)
         try:
@@ -1088,6 +1234,10 @@ def validate_inputs(args: argparse.Namespace, *,
         validate_engine_fixture_routes(manifest)
     except ValueError as error:
         raise ValueError(f"engine fixture route preflight failed: {error}") from error
+    args._guest_retained_root = validate_guest_asset_retained_root(DEFAULT_WORKFLOW_RETAINED)
+    lock = json.loads((args.repository / "Tools/bazel/releases.lock.json").read_bytes())
+    args._active_provider_runtimes = active_provider_runtime_inputs(lock, args._guest_retained_root)
+    require_active_provider_cli_paths(args, args._active_provider_runtimes)
     pins = manifest.get("referencePins", {})
     expected = {
         "docker": sha256(args.docker_bin),
@@ -1149,7 +1299,6 @@ def validate_inputs(args: argparse.Namespace, *,
             or args.qualification_directory.stat().st_uid != os.getuid()
             or args.qualification_directory.stat().st_mode & 0o777 != 0o700):
         raise ValueError("qualification retained root must be user-owned internal storage with mode 0700")
-    args._guest_retained_root = validate_guest_asset_retained_root(DEFAULT_WORKFLOW_RETAINED)
     args._provider_release_identity = admit_locked_native_compose_inputs(
         args, manifest, args._guest_retained_root)
     if not args.evidence.is_relative_to(args.ssd_root):
@@ -1441,11 +1590,11 @@ def admit_provider_helper_programs(lane: str, args: argparse.Namespace) -> dict:
     receipt_path = retained / "prepared-receipts" / (prepared["preparationSHA256"] + ".json")
     receipt = json.loads(receipt_path.read_bytes())
     verified = prepare_releases.validate_prepared(package_root, specification, receipt)
+    active = args._active_provider_runtimes[lane]["active"]
     provider_root = provider_install_root(lane, args)
-    prefix = package_root / ("Payload" if specification["layout"]["format"] == "pkg" else "")
-    if (provider_root != prefix or provider_root.is_symlink()
+    if (provider_root != Path(active["root"]) or provider_root.is_symlink()
             or provider_root.resolve(strict=True) != provider_root):
-        raise ValueError(f"{lane} selected provider root differs from the retained locked package")
+        raise ValueError(f"{lane} selected provider root differs from its exact active runtime")
 
     helpers = {
         "com.apple.container.container-core-images":
@@ -1473,6 +1622,8 @@ def admit_provider_helper_programs(lane: str, args: argparse.Namespace) -> dict:
         "preparationSHA256": prepared["preparationSHA256"],
         "preparedReceiptSHA256": sha256(receipt_path),
         "inventorySHA256": prepared["inventorySHA256"],
+        "activationReceiptSHA256": active["activation"]["receiptSHA256"],
+        "activeInventorySHA256": active["inventorySHA256"],
         "helperExecutables": helper_evidence,
     }
     return admitted
@@ -1506,6 +1657,201 @@ def retain_lane_start_failure(runtime, error: BaseException) -> dict | None:
             or disposition["hostMutationStarted"] is not True):
         raise RuntimeError("runtime start disposition is inconsistent")
     return None
+
+
+def preflight_native_api_startup(args: argparse.Namespace, lane: str,
+                                evidence: Path, cleanup: dict[str, dict]) -> dict:
+    """Prove one exact active provider API can start and restore before Docker fixtures."""
+    if lane not in {"apple-stock", "container-compose"}:
+        raise ValueError("native API preflight requires a selected native provider")
+    active = args._active_provider_runtimes[lane]["active"]
+    api = Path(active["executables"]["container-apiserver"])
+    container = Path(active["executables"]["container"])
+    api_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
+    cli_key = "stockContainer" if lane == "apple-stock" else "composeContainer"
+    if (api != container.parent / "container-apiserver"
+            or sha256(api) != args._provider_hashes[api_key]
+            or sha256(container) != args._provider_hashes[cli_key]):
+        raise ValueError(f"{lane} preflight binaries differ from the admitted active provider")
+
+    from private_keychain import run_keychain
+    from runtime_services import ControlledRuntime
+
+    activation = qualification_provider_runtime_identities(args._active_provider_runtimes)[lane]
+    root = None
+    try:
+        root = Path(tempfile.mkdtemp(prefix=f"native-api-preflight-{lane}-", dir=SSD)).resolve()
+        root.chmod(0o700)
+        identity = {"campaign": args.campaign, "lane": lane,
+                    "sourceCommit": args.source_commit, "scope": "native-api-startup-preflight"}
+        owner = {"identity": identity, "root": str(root)}
+        owner_path = root / "owner.json"
+        descriptor_fd = os.open(owner_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor_fd, "wb") as output:
+            output.write((json.dumps(owner, sort_keys=True) + "\n").encode())
+            output.flush()
+            os.fsync(output.fileno())
+        runtime = ControlledRuntime(root, owner, api, JOURNAL_PARENT, home=ACCOUNT_HOME)
+    except BaseException as error:
+        record = {"schemaVersion": 1, "lane": lane, "status": "failed",
+                  "sourceCommit": args.source_commit, "providerRuntimeActivation": activation,
+                  "apiServerSHA256": sha256(api), "containerSHA256": sha256(container),
+                  "apiReadiness": "failed", "serviceState": "not-started",
+                  "serviceRestored": True, "primaryFailureType":
+                  f"{type(error).__module__}.{type(error).__qualname__}",
+                  "primaryFailureSHA256": None, "primaryFailureRetentionErrorType": None,
+                  "cleanupFailureType": None}
+        if root is not None:
+            record["scratchRoot"] = str(root)
+            marker = root / "owner.json"
+            if marker.is_file() and not marker.is_symlink():
+                record["ownerSHA256"] = sha256(marker)
+        write_durable_preflight_json(evidence / f"{lane}-startup-preflight.json", record)
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
+        raise RuntimeError(f"{lane} API startup preflight setup failed before provider mutation: {error}") from error
+
+    keychain_created = False
+    restored = False
+    failure = None
+    failure_row = None
+    failure_retention_error = None
+    cleanup_errors = []
+    try:
+        def prepare_private_home(journal):
+            nonlocal keychain_created
+            run_keychain(root, "create", journal)
+            keychain_created = True
+
+        runtime.start(prepare_home=prepare_private_home)
+        runtime.verify()
+    except BaseException as error:
+        failure = error
+        try:
+            failure_row = retain_lane_start_failure(runtime, error)
+        except BaseException as retain_error:
+            failure_retention_error = retain_error
+
+    if runtime.switch is not None:
+        try:
+            # Restoration is attempted even if retaining the primary failure failed.
+            runtime.restore()
+            restored = True
+        except BaseException as error:
+            cleanup_errors.append(error)
+    else:
+        restored = not runtime.host_mutation_started
+
+    if restored and keychain_created:
+        try:
+            run_keychain(root, "delete", runtime.journal)
+        except BaseException as error:
+            cleanup_errors.append(error)
+
+    journal_receipt = None
+    if runtime.journal is not None:
+        try:
+            runtime.preserve_logs()
+            receipt = runtime.receipt()
+            journal_receipt = {"schemaVersion": 1, "lane": lane,
+                               "status": "restored" if restored and not cleanup_errors else "uncertain",
+                               "ownerSHA256": receipt.get("ownerSHA256"),
+                               "records": receipt.get("records"), "seal": receipt.get("seal")}
+        except BaseException as error:
+            cleanup_errors.append(error)
+    else:
+        journal_receipt = {"schemaVersion": 1, "lane": lane, "status": "not-started",
+                           "reason": "failure before durable service journal creation"}
+    if journal_receipt is not None:
+        try:
+            write_durable_preflight_json(evidence / f"{lane}-startup-preflight-journal.json", journal_receipt)
+        except BaseException as error:
+            cleanup_errors.append(error)
+    journal_path = evidence / f"{lane}-startup-preflight-journal.json"
+    journal_sha = None
+    try:
+        if journal_path.is_file() and not journal_path.is_symlink():
+            journal_sha = sha256(journal_path)
+    except OSError as error:
+        cleanup_errors.append(error)
+    if failure is None and restored and not cleanup_errors:
+        if (not isinstance(journal_receipt, dict)
+                or journal_receipt.get("status") != "restored"
+                or re.fullmatch(r"[0-9a-f]{64}", str(journal_receipt.get("ownerSHA256", ""))) is None
+                or type(journal_receipt.get("records")) is not int or journal_receipt["records"] <= 0
+                or re.fullmatch(r"[0-9a-f]{64}", str(journal_receipt.get("seal", ""))) is None):
+            cleanup_errors.append(ValueError("native API preflight journal receipt is incomplete"))
+
+    marker = root / "owner.json"
+    try:
+        if marker.is_symlink() or json.loads(marker.read_text(encoding="utf-8")) != owner:
+            raise ValueError("native API preflight ownership marker changed")
+    except (OSError, ValueError, UnicodeError) as error:
+        cleanup_errors.append(error)
+
+    status = "passed" if (failure is None and not cleanup_errors
+                           and failure_retention_error is None and restored) else "failed"
+    if status == "passed":
+        try:
+            shutil.rmtree(root)
+        except BaseException as error:
+            cleanup_errors.append(error)
+            status = "failed"
+
+    record = {
+        "schemaVersion": 1,
+        "lane": lane,
+        "status": status,
+        "sourceCommit": args.source_commit,
+        "providerRuntimeActivation": activation,
+        "startupJournalSHA256": journal_sha,
+        "apiServerSHA256": sha256(api),
+        "containerSHA256": sha256(container),
+        "apiReadiness": "passed" if failure is None else "failed",
+        "serviceState": ("not-started" if not runtime.host_mutation_started else
+                         "restored" if restored else "uncertain"),
+        "serviceRestored": not runtime.host_mutation_started or restored,
+        "primaryFailureType": (f"{type(failure).__module__}.{type(failure).__qualname__}"
+                                if failure is not None else None),
+        "primaryFailureSHA256": (failure_row or {}).get("primaryFailureSHA256"),
+        "primaryFailureRetentionErrorType": (
+            f"{type(failure_retention_error).__module__}.{type(failure_retention_error).__qualname__}"
+            if failure_retention_error is not None else None),
+        "cleanupFailureType": (f"{type(cleanup_errors[0]).__module__}.{type(cleanup_errors[0]).__qualname__}"
+                               if cleanup_errors else None),
+    }
+    if status != "passed":
+        record["scratchRoot"] = str(root)
+        try:
+            if marker.is_file() and not marker.is_symlink():
+                record["ownerSHA256"] = sha256(marker)
+        except OSError:
+            pass
+    write_durable_preflight_json(evidence / f"{lane}-startup-preflight.json", record)
+    if status != "passed":
+        if (not restored or cleanup_errors or failure_retention_error is not None):
+            cleanup[lane] = {"status": "uncertain",
+                             "serviceRestored": not runtime.host_mutation_started or restored,
+                             "scratchRoot": str(root), "startupPreflight": record}
+        if cleanup_errors:
+            raise RuntimeError(f"{lane} API startup preflight cleanup failed; preserving private root") from cleanup_errors[0]
+        if failure_retention_error is not None:
+            raise RuntimeError(f"{lane} API startup failure retention failed after restoration attempt; preserving private root") from failure_retention_error
+        if failure is not None:
+            raise RuntimeError(f"{lane} API startup preflight failed before Docker fixtures: {failure}") from failure
+        raise RuntimeError(f"{lane} API startup preflight was not fully restored")
+
+    return record
+
+
+def preflight_native_providers_before_docker(args: argparse.Namespace, evidence: Path,
+                                             cleanup: dict[str, dict], docker_runner) -> None:
+    """Require both bounded native API start/restore checks before Docker fixture work."""
+    root = evidence / "native-api-startup-preflight"
+    root.mkdir(mode=0o700, parents=True)
+    for lane in ("apple-stock", "container-compose"):
+        preflight_native_api_startup(args, lane, root, cleanup)
+    docker_runner()
 
 
 def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
@@ -1579,6 +1925,8 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             {"status": "api-and-helper-ready",
              "containerBinarySHA256": sha256(Path(lane_env["DEVCONTAINER_CONTAINER_BIN"])),
              "apiServerSHA256": sha256(api),
+             "providerRuntimeActivation": qualification_provider_runtime_identities(
+                 args._active_provider_runtimes)[lane],
              "providerHelperSHA256": {label: value["sha256"] for label, value in expected_helpers.items()},
              "providerHelperHome": helper_home,
              "guestImagesAndKernel": "admitted ReleasedGuest provisioning before owned Engine start"},
@@ -1673,7 +2021,11 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
 
 def provider_install_root(lane: str, args: argparse.Namespace) -> Path:
     executable = args.stock_container_bin if lane == "apple-stock" else args.compose_container_bin
-    return executable.parent.parent
+    root = executable.parent.parent
+    active = args._active_provider_runtimes[lane]["active"]
+    if root != Path(active["root"]):
+        raise ValueError(f"{lane} provider install root is not the admitted active runtime")
+    return root
 
 
 def cli_cleanup_is_complete(evidence: Path, lane: str,
@@ -1976,6 +2328,8 @@ def main() -> int:
         "trustedStateSHA256": args.state_sha256,
         "archiveSHA256": package_proof["archiveSHA256"],
         "packageAdmissions": package_admissions, "providerSHA256": binaries,
+        "activeProviderRuntimes": qualification_provider_runtime_identities(
+            args._active_provider_runtimes),
         "guestInputAdmissions": args._guest_input_admissions,
         "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
         "initialServiceSetSHA256": initial_services, "initialServiceCount": initial_service_count,
@@ -1997,9 +2351,12 @@ def main() -> int:
         guard.begin(transaction_owner)
         try:
             try:
-                docker_lane(args, args.evidence, endpoint, base_env, initial_colima, cleanup)
+                preflight_native_providers_before_docker(
+                    args, args.evidence, cleanup,
+                    lambda: docker_lane(args, args.evidence, endpoint, base_env,
+                                        initial_colima, cleanup))
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                errors.append(f"docker: {error}")
+                errors.append(f"native API preflight / Docker lane: {error}")
             if cleanup["docker"].get("status") == "restored":
                 for lane, api in (
                     ("apple-stock", args.stock_container_bin.parent / "container-apiserver"),
@@ -2069,6 +2426,14 @@ def main() -> int:
         errors.append("runtime guard was not cleared")
     if not all(cleanup[lane].get("status") == "restored" for lane in LANES):
         errors.append("one or more runtime lanes were not fully restored")
+    try:
+        lock = json.loads((args.repository / "Tools/bazel/releases.lock.json").read_bytes())
+        final_active = active_provider_runtime_inputs(lock, args._guest_retained_root)
+        if active_provider_runtime_receipts(final_active) != active_provider_runtime_receipts(
+                args._active_provider_runtimes):
+            raise ValueError("active provider runtime receipt changed during qualification")
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+        errors.append(f"active provider re-admission failed: {error}")
     if component_fixture:
         component_comparison = component_comparison or {"status": "failed"}
         component_provider_inputs = {}
@@ -2078,6 +2443,9 @@ def main() -> int:
             if final_binaries != binaries or args._source_tree != json.loads(
                     (args.evidence / "operator-inputs.json").read_text())["sourceTree"]:
                 raise ValueError("source or provider inputs changed during component run")
+            if qualification_provider_runtime_identities(args._active_provider_runtimes) != json.loads(
+                    (args.evidence / "operator-inputs.json").read_text())["activeProviderRuntimes"]:
+                raise ValueError("active provider runtime inputs changed during component run")
             final_package_admissions = admit_package_before_runtime(args)
             if final_package_admissions != package_admissions:
                 raise ValueError("finalized package admissions changed during component run")
@@ -2090,6 +2458,8 @@ def main() -> int:
             component_provider_inputs = {
                 "providerSHA256": final_binaries,
                 "admittedPackageLanes": final_package_admissions,
+                "activeProviderRuntimes": qualification_provider_runtime_identities(
+                    args._active_provider_runtimes),
                 "providerHelperEvidence": args._provider_helper_evidence,
                 "laneEvidenceSHA256": {},
             }
