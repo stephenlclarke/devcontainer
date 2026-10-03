@@ -212,6 +212,8 @@ The release installation check trusts only its generated formula in a temporary 
 
 The [layered dependency workflow](docs/devcontainer-layers.md) imports published ArgumentParser, foundation, Containerization, Engine API and Container SDK binaries in both profiles. `make bazel-compiled-consumers LAYER_EVIDENCE=FRESH_ABSOLUTE_DIR` builds all four executables and checks their actual imported archives and action inputs. `make bazel-layers LAYER_EVIDENCE=FRESH_ABSOLUTE_DIR` separately runs all eleven source-unit suites in six ordered groups for both profiles. Exact dependency pins, toolchain and release evidence are checked before reuse; full product release qualification remains separate.
 
+Legacy layer-reuse admission runs with the operational `/usr/bin/python3` AST format. Python versions whose `ast.dump` suppresses empty fields by default fail closed for those legacy receipts; `make lint` tests admission with `/usr/bin/python3` and checks that newer interpreter behavior explicitly.
+
 In the unreleased candidate, `devcontainer configure` preserves existing settings omitted from the command, including strict compatibility. Use `--strict` or `--no-strict` to change that setting explicitly; new configurations remain strict by default. Changing only the socket no longer silently resets stored strictness. Backend and Compose frontend choices remain independent.
 
 The candidate also preserves progress from failed Apple image builds and returns a Docker-compatible error record without recording success. Preflight rejection, cancellation and abandonment remain distinct failures. [Component tests](docs/bazel-test-harness.md#image-build-contract) cover this in both profiles; live E04 build parity and stable publication are still required.

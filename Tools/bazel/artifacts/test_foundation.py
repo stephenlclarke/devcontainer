@@ -73,27 +73,39 @@ LEGACY_LOCK_FIXTURES = {
 
 
 class FoundationTests(unittest.TestCase):
-    def test_legacy_producer_ast_guard_is_stable_across_python_ast_versions(self) -> None:
+    def test_legacy_producer_ast_guard_is_stable_or_fails_closed_across_python_ast_versions(self) -> None:
         root = Path(__file__).resolve().parents[3]
-        interpreters = [sys.executable]
-        system_python = Path("/usr/bin/python3")
-        path_python = shutil.which("python3")
-        for candidate in (str(system_python) if system_python.is_file() else None, path_python):
-            if candidate and candidate not in interpreters:
-                interpreters.append(candidate)
+        candidates = [sys.executable, "/usr/bin/python3"]
+        candidates.extend(shutil.which(f"python3.{minor}") for minor in (9, 12, 13, 14, 15))
+        candidates.append(shutil.which("python3"))
+        interpreters = []
+        seen = set()
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                identity = os.path.realpath(candidate)
+                if identity not in seen:
+                    seen.add(identity)
+                    interpreters.append(candidate)
         code = """
+import ast
+import inspect
 import json
 from pathlib import Path
 from artifacts import foundation
 root = Path.cwd()
 assert foundation._legacy_upper_pin_delta(root, 'enhanced')
-assert foundation._legacy_producer_ast_unchanged(root)
+dump_parameters = inspect.signature(ast.dump).parameters
+suppresses_empty_fields = (
+    'show_empty' in dump_parameters and dump_parameters['show_empty'].default is False
+)
+expected_admission = not suppresses_empty_fields
+assert foundation._legacy_producer_ast_unchanged(root) == expected_admission
 for profile in ('stock', 'enhanced'):
     for group in foundation.GROUPS:
         path = foundation.layer_lock_path(root, group, profile)
         lock = json.loads(path.read_text())
         admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
-        assert admitted == (profile == 'stock'), (profile, group)
+        assert admitted == (profile == 'stock' and expected_admission), (profile, group)
 """
         environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
         for executable in interpreters:

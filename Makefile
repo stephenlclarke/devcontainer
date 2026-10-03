@@ -570,8 +570,9 @@ lint:
 	$(PYTHON) -m unittest discover Tools/parity
 	$(PYTHON) -m unittest discover Tools/release
 	$(PYTHON) -m unittest discover Tools/ci
+	PYTHONPATH=Tools/bazel /usr/bin/python3 -m unittest artifacts.test_foundation
 	PYTHONPATH=Tools/bazel $(PYTHON) -m unittest \
-		artifacts.test_argument_parser artifacts.test_foundation \
+		artifacts.test_argument_parser \
 		artifacts.test_native_argument_parser artifacts.test_native_layers \
 		artifacts.test_prove_layers artifacts.test_release_asset \
 		test_layered_build test_compiled_consumers test_source_graph \
