@@ -99,17 +99,22 @@ class BuildProbeTests(unittest.TestCase):
         self.assertIsNone(build_output(200, manifest_only).image_id)
         combined = payload + f'{{"aux":{{"ID":"{config}"}}}}\n'.encode()
         self.assertEqual(build_output(200, combined).image_id, config)
+        conflicting = payload + f'{{"aux":{{"ID":"{manifest}"}}}}\n'.encode()
         with self.assertRaisesRegex(ValueError, "conflicting image identities"):
-            build_output(200, payload + f'{{"aux":{{"ID":"{manifest}"}}}}\n'.encode())
+            build_output(200, conflicting)
 
     def test_buildkit_identity_rejects_ambiguous_or_malformed_config_records(self):
         config = 'sha256:' + 'c' * 64
         other = 'sha256:' + 'd' * 64
-        for line in (f'#6 exporting config {config} done extra',
-                     f'#6 exporting config {config[:20]} done',
-                     f'#6 exporting config {config} 0.1s done'):
+        malformed_records = [
+            (line, json.dumps({"stream": line}).encode() + b'\n')
+            for line in (f'#6 exporting config {config} done extra',
+                         f'#6 exporting config {config[:20]} done',
+                         f'#6 exporting config {config} 0.1s done')
+        ]
+        for line, payload in malformed_records:
             with self.subTest(line=line), self.assertRaisesRegex(ValueError, "config identity is malformed"):
-                build_output(200, json.dumps({"stream": line}).encode() + b'\n')
+                build_output(200, payload)
         distinct = (f'{{"stream":"#6 exporting config {config} done\\n"}}\n'
                     f'{{"stream":"#7 exporting config {other} done\\n"}}\n').encode()
         with self.assertRaisesRegex(ValueError, "conflicting image identities"):

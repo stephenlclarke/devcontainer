@@ -161,7 +161,9 @@ final class DockerFrontendUnixHTTPClient: @unchecked Sendable {
         var reader = SocketReader(descriptor: descriptor, lifetime: lifetime)
         let head = try Self.parseHead(reader.readHead(maximumBytes: Self.maximumHeaderBytes))
         guard head.status == 101 else {
-            let collector = BodyCollector(maximumBytes: 64 * 1024, handler: { _ in /* Retain error only. */ })
+            let collector = BodyCollector(maximumBytes: 64 * 1024, handler: { _ in
+                // The collector retains diagnostics; failed upgrades never deliver raw stream bytes.
+            })
             try readBody(request: request, head: head, reader: &reader, collector: collector)
             throw ContainerUnixHTTPClientError.server(status: head.status, message: collector.errorMessage)
         }

@@ -64,20 +64,24 @@ final class DockerFrontendUnixHTTPConnection: @unchecked Sendable {
                 }
                 let descriptor = try self.lifetime.duplicateDescriptor()
                 defer { Darwin.close(descriptor) }
-                try data.withUnsafeBytes { bytes in
-                    guard let base = bytes.baseAddress else { return }
-                    var offset = 0
-                    while offset < bytes.count {
-                        try self.lifetime.check()
-                        let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
-                        try self.lifetime.check()
-                        if count < 0, errno == EINTR {
-                            continue
-                        }
-                        guard count > 0 else { throw Self.posixError() }
-                        offset += count
-                    }
+                try self.writeBytes(data, to: descriptor)
+            }
+        }
+    }
+
+    private func writeBytes(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                try lifetime.check()
+                let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+                try lifetime.check()
+                if count < 0, errno == EINTR {
+                    continue
                 }
+                guard count > 0 else { throw Self.posixError() }
+                offset += count
             }
         }
     }

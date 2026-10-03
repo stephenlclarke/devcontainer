@@ -14,7 +14,8 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parent / "prepare-swiftpm-dependencies.py"
 SPEC = importlib.util.spec_from_file_location("prepare_swiftpm_dependencies", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)

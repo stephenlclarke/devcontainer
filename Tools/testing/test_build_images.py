@@ -349,8 +349,9 @@ class BuildImagesTests(unittest.TestCase):
         self.output()
         with self.assertRaisesRegex(ValueError, "matching durable image identity"):
             self.fixture.response(200, b'{"stream":"Step 4/4 done"}\n')
+        recovered = self.reopen()
         with self.assertRaisesRegex(ValueError, "durable response identity"):
-            self.reopen().cleanup()
+            recovered.cleanup()
         self.assert_no_delete()
         self.assertIn(tag_for(OWNER), self.server.images)
 
@@ -376,9 +377,10 @@ class BuildImagesTests(unittest.TestCase):
                 raise OSError("simulated lost creation receipt")
             return put(name, payload)
 
+        response = buildkit_success('sha256:' + 'd' * 64)
         with patch.object(self.fixture.journal, "put", side_effect=lose_creation_receipt), \
                 self.assertRaisesRegex(OSError, "lost creation receipt"):
-            self.fixture.response(200, buildkit_success('sha256:' + 'd' * 64))
+            self.fixture.response(200, response)
         records = self.journal.records()
         self.assertIn("e04-built-completed.json", records)
         self.assertNotIn("e04-built-created.json", records)
