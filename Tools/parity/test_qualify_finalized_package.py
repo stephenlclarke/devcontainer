@@ -21,6 +21,13 @@ from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+# Positive socket fixtures need a short parent independent of ambient TMPDIR.
+# This Mac must keep transient fixtures on its enrolled SSD; hosted CI can use /tmp.
+NATIVE_SOCKET_TMPDIR = Path(os.environ.get("DEVCONTAINER_TEST_SCRATCH_ROOT", "/tmp")).resolve()
+if sys.platform == "darwin" and (Path("/Volumes/SSD").exists() or os.environ.get("GITHUB_ACTIONS") != "true"):
+    NATIVE_SOCKET_TMPDIR = Path(os.environ.get("DEVCONTAINER_TEST_SCRATCH_ROOT", "/Volumes/SSD/q")).resolve()
+    if not NATIVE_SOCKET_TMPDIR.is_relative_to("/Volumes/SSD"):
+        raise ValueError("Native socket fixtures on this Mac require enrolled SSD scratch")
 sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
 sys.path.insert(0, str(REPOSITORY / "Tools/bazel"))
 
@@ -887,7 +894,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
     def test_native_api_preflight_restores_service_after_bounded_ready_probe(self) -> None:
         from types import SimpleNamespace
 
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=NATIVE_SOCKET_TMPDIR) as temporary:
             root = Path(temporary).resolve()
             scratch = root / "ssd"
             scratch.mkdir(mode=0o700)
@@ -969,7 +976,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
         for mode in ("constructor-error", "before-mutation", "during-start", "retention-error",
                      "restore-error", "keychain-delete-error", "journal-incomplete",
                      "owner-missing", "owner-unreadable", "owner-malformed"):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=NATIVE_SOCKET_TMPDIR) as temporary:
                 root = Path(temporary).resolve()
                 scratch, retained, evidence, args = self._native_preflight_fixture(root)
                 events = []
@@ -1278,7 +1285,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
                 qualify.validate_guest_asset_retained_root(root)
 
     def test_package_admission_failure_happens_before_evidence_or_runtime_mutation(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=NATIVE_SOCKET_TMPDIR) as temporary:
             root = Path(temporary).resolve()
             app = root / "VS Code.app"
             code = app / "Contents/MacOS/Code"
