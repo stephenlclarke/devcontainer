@@ -782,6 +782,76 @@ class AdmissionBoundaryTests(unittest.TestCase):
             campaign="preflight-fixture", source_commit="1" * 40)
         return scratch, retained, evidence, args
 
+    def test_native_api_preflight_socket_fits_physical_ssd_and_rejects_utf8_length(self) -> None:
+        suffix = "/container/engine-provider/provider.sock"
+        ascii_length = 103 - len(os.fsencode(suffix)) - 1
+        self.assertEqual(len(os.fsencode(qualify.require_native_api_preflight_socket_path(
+            Path("/" + "x" * ascii_length)))), 103)
+        with self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+            qualify.require_native_api_preflight_socket_path(Path("/" + "x" * (ascii_length + 1)))
+        utf8_root = Path("/" + "é" * 10 + "x" * (ascii_length - 20))
+        self.assertEqual(len(os.fsencode(qualify.require_native_api_preflight_socket_path(utf8_root))), 103)
+        with self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+            qualify.require_native_api_preflight_socket_path(
+                Path("/" + "é" * 10 + "x" * (ascii_length - 19)))
+
+        for lane in ("apple-stock", "container-compose"):
+            root = Path(f"/Volumes/SSD/cf/bazel/api-{lane}-abcdefgh")
+            socket = qualify.require_native_api_preflight_socket_path(root)
+            self.assertLess(len(os.fsencode(socket)), 104)
+            self.assertEqual(socket, root / "container/engine-provider/provider.sock")
+
+        qualify.require_native_provider_socket_layouts(Path("/Volumes/SSD/cf/bazel/abc"))
+        with self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+            qualify.require_native_api_preflight_socket_path(
+                Path("/Volumes/SSD/cf/bazel/abc/native-parity-container-compose-abcdefgh"))
+
+        for root in (Path("/Volumes/SSD/cf/bazel/" + "x" * 32 + "/api-apple-stock-abcdefgh"),
+                     Path("/Volumes/SSD/cf/bazel/" + "é" * 16 + "/api-apple-stock-abcdefgh")):
+            with self.subTest(root=root), self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+                qualify.require_native_api_preflight_socket_path(root)
+
+    def test_oversized_native_api_preflight_root_fails_before_host_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            _, retained, evidence, args = self._native_preflight_fixture(base)
+            scratch = base / ("é" * 32) / "ssd"
+            scratch.mkdir(parents=True, mode=0o700)
+            cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+            with (mock.patch.object(qualify, "SSD", scratch),
+                  mock.patch.object(qualify, "JOURNAL_PARENT", retained),
+                  mock.patch("runtime_services.ControlledRuntime") as runtime,
+                  mock.patch("private_keychain.run_keychain") as keychain):
+                with self.assertRaisesRegex(RuntimeError, "setup failed.*provider socket exceeds"):
+                    qualify.preflight_native_api_startup(args, "container-compose", evidence, cleanup)
+            runtime.assert_not_called()
+            keychain.assert_not_called()
+            record = json.loads((evidence / "container-compose-startup-preflight.json").read_text())
+            self.assertEqual(record["serviceState"], "not-started")
+            self.assertTrue(record["serviceRestored"])
+            self.assertFalse((Path(record["scratchRoot"]) / "owner.json").exists())
+            self.assertEqual(list(Path(record["scratchRoot"]).iterdir()), [])
+
+    def test_native_provider_layouts_reject_long_root_before_docker_work(self) -> None:
+        with self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+            qualify.require_native_provider_socket_layouts(
+                Path("/Volumes/SSD/cf/bazel/" + "é" * 16 + "/deeper"))
+
+    def test_native_parity_root_rejects_actual_oversize_before_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            allocated = base / ("é" * 24) / "par-container-compose-abcdefgh"
+            allocated.mkdir(parents=True, mode=0o700)
+            args = argparse.Namespace(campaign="socket-bound", source_commit="1" * 40)
+            with (mock.patch.object(qualify.tempfile, "mkdtemp", return_value=str(allocated)),
+                  mock.patch("runtime_services.ControlledRuntime") as runtime,
+                  mock.patch("private_keychain.run_keychain") as keychain):
+                with self.assertRaisesRegex(ValueError, "provider socket exceeds"):
+                    qualify.apple_lane(args, "container-compose", base, base / "api", {}, {})
+            runtime.assert_not_called()
+            keychain.assert_not_called()
+            self.assertFalse(allocated.exists())
+
     def test_native_startup_preflights_both_providers_before_docker_callback(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

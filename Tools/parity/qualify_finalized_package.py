@@ -1659,6 +1659,23 @@ def retain_lane_start_failure(runtime, error: BaseException) -> dict | None:
     return None
 
 
+def require_native_api_preflight_socket_path(root: Path) -> Path:
+    """Reject any private API root that cannot hold its Engine provider socket."""
+    socket = root / "container/engine-provider/provider.sock"
+    if len(os.fsencode(socket)) >= 104:
+        raise ValueError(f"Native API provider socket exceeds Darwin's 103-byte limit: {socket}")
+    return socket
+
+
+def require_native_provider_socket_layouts(ssd: Path) -> None:
+    """Admit both native scratch layouts before Docker or runtime work."""
+    for lane in ("apple-stock", "container-compose"):
+        for prefix in (f"api-{lane}-", f"par-{lane}-"):
+            # tempfile.mkdtemp currently adds eight random characters. The
+            # actual allocated root is checked again before host mutation.
+            require_native_api_preflight_socket_path(ssd / (prefix + "abcdefgh"))
+
+
 def preflight_native_api_startup(args: argparse.Namespace, lane: str,
                                 evidence: Path, cleanup: dict[str, dict]) -> dict:
     """Prove one exact active provider API can start and restore before Docker fixtures."""
@@ -1680,7 +1697,8 @@ def preflight_native_api_startup(args: argparse.Namespace, lane: str,
     activation = qualification_provider_runtime_identities(args._active_provider_runtimes)[lane]
     root = None
     try:
-        root = Path(tempfile.mkdtemp(prefix=f"native-api-preflight-{lane}-", dir=SSD)).resolve()
+        root = Path(tempfile.mkdtemp(prefix=f"api-{lane}-", dir=SSD)).resolve()
+        require_native_api_preflight_socket_path(root)
         root.chmod(0o700)
         identity = {"campaign": args.campaign, "lane": lane,
                     "sourceCommit": args.source_commit, "scope": "native-api-startup-preflight"}
@@ -1862,7 +1880,14 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
     from runtime_services import ControlledRuntime
 
     identity = {"campaign": args.campaign, "lane": lane, "sourceCommit": args.source_commit}
-    root = Path(tempfile.mkdtemp(prefix=f"native-parity-{lane}-", dir=SSD))
+    root = Path(tempfile.mkdtemp(prefix=f"par-{lane}-", dir=SSD))
+    try:
+        require_native_api_preflight_socket_path(root)
+    except ValueError:
+        # rmdir removes only this freshly allocated empty path, not its parent
+        # or a replacement symlink target.
+        root.rmdir()
+        raise
     root.chmod(0o700)
     owner = {"identity": identity, "root": str(root)}
     (root / "owner.json").write_text(json.dumps(owner, sort_keys=True) + "\n")
@@ -2278,6 +2303,8 @@ def main() -> int:
 
     if component_fixture and (args.evidence.exists() or args.evidence.is_symlink()):
         raise ValueError("Component evidence root must be fresh")
+
+    require_native_provider_socket_layouts(SSD)
 
     # Exact signed-package admissions precede lease acquisition and any runtime,
     # Colima, launchd, provider or keychain mutation.
