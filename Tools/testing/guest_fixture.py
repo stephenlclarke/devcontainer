@@ -85,12 +85,24 @@ class GuestFixture:
         identifier = value.get("Id")
         config = value.get("Config")
         labels = config.get("Labels") if isinstance(config, dict) else None
-        if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None or
-                value.get("Name") != "/" + self.name or not isinstance(config, dict) or
-                not isinstance(labels, dict) or labels.get(OWNER_LABEL) != self.owner or config.get("Image") != self.image or
-                config.get("Cmd") != self.intent["command"] or
-                value.get("Image") != self.image):
-            raise ValueError("Guest resource ownership or image changed; refusing mutation")
+        command = self.intent["command"]
+        entrypoint = config.get("Entrypoint") if isinstance(config, dict) else None
+        cmd = config.get("Cmd") if isinstance(config, dict) else None
+        # Docker can project the same exact argv as a full Cmd or as one
+        # Entrypoint element followed by Cmd. No other split is owned.
+        command_matches = (type(cmd) is list and all(type(part) is str for part in cmd) and
+                           (((entrypoint is None or entrypoint == []) and cmd == command) or
+                            (type(entrypoint) is list and entrypoint == command[:1] and cmd == command[1:])))
+        checks = {"id": isinstance(identifier, str) and re.fullmatch(self.id_pattern, identifier) is not None,
+                  "name": value.get("Name") == "/" + self.name,
+                  "owner": isinstance(labels, dict) and labels.get(OWNER_LABEL) == self.owner,
+                  "configImage": isinstance(config, dict) and config.get("Image") == self.image,
+                  "image": value.get("Image") == self.image,
+                  "command": command_matches}
+        if not all(checks.values()):
+            # Boolean diagnostics reveal no labels, command, image bytes or keys.
+            raise ValueError("Guest resource ownership or image changed; refusing mutation: " +
+                             json.dumps(checks, sort_keys=True))
         return identifier
 
     def setup(self):

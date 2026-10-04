@@ -342,6 +342,59 @@ class GuestFixtureTests(unittest.TestCase):
                 self.fixture.cleanup()
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
 
+    def test_exact_split_command_preserves_owner_and_cleanup(self):
+        self.fixture.setup()
+        original = copy.deepcopy(self.server.guest)
+        command = self.fixture.intent["command"]
+        split = copy.deepcopy(original)
+        split["Config"]["Entrypoint"] = command[:1]
+        split["Config"]["Cmd"] = command[1:]
+        self.server.guest = split
+        self.assertEqual(self.fixture.owned(split), original["Id"])
+        for kind in ("entrypoint", "cmd", "extra-entrypoint", "scalar-cmd",
+                     "name", "id", "owner", "image", "config-image"):
+            changed = copy.deepcopy(split)
+            if kind == "entrypoint":
+                changed["Config"]["Entrypoint"] = ["other"]
+            elif kind == "cmd":
+                changed["Config"]["Cmd"] = ["other"]
+            elif kind == "extra-entrypoint":
+                changed["Config"]["Entrypoint"] = ["sleep", "extra"]
+            elif kind == "scalar-cmd":
+                changed["Config"]["Cmd"] = "300"
+            elif kind == "name":
+                changed["Name"] = "/other"
+            elif kind == "id":
+                changed["Id"] = "d" * 64
+            elif kind == "owner":
+                changed["Config"]["Labels"][OWNER_LABEL] = "foreign"
+            elif kind == "image":
+                changed["Image"] = "sha256:" + "d" * 64
+            else:
+                changed["Config"]["Image"] = "alpine:latest"
+            if kind == "id":
+                self.server.guest = changed
+                with self.subTest(kind=kind), self.assertRaises(ValueError):
+                    self.fixture.cleanup()  # The journal rejects a changed valid ID.
+                self.server.guest = split
+            else:
+                with self.subTest(kind=kind), self.assertRaises(ValueError):
+                    self.fixture.owned(changed)
+        full_with_extra = copy.deepcopy(original)
+        full_with_extra["Config"]["Entrypoint"] = ["sleep"]
+        with self.assertRaises(ValueError):
+            self.fixture.owned(full_with_extra)
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_full_command_accepts_only_empty_or_missing_entrypoint(self):
+        self.fixture.setup()
+        value = copy.deepcopy(self.server.guest)
+        value["Config"]["Entrypoint"] = []
+        self.assertEqual(self.fixture.owned(value), value["Id"])
+        value["Config"]["Entrypoint"] = ""
+        with self.assertRaises(ValueError):
+            self.fixture.owned(value)
+
     def test_unknown_removal_outcome_resumes_by_id_without_repeating_delete(self):
         self.fixture.setup()
         original = self.fixture.call

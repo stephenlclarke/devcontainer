@@ -550,6 +550,15 @@ class ComposeSignalTests(unittest.TestCase):
         value["Config"]["Cmd"] = list(self.fixture.command)
         return value
 
+    def test_q_inspect_split_is_owned_only_for_exact_signal_argv(self):
+        value = self.guest()
+        value["Config"]["Entrypoint"] = ["sh"]
+        value["Config"]["Cmd"] = list(self.fixture.command[1:])
+        self.assertEqual(self.fixture.owned(value), value["Id"])
+        value["Config"]["Cmd"] = ["-c", "other script"]
+        with self.assertRaises(ValueError):
+            self.fixture.owned(value)
+
     def run_cli(self, script=None):
         original = self.fixture.child.start
         original_auto_remove = ForegroundFixture.require_auto_removed
