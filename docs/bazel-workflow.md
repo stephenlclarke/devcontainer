@@ -124,6 +124,8 @@ The signed Compose input format requires six independently locked release assets
 
 Qualification and its independent verifier retain separate `containerCompose` and `containerRuntime` identities, including exact preparation and inventory hashes for both. Legacy receipts retain their original schema and exact locked asset pair; they cannot be relabeled as evidence for the new chain. A Compose prerelease's distribution limitation remains recorded, even when it is admitted as an external test input. This does not authorize bundling it into devcontainer or replace devcontainer's own legal, signing, complete runtime, installation and restoration gates.
 
+The stock Compose Engine gateway uses the same authenticated archive layout with explicitly scoped `signed-compose-stock-gateway-provenance`. Admission binds its signed candidate's stock profile, source, published stock SDK locks and notarization while retaining `runtimeQualification: pending`. The Q runtime, guest and builder provenance is verified independently. Enhanced Compose's direct native runtime qualification cannot qualify this stock gateway; Devcontainer must run its own complete fixture set through the Engine socket.
+
 ## Storage and evidence
 
 | Data | Location / policy |

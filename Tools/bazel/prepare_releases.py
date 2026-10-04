@@ -413,10 +413,18 @@ def validate_q_runtime_provenance(bundle: dict, runtime_asset: dict,
 
 def validate_compose_runtime_association(selection: dict, provenance: dict,
                                          runtime_provenance: dict,
-                                         prepared_runtime_root: Path) -> dict:
-    """Bind the signed Compose release to the exact independently locked Q runtime."""
+                                         prepared_runtime_root: Path,
+                                         compose_root: Path | None = None) -> dict:
+    """Authenticate the selected Compose profile and enhanced runtime association."""
     compose_asset = selection["composeArchive"]
     provenance_asset = selection["composeProvenance"]
+    if provenance.get("kind") == "signed-compose-stock-gateway-provenance":
+        if compose_root is None:
+            raise ValueError("Stock Compose admission requires the extracted signed archive tree")
+        validate_compose_signed_tree(provenance, compose_root)
+        return validate_stock_compose_gateway(selection, provenance, compose_root)
+    if provenance.get("runtimeProfile") == "stock":
+        raise ValueError("Stock Compose provenance has an unsupported scope or kind")
     runtime_asset = selection["containerRuntime"]
     runtime_provenance_asset = selection["containerRuntimeProvenance"]
     guest_asset = selection["guestImage"]
@@ -509,6 +517,150 @@ def validate_compose_runtime_association(selection: dict, provenance: dict,
     }
 
 
+def validate_stock_compose_gateway(selection: dict, provenance: dict,
+                                   compose_root: Path) -> dict:
+    """Admit signed stock Engine-gateway bytes without claiming live runtime qualification."""
+    compose_asset = selection["composeArchive"]
+    provenance_asset = selection["composeProvenance"]
+    source = compose_asset.get("commit")
+    archive_sha = compose_asset.get("sha256")
+    if (compose_asset.get("repository") != "stephenlclarke/container-compose"
+            or compose_asset.get("name") != "container-compose-signed-arm64.zip"
+            or provenance_asset.get("repository") != compose_asset.get("repository")
+            or provenance_asset.get("tag") != compose_asset.get("tag")
+            or provenance_asset.get("commit") != source
+            or provenance_asset.get("name") != "qualified-compose-release.json"
+            or not isinstance(source, str) or re.fullmatch(r"[0-9a-f]{40}", source) is None
+            or not isinstance(archive_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", archive_sha) is None):
+        raise ValueError("Stock Compose archive and provenance release identities differ")
+    notary = provenance.get("notary")
+    if (provenance.get("scope") != "signed-stock-gateway-compiled-layer"
+            or provenance.get("runtimeProfile") != "stock"
+            or provenance.get("gatewayBackend") != "engine"
+            or provenance.get("runtimeQualification") != "pending"
+            or provenance.get("architecture") != "arm64"
+            or provenance.get("source") != source
+            or provenance.get("signedArchiveSHA256") != archive_sha
+            or provenance.get("signedAndNotarized") is not True
+            or provenance.get("signedDistributionReady") is not False
+            or not isinstance(notary, dict) or notary.get("status") != "Accepted"
+            or not isinstance(notary.get("id"), str) or not notary["id"]):
+        raise ValueError("Stock Compose provenance does not authenticate the pending signed gateway layer")
+
+    chain = provenance.get("compiledSdkChain")
+    pins = provenance.get("compiledSourcePins")
+    lock_repositories = {
+        "argument-parser": "stephenlclarke/container",
+        "foundation": "stephenlclarke/container-compose",
+        "containerization": "stephenlclarke/containerization",
+        "engine-api": "stephenlclarke/container-engine-api",
+        "container-sdk": "stephenlclarke/container",
+    }
+    if (not isinstance(chain, dict) or chain.get("schema") != 1
+            or chain.get("source") != source or chain.get("profile") != "stock"
+            or chain.get("selected_config") != "prebuilt-container-sdk"
+            or not isinstance(chain.get("package_invocation"), str)
+            or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                            chain["package_invocation"]) is None
+            or not isinstance(pins, dict)
+            or set(pins) != {"container", "containerization", "engine-api"}):
+        raise ValueError("Stock Compose compiled source chain is incomplete or mismatched")
+    records = chain.get("locks")
+    if not isinstance(records, dict) or set(records) != set(lock_repositories):
+        raise ValueError("Stock Compose compiled dependency lock set is incomplete")
+    for name, repository in lock_repositories.items():
+        record = records[name]
+        if (not isinstance(record, dict)
+                or record.get("repository") != repository
+                or not isinstance(record.get("tag"), str)
+                or (not record["tag"].startswith("layer-argument-parser-")
+                    if name == "argument-parser"
+                    else not record["tag"].startswith(f"layer-{name}-stock-"))
+                or not isinstance(record.get("target_commit"), str)
+                or re.fullmatch(r"[0-9a-f]{40}", record["target_commit"]) is None
+                or any(not isinstance(record.get(key), str)
+                       or re.fullmatch(r"[0-9a-f]{64}", record[key]) is None
+                       for key in ("lock_sha256", "archive_sha256"))):
+            raise ValueError("Stock Compose compiled dependency record is malformed: " + name)
+    pin_repositories = {
+        "container": "apple/container",
+        "containerization": "apple/containerization",
+        "engine-api": "stephenlclarke/container-engine-api",
+    }
+    for name, repository in pin_repositories.items():
+        pin = pins[name]
+        if (not isinstance(pin, dict) or pin.get("repository") != repository
+                or not isinstance(pin.get("commit"), str)
+                or re.fullmatch(r"[0-9a-f]{40}", pin["commit"]) is None):
+            raise ValueError("Stock Compose compiled source pin is malformed: " + name)
+    if any(records[lock_name]["target_commit"] != pins[pin_name]["commit"]
+           for lock_name, pin_name in (("container-sdk", "container"),
+                                       ("containerization", "containerization"),
+                                       ("engine-api", "engine-api"))):
+        raise ValueError("Stock Compose compiled source pins differ from published layer locks")
+
+    signed_payload = provenance.get("signedPayload")
+    expected_payload = {"bin/compose", "resources/compose-normalizer"}
+    if not isinstance(signed_payload, dict) or set(signed_payload) != expected_payload:
+        raise ValueError("Stock Compose provenance has an incomplete signed payload inventory")
+    signed_tree = provenance.get("signedTree")
+    for relative, digest in signed_payload.items():
+        if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or signed_tree.get(relative) != digest):
+            raise ValueError("Stock Compose signed payload differs from its signed tree")
+
+    candidate_path = compose_root / "compose/resources/candidate.json"
+    build_info_path = compose_root / "compose/resources/build-info.json"
+    for path in (candidate_path, build_info_path):
+        if path.is_symlink() or not path.is_file() or not stat.S_ISREG(path.stat().st_mode):
+            raise ValueError("Stock Compose archive is missing regular build identity metadata")
+    if signed_tree.get("resources/candidate.json") != sha256(candidate_path):
+        raise ValueError("Stock Compose candidate identity is not bound by the signed tree")
+    try:
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("Stock Compose build identity metadata is unreadable") from error
+    dependency_lock_sha = provenance.get("dependencyLockSHA256")
+    if (not isinstance(candidate, dict) or not isinstance(build_info, dict)
+            or not isinstance(dependency_lock_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", dependency_lock_sha) is None
+            or candidate.get("dependencyLockSHA256") != dependency_lock_sha
+            or candidate.get("kind") != "unsigned-native-candidate"
+            or candidate.get("runtimeProfile") != "stock"
+            or candidate.get("commit") != source
+            or candidate.get("architecture") != "arm64"
+            or candidate.get("compilationMode") != "opt"
+            or candidate.get("distributionReady") is not False
+            or build_info.get("source") != compose_asset["repository"]
+            or build_info.get("commit") != source
+            or build_info.get("containerSource") != pins["container"]["repository"]
+            or build_info.get("containerRef") != pins["container"]["commit"]
+            or build_info.get("containerizationSource") != pins["containerization"]["repository"]
+            or build_info.get("containerizationRef") != pins["containerization"]["commit"]):
+        raise ValueError("Stock Compose candidate or build metadata differs from its compiled profile")
+
+    runtime_asset = selection["containerRuntime"]
+    runtime_commit = runtime_asset.get("commit")
+    if (runtime_asset.get("repository") != "stephenlclarke/container"
+            or runtime_asset.get("name") != "container-homebrew-arm64.tar.gz"
+            or not isinstance(runtime_commit, str)
+            or re.fullmatch(r"[0-9a-f]{40}", runtime_commit) is None
+            or not isinstance(runtime_asset.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", runtime_asset["sha256"]) is None):
+        raise ValueError("Stock Compose selected Q runtime identity is malformed")
+    return {
+        "containerCompose": {"repository": compose_asset["repository"], "version": None,
+                             "commit": source, "archiveSHA256": archive_sha},
+        "containerRuntime": {"repository": runtime_asset["repository"],
+                             "commit": runtime_commit, "archiveSHA256": runtime_asset["sha256"]},
+        "runtimeProfile": "stock", "gatewayBackend": "engine",
+        "runtimeQualification": "pending", "compiledSourcePins": pins,
+        "signedAndNotarized": True, "distributionReady": False,
+    }
+
+
 def admit_compose_runtime_inputs(selection: dict, retained_objects: Path,
                                  prepared: dict) -> dict:
     """Authenticate archive, provenance, signed tree and distinct source identities."""
@@ -527,16 +679,25 @@ def admit_compose_runtime_inputs(selection: dict, retained_objects: Path,
     runtime_provenance_path = Path(prepared["containerRuntimeProvenance"]["files"]["provenance"])
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     runtime_provenance = json.loads(runtime_provenance_path.read_text(encoding="utf-8"))
+    compose_root = Path(prepared["composeArchive"]["root"])
     identity = validate_compose_runtime_association(
-        selection, provenance, runtime_provenance, Path(prepared["containerRuntime"]["root"]))
-    validate_compose_signed_tree(provenance, Path(prepared["composeArchive"]["root"]))
+        selection, provenance, runtime_provenance,
+        Path(prepared["containerRuntime"]["root"]), compose_root)
+    if identity.get("runtimeProfile") == "stock":
+        identity["qRuntimeProvenance"] = validate_q_runtime_provenance(
+            runtime_provenance, selection["containerRuntime"], selection["guestImage"],
+            selection["builderImage"], Path(prepared["containerRuntime"]["root"]))
+    else:
+        validate_compose_signed_tree(provenance, compose_root)
     build_info_path = Path(prepared["composeArchive"]["root"]) / "compose/resources/build-info.json"
     build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
     if (build_info.get("source") != identity["containerCompose"]["repository"]
             or build_info.get("commit") != identity["containerCompose"]["commit"]
-            or build_info.get("containerSource") != identity["containerRuntime"]["repository"]
-            or build_info.get("containerRef") != identity["containerRuntime"]["commit"]
             or not isinstance(build_info.get("version"), str) or not build_info["version"]):
+        raise ValueError("Compose build metadata conflates or changes its runtime identity")
+    if identity.get("runtimeProfile") != "stock" and (
+            build_info.get("containerSource") != identity["containerRuntime"]["repository"]
+            or build_info.get("containerRef") != identity["containerRuntime"]["commit"]):
         raise ValueError("Compose build metadata conflates or changes its runtime identity")
     identity["containerCompose"]["version"] = build_info["version"]
     return identity

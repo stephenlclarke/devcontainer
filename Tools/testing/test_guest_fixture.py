@@ -228,8 +228,9 @@ class GuestFixtureTests(unittest.TestCase):
             if created is not None:
                 changed["container-created.json"] = created
             with self.subTest(case=name), patch.object(self.journal, "records", return_value=changed):
+                reopened = self.reopen()
                 with self.assertRaisesRegex(ValueError, "Observed guest receipt"):
-                    self.reopen().cleanup()
+                    reopened.cleanup()
         self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
         self.assertNotIn("container-removed.json", self.journal.records())
 

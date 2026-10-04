@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scope": "authenticated external Compose prerelease and Q release inputs; Devcontainer runtime qualification pending",
+  "scope": "authenticated stock Compose Engine gateway prerelease and independent Q release inputs; Devcontainer runtime qualification pending",
   "assets": [
     {
       "repository": "stephenlclarke/devcontainer",
@@ -32,31 +32,31 @@
     },
     {
       "repository": "stephenlclarke/container-compose",
-      "tag": "layer-compose-8129f2b78af2-2952284ab02f",
-      "releaseID": 403199632,
+      "tag": "layer-compose-stock-8129f2b78af2-a9240a70cef7",
+      "releaseID": 403246993,
       "tagObject": "8129f2b78af2305d0298d17f7880b21d7539c61d",
       "commit": "8129f2b78af2305d0298d17f7880b21d7539c61d",
       "publisher": "stephenlclarke",
       "prerelease": true,
-      "assetID": 610621887,
+      "assetID": 610891364,
       "name": "container-compose-signed-arm64.zip",
       "architecture": "arm64",
-      "size": 34954088,
-      "sha256": "2952284ab02f4704e4bb017fb83ef44d1d6fe5582ea4374b43ee731d3b354e4d"
+      "size": 32126611,
+      "sha256": "a9240a70cef7b89b655d45f0c7d3b753accc6e80d8675113ab3cb32c7eed1b5c"
     },
     {
       "repository": "stephenlclarke/container-compose",
-      "tag": "layer-compose-8129f2b78af2-2952284ab02f",
-      "releaseID": 403199632,
+      "tag": "layer-compose-stock-8129f2b78af2-a9240a70cef7",
+      "releaseID": 403246993,
       "tagObject": "8129f2b78af2305d0298d17f7880b21d7539c61d",
       "commit": "8129f2b78af2305d0298d17f7880b21d7539c61d",
       "publisher": "stephenlclarke",
       "prerelease": true,
-      "assetID": 610621885,
+      "assetID": 610891363,
       "name": "qualified-compose-release.json",
       "architecture": "arm64",
-      "size": 13059,
-      "sha256": "38b407fab7259a9696d91d7f00fc6e7cd4735cea43ebacac7d6f6b03a7a847a5"
+      "size": 5870,
+      "sha256": "c1e502d7f8f394c7ead889892f26fa9cbb187bab432109ffdc4efc7464208220"
     },
     {
       "repository": "stephenlclarke/container",

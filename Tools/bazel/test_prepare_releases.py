@@ -255,6 +255,225 @@ class PrepareReleasesTests(unittest.TestCase):
             preparation.validate_q_runtime_provenance(
                 q_changed, runtime_asset, guest_asset, builder_asset, runtime_root)
 
+    def stock_gateway_fixture(self):
+        source = "8129f2b78af2305d0298d17f7880b21d7539c61d"
+        pins = {
+            "container": {"repository": "apple/container",
+                          "commit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"},
+            "containerization": {"repository": "apple/containerization",
+                                 "commit": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d"},
+            "engine-api": {"repository": "stephenlclarke/container-engine-api",
+                           "commit": "c04ed07b8a324a996b9d62397278b90a389fe830"},
+        }
+        lock_repositories = {
+            "argument-parser": "stephenlclarke/container",
+            "foundation": "stephenlclarke/container-compose",
+            "containerization": "stephenlclarke/containerization",
+            "engine-api": "stephenlclarke/container-engine-api",
+            "container-sdk": "stephenlclarke/container",
+        }
+        lock_targets = {
+            "argument-parser": "1" * 40,
+            "foundation": "2" * 40,
+            "containerization": pins["containerization"]["commit"],
+            "engine-api": pins["engine-api"]["commit"],
+            "container-sdk": pins["container"]["commit"],
+        }
+        locks = {}
+        for name, repository in lock_repositories.items():
+            suffix = "argument-parser" if name == "argument-parser" else name + "-stock"
+            locks[name] = {
+                "lock_sha256": ("a" if name == "argument-parser" else "b") * 64,
+                "archive_sha256": ("c" if name == "argument-parser" else "d") * 64,
+                "repository": repository,
+                "tag": f"layer-{suffix}-fixture",
+                "target_commit": lock_targets[name],
+            }
+        chain = {
+            "schema": 1, "source": source, "profile": "stock",
+            "selected_config": "prebuilt-container-sdk",
+            "package_invocation": "a1ebdf2a-88b1-4ea9-b83f-dab3b07ad7e1",
+            "locks": locks,
+        }
+        compose_root = self.root / f"stock-compose-{len(list(self.root.glob('stock-compose-*')))}"
+        plugin_root = compose_root / "compose"
+        resources = plugin_root / "resources"
+        binaries = plugin_root / "bin"
+        resources.mkdir(parents=True)
+        binaries.mkdir()
+        candidate = {
+            "kind": "unsigned-native-candidate", "runtimeProfile": "stock",
+            "commit": source, "architecture": "arm64", "compilationMode": "opt",
+            "distributionReady": False,
+            "dependencyLockSHA256": "8" * 64,
+        }
+        build_info = {
+            "source": "stephenlclarke/container-compose", "commit": source,
+            "version": "0.15.1", "containerSource": pins["container"]["repository"],
+            "containerRef": pins["container"]["commit"],
+            "containerizationSource": pins["containerization"]["repository"],
+            "containerizationRef": pins["containerization"]["commit"],
+        }
+        (resources / "candidate.json").write_text(json.dumps(candidate, sort_keys=True))
+        (resources / "build-info.json").write_text(json.dumps(build_info, sort_keys=True))
+        (binaries / "compose").write_bytes(b"stock compose binary")
+        (resources / "compose-normalizer").write_bytes(b"stock normalizer")
+        signed_tree = {
+            path.relative_to(plugin_root).as_posix(): sha256(path)
+            for path in plugin_root.rglob("*") if path.is_file()
+        }
+        archive_sha = "9" * 64
+        archive = {
+            "repository": "stephenlclarke/container-compose", "tag": "stock-fixture",
+            "commit": source, "name": "container-compose-signed-arm64.zip",
+            "sha256": archive_sha,
+        }
+        provenance_asset = {
+            "repository": archive["repository"], "tag": archive["tag"],
+            "commit": archive["commit"], "name": "qualified-compose-release.json",
+            "sha256": "7" * 64,
+        }
+        runtime_asset = {
+            "repository": "stephenlclarke/container", "tag": "runtime-fixture",
+            "commit": "f" * 40, "name": "container-homebrew-arm64.tar.gz",
+            "sha256": "e" * 64,
+        }
+        provenance = {
+            "kind": "signed-compose-stock-gateway-provenance",
+            "scope": "signed-stock-gateway-compiled-layer",
+            "runtimeProfile": "stock", "gatewayBackend": "engine",
+            "runtimeQualification": "pending", "architecture": "arm64",
+            "source": source, "signedArchiveSHA256": archive_sha,
+            "signedAndNotarized": True, "signedDistributionReady": False,
+            "notary": {"status": "Accepted", "id": "notary-fixture"},
+            "signedPayload": {
+                "bin/compose": signed_tree["bin/compose"],
+                "resources/compose-normalizer": signed_tree["resources/compose-normalizer"],
+            },
+            "signedTree": signed_tree,
+            "dependencyLockSHA256": candidate["dependencyLockSHA256"],
+            "compiledSdkChain": chain,
+            "compiledSourcePins": pins,
+        }
+        selection = {
+            "composeArchive": archive, "composeProvenance": provenance_asset,
+            "containerRuntime": runtime_asset,
+        }
+        return selection, provenance, compose_root, candidate, signed_tree
+
+    def test_stock_gateway_admission_binds_profile_binary_and_compiled_closure(self):
+        selection, provenance, compose_root, _, _ = self.stock_gateway_fixture()
+        identity = preparation.validate_compose_runtime_association(
+            selection, provenance, {}, self.root, compose_root)
+        self.assertEqual(identity["runtimeProfile"], "stock")
+        self.assertEqual(identity["gatewayBackend"], "engine")
+        self.assertEqual(identity["runtimeQualification"], "pending")
+        self.assertEqual(identity["containerCompose"]["commit"], "8129f2b78af2305d0298d17f7880b21d7539c61d")
+        self.assertEqual(identity["containerRuntime"]["commit"], "f" * 40)
+        self.assertNotIn("qRuntimeProvenance", identity)
+
+    def test_stock_gateway_admission_rejects_profile_scope_and_identity_drift(self):
+        mutations = (
+            ("runtimeProfile", "enhanced"),
+            ("gatewayBackend", "container"),
+            ("runtimeQualification", "qualified"),
+            ("scope", "fully-qualified-runtime"),
+            ("source", "0" * 40),
+            ("signedAndNotarized", False),
+            ("signedArchiveSHA256", "0" * 64),
+            ("dependencyLockSHA256", "0" * 64),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                selection, provenance, compose_root, _, _ = self.stock_gateway_fixture()
+                changed = json.loads(json.dumps(provenance))
+                changed[field] = value
+                with self.assertRaises(ValueError):
+                    preparation.validate_compose_runtime_association(
+                        selection, changed, {}, self.root, compose_root)
+
+    def test_stock_gateway_admission_rejects_enhanced_candidate_masquerading_as_stock(self):
+        selection, provenance, compose_root, candidate, signed_tree = self.stock_gateway_fixture()
+        candidate["runtimeProfile"] = "enhanced"
+        path = compose_root / "compose/resources/candidate.json"
+        path.write_text(json.dumps(candidate, sort_keys=True))
+        provenance["signedTree"]["resources/candidate.json"] = sha256(path)
+        with self.assertRaisesRegex(ValueError, "candidate or build metadata"):
+            preparation.validate_compose_runtime_association(
+                selection, provenance, {}, self.root, compose_root)
+
+    def test_stock_gateway_admission_rejects_malformed_dependency_chain(self):
+        changes = (
+            lambda value: value["compiledSdkChain"].update(profile="enhanced"),
+            lambda value: value["compiledSdkChain"]["locks"].pop("engine-api"),
+            lambda value: value["compiledSdkChain"]["locks"]["engine-api"].update(
+                target_commit="0" * 40),
+            lambda value: value["compiledSourcePins"]["container"].update(
+                repository="stephenlclarke/container"),
+        )
+        for mutate in changes:
+            with self.subTest(mutate=mutate):
+                selection, provenance, compose_root, _, _ = self.stock_gateway_fixture()
+                changed = json.loads(json.dumps(provenance))
+                mutate(changed)
+                with self.assertRaises(ValueError):
+                    preparation.validate_compose_runtime_association(
+                        selection, changed, {}, self.root, compose_root)
+
+    def test_stock_gateway_admission_rejects_bad_notary_and_signed_payload_or_tree(self):
+        mutations = (
+            lambda value: value["notary"].update(status="Invalid"),
+            lambda value: value["signedPayload"].update({"bin/compose": "0" * 64}),
+            lambda value: value["signedTree"].update({"resources/build-info.json": "0" * 64}),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                selection, provenance, compose_root, _, _ = self.stock_gateway_fixture()
+                changed = json.loads(json.dumps(provenance))
+                mutate(changed)
+                with self.assertRaises(ValueError):
+                    preparation.validate_compose_runtime_association(
+                        selection, changed, {}, self.root, compose_root)
+
+    def test_stock_gateway_keeps_q_runtime_validation_independent(self):
+        (compose_asset, provenance_asset, runtime_asset, runtime_provenance_asset,
+         _, runtime_provenance_path, _, runtime_provenance, _, runtime_root, _,
+         guest_asset, builder_asset, _, _, _, _) = self.compose_release_fixture()
+        selection, compose_provenance, compose_root, _, _ = self.stock_gateway_fixture()
+        selection.update({
+            "containerRuntime": runtime_asset,
+            "containerRuntimeProvenance": runtime_provenance_asset,
+            "guestImage": guest_asset, "builderImage": builder_asset,
+        })
+        compose_provenance_path = self.root / "stock-qualified-compose-release.json"
+        compose_provenance_path.write_text(json.dumps(compose_provenance, sort_keys=True))
+        prepared = {
+            "composeArchive": {"root": str(compose_root)},
+            "composeProvenance": {"files": {"provenance": str(compose_provenance_path)}},
+            "containerRuntime": {"root": str(runtime_root)},
+            "containerRuntimeProvenance": {
+                "files": {"provenance": str(runtime_provenance_path)}},
+            "guestImage": {}, "builderImage": {},
+        }
+        objects = self.root / "objects"
+        objects.mkdir()
+        with patch("prepare_releases.verify_object"):
+            identity = preparation.admit_compose_runtime_inputs(selection, objects, prepared)
+        self.assertEqual(identity["runtimeProfile"], "stock")
+        self.assertEqual(identity["runtimeQualification"], "pending")
+        self.assertEqual(identity["containerRuntime"]["commit"], runtime_asset["commit"])
+        self.assertEqual(identity["qRuntimeProvenance"]["commit"], runtime_asset["commit"])
+        self.assertNotIn("qRuntimeProvenance", compose_provenance)
+
+        changed_q = json.loads(json.dumps(runtime_provenance))
+        changed_q["assets"]["runtime"]["sha256"] = "0" * 64
+        changed_q_path = self.root / "bad-q-runtime-provenance.json"
+        changed_q_path.write_text(json.dumps(changed_q, sort_keys=True))
+        prepared["containerRuntimeProvenance"]["files"]["provenance"] = str(changed_q_path)
+        with patch("prepare_releases.verify_object"), self.assertRaisesRegex(
+                ValueError, "does not bind the selected runtime archive"):
+            preparation.admit_compose_runtime_inputs(selection, objects, prepared)
+
     def test_locked_adapter_requires_retained_zip_provenance_and_q_tar(self):
         (compose_asset, provenance_asset, runtime_asset, runtime_provenance_asset,
          provenance_path, runtime_provenance_path, _, _, _, _, runtime_source,
