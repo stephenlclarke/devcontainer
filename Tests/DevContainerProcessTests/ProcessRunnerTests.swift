@@ -160,17 +160,128 @@ struct ProcessRunnerTests {
     @Test(arguments: [false, true])
     func `inherited runner forwards exact signals and restores prior dispositions`(signalBeforeSpawnReturns: Bool) async throws {
         let result = try await runSignalRelayProbe(signalBeforeSpawnReturns: signalBeforeSpawnReturns)
-        #expect(result.readyObserved)
-        #expect(result.signalObserved)
-        #expect(result.exited)
-        #expect(result.exitCode == 23)
-        #expect(result.stdout == Data("usr1\nterm\ndispositions-restored\n".utf8))
-        #expect(result.stderr == Data("child-stderr\n".utf8))
-        #expect(result.termMarkerExists)
-        #expect(result.productionWaitCompleted)
-        #expect(!result.fixtureRootPreserved)
-        #expect(result.competingRequestRejected, "Contender result: \(result.competingStatus)")
-        #expect(!result.competingChildStarted)
+        #expect(result.readyObserved, "\(result.diagnostic)")
+        #expect(result.signalObserved, "\(result.diagnostic)")
+        #expect(result.exited, "\(result.diagnostic)")
+        #expect(result.exitCode == 23, "\(result.diagnostic)")
+        #expect(result.stdout == Data("usr1\nterm\ndispositions-restored\n".utf8), "\(result.diagnostic)")
+        #expect(result.stderr == Data("child-stderr\n".utf8), "\(result.diagnostic)")
+        #expect(result.stdoutReachedEOF, "\(result.diagnostic)")
+        #expect(result.stderrReachedEOF, "\(result.diagnostic)")
+        #expect(result.termMarkerExists, "\(result.diagnostic)")
+        #expect(result.productionWaitCompleted, "\(result.diagnostic)")
+        #expect(!result.fixtureRootPreserved, "\(result.diagnostic)")
+        #expect(result.ownershipVerified, "\(result.diagnostic)")
+        #expect(!result.cleanupAttempted, "\(result.diagnostic)")
+        #expect(!result.forcedCleanup, "\(result.diagnostic)")
+        #expect(result.competingRequestRejected, "\(result.diagnostic)")
+        #expect(!result.competingChildStarted, "\(result.diagnostic)")
+    }
+
+    @Test
+    func `signal cleanup rejects a changed process incarnation or ownership edge`() {
+        let expected = SignalRelayProcessIdentity(
+            pid: 41, parentPID: 17, processGroupID: 41,
+            startSeconds: 100, startMicroseconds: 200, executablePath: "/bin/sh"
+        )
+        let ownership = SignalRelayExpectedOwnership(parentPID: 17, processGroupID: 41, executablePath: "/bin/sh")
+        #expect(isOwnedSignalProcess(expected, current: expected, ownership: ownership))
+        #expect(!isOwnedSignalProcess(expected, current: nil, ownership: ownership))
+        for current in tamperedSignalRelayIdentities(expected) {
+            #expect(!isOwnedSignalProcess(expected, current: current, ownership: ownership))
+        }
+    }
+
+    @Test
+    func `rejected native snapshots never become signal authority`() {
+        let candidate = SignalRelayProcessIdentity(
+            pid: 41, parentPID: 17, processGroupID: 41,
+            startSeconds: 100, startMicroseconds: 200, executablePath: "/bin/sh"
+        )
+        let ownership = SignalRelayExpectedOwnership(parentPID: 17, processGroupID: 41, executablePath: "/bin/sh")
+        #expect(admittedSignalProcessIdentity(candidate, ownership: ownership, allowedPaths: ["/bin/sh"]) == candidate)
+        #expect(admittedSignalProcessIdentity(nil, ownership: ownership, allowedPaths: ["/bin/sh"]) == nil)
+        var unknownPath = candidate
+        unknownPath.executablePath = "/usr/bin/other"
+        let unknownOwnership = SignalRelayExpectedOwnership(
+            parentPID: 17, processGroupID: 41, executablePath: unknownPath.executablePath
+        )
+        let admittedUnknown = admittedSignalProcessIdentity(
+            unknownPath, ownership: unknownOwnership, allowedPaths: ["/bin/sh", "/bin/bash"]
+        )
+        #expect(admittedUnknown == nil)
+        for current in tamperedSignalRelayIdentities(candidate) where current.parentPID != candidate.parentPID
+            || current.processGroupID != candidate.processGroupID
+        {
+            #expect(admittedSignalProcessIdentity(current, ownership: ownership, allowedPaths: ["/bin/sh"]) == nil)
+        }
+    }
+
+    @Test
+    func `recorded child exit requires a missing process or changed kernel birth identity`() {
+        let expected = SignalRelayProcessIdentity(
+            pid: 41, parentPID: 17, processGroupID: 41,
+            startSeconds: 100, startMicroseconds: 200, executablePath: "/bin/sh"
+        )
+        #expect(!recordedSignalProcessHasExited(expected, current: expected))
+        #expect(recordedSignalProcessHasExited(expected, current: nil))
+        for current in tamperedSignalRelayIdentities(expected) {
+            let sameBirth = current.pid == expected.pid
+                && current.startSeconds == expected.startSeconds
+                && current.startMicroseconds == expected.startMicroseconds
+            #expect(recordedSignalProcessHasExited(expected, current: current) == !sameBirth)
+        }
+    }
+
+    @Test
+    func `cancellation during child marker wait performs bounded owned cleanup`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("signal-cancel-marker-\(UUID().uuidString)")
+        let task = Task {
+            try await runSignalRelayProbe(
+                signalBeforeSpawnReturns: false, root: root, delayPIDMarker: true
+            )
+        }
+        let markerWaitReached = try await waitForMarkerValue(
+            root.appendingPathComponent("parent-phase"), expected: "waiting-child-pid"
+        )
+        #expect(markerWaitReached)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(FileManager.default.fileExists(atPath: root.path))
+        #expect(try await wrapperFromRootHasExited(root))
+        let childIdentity = root.appendingPathComponent("child-identity.json")
+        if FileManager.default.fileExists(atPath: childIdentity.path) {
+            #expect(try await recordedProcessFromRootHasExited(root, markerName: childIdentity.lastPathComponent))
+        }
+        #expect((try? String(contentsOf: root.appendingPathComponent("parent-phase"), encoding: .utf8))?
+            .hasPrefix("cancelled-") == true)
+    }
+
+    @Test
+    func `cancellation during wrapper exit wait terminates the recorded wrapper`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("signal-cancel-exit-\(UUID().uuidString)")
+        let task = Task {
+            try await runSignalRelayProbe(
+                signalBeforeSpawnReturns: false, root: root, holdAfterInheritedReturn: true
+            )
+        }
+        let childHeld = try await waitForMarkerValue(
+            root.appendingPathComponent("child-phase"), expected: "holding-after-inherited-return", checks: 1200
+        )
+        let parentWaiting = try await waitForMarkerValue(
+            root.appendingPathComponent("parent-phase"), expected: "waiting-wrapper-exit"
+        )
+        #expect(childHeld && parentWaiting)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(FileManager.default.fileExists(atPath: root.path))
+        #expect(try await wrapperFromRootHasExited(root))
+        let childIdentity = root.appendingPathComponent("child-identity.json")
+        if FileManager.default.fileExists(atPath: childIdentity.path) {
+            #expect(try await recordedProcessFromRootHasExited(root, markerName: childIdentity.lastPathComponent))
+        }
+        #expect((try? String(contentsOf: root.appendingPathComponent("parent-phase"), encoding: .utf8))?
+            .hasPrefix("cancelled-") == true)
     }
 
     @Test
@@ -386,7 +497,7 @@ struct ProcessRunnerTests {
     }
 }
 
-private func processProbeURL() throws -> URL {
+func processProbeURL() throws -> URL {
     let environment = ProcessInfo.processInfo.environment
     if environment["BAZEL_TEST"] == "1" {
         guard let root = environment["TEST_SRCDIR"],
@@ -399,136 +510,6 @@ private func processProbeURL() throws -> URL {
     }
     return Bundle(for: ProcessProbeBundle.self).bundleURL.deletingLastPathComponent()
         .appendingPathComponent("DevContainerProcessProbe")
-}
-
-private func waitForSignalMarker(_ url: URL) async throws -> Bool {
-    for _ in 0 ..< 400 {
-        if FileManager.default.fileExists(atPath: url.path) {
-            return true
-        }
-        try await Task.sleep(for: .milliseconds(5))
-    }
-    return false
-}
-
-private func waitForProcessExit(_ process: Process, checks: Int = 400) async throws -> Bool {
-    for _ in 0 ..< checks {
-        if !process.isRunning {
-            return true
-        }
-        try await Task.sleep(for: .milliseconds(5))
-    }
-    return !process.isRunning
-}
-
-private struct SignalRelayProbeResult {
-    var readyObserved: Bool
-    var signalObserved: Bool
-    var exited: Bool
-    var exitCode: Int32
-    var stdout: Data
-    var stderr: Data
-    var termMarkerExists: Bool
-    var productionWaitCompleted: Bool
-    var fixtureRootPreserved: Bool
-    var competingRequestRejected: Bool
-    var competingChildStarted: Bool
-    var competingStatus: String
-}
-
-private func runSignalRelayProbe(signalBeforeSpawnReturns: Bool) async throws -> SignalRelayProbeResult {
-    let probe = try SignalRelayProbe(signalBeforeSpawnReturns: signalBeforeSpawnReturns)
-    try probe.process.run()
-    var result = try await probe.observe()
-    result.fixtureRootPreserved = !result.productionWaitCompleted
-    if result.productionWaitCompleted {
-        try? FileManager.default.removeItem(at: probe.root)
-    }
-    return result
-}
-
-private struct SignalRelayProbe {
-    let root: URL
-    let ready: URL
-    let pidMarker: URL
-    let userMarker: URL
-    let termMarker: URL
-    let competingMarker: URL
-    let competingRejectedMarker: URL
-    let competingStatusMarker: URL
-    let process: Process
-    let signalBeforeSpawnReturns: Bool
-    let output = Pipe()
-    let error = Pipe()
-
-    init(signalBeforeSpawnReturns: Bool) throws {
-        root = TestStorage.temporaryDirectory.appendingPathComponent("signal-relay-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        ready = root.appendingPathComponent("ready")
-        pidMarker = root.appendingPathComponent("pid")
-        userMarker = root.appendingPathComponent("usr1")
-        termMarker = root.appendingPathComponent("term")
-        competingMarker = root.appendingPathComponent("competing")
-        competingRejectedMarker = root.appendingPathComponent("competing-rejected")
-        competingStatusMarker = root.appendingPathComponent("competing-status")
-        process = Process()
-        self.signalBeforeSpawnReturns = signalBeforeSpawnReturns
-        process.executableURL = try processProbeURL()
-        process.arguments = ["--forward-signals"]
-        process.environment = [
-            "RELAY_READY_MARKER": ready.path,
-            "RELAY_PID_MARKER": pidMarker.path,
-            "RELAY_USR1_MARKER": userMarker.path,
-            "RELAY_TERM_MARKER": termMarker.path,
-            "RELAY_COMPETING_MARKER": competingMarker.path,
-            "RELAY_COMPETING_REJECTED_MARKER": competingRejectedMarker.path,
-            "RELAY_COMPETING_STATUS_MARKER": competingStatusMarker.path,
-            "RELAY_EARLY_SIGNAL": signalBeforeSpawnReturns ? "1" : "0"
-        ]
-        process.standardOutput = output
-        process.standardError = error
-    }
-
-    func observe() async throws -> SignalRelayProbeResult {
-        let readyFile = try await waitForSignalMarker(ready)
-        let pidFile = try await waitForSignalMarker(pidMarker)
-        let readyObserved = readyFile && pidFile
-        let competingRequestRejected = try await waitForSignalMarker(competingRejectedMarker)
-        if !signalBeforeSpawnReturns, readyObserved, process.isRunning {
-            _ = Darwin.kill(process.processIdentifier, SIGUSR1)
-        }
-        let signalObserved = try await waitForSignalMarker(userMarker)
-        if process.isRunning {
-            _ = Darwin.kill(process.processIdentifier, SIGTERM)
-        }
-        var exited = try await waitForProcessExit(process)
-        if !exited, process.isRunning {
-            // Cleanup only addresses the owned wrapper; its production signal relay
-            // forwards TERM to the child while preserving exact-child ownership.
-            _ = Darwin.kill(process.processIdentifier, SIGTERM)
-            exited = try await waitForProcessExit(process, checks: 1400)
-        }
-        if exited {
-            process.waitUntilExit()
-        }
-        let exitCode = exited ? process.terminationStatus : -1
-        let termMarkerExists = FileManager.default.fileExists(atPath: termMarker.path)
-        let productionWaitCompleted = exited && exitCode == 23 && termMarkerExists
-        return SignalRelayProbeResult(
-            readyObserved: readyObserved,
-            signalObserved: signalObserved,
-            exited: exited,
-            exitCode: exitCode,
-            stdout: exited ? output.fileHandleForReading.readDataToEndOfFile() : Data(),
-            stderr: exited ? error.fileHandleForReading.readDataToEndOfFile() : Data(),
-            termMarkerExists: termMarkerExists,
-            productionWaitCompleted: productionWaitCompleted,
-            fixtureRootPreserved: false,
-            competingRequestRejected: competingRequestRejected,
-            competingChildStarted: FileManager.default.fileExists(atPath: competingMarker.path),
-            competingStatus: (try? String(contentsOf: competingStatusMarker, encoding: .utf8)) ?? "missing"
-        )
-    }
 }
 
 private final class ProcessProbeBundle: NSObject {}

@@ -10,12 +10,14 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
           environment["RELAY_PID_MARKER"] != nil,
           environment["RELAY_USR1_MARKER"] != nil,
           environment["RELAY_TERM_MARKER"] != nil,
+          let phaseMarker = environment["RELAY_PHASE_MARKER"],
           let competingMarker = environment["RELAY_COMPETING_MARKER"],
           let competingRejectedMarker = environment["RELAY_COMPETING_REJECTED_MARKER"],
           let competingStatusMarker = environment["RELAY_COMPETING_STATUS_MARKER"]
     else {
         exit(89)
     }
+    _ = recordRelayMarker("checking-disposition-restoration", at: phaseMarker)
     _ = Darwin.signal(SIGUSR1, SIG_IGN)
     do {
         _ = try await ProcessRunner.inherited(
@@ -32,6 +34,7 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
             exit(86)
         }
     }
+    _ = recordRelayMarker("disposition-restored-before-main-call", at: phaseMarker)
     let competing = Task.detached { () -> Bool in
         _ = recordRelayMarker("started", at: competingStatusMarker)
         var readyObserved = false
@@ -73,6 +76,7 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
         try await Task.sleep(for: .milliseconds(2))
     }
     guard competingReady else { exit(84) }
+    _ = recordRelayMarker("awaiting-inherited-return", at: phaseMarker)
     let status = try await ProcessRunner.inherited(
         executable: URL(fileURLWithPath: "/bin/sh"),
         arguments: [
@@ -81,15 +85,31 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
                 + "trap 'printf \"term\\n\"; : > \"$RELAY_TERM_MARKER\"; exit 23' TERM; "
                 + "printf \"child-stderr\\n\" >&2; "
                 + "if [ \"$RELAY_EARLY_SIGNAL\" = 1 ]; then kill -USR1 \"$PPID\"; fi; "
+                + "if [ \"$RELAY_DELAY_PID_MARKER\" = 1 ]; then /bin/sleep 1; fi; "
                 + "printf '%s\\n' \"$$\" > \"$RELAY_PID_MARKER\"; "
                 + ": > \"$RELAY_READY_MARKER\"; "
                 + "i=0; while [ \"$i\" -lt 250 ]; do /bin/sleep 0.02; i=$((i + 1)); done; exit 84"
         ],
         environment: environment
     )
+    if let releaseMarker = environment["RELAY_EXIT_RELEASE_MARKER"] {
+        _ = recordRelayMarker("holding-after-inherited-return", at: phaseMarker)
+        var released = false
+        for _ in 0 ..< 2000 {
+            if FileManager.default.fileExists(atPath: releaseMarker) {
+                released = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        guard released else { exit(86) }
+    }
+    _ = recordRelayMarker("inherited-returned", at: phaseMarker)
+    _ = recordRelayMarker("awaiting-contender-result", at: phaseMarker)
     guard await competing.value else {
         exit(85)
     }
+    _ = recordRelayMarker("contender-returned", at: phaseMarker)
     var userAction = sigaction()
     var termAction = sigaction()
     guard sigaction(SIGUSR1, nil, &userAction) == 0,
@@ -101,6 +121,7 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
         exit(88)
     }
     print("dispositions-restored")
+    _ = recordRelayMarker("probe-complete", at: phaseMarker)
     exit(status)
 }
 

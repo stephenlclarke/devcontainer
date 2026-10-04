@@ -172,6 +172,8 @@ Coverage builds now use atomic counters and sandboxed Swift compilation to preve
 
 Coverage cleanup removes stale profiles and reports only from the selected SwiftPM build’s `codecov` output directory. It leaves dependency checkouts and their tracked configuration files untouched.
 
+The inherited-process signal regression test uses bounded exit polling and nonblocking pipe drains. It records parent and probe phase markers, revalidates native process identities before cleanup signals, and retains its fixture directory after a failed assertion, so a timeout preserves diagnostic evidence without changing production signal handling.
+
 The unreleased Bazel candidate preserves published ports when a delivered signal does not stop the container and joins restored-container observers during shutdown. [Signal implementation and evidence](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguish passing component tests from the unresolved Docker duplicate-signal oracle, native qualification and release gates.
 
 The Bazel E08 foreground fixture passes all seven observations on Docker and stock Apple: terminal resize, detach/reconnect of the same init process, acknowledged exit status and automatic removal. Stock proof includes the corrected `AutoRemove` inspection and resize-route declaration. E09 exercises the real Compose CLI's piped input, separate output streams, exit status and automatic removal; E10 applies those checks with `run --quiet`. Enhanced runtime, complete foreground parity, quiet-machine performance and stable release qualification remain open. See the [exact evidence and remaining requirements](docs/bazel-test-harness.md#foreground-init-attachment-development).
