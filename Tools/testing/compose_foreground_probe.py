@@ -144,18 +144,40 @@ class ComposeForegroundFixture(GuestFixture):
         return data
 
     def ready(self, end):
+        observed_id = None
         while True:
+            remaining(end)
             output = self.snapshot(self.output)
+            remaining(end)
             if output == self.ready_output:
-                actual = self.inspect(self.name)
-                if actual is None or actual.get("State", {}).get("Status") != "running":
+                actual = self.inspect(observed_id or self.name, total_timeout=remaining(end))
+                if actual is None:
                     raise ValueError("Compose foreground output has no running guest")
+                identifier = self.owned(actual)
+                if observed_id is None:
+                    observed_id = identifier
+                    # Creation is an ownership fact even while the native
+                    # start request is still committing its running state.
+                    self.journal.put("container-created.json", canonical({"id": identifier}))
+                elif identifier != observed_id:
+                    raise ValueError("Compose foreground guest identity changed during startup")
+                remaining(end)
+                if self.child.process.poll() is not None:
+                    raise ValueError("Compose CLI exited before its guest was running")
+                status = actual.get("State", {}).get("Status")
+                if status == "created":
+                    time.sleep(min(remaining(end), 0.01))
+                    continue
+                if status != "running":
+                    raise ValueError("Compose foreground guest left its created state before running")
                 self.journal.put("compose-foreground-inspection.json", canonical({
                     "identity": {key: actual.get(key) for key in ("Id", "Name", "Image")},
                     "config": {key: actual.get("Config", {}).get(key) for key in ("Tty", "OpenStdin")},
                     "host": {key: actual.get("HostConfig", {}).get(key) for key in ("AutoRemove", "NetworkMode")}}))
-                self.identifier = self.owned(actual)
-                self.journal.put("container-created.json", canonical({"id": self.identifier}))
+                remaining(end)
+                if self.child.process.poll() is not None:
+                    raise ValueError("Compose CLI exited before its guest was running")
+                self.identifier = identifier
                 return
             if not self.ready_output.startswith(output) or self.child.process.poll() is not None:
                 raise ValueError("Compose CLI exited or emitted unexpected foreground stdout")

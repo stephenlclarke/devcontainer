@@ -71,8 +71,9 @@ class GuestFixture:
             if self.observe is not None:
                 self.observe(event)
 
-    def inspect(self, resource: str):
-        status, payload = self.call("GET", f"/containers/{resource}/json")
+    def inspect(self, resource: str, *, total_timeout=None):
+        options = {"total_timeout": total_timeout} if total_timeout is not None else {}
+        status, payload = self.call("GET", f"/containers/{resource}/json", **options)
         value = json.loads(payload)
         if status == 404 and isinstance(value, dict) and isinstance(value.get("message"), str):
             return None

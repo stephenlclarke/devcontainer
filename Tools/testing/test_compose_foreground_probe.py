@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import sqlite3
 import subprocess
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -38,6 +39,104 @@ class ComposeForegroundTests(unittest.TestCase):
                            "Labels": {**self.fixture.intent["labels"], "com.docker.compose.project": self.fixture.project,
                                       "com.docker.compose.service": "app"}},
                 "HostConfig": {"AutoRemove": True, "NetworkMode": "none"}, "State": {"Status": "running"}}
+
+    def ready_with(self, inspections, *, outputs=None, process=None, end=None):
+        process = process or Mock()
+        process.poll.return_value = None
+        with patch.object(self.fixture, "snapshot", side_effect=outputs or [STDOUT] * len(inspections)), \
+                patch.object(self.fixture, "inspect", side_effect=inspections) as inspect, \
+                patch.object(self.fixture.child, "process", process):
+            self.fixture.ready(end or time.monotonic() + 1)
+        self.inspection_calls = list(inspect.call_args_list)
+        return [call.args[0] for call in inspect.call_args_list]
+
+    def test_ready_waits_for_same_owned_guest_to_be_running(self):
+        created, running = self.guest(), self.guest()
+        created["State"] = {"Status": "created"}
+        inspected = self.ready_with([created, running])
+        self.assertEqual(inspected, [self.fixture.name, "b" * 64])
+        self.assertTrue(all(0 < call.kwargs["total_timeout"] <= 1 for call in self.inspection_calls))
+        self.assertEqual(self.fixture.identifier, "b" * 64)
+        self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
+        self.assertIn("compose-foreground-inspection.json", self.journal.records())
+
+    def test_ready_rejects_replacement_and_disappearance_after_observed_creation(self):
+        created = self.guest()
+        created["State"] = {"Status": "created"}
+        replacement = self.guest()
+        replacement["Id"] = "c" * 64
+        for later, message in ((replacement, "identity changed"), (None, "no running guest")):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.ready_with([created, later])
+            self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
+            self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
+
+    def test_ready_does_not_journal_unowned_creation(self):
+        foreign = self.guest()
+        foreign["State"] = {"Status": "created"}
+        foreign["Config"]["Labels"]["com.docker.compose.project"] = "other-project"
+        with self.assertRaisesRegex(ValueError, "configuration changed"):
+            self.ready_with([foreign])
+        self.assertNotIn("container-created.json", self.journal.records())
+
+    def test_ready_rejects_cli_exit_and_unexpected_stdout_while_created(self):
+        created = self.guest()
+        created["State"] = {"Status": "created"}
+        process = Mock()
+        process.poll.side_effect = [None, 23]
+        with self.assertRaisesRegex(ValueError, "CLI exited"):
+            self.ready_with([created, created], process=process)
+        with self.assertRaisesRegex(ValueError, "unexpected foreground"):
+            self.ready_with([created], outputs=[STDOUT, STDOUT + b"unexpected\n"])
+
+    def test_ready_requires_running_before_original_deadline(self):
+        created = self.guest()
+        created["State"] = {"Status": "created"}
+        with patch("compose_foreground_probe.remaining", side_effect=[1, 1, 1, 1, TimeoutError("deadline")]), \
+                patch("compose_foreground_probe.time.sleep"):
+            with self.assertRaisesRegex(TimeoutError, "deadline"):
+                self.ready_with([created, created])
+        self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
+        self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
+
+        with patch("compose_foreground_probe.remaining", side_effect=[1, 1, 0.25, TimeoutError("deadline")]):
+            with self.assertRaisesRegex(TimeoutError, "deadline"):
+                self.ready_with([self.guest()])
+        self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
+
+    def test_inspect_forwards_its_total_http_budget(self):
+        with patch.object(self.fixture, "call", return_value=(200, canonical(self.guest()))) as call:
+            self.fixture.inspect(self.fixture.name, total_timeout=0.25)
+        call.assert_called_once_with("GET", f"/containers/{self.fixture.name}/json", total_timeout=0.25)
+        self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
+
+    def test_final_inspection_journal_cannot_outlive_deadline_or_cli(self):
+        with patch("compose_foreground_probe.remaining",
+                   side_effect=[1, 1, 1, 1, TimeoutError("deadline")]):
+            with self.assertRaisesRegex(TimeoutError, "deadline"):
+                self.ready_with([self.guest()])
+        self.assertIn("compose-foreground-inspection.json", self.journal.records())
+        self.assertIsNone(self.fixture.identifier)
+
+        process = Mock()
+        process.poll.side_effect = [None, 23]
+        with self.assertRaisesRegex(ValueError, "CLI exited"):
+            self.ready_with([self.guest()], process=process)
+        self.assertIsNone(self.fixture.identifier)
+
+    def test_created_identity_remains_recoverable_after_readiness_failure(self):
+        self.fixture.prepare()
+        self.fixture.command_attempted = True
+        created = self.guest()
+        created["State"] = {"Status": "created"}
+        self.server.guest = created
+        with patch("compose_foreground_probe.remaining", side_effect=[1, 1, 1, 1, TimeoutError("deadline")]), \
+                patch("compose_foreground_probe.time.sleep"):
+            with self.assertRaisesRegex(TimeoutError, "deadline"):
+                self.ready_with([created, created])
+        self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
+        self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
+        self.assertIsNone(self.server.guest)
 
     def run_cli(self, script=COMMAND[2]):
         original = self.fixture.child.start
