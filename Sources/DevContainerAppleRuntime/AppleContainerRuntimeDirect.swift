@@ -84,6 +84,15 @@ struct LiveAppleContainerFileClient: AppleContainerFileClient {
 struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
     let client: ContainerClient
     private let identityClient = XPCClient(service: "com.apple.container.apiserver")
+    private let identityResponseSender: (@Sendable (XPCMessage) async throws -> XPCMessage)?
+
+    init(
+        client: ContainerClient,
+        identityResponseSender: (@Sendable (XPCMessage) async throws -> XPCMessage)? = nil
+    ) {
+        self.client = client
+        self.identityResponseSender = identityResponseSender
+    }
 
     func list() async throws -> [ContainerResource.ContainerSnapshot] {
         try await client.list(filters: .all.withoutMachines())
@@ -104,8 +113,15 @@ struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
     private func rawIdentity(id: String) async throws -> Data {
         let request = XPCMessage(route: .containerList)
         try request.set(key: .listFilters, value: JSONEncoder().encode(ContainerListFilters(ids: [id])))
-        let response = try await identityClient.send(request, responseTimeout: .seconds(10))
+        let response = try await sendIdentityRequest(request)
         return try Self.copiedIdentityPayload(from: response)
+    }
+
+    private func sendIdentityRequest(_ request: XPCMessage) async throws -> XPCMessage {
+        if let identityResponseSender {
+            return try await identityResponseSender(request)
+        }
+        return try await identityClient.send(request, responseTimeout: .seconds(10))
     }
 
     static func copiedIdentityPayload(from response: XPCMessage) throws -> Data {

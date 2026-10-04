@@ -229,6 +229,39 @@ struct AppleContainerInventoryIdentityTests {
         }
     }
 
+    @Test
+    func `live identity request uses the exact filtered XPC path`() async throws {
+        let startedAt = createdAt.addingTimeInterval(10.125)
+        let payload = try JSONSerialization.data(withJSONObject: [[
+            "configuration": [
+                "id": "fixture", "creationDate": createdAt.timeIntervalSinceReferenceDate,
+                "labels": labels,
+                "image": ["reference": "fixture:latest", "descriptor": ["digest": "sha256:immutable"]]
+            ],
+            "startedDate": startedAt.timeIntervalSinceReferenceDate
+        ]])
+        let response = XPCMessage(route: .containerList)
+        response.set(key: .containers, value: payload)
+        let inventory = LiveAppleContainerInventoryClient(
+            client: ContainerClient(),
+            identityResponseSender: { request in
+                let expectedRoute = XPCMessage(route: .containerList).string(key: XPCMessage.routeKey)
+                #expect(request.string(key: XPCMessage.routeKey) == expectedRoute)
+                let filterData = try #require(request.data(key: .listFilters))
+                let filters = try JSONDecoder().decode(ContainerListFilters.self, from: filterData)
+                #expect(filters.ids == ["fixture"])
+                #expect(filters.status == nil)
+                #expect(filters.labels.isEmpty)
+                return response
+            }
+        )
+
+        let identity = try await inventory.identity(id: "fixture")
+        #expect(identity.id == "fixture")
+        #expect(identity.creationDate == createdAt)
+        #expect(identity.startedDate == startedAt)
+    }
+
     @Test(arguments: ["missing", "null", "ipv6-only"])
     func `raw native image authority proves a bare alias without decoding attachments`(
         attachmentShape: String
