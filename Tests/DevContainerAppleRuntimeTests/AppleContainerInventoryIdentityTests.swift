@@ -1,6 +1,8 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
+import ContainerAPIClient
 import ContainerResource
+import ContainerXPC
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -185,6 +187,46 @@ struct AppleContainerInventoryIdentityTests {
             ["configuration": configuration], ["configuration": configuration]
         ])
         #expect(throws: (any Error).self) { try AppleContainerIdentity.decode(duplicate, id: "fixture") }
+    }
+
+    @Test
+    func `native identity payload is copied before XPC response release`() throws {
+        let startedAt = createdAt.addingTimeInterval(10.125)
+        let payload = try JSONSerialization.data(withJSONObject: [[
+            "configuration": [
+                "id": "fixture", "creationDate": createdAt.timeIntervalSinceReferenceDate,
+                "labels": labels,
+                "image": ["reference": "fixture:latest", "descriptor": ["digest": "sha256:immutable"]]
+            ],
+            "startedDate": startedAt.timeIntervalSinceReferenceDate
+        ]])
+        #expect(payload.count > 14)
+
+        let copied = try {
+            let response = XPCMessage(route: .containerList)
+            response.set(key: .containers, value: payload)
+            let borrowed = try #require(response.dataNoCopy(key: .containers))
+            let data = try LiveAppleContainerInventoryClient.copiedIdentityPayload(from: response)
+            let hasIndependentStorage = withExtendedLifetime(response) {
+                data.withUnsafeBytes { dataBytes in
+                    borrowed.withUnsafeBytes { borrowedBytes in
+                        dataBytes.baseAddress != borrowedBytes.baseAddress
+                    }
+                }
+            }
+            #expect(hasIndependentStorage)
+            return data
+        }()
+
+        let identity = try AppleContainerIdentity.decode(copied, id: "fixture")
+        #expect(identity.id == "fixture")
+        #expect(identity.creationDate == createdAt)
+        #expect(identity.startedDate == startedAt)
+
+        let missing = XPCMessage(route: .containerList)
+        #expect(throws: (any Error).self) {
+            try LiveAppleContainerInventoryClient.copiedIdentityPayload(from: missing)
+        }
     }
 
     @Test(arguments: ["missing", "null", "ipv6-only"])

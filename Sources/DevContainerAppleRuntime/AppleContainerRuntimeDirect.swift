@@ -105,7 +105,12 @@ struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
         let request = XPCMessage(route: .containerList)
         try request.set(key: .listFilters, value: JSONEncoder().encode(ContainerListFilters(ids: [id])))
         let response = try await identityClient.send(request, responseTimeout: .seconds(10))
-        guard let data = response.dataNoCopy(key: .containers) else {
+        return try Self.copiedIdentityPayload(from: response)
+    }
+
+    static func copiedIdentityPayload(from response: XPCMessage) throws -> Data {
+        // The no-copy view is valid only while the response's XPC object is retained.
+        guard let data = response.data(key: .containers) else {
             throw ContainerizationError(.notFound, message: "Container identity is absent")
         }
         return data

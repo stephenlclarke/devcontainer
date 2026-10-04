@@ -107,7 +107,7 @@ jobs:
           curl --fail --location --silent --show-error \
             "${scanner_url}.asc" --output "${scanner_signature}"
           gpg --homedir "${gpg_home}" --batch \
-            --keyserver hkps://keys.openpgp.org \
+            --keyserver hkps://keyserver.ubuntu.com \
             --recv-keys "${SONAR_SCANNER_GPG_FINGERPRINT}"
           actual_fingerprint="$(
             gpg --homedir "${gpg_home}" --batch --with-colons \
