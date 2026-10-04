@@ -79,6 +79,48 @@ class ComposeForegroundTests(unittest.TestCase):
             self.ready_with([foreign])
         self.assertNotIn("container-created.json", self.journal.records())
 
+    def test_wrong_config_image_records_only_owned_observation_and_proves_auto_removal(self):
+        self.fixture.prepare()
+        self.fixture.command_attempted = True
+        wrong = self.guest()
+        wrong["Config"]["Image"] = "docker.io/library/alpine:3.22.5"
+        with self.assertRaisesRegex(ValueError, "configImage"):
+            self.ready_with([wrong])
+        records = self.journal.records()
+        self.assertEqual(json.loads(records["container-observed-owned.json"])["id"], "b" * 64)
+        self.assertEqual(json.loads(records["compose-foreground-failed-inspect.json"]), wrong)
+        self.assertNotIn("container-created.json", records)
+        self.assertNotIn("compose-foreground-inspection.json", records)
+        self.server.guest = None  # The stopped one-off was auto-removed.
+        self.assertEqual(self.fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertIn("container-removed.json", self.journal.records())
+
+    def test_observed_wrong_config_live_guest_cannot_authorize_delete(self):
+        self.fixture.prepare()
+        self.fixture.command_attempted = True
+        wrong = self.guest()
+        wrong["Config"]["Image"] = "docker.io/library/alpine:3.22.5"
+        with self.assertRaisesRegex(ValueError, "configImage"):
+            self.ready_with([wrong])
+        self.server.guest = wrong
+        with self.assertRaisesRegex(ValueError, "configImage"):
+            self.fixture.cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_unowned_observation_cannot_prove_auto_removal(self):
+        self.fixture.prepare()
+        self.fixture.command_attempted = True
+        foreign = self.guest()
+        foreign["Config"]["Labels"]["devcontainer.parity.case"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "not the exact owned guest"):
+            self.ready_with([foreign])
+        self.assertNotIn("container-observed-owned.json", self.journal.records())
+        with self.assertRaisesRegex(ValueError, "Uncertain creation"):
+            self.fixture.cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+
     def test_ready_rejects_cli_exit_and_unexpected_stdout_while_created(self):
         created = self.guest()
         created["State"] = {"Status": "created"}

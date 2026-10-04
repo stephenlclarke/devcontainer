@@ -189,7 +189,7 @@ class GuestFixture:
             raise ValueError("Archive guest identity/state changed")
         return archive_copy(self.socket, self.identifier, self.version, observe=observe)
 
-    def cleanup(self):
+    def cleanup(self, *, observed_stopped=None):
         records = self.journal.records()
         intent = records.get("container-intent.json")
         if intent is None:
@@ -201,7 +201,19 @@ class GuestFixture:
         if created is not None and deleting is not None and created != deleting:
             raise ValueError("Guest creation and deletion identities disagree")
         known = created or deleting
+        observed = json.loads(records["container-observed-owned.json"]) if "container-observed-owned.json" in records else None
+        if observed is not None:
+            expected = {"name": self.name, "owner": self.owner, "image": self.image,
+                        "intentSHA256": digest(intent)}
+            if (not isinstance(observed, dict) or set(observed) != set(expected) | {"id"}
+                    or any(observed.get(key) != value for key, value in expected.items())
+                    or not isinstance(observed.get("id"), str)
+                    or re.fullmatch(self.id_pattern, observed["id"]) is None
+                    or (known is not None and known != {"id": observed["id"]})):
+                raise ValueError("Observed guest receipt differs from the exact owned intent")
         rejected = json.loads(records["container-create-rejected.json"]) if "container-create-rejected.json" in records else None
+        if observed is not None and rejected is not None:
+            raise ValueError("Rejected creation cannot have an observed guest")
         if "container-create-rejected.json" in records:
             if (not isinstance(rejected, dict) or set(rejected) != {"intentSHA256", "status", "responseSHA256", "preflight"} or
                     rejected["intentSHA256"] != digest(intent) or rejected["preflight"] != "rejected" or
@@ -215,6 +227,8 @@ class GuestFixture:
             raise ValueError("Rejected creation has an unexpected resource; refusing mutation")
         if actual is not None:
             identifier = self.owned(actual)
+            if observed is not None and identifier != observed["id"]:
+                raise ValueError("Observed guest ID now identifies another resource")
             if known is not None and known != {"id": identifier}:
                 raise ValueError("Fixture name now identifies a different guest")
             if "container-removed.json" in records:
@@ -232,6 +246,10 @@ class GuestFixture:
                 raise ValueError("Guest journal has invalid created identity")
             if self.inspect(identifier) is not None:
                 raise ValueError("Guest was renamed; refusing unverified cleanup")
+        elif observed is not None:
+            if (observed_stopped is None or records.get(observed_stopped) != canonical({"verifiedStopped": True})
+                    or self.inspect(observed["id"]) is not None):
+                raise ValueError("Observed guest has no quiescent exact-ID absence proof")
         elif rejected is None:
             # A request may still be executing server-side after a client
             # timeout. A momentary 404 is not proof that it created nothing.

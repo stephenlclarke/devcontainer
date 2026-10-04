@@ -24,7 +24,8 @@ import Foundation
 
 extension AppleContainerRuntime {
     func containerRecord(
-        _ value: ContainerResource.ContainerSnapshot
+        _ value: ContainerResource.ContainerSnapshot,
+        configurationDigest: String? = nil
     ) throws -> AppleContainerRecord {
         let configuration = value.configuration
         let process = configuration.initProcess
@@ -38,7 +39,8 @@ extension AppleContainerRuntime {
                 image: Self.composeImageReference(
                     observed: configuration.image.reference,
                     descriptorDigest: configuration.image.descriptor.digest,
-                    labels: labels
+                    labels: labels,
+                    configurationDigest: configurationDigest
                 ),
                 command: process.executable.isEmpty
                     ? process.arguments
@@ -124,7 +126,9 @@ extension AppleContainerRuntime {
         }
     }
 
-    func containerRecord(_ value: [String: Any]) throws -> AppleContainerRecord {
+    func containerRecord(
+        _ value: [String: Any], configurationDigest: String? = nil
+    ) throws -> AppleContainerRecord {
         guard
             let id = value["id"] as? String,
             let configuration = value["configuration"] as? [String: Any]
@@ -140,7 +144,8 @@ extension AppleContainerRuntime {
         spec.image = try Self.composeImageReference(
             observed: spec.image,
             descriptorDigest: (image?["descriptor"] as? [String: Any])?["digest"] as? String,
-            labels: labels
+            labels: labels,
+            configurationDigest: configurationDigest
         )
         spec.healthcheck = try Self.composeHealthPolicy(labels: labels)
         return AppleContainerRecord(
@@ -155,62 +160,6 @@ extension AppleContainerRuntime {
                 .flatMap(Int32.init(exactly:)),
             networkAddresses: Self.networkAddresses(status)
         )
-    }
-
-    func preciseContainerRecord(
-        _ value: [String: Any], context: RuntimeRequestContext
-    ) async throws -> AppleContainerRecord {
-        var record = try containerRecord(value)
-        guard useDirectContainerAPI,
-              metadataStore != nil || requestedContainers[record.id] != nil
-              || requestedContainers[record.dockerID] != nil
-        else {
-            return record
-        }
-        try context.checkActive()
-        let native: AppleContainerIdentity
-        do {
-            native = try await inventoryClient.identity(id: record.id)
-        } catch {
-            throw directAPIError(error, operation: "precise container identity")
-        }
-        try context.checkActive()
-        let configuration = value["configuration"] as? [String: Any]
-        let image = configuration?["image"] as? [String: Any]
-        let status = value["status"] as? [String: Any]
-        guard native.id == record.id,
-              native.labels == record.spec.labels,
-              image?["reference"] as? String == native.image.reference,
-              (image?["descriptor"] as? [String: Any])?["digest"] as? String == native.image.descriptor.digest,
-              let encodedDate = configuration?["creationDate"] as? String,
-              Self.matchesEncodedDate(encodedDate, native: native.creationDate),
-              Self.matchesEncodedStartDate(status?["startedDate"], native: native.startedDate)
-        else {
-            throw DevContainerError(.conflict, message: "Container identity changed during CLI inventory")
-        }
-        // Never loosen incarnation matching to a one-second tolerance: two
-        // replacements or process generations can occupy the same encoded
-        // second. Preserve CLI-only enhanced fields while restoring both
-        // precise native timestamps used by attachment ownership checks.
-        record.createdAt = native.creationDate
-        record.startedAt = native.startedDate
-        return record
-    }
-
-    private static func matchesEncodedStartDate(_ value: Any?, native: Date?) -> Bool {
-        guard let native else {
-            return value == nil || value is NSNull
-        }
-        guard let value = value as? String else { return false }
-        return matchesEncodedDate(value, native: native)
-    }
-
-    private static func matchesEncodedDate(_ value: String, native: Date) -> Bool {
-        if value.contains(".") {
-            guard let observed = date(value) else { return false }
-            return sameContainerIncarnation(metadataCreatedAt: native, observedCreatedAt: observed)
-        }
-        return ISO8601DateFormatter().string(from: native) == value
     }
 
     static func matchingContainerMetadata(
@@ -445,7 +394,13 @@ extension AppleContainerRuntime {
             observed: observed.spec
         )
         snapshot.dockerID = metadata.dockerID
-        snapshot.imageID = metadata.imageID
+        if let proven = observed.spec.labels[Self.composeImageReferenceLabel],
+           Self.validImageDigest(proven), observed.spec.image == proven
+        {
+            snapshot.imageID = proven
+        } else {
+            snapshot.imageID = metadata.imageID
+        }
         snapshot.createdAt = metadata.createdAt
         // A native restart preserves creation identity but replaces the start
         // generation. Persisted gateway timestamps cannot override runtime truth.

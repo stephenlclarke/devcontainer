@@ -25,12 +25,18 @@ protocol AppleContainerInventoryClient: Sendable {
     func list() async throws -> [ContainerResource.ContainerSnapshot]
     func get(id: String) async throws -> ContainerResource.ContainerSnapshot
     func identity(id: String) async throws -> AppleContainerIdentity
+    func imageAuthority(id: String) async throws -> AppleContainerImageAuthority
 }
 
 extension AppleContainerInventoryClient {
     func identity(id: String) async throws -> AppleContainerIdentity {
         let snapshot = try await get(id: id)
         return AppleContainerIdentity(snapshot.configuration, startedDate: snapshot.startedDate)
+    }
+
+    func imageAuthority(id: String) async throws -> AppleContainerImageAuthority {
+        let snapshot = try await get(id: id)
+        return try AppleContainerImageAuthority(snapshot.configuration, startedDate: snapshot.startedDate)
     }
 }
 
@@ -88,13 +94,21 @@ struct LiveAppleContainerInventoryClient: AppleContainerInventoryClient {
     }
 
     func identity(id: String) async throws -> AppleContainerIdentity {
+        try await AppleContainerIdentity.decode(rawIdentity(id: id), id: id)
+    }
+
+    func imageAuthority(id: String) async throws -> AppleContainerImageAuthority {
+        try await AppleContainerImageAuthority.decode(rawIdentity(id: id), id: id)
+    }
+
+    private func rawIdentity(id: String) async throws -> Data {
         let request = XPCMessage(route: .containerList)
         try request.set(key: .listFilters, value: JSONEncoder().encode(ContainerListFilters(ids: [id])))
         let response = try await identityClient.send(request, responseTimeout: .seconds(10))
         guard let data = response.dataNoCopy(key: .containers) else {
             throw ContainerizationError(.notFound, message: "Container identity is absent")
         }
-        return try AppleContainerIdentity.decode(data, id: id)
+        return data
     }
 }
 
@@ -167,7 +181,7 @@ extension AppleContainerRuntime {
         var observedValues: [DevContainerModel.ContainerSnapshot] = []
         observedValues.reserveCapacity(values.count)
         for value in values {
-            let observed = try containerSnapshot(containerRecord(value))
+            let observed = try await containerSnapshot(verifiedContainerRecord(value, context: context))
             if !Self.isInternalBuilderResource(observed) {
                 observedValues.append(observed)
             }
@@ -232,7 +246,7 @@ extension AppleContainerRuntime {
         } catch {
             throw directAPIError(error, operation: "container inspect")
         }
-        let observed = try containerSnapshot(containerRecord(value))
+        let observed = try await containerSnapshot(verifiedContainerRecord(value, context: context))
         let metadata = try await metadataStore?.containerMetadata(
             id: observed.runtimeID.rawValue
         )

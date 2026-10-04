@@ -28,7 +28,10 @@ struct FakeAppleImageIdentityClient: AppleImageIdentityClient {
         let description = try #require(JSONSerialization.jsonObject(with: descriptor) as? [String: Any])
         #expect(description["digest"] as? String == "sha256:" + String(repeating: "a", count: 64))
         let selected = try #require(JSONSerialization.jsonObject(with: platform) as? [String: String])
-        #expect(selected == ["architecture": "arm64", "os": "linux"])
+        #expect(selected["architecture"] == "arm64")
+        #expect(selected["os"] == "linux")
+        #expect(selected["variant"] == nil || selected["variant"] == "v8")
+        #expect(Set(selected.keys).isSubset(of: ["architecture", "os", "variant"]))
         return .init(digest: result, rootFSLayers: layers, entrypoint: entrypoint, command: command)
     }
 }

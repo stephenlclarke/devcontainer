@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sqlite3
 import stat
@@ -77,6 +78,25 @@ class ComposeForegroundFixture(GuestFixture):
                 labels.get("com.docker.compose.project") != self.project or
                 labels.get("com.docker.compose.service") != "app"):
             raise ValueError("Compose foreground configuration changed")
+        return identifier
+
+    def observe_owned(self, value):
+        """Record only identity sufficient to prove later auto-removal, not readiness."""
+        config = value.get("Config") if isinstance(value, dict) else None
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        identifier = value.get("Id") if isinstance(value, dict) else None
+        if (not isinstance(identifier, str) or re.fullmatch(self.id_pattern, identifier) is None
+                or value.get("Name") != "/" + self.name
+                or not isinstance(labels, dict) or labels.get(OWNER_LABEL) != self.owner
+                or value.get("Image") != self.image):
+            raise ValueError("Compose foreground observation is not the exact owned guest")
+        receipt = canonical({"id": identifier, "name": self.name, "owner": self.owner,
+                             "image": self.image, "intentSHA256": digest(canonical(self.intent))})
+        previous = self.journal.records().get("container-observed-owned.json")
+        if previous is None:
+            self.journal.put("container-observed-owned.json", receipt)
+        elif previous != receipt:
+            raise ValueError("Compose foreground observed guest identity changed")
         return identifier
 
     def prepare(self):
@@ -153,7 +173,20 @@ class ComposeForegroundFixture(GuestFixture):
                 actual = self.inspect(observed_id or self.name, total_timeout=remaining(end))
                 if actual is None:
                     raise ValueError("Compose foreground output has no running guest")
-                identifier = self.owned(actual)
+                if observed_id is None:
+                    self.observe_owned(actual)
+                try:
+                    identifier = self.owned(actual)
+                except ValueError:
+                    # Full inspect is private evidence only. Never project it
+                    # into the public fixture result or a readiness receipt.
+                    raw = canonical(actual)
+                    if len(raw) <= 128 * 1024:
+                        self.journal.put("compose-foreground-failed-inspect.json", raw)
+                    else:
+                        self.journal.put("compose-foreground-failed-inspect-metadata.json", canonical({
+                            "size": len(raw), "sha256": digest(raw), "truncated": True}))
+                    raise
                 if observed_id is None:
                     observed_id = identifier
                     # Creation is an ownership fact even while the native
@@ -232,7 +265,7 @@ class ComposeForegroundFixture(GuestFixture):
                     payload, metadata = diagnostic_snapshot(path)
                     self.journal.put(PROCESS + suffix + ".log", payload)
                     self.journal.put(PROCESS + suffix + "-log.json", metadata)
-        cleanup = super().cleanup()
+        cleanup = super().cleanup(observed_stopped=PROCESS + "-stopped.json")
         if self.wrapper_selection is not None and self.command_attempted:
             self._release_compose_project()
         return cleanup

@@ -32,7 +32,9 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
     private var listCalls = 0
     private var getCalls = 0
     private var holdNextGet = false
+    private var holdGetCall: Int?
     private var heldGet: CheckedContinuation<Void, Never>?
+    private var heldGetWaiter: CheckedContinuation<Void, Never>?
 
     init(
         snapshots: [ContainerResource.ContainerSnapshot],
@@ -52,9 +54,14 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
 
     func get(id: String) async throws -> ContainerResource.ContainerSnapshot {
         getCalls += 1
-        if holdNextGet {
+        if holdNextGet || holdGetCall == getCalls {
             holdNextGet = false
-            await withCheckedContinuation { heldGet = $0 }
+            holdGetCall = nil
+            await withCheckedContinuation {
+                heldGet = $0
+                heldGetWaiter?.resume()
+                heldGetWaiter = nil
+            }
         }
         if let getFailure {
             switch getFailure {
@@ -95,6 +102,17 @@ actor FakeContainerInventory: AppleContainerInventoryClient {
 
     func holdOneGet() {
         holdNextGet = true
+    }
+
+    func holdGet(call: Int) {
+        holdGetCall = call
+    }
+
+    func waitForHeldGet() async {
+        if heldGet != nil {
+            return
+        }
+        await withCheckedContinuation { heldGetWaiter = $0 }
     }
 
     func isGetHeld() -> Bool {
@@ -337,7 +355,8 @@ func directRuntime(
     inventory: any AppleContainerInventoryClient,
     files: any AppleContainerFileClient = FakeContainerFileClient(),
     networks: any AppleNetworkClient = FakeNetworkClient(),
-    metadataStore: (any RuntimeMetadataStore)? = nil
+    metadataStore: (any RuntimeMetadataStore)? = nil,
+    images: any AppleImageIdentityClient = FakeAppleImageIdentityClient()
 ) throws -> AppleContainerRuntime {
     try AppleContainerRuntime(
         executable: fixture.executable,
@@ -354,7 +373,7 @@ func directRuntime(
             inventory: inventory,
             files: files,
             networks: networks,
-            overrides: .init(images: FakeAppleImageIdentityClient())
+            overrides: .init(images: images)
         )
     )
 }

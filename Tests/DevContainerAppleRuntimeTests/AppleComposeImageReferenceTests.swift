@@ -68,4 +68,30 @@ struct AppleComposeImageReferenceTests {
             observed: "alpine:3.22", descriptorDigest: nil, labels: [:]
         ) == "alpine:3.22")
     }
+
+    @Test
+    func `bare configuration ID requires the independent OCI config digest`() throws {
+        let config = "sha256:" + String(repeating: "b", count: 64)
+        let observed = "docker.io/library/fixture:latest"
+        #expect(try AppleContainerRuntime.composeImageReference(
+            observed: observed, descriptorDigest: digest,
+            labels: [key: config], configurationDigest: config
+        ) == config)
+        for wrong in [digest, "sha256:" + String(repeating: "c", count: 64)] {
+            #expect(throws: DevContainerError.self) {
+                try AppleContainerRuntime.composeImageReference(
+                    observed: observed, descriptorDigest: digest,
+                    labels: [key: wrong], configurationDigest: config
+                )
+            }
+        }
+        #expect(throws: DevContainerError.self) {
+            try AppleContainerRuntime.composeImageReference(
+                observed: observed, descriptorDigest: digest, labels: [key: config]
+            )
+        }
+        #expect(try AppleContainerRuntime.composeImageReference(
+            observed: observed, descriptorDigest: digest, labels: [:]
+        ) == observed)
+    }
 }

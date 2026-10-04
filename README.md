@@ -24,6 +24,8 @@
 
 Run VS Code-compatible Development Containers on Apple silicon through stock [`apple/container`](https://github.com/apple/container), with first-class support for [`container-compose`](https://github.com/stephenlclarke/container-compose).
 
+For native Compose guests, a bare `sha256:` configuration ID is reported as `Config.Image` only after verification against the selected native OCI descriptor and platform. Repo-qualified manifest digest aliases retain their existing validation, while ordinary tags keep their spelling. See the [image provenance handoff](docs/PR-config-id-image-provenance.md); the enhanced E13 failure still requires fresh live qualification.
+
 The project's north-star goal is 100% behavioural parity with Docker-based Development Containers, with comparable or better user-visible performance. Current releases make narrower evidence-bound claims until the complete specification and performance objectives are proved. The audited findings and solution designs are in the [full parity and performance roadmap](PARITY-ROADMAP.md).
 
 > [!IMPORTANT]
@@ -235,6 +237,8 @@ New Bazel build/test invocations also retain elapsed timings, platform/toolchain
 The [test-harness replacement](docs/bazel-test-harness.md) is in progress. `make bazel-harness` runs its deterministic recovery and real Unix-socket component tests, including Engine negotiation, lifecycle, exec-stream, archive-copy and network/volume assertions, and journalled test-resource ownership, under Bazel without building products or starting container services. These checks do not yet establish live runtime parity; all 19 existing fixtures remain required for cutover.
 
 The Compose foreground fixtures retain the first authenticated guest ID even if output arrives before native startup commits `running`. They inspect that same ID until a real running state is observed within the original deadline; a changed identity, exited CLI or missed deadline still fails and remains recoverable. Focused fake-backend tests cover these checks; live E13 qualification remains a separate release gate.
+
+An unreleased E13 cleanup correction records the exact observed guest ID, name, case owner and top-level image before the strict `Config.Image` readiness check. A semantic image failure remains failed; the observation can prove only that the same guest auto-removed after the owned Compose process stopped. A still-live guest must satisfy the original full ownership check before deletion. See the [observed-owner handoff](docs/PR-e13-observed-owned-cleanup.md).
 
 Guest ownership checks require the exact requested process arguments. Docker inspection may report them as a full `Config.Cmd` or as a one-element `Config.Entrypoint` followed by the remaining `Config.Cmd`; every other split is rejected. This representation check does not qualify the live E13 case or claim complete Docker inspection metadata parity.
 

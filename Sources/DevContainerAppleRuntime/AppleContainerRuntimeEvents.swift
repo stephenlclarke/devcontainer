@@ -983,6 +983,12 @@ extension AppleContainerRuntime {
             exitCode: record.exitCode,
             networkAddresses: record.networkAddresses
         )
+        if let original = record.spec.labels[Self.composeImageReferenceLabel],
+           Self.validImageDigest(original), record.spec.image == original
+        {
+            // Bare spelling is projected only after descriptor/platform-bound OCI config verification.
+            snapshot.imageID = original
+        }
         if let requestedSpec {
             snapshot.spec = Self.effectiveContainerSpec(
                 requested: requestedSpec,

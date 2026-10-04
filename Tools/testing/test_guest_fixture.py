@@ -10,9 +10,9 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import Mock, patch
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
-from case_evidence import canonical
+from case_evidence import canonical, digest
 from guest_fixture import GuestFixture, OWNER_LABEL
 from service_journal import ServiceJournal
 
@@ -96,6 +96,19 @@ class GuestFixtureTests(unittest.TestCase):
 
     def reopen(self):
         return GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal)
+
+    def record_observed_owned(self, identifier="b" * 64):
+        self.journal.put("container-intent.json", canonical(self.fixture.intent))
+        self.journal.put("container-observed-owned.json", canonical({
+            "id": identifier, "name": self.fixture.name, "owner": self.owner,
+            "image": self.server.image, "intentSHA256": digest(canonical(self.fixture.intent)),
+        }))
+
+    def observed_guest(self, identifier="b" * 64, name=None):
+        return {"Id": identifier, "Name": "/" + (name or self.fixture.name),
+                "Config": {"Image": self.server.image, "Labels": {OWNER_LABEL: self.owner},
+                           "Cmd": self.fixture.intent["command"]},
+                "Image": self.server.image, "State": {"Status": "exited"}}
 
     def test_empty_response_does_not_write_to_an_already_closed_client(self):
         handler = Mock()
@@ -200,6 +213,59 @@ class GuestFixtureTests(unittest.TestCase):
         self.journal.put("container-intent.json", canonical(self.fixture.intent))
         with self.assertRaisesRegex(ValueError, "Uncertain creation"):
             self.fixture.cleanup()
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_observed_receipt_tampering_and_known_id_contradiction_never_delete(self):
+        self.record_observed_owned()
+        records = self.journal.records()
+        receipt = json.loads(records["container-observed-owned.json"])
+        cases = (
+            ("intent digest", dict(receipt, intentSHA256="c" * 64), None),
+            ("created ID", receipt, canonical({"id": "c" * 64})),
+        )
+        for name, observed, created in cases:
+            changed = dict(records, **{"container-observed-owned.json": canonical(observed)})
+            if created is not None:
+                changed["container-created.json"] = created
+            with self.subTest(case=name), patch.object(self.journal, "records", return_value=changed):
+                with self.assertRaisesRegex(ValueError, "Observed guest receipt"):
+                    self.reopen().cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_observed_guest_requires_stopped_receipt_before_accepting_absence(self):
+        self.record_observed_owned()
+        with self.assertRaisesRegex(ValueError, "quiescent exact-ID absence proof"):
+            self.fixture.cleanup()
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_observed_exact_id_still_present_after_name_404_is_not_removed(self):
+        self.record_observed_owned()
+        self.journal.put("process-stopped.json", canonical({"verifiedStopped": True}))
+        self.server.guest = self.observed_guest(name="renamed")
+        with self.assertRaisesRegex(ValueError, "quiescent exact-ID absence proof"):
+            self.fixture.cleanup(observed_stopped="process-stopped.json")
+        self.assertTrue(any(route.endswith("/containers/" + self.fixture.name + "/json")
+                            for method, route in self.server.routes if method == "GET"))
+        self.assertTrue(any(route.endswith("/containers/" + "b" * 64 + "/json")
+                            for method, route in self.server.routes if method == "GET"))
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
+        self.assertNotIn("container-removed.json", self.journal.records())
+
+    def test_owner_filtered_residue_blocks_removed_receipt_without_deleting(self):
+        self.record_observed_owned()
+        self.journal.put("process-stopped.json", canonical({"verifiedStopped": True}))
+        self.server.guest = self.observed_guest(identifier="d" * 64, name="hidden")
+        with self.assertRaisesRegex(ValueError, "Owned guest residue remains"):
+            self.fixture.cleanup(observed_stopped="process-stopped.json")
+        filtered = [route for method, route in self.server.routes
+                    if method == "GET" and "/containers/json?" in route]
+        self.assertEqual(len(filtered), 1)
+        self.assertIn("all=true", filtered[0])
+        self.assertIn("filters=", filtered[0])
+        self.assertIn(OWNER_LABEL + "=" + self.owner, unquote(filtered[0]))
+        self.assertFalse(any(method == "DELETE" for method, _ in self.server.routes))
         self.assertNotIn("container-removed.json", self.journal.records())
 
     def test_preflight_rejection_recovers_without_inventing_a_created_identity(self):

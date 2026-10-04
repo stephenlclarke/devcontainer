@@ -63,9 +63,9 @@ extension AppleContainerRuntime {
         try context.checkActive()
         guard let identity = try managedNetworkHostsIdentity(configuration: configuration) else { return }
         let inventory = try await listContainers(all: true, labels: [:], context: context)
-        var target = try containerSnapshot(containerRecord(.init(
+        var target = try await containerSnapshot(plannedContainerRecord(.init(
             configuration: configuration, status: .stopped, networks: []
-        )))
+        ), context: context))
         if includeAllocatedSelf {
             var attachments: [Attachment] = []
             for network in configuration.networks {

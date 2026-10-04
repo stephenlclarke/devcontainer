@@ -481,6 +481,12 @@ public extension AppleContainerRuntime {
                 metadataCreatedAt: metadata.createdAt,
                 observedCreatedAt: snapshot.createdAt
             ) {
+                if let proven = snapshot.spec.labels[Self.composeImageReferenceLabel],
+                   Self.validImageDigest(proven), snapshot.spec.image == proven,
+                   let stored = metadata.imageID, stored != proven
+                {
+                    throw DevContainerError(.conflict, message: "Stored image ID conflicts with proven OCI config")
+                }
                 if metadata.imageID == nil, let imageID {
                     metadata.imageID = imageID
                     try await metadataStore.recordContainerMetadata(metadata)

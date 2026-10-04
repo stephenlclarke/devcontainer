@@ -17,7 +17,13 @@ extension AppleContainerRuntime {
             try await recordContainerMetadata(snapshot: snapshot, spec: spec)
             return snapshot
         }
-        var snapshot = try await verifiedCreationSnapshot(creation)
+        var snapshot = try await verifiedCreationSnapshot(creation, context: context)
+        if let proven = snapshot.spec.labels[Self.composeImageReferenceLabel],
+           Self.validImageDigest(proven), snapshot.spec.image == proven,
+           imageID != proven
+        {
+            throw DevContainerError(.conflict, message: "Created image ID disagrees with native OCI configuration")
+        }
         let storedSpec = creation.spec
         if spec.labels[Self.dockerIDLabel] == nil {
             snapshot.dockerID = DockerID(rawValue: Self.syntheticDockerIdentifier())
@@ -53,11 +59,15 @@ extension AppleContainerRuntime {
 
     /// Revalidate the final observation, not an earlier create RPC response.
     /// Never persist a replacement's timestamp with the requested image/spec.
-    func verifiedCreationSnapshot(_ creation: RuntimeContainerCreation) async throws -> DevContainerModel
+    func verifiedCreationSnapshot(
+        _ creation: RuntimeContainerCreation, context: RuntimeRequestContext
+    ) async throws -> DevContainerModel
         .ContainerSnapshot
     {
+        try context.checkActive()
         let expected = try JSONDecoder().decode(ContainerConfiguration.self, from: creation.nativeConfiguration)
         let observed = try await inventoryClient.get(id: creation.runtimeID)
+        try context.checkActive()
         try AppleContainerCreateProjection.verify(observed.configuration, expected: expected)
         let expectedHosts = try managedNetworkHostsIdentity(configuration: expected)
         let observedHosts = try managedNetworkHostsIdentity(configuration: observed.configuration)
@@ -73,7 +83,9 @@ extension AppleContainerRuntime {
                 .providerProtocolMismatch, message: "created container incarnation changed before completion"
             )
         }
-        return try containerSnapshot(containerRecord(observed))
+        return try await containerSnapshot(verifiedContainerRecord(
+            observed, context: context
+        ))
     }
 
     /// Never delete by name after a failed create: stock Apple has no conditional
