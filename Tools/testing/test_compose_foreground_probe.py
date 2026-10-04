@@ -99,9 +99,10 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertEqual(json.loads(self.journal.records()["container-created.json"]), {"id": "b" * 64})
         self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
 
+        running = self.guest()
         with patch("compose_foreground_probe.remaining", side_effect=[1, 1, 0.25, TimeoutError("deadline")]):
             with self.assertRaisesRegex(TimeoutError, "deadline"):
-                self.ready_with([self.guest()])
+                self.ready_with([running])
         self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
 
     def test_inspect_forwards_its_total_http_budget(self):
@@ -111,17 +112,19 @@ class ComposeForegroundTests(unittest.TestCase):
         self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
 
     def test_final_inspection_journal_cannot_outlive_deadline_or_cli(self):
+        running = self.guest()
         with patch("compose_foreground_probe.remaining",
                    side_effect=[1, 1, 1, 1, TimeoutError("deadline")]):
             with self.assertRaisesRegex(TimeoutError, "deadline"):
-                self.ready_with([self.guest()])
+                self.ready_with([running])
         self.assertIn("compose-foreground-inspection.json", self.journal.records())
         self.assertIsNone(self.fixture.identifier)
 
         process = Mock()
         process.poll.side_effect = [None, 23]
+        running = self.guest()
         with self.assertRaisesRegex(ValueError, "CLI exited"):
-            self.ready_with([self.guest()], process=process)
+            self.ready_with([running], process=process)
         self.assertIsNone(self.fixture.identifier)
 
     def test_created_identity_remains_recoverable_after_readiness_failure(self):
