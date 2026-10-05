@@ -71,6 +71,18 @@ LEGACY_LOCK_FIXTURES = {
     "foundation-stock.lock.json": "986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495",
 }
 
+# Pin the independently reviewed Engine API release source snapshot.
+ENGINE_REFRESH_PINS = {
+    "enhanced-engine": "6e8c932fc8755a4b922fd239426e9029be0554e0",
+    "stock-engine": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
+    "enhanced-container": "906014c854a09df4283316289bc755a925f81fe3",
+}
+ENGINE_REFRESH_INPUTS = {
+    "Package.swift": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
+    "Package.resolved": "8a75925150ca36efd92d11767d4d2e4ee68f420361667228ba9abc9ed07c3325",
+    "Package.stock.resolved": "c5dc4990e57aae68e649864f7914605a4d374563950b460191eacec46c2c084d",
+}
+
 
 class FoundationTests(unittest.TestCase):
     def test_legacy_producer_ast_guard_is_stable_or_fails_closed_across_python_ast_versions(self) -> None:
@@ -105,7 +117,7 @@ for profile in ('stock', 'enhanced'):
         path = foundation.layer_lock_path(root, group, profile)
         lock = json.loads(path.read_text())
         admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
-        assert admitted == expected_admission, (profile, group)
+        assert admitted == (expected_admission and group in {'foundation', 'containerization'}), (profile, group)
 """
         environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
         for executable in interpreters:
@@ -159,6 +171,46 @@ for profile in ('stock', 'enhanced'):
                 1))
             self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
 
+    def _restore_previous_reviewed_inputs(self, root: Path) -> None:
+        """Reconstruct exact historical inputs without mutating archived fixtures."""
+        previous = {
+            "Package.swift": "f7ad97c42070afded8f7c3b8f98a6960b40b88d1f5e46d289f032d381a520eb0",
+            "Package.resolved": "ca16e09dbbe9be201ca06279b3e9810df09435185c070cdb92c250451ef35a3c",
+            "Package.stock.resolved": "f7186c61b9e1571021ae2b1f58ef05f901043bfa872829e49546f766e41da37d",
+        }
+        if digest((root / "Package.swift").read_bytes()) == previous["Package.swift"]:
+            for name, expected in previous.items():
+                self.assertEqual(digest((root / name).read_bytes()), expected, name)
+            return
+        for name, expected in ENGINE_REFRESH_INPUTS.items():
+            self.assertEqual(digest((root / name).read_bytes()), expected, name)
+        replacements = {
+            "enhanced-engine": "48e44d74d738ca3d24351ba02c4869be1a3e6998",
+            "stock-engine": "40436017e1e93012b8dab7cfc3c79783538065c3",
+            "enhanced-container": "f86fea2236fab118c0e0c6f8be5eb7672df894e2",
+        }
+        manifest = (root / "Package.swift").read_bytes()
+        for name, old_pin in replacements.items():
+            current = ENGINE_REFRESH_PINS[name].encode()
+            self.assertEqual(manifest.count(current), 1, name)
+            manifest = manifest.replace(current, old_pin.encode(), 1)
+        self.assertEqual(digest(manifest), previous["Package.swift"])
+        (root / "Package.swift").write_bytes(manifest)
+        for name, pins, origin in (
+                ("Package.resolved", ("enhanced-engine", "enhanced-container"), previous["Package.swift"]),
+                ("Package.stock.resolved", ("stock-engine",),
+                 "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a")):
+            data = (root / name).read_bytes()
+            for pin in pins:
+                current = ENGINE_REFRESH_PINS[pin].encode()
+                self.assertEqual(data.count(current), 1, pin)
+                data = data.replace(current, replacements[pin].encode(), 1)
+            data, count = re.subn(rb'("originHash"\s*:\s*")[0-9a-f]{64}(")',
+                                 lambda match: match.group(1) + origin.encode() + match.group(2), data)
+            self.assertEqual(count, 1, name)
+            self.assertEqual(digest(data), previous[name], name)
+            (root / name).write_bytes(data)
+
     def _layer_fixture(self, directory: str, source_root: Path | None = None,
                        archived: bool = True) -> Path:
         """Copy package inputs and immutable archived locks used by the verifier."""
@@ -193,6 +245,7 @@ for profile in ('stock', 'enhanced'):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
             return root
+        self._restore_previous_reviewed_inputs(root)
         for name, expected_sha in LEGACY_LOCK_FIXTURES.items():
             source = lock_fixture_root / name
             self.assertEqual(digest(source.read_bytes()), expected_sha, name)
@@ -376,7 +429,7 @@ for profile in ('stock', 'enhanced'):
                 with self.subTest(group=group):
                         self._verify_archived_consumer(root, "stock", group)
 
-    def test_current_stock_and_enhanced_layers_reuse_all_eight_exact_consumers(self) -> None:
+    def test_engine_refresh_reuses_only_four_exact_lower_consumers(self) -> None:
         source_root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             root = self._layer_fixture(directory, source_root, archived=False)
@@ -385,8 +438,16 @@ for profile in ('stock', 'enhanced'):
                     with self.subTest(profile=profile, group=group):
                         lock = json.loads((root / f"Tools/bazel/artifacts/{group}-{profile}.lock.json")
                                           .read_text())
-                        self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
-                        self._verify_archived_consumer(root, profile, group)
+                        if group in {"foundation", "containerization"}:
+                            self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
+                            self._verify_archived_consumer(root, profile, group)
+                        else:
+                            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
+                            if lock["recipeSHA256"] == foundation.recipe_identity(root, profile, group):
+                                self._verify_archived_consumer(root, profile, group)
+                            else:
+                                with self.assertRaises(ValueError):
+                                    self._verify_archived_consumer(root, profile, group)
 
     def test_terminal_addition_compatibility_rejects_any_shared_snapshot_drift(self) -> None:
         source_root = Path(__file__).resolve().parents[3]
@@ -416,6 +477,69 @@ for profile in ('stock', 'enhanced'):
                                               .read_text())
                             self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
 
+    def test_engine_refresh_rejects_any_source_snapshot_drift(self) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        mutations = (
+            ("Package.swift", lambda data: data + b"\n// drift\n"),
+            ("Package.swift", lambda data: data.replace(
+                ENGINE_REFRESH_PINS["enhanced-engine"].encode(), b"0" * 40, 1)),
+            ("Package.swift", lambda data: data.replace(
+                ENGINE_REFRESH_PINS["stock-engine"].encode(), b"0" * 40, 1)),
+            ("Package.swift", lambda data: data.replace(
+                ENGINE_REFRESH_PINS["enhanced-container"].encode(), b"0" * 40, 1)),
+            ("Package.resolved", lambda data: data + b"\n"),
+            ("Package.stock.resolved", lambda data: data + b"\n"),
+            ("Package.resolved", lambda data: data.replace(b'"originHash" : "', b'"originHash" : "0', 1)),
+            ("Package.stock.resolved", lambda data: data.replace(b'"originHash" : "', b'"originHash" : "0', 1)),
+            ("Package.resolved", lambda data: data.replace(
+                b"https://github.com/stephenlclarke/container-engine-api.git",
+                b"https://github.com/unreviewed/container-engine-api.git", 1)),
+            ("Package.stock.resolved", lambda data: data.replace(
+                b"https://github.com/stephenlclarke/container-engine-api.git",
+                b"https://github.com/unreviewed/container-engine-api.git", 1)),
+        )
+        for relative, mutate in mutations:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = self._layer_fixture(directory, source_root, archived=False)
+                for name, expected in ENGINE_REFRESH_INPUTS.items():
+                    self.assertEqual(digest((root / name).read_bytes()), expected, name)
+                path = root / relative
+                before = path.read_bytes()
+                changed = mutate(before)
+                self.assertNotEqual(before, changed)
+                path.write_bytes(changed)
+                for profile in ("stock", "enhanced"):
+                    self.assertFalse(foundation._legacy_upper_pin_delta(root, profile))
+                    for group in ("foundation", "containerization"):
+                        lock = json.loads(foundation.layer_lock_path(root, group, profile).read_text())
+                        self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
+
+    def test_engine_refresh_rejects_changed_canonical_lower_locks_and_assets(self) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        for profile in ("stock", "enhanced"):
+            for group in ("foundation", "containerization"):
+                for field in ("archiveSHA256", "evidenceSHA256", "tag", "sourcePins", "toolchain", "recipeSHA256"):
+                    with self.subTest(profile=profile, group=group, field=field), tempfile.TemporaryDirectory() as directory:
+                        root = self._layer_fixture(directory, source_root, archived=False)
+                        path = foundation.layer_lock_path(root, group, profile)
+                        lock = json.loads(path.read_text())
+                        self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
+                        changed = json.loads(json.dumps(lock))
+                        changed[field] = {} if isinstance(changed[field], dict) else "0" * 64
+                        path.write_text(json.dumps(changed, indent=2, sort_keys=True) + "\n")
+                        self.assertFalse(foundation._legacy_recipe_compatible(root, changed, profile, group))
+                for field in ("archiveSHA256", "evidenceSHA256", "tag"):
+                    with self.subTest(profile=profile, group=group, lower_field=field), tempfile.TemporaryDirectory() as directory:
+                        root = self._layer_fixture(directory, source_root, archived=False)
+                        lock = json.loads(foundation.layer_lock_path(root, group, profile).read_text())
+                        lower = "argument-parser" if group == "foundation" else "foundation"
+                        lower_path = (root / "Tools/bazel/artifacts/argument-parser.lock.json" if lower == "argument-parser"
+                                      else foundation.layer_lock_path(root, lower, profile))
+                        changed = json.loads(lower_path.read_text())
+                        changed[field] = "0" * 64
+                        lower_path.write_text(json.dumps(changed, indent=2, sort_keys=True) + "\n")
+                        self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
+
     def test_new_q_pin_and_replaced_sdk_lock_reconstruct_original_archive_locks(self) -> None:
         """A live Q/SDK lock advance must not rewrite the archived lock fixture."""
         source_root = Path(__file__).resolve().parents[3]
@@ -442,6 +566,7 @@ for profile in ('stock', 'enhanced'):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / relative, destination)
 
+            self._restore_previous_reviewed_inputs(current)
             manifest = (current / "Package.swift").read_bytes()
             self.assertEqual(json.loads((current / "Package.resolved").read_text())["originHash"],
                              foundation.digest(manifest))

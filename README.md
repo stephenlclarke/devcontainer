@@ -156,6 +156,8 @@ advanced mount options.
 
 The eight stock/enhanced compiled dependency layers were refreshed through their maintained producers and focused tests. Their published archives and evidence were downloaded and verified in Foundation, Containerization/Engine API, then Container SDK order. The product build consumes these exact released inputs; full package qualification remains a separate gate.
 
+The next Engine API transport correction requires new Engine API and Container SDK archives in both profiles. Its finite source-transition check retains only the unchanged Foundation and Containerization archives, with exact canonical locks, lower inputs, recipes and toolchains; ArgumentParser keeps its independent admission. New assets require focused qualification and downloaded admission before becoming product inputs. See [the layer refresh handoff](docs/PR-engine-api-layer-refresh.md).
+
 The Docker frontend uses a first-party bounded Unix HTTP transport for requests, event/build streams, and attach/exec upgrades. It validates the current-user socket, enforces absolute request and upgraded-session deadlines, interrupts socket work on cancellation, preserves output received with the upgrade response, and supports stdin half-close. This compatibility adapter retains the shared wire and response types while leaving the Enhanced API 48 pin and all published dependency layers unchanged. See [the transport handoff](docs/PR-docker-frontend-transport.md).
 
 The hosted CLI smoke check explicitly selects the Docker provider and disables standalone Compose autodiscovery so it uses the pinned test fixture. The native provider remains the product default.

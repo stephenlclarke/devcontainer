@@ -97,8 +97,8 @@ let package = Package(
             environmentVariable: "CONTAINER_ENGINE_API_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container-engine-api.git",
             revision: enhancedRuntime
-                ? "48e44d74d738ca3d24351ba02c4869be1a3e6998"
-                : "40436017e1e93012b8dab7cfc3c79783538065c3"
+                ? "6e8c932fc8755a4b922fd239426e9029be0554e0"
+                : "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77"
         ),
         runtimeDependency(
             name: "container",
@@ -106,7 +106,7 @@ let package = Package(
             stockURL: "https://github.com/apple/container.git",
             stockVersion: "1.4.1",
             enhancedURL: "https://github.com/stephenlclarke/container.git",
-            enhancedRevision: "f86fea2236fab118c0e0c6f8be5eb7672df894e2"
+            enhancedRevision: "906014c854a09df4283316289bc755a925f81fe3"
         ),
         runtimeDependency(
             name: "containerization",

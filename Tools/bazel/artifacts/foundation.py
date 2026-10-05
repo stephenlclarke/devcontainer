@@ -109,6 +109,19 @@ def _legacy_upper_pin_delta(root: Path, profile: str) -> bool:
     lock_path = root / "Package.resolved"
     stock_lock_path = root / "Package.stock.resolved"
     try:
+        # Bind the tested Engine API sources and enhanced Container nested pin
+        # to exact reviewed files; every other manifest and lock byte stays fixed.
+        engine_refresh_inputs = {
+            manifest_path: "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
+            lock_path: "8a75925150ca36efd92d11767d4d2e4ee68f420361667228ba9abc9ed07c3325",
+            stock_lock_path: "c5dc4990e57aae68e649864f7914605a4d374563950b460191eacec46c2c084d",
+        }
+        if all(file_digest(path) == expected for path, expected in engine_refresh_inputs.items()):
+            enhanced = source_pins(root, "enhanced")
+            stock = source_pins(root, "stock")
+            return (enhanced["container-engine-api"] == "6e8c932fc8755a4b922fd239426e9029be0554e0"
+                    and stock["container-engine-api"] == "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77"
+                    and enhanced["container"] == "906014c854a09df4283316289bc755a925f81fe3")
         manifest = manifest_path.read_bytes()
         lock = lock_path.read_bytes()
         current_manifest_sha = digest(manifest)
@@ -315,6 +328,10 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
             or not _legacy_producer_ast_unchanged(root)):
         return False
     try:
+        engine_refresh = (file_digest(root / "Package.swift") ==
+                          "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3")
+        if engine_refresh and group not in {"foundation", "containerization"}:
+            return False
         canonical_lock = layer_lock_path(root, group, profile)
         lock_sha = file_digest(canonical_lock)
         archived_match = profile == "stock" and lock_sha == archived_locks[(profile, group)]
@@ -374,6 +391,10 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
             # build snapshot above; every other current recipe field stays bound.
             # The pinned production AST excludes only reviewed verifier bodies.
             expected["producer"] = "29872c70f5aa696a2be65998de9bd484a7629a4176808877d9fe9e6f0fcec114"
+            if engine_refresh:
+                # Only the four exact lower locks survive this Engine/SDK
+                # source refresh; their original manifest remains recipe-bound.
+                expected["swiftPackageManifest"] = "f7ad97c42070afded8f7c3b8f98a6960b40b88d1f5e46d289f032d381a520eb0"
             for name in ("rootBuild", "moduleGraph", "moduleRules"):
                 expected[name] = lock["recipeSHA256"][name]
         return lock.get("recipeSHA256") == expected
