@@ -102,7 +102,10 @@ final class DockerBuildLines: @unchecked Sendable {
     ) -> @Sendable (Data) throws -> Void {
         { bytes in
             if quiet {
-                try self.consume(bytes) { _ in /* Validate progress without writing quiet output. */ }
+                try self.consume(bytes) { renderedProgress in
+                    // Quiet mode still validates the stream before discarding rendered progress.
+                    _ = renderedProgress
+                }
             } else {
                 try self.consume(bytes, output: output)
             }

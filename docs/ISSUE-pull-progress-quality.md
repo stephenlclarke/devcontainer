@@ -11,3 +11,5 @@ Reuse the existing bounded progress handler for pull, preserving validation and 
 ## Validation
 
 Existing pull parser, progress, quiet, malformed-response, deadline, cancellation and real private-socket regressions must pass. The exact-main SonarQube check must report no remaining issues before publication.
+
+The subsequent exact-main analysis on `5485f889bc5ede913241b02a6d9b68217c6d1664` reports the inline-comment discard closure as empty (`swift:S1186`) and the query-bearing route literal as a hardcoded URI (`swift:S1075`). Make the discard explicit and assemble the fixed protocol path and query delimiter separately, retaining the same request bytes and validation.
