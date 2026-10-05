@@ -37,9 +37,9 @@ public struct DockerFrontend: Sendable {
 
     public func execute(_ command: DockerFrontendCommand, transport: any DockerFrontendTransport) async throws -> Data {
         switch command {
-        case .exec, .run, .events, .build:
+        case .exec, .run, .events, .build, .pull:
             throw DockerFrontendError.usage(
-                "exec, run, events and build require their streaming execution entry points"
+                "exec, run, events, build and pull require their streaming execution entry points"
             )
         case .clientVersion:
             return versionOutput

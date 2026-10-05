@@ -78,6 +78,60 @@ struct DockerFrontendSocketTests {
         try await server.shutdown()
     }
 
+    @Test
+    func `real executable and Unix transport pull tagged images with progress and streamed errors`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("dp-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let responder = PullSocketResponder()
+        let server = ContainerUnixHTTPServer(
+            responder: responder, socketPath: socket, logger: Logger(label: "frontend-pull-test")
+        )
+        try await server.start()
+        do {
+            let reference = "alpine:3.22@sha256:" + String(repeating: "a", count: 64)
+            let success = try await FrontendExecutable.run(["pull", reference], socket: socket)
+            #expect(success.exitCode == 0)
+            #expect(success.standardOutput == Data("Pulling fs layer\nDownload complete\n".utf8))
+            #expect(success.standardError.isEmpty)
+            let escapedReference = "alpine%3A3.22%40sha256%3A" + String(repeating: "a", count: 64)
+            #expect(await responder.targets.first == "/images/create?fromImage=" + escapedReference)
+
+            let quiet = try await FrontendExecutable.run(["pull", "--quiet", "quiet-image:1"], socket: socket)
+            #expect(quiet.exitCode == 0)
+            #expect(quiet.standardOutput.isEmpty)
+            #expect(quiet.standardError.isEmpty)
+
+            let failure = try await FrontendExecutable.run(["pull", "error-image:1"], socket: socket)
+            #expect(failure.exitCode == 1)
+            #expect(failure.standardOutput == Data("Downloading\n".utf8))
+            #expect(String(data: failure.standardError, encoding: .utf8)?.contains("pull failed") == true)
+
+            let libraryOutput = root.appendingPathComponent("library-output")
+            try Data().write(to: libraryOutput)
+            let handle = try FileHandle(forWritingTo: libraryOutput)
+            defer { try? handle.close() }
+            guard case let .pull(command) = try DockerFrontendCommand.parse(["pull", "library-image:1"]) else {
+                Issue.record("expected pull command")
+                return
+            }
+            let frontend = DockerFrontend(version: "test", executionTimeout: .seconds(2))
+            let transport = try UnixDockerFrontendTransport(socketPath: socket)
+            let output = try DockerFrontendOutput(descriptor: handle.fileDescriptor)
+            try await frontend.executePull(command, transport: transport, output: output)
+            #expect(try Data(contentsOf: libraryOutput) == Data("Pulling fs layer\nDownload complete\n".utf8))
+            #expect(await responder.targets.contains("/images/create?fromImage=library-image%3A1"))
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    }
+
     private func checkBuildClient(context: URL, socket: String, outputRoot: URL) async throws {
         for tag in ["good", "bad"] {
             guard case let .build(spec) = try DockerFrontendCommand.parse(["build", "-t", tag, context.path]) else {
@@ -299,6 +353,9 @@ enum FrontendExecutable {
         childEnvironment["PATH"] = "/no-external-clients"
         childEnvironment["DEVCONTAINER_CONFIG"] = "/no-config"
         childEnvironment["TMPDIR"] = TestStorage.temporaryDirectory.path
+        if let profilePath = ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] {
+            childEnvironment["LLVM_PROFILE_FILE"] = profilePath
+        }
         if let socket {
             childEnvironment["DOCKER_HOST"] = "unix://\(socket)"
         }
@@ -310,6 +367,29 @@ enum FrontendExecutable {
                 environment: childEnvironment, input: input, maximumOutputBytes: 65536
             )
         }
+    }
+}
+
+private actor PullSocketResponder: DockerHTTPResponder {
+    private(set) var targets: [String] = []
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        guard request.method == .post, request.target.hasPrefix("/images/create?fromImage=") else {
+            return .text("unexpected request", status: 400)
+        }
+        targets.append(request.target)
+        if request.target.contains("error-image") {
+            return .text(
+                "{\"status\":\"Downloading\"}\n{\"errorDetail\":{\"message\":\"pull failed\"}}\n",
+                contentType: "application/json"
+            )
+        }
+        let stream = AsyncThrowingStream<Data, any Error> { continuation in
+            continuation.yield(Data(#"{"status":"Pulling fs layer"}"#.utf8) + Data([10]))
+            continuation.yield(Data(#"{"status":"Download complete"}"#.utf8))
+            continuation.finish()
+        }
+        return .init(status: 200, headers: ["Content-Type": "application/json"], body: .stream(stream))
     }
 }
 

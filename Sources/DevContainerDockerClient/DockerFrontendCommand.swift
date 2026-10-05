@@ -1,5 +1,6 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
+import ContainerEngineWire
 import Foundation
 
 public enum DockerFrontendError: Error, Equatable, CustomStringConvertible {
@@ -21,6 +22,7 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     case version(format: String?)
     case info
     case inspect(kind: String, name: String)
+    case pull(DockerPullCommand)
     case containers(all: Bool, truncate: Bool, filters: [String: [String]])
     case exec(DockerExecCommand)
     case run(DockerRunCommand)
@@ -32,7 +34,7 @@ public enum DockerFrontendCommand: Equatable, Sendable {
         var options = DockerFrontendArguments(arguments)
         guard let command = options.next() else {
             throw DockerFrontendError
-                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events, build, rm")
+                .usage("expected a command; supported: version, info, inspect, ps, exec, run, events, build, pull, rm")
         }
         switch command {
         case "-v", "--version":
@@ -70,6 +72,8 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             return try .events(DockerEventsCommand.parse(&options))
         case "build":
             return try .build(DockerBuildCommand.parse(&options))
+        case "pull":
+            return try .pull(DockerPullCommand.parse(&options))
         default:
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")
@@ -155,6 +159,42 @@ public enum DockerFrontendCommand: Equatable, Sendable {
             throw DockerFrontendError.usage("filter requires a nonempty key=value")
         }
         filters[String(fields[0]), default: []].append(String(fields[1]))
+    }
+}
+
+public struct DockerPullCommand: Equatable, Sendable {
+    public let reference: String
+    public let quiet: Bool
+
+    static func parse(_ options: inout DockerFrontendArguments) throws -> Self {
+        var reference: String?
+        var quiet = false
+        var positionalOnly = false
+        while let argument = options.next() {
+            if positionalOnly {
+                guard reference == nil else { throw DockerFrontendError.usage("pull accepts one image reference") }
+                reference = argument
+            } else if argument == "--" {
+                positionalOnly = true
+            } else if argument == "-q" || argument == "--quiet" {
+                guard !quiet else { throw DockerFrontendError.usage("duplicate pull quiet option") }
+                quiet = true
+            } else if argument.hasPrefix("-") {
+                throw DockerFrontendError.usage("unsupported pull option: \(argument)")
+            } else if reference == nil {
+                reference = argument
+            } else {
+                throw DockerFrontendError.usage("pull accepts one image reference")
+            }
+        }
+        guard let reference, !reference.isEmpty,
+              !reference.contains(where: { $0.isWhitespace || $0.isNewline || $0 == "\0" })
+        else { throw DockerFrontendError.usage("pull requires one nonempty image reference") }
+        return Self(reference: reference, quiet: quiet)
+    }
+
+    func request() -> DockerHTTPRequest {
+        .init(method: .post, target: "/images/create?fromImage=" + DockerFrontend.escaped(reference))
     }
 }
 

@@ -8,13 +8,53 @@ public protocol DockerFrontendBuildTransport: Sendable {
     func build(_ request: DockerHTTPRequest, onBody: @escaping @Sendable (Data) throws -> Void) async throws
 }
 
+public protocol DockerFrontendPullTransport: Sendable {
+    /// Deliver image progress serially under the same bounded backpressure contract as builds.
+    func pull(_ request: DockerHTTPRequest, onBody: @escaping @Sendable (Data) throws -> Void) async throws
+}
+
 extension UnixDockerFrontendTransport: DockerFrontendBuildTransport {
     public func build(_ request: DockerHTTPRequest, onBody: @escaping @Sendable (Data) throws -> Void) async throws {
         _ = try await duplexClient.stream(request, onBody: onBody)
     }
 }
 
+extension UnixDockerFrontendTransport: DockerFrontendPullTransport {
+    public func pull(_ request: DockerHTTPRequest, onBody: @escaping @Sendable (Data) throws -> Void) async throws {
+        _ = try await duplexClient.stream(request, onBody: onBody)
+    }
+}
+
 public extension DockerFrontend {
+    func executePull(
+        _ command: DockerPullCommand, transport: any DockerFrontendPullTransport, output: DockerFrontendOutput
+    ) async throws {
+        let lines = DockerBuildLines(operation: "pull")
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            defer { group.cancelAll() }
+            group.addTask {
+                try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    try await transport.pull(command.request()) { bytes in
+                        try lines.consume(bytes) { data in
+                            if !command.quiet {
+                                try output.writeSynchronously(data)
+                            }
+                        }
+                    }
+                    if let tail = try lines.finish(), !command.quiet {
+                        try await output.write(tail)
+                    }
+                } onCancel: { output.cancel() }
+            }
+            group.addTask {
+                try await Task.sleep(for: executionTimeout)
+                throw DockerFrontendError.invalidResponse("pull exceeded its execution deadline")
+            }
+            _ = try await group.next()
+        }
+    }
+
     func executeBuild(
         _ spec: DockerBuildCommand, archive: DockerBuildArchive,
         transport: any DockerFrontendBuildTransport, output: DockerFrontendOutput
@@ -46,7 +86,12 @@ public extension DockerFrontend {
 /// carries build failures inside the response stream, including its final line.
 final class DockerBuildLines: @unchecked Sendable {
     private let lines = DockerEventLines()
+    private let operation: String
     private var received = false
+
+    init(operation: String = "build") {
+        self.operation = operation
+    }
 
     func consume(_ bytes: Data, emit: (Data) throws -> Void) throws {
         try lines.consume(bytes) { try emit(render($0)) }
@@ -73,7 +118,7 @@ final class DockerBuildLines: @unchecked Sendable {
         received = true
         if record["error"] != nil || record["errorDetail"] != nil {
             let detail = record["errorDetail"] as? [String: Any]
-            let message = detail?["message"] as? String ?? record["error"] as? String ?? "Engine build failed"
+            let message = detail?["message"] as? String ?? record["error"] as? String ?? "Engine \(operation) failed"
             throw DockerFrontendError.invalidResponse(message)
         }
         if let stream = record["stream"] as? String {

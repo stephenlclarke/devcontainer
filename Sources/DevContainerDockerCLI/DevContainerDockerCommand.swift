@@ -42,23 +42,15 @@ enum DevContainerDockerCommand {
                 try await events(spec, invocation: invocation, frontend: frontend)
                 return 0
             }
+            if case let .pull(spec) = invocation.command {
+                try await pull(spec, invocation: invocation, frontend: frontend)
+                return 0
+            }
             if case let .run(spec) = invocation.command {
                 return try await run(spec, invocation: invocation, frontend: frontend)
             }
             if case let .exec(spec) = invocation.command {
-                let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
-                let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
-                let input = try spec.interactive ? DockerFrontendInput() : nil
-                let standardOutput = try DockerFrontendOutput(descriptor: STDOUT_FILENO)
-                let standardError = try DockerFrontendOutput(descriptor: STDERR_FILENO)
-                return try await frontend.executeExec(
-                    spec,
-                    transport: transport,
-                    input: { try await input?.read() }, output: { frame in
-                        let writer = frame.channel == .standardError ? standardError : standardOutput
-                        try await writer.write(frame.data)
-                    }
-                )
+                return try await exec(spec, invocation: invocation, frontend: frontend)
             }
             let output: Data
             if invocation.command == .clientVersion {
@@ -78,6 +70,24 @@ enum DevContainerDockerCommand {
             )
             return 1
         }
+    }
+
+    private static func exec(
+        _ spec: DockerExecCommand, invocation: DockerFrontendInvocation, frontend: DockerFrontend
+    ) async throws -> Int32 {
+        let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
+        let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
+        let input = try spec.interactive ? DockerFrontendInput() : nil
+        let standardOutput = try DockerFrontendOutput(descriptor: STDOUT_FILENO)
+        let standardError = try DockerFrontendOutput(descriptor: STDERR_FILENO)
+        return try await frontend.executeExec(
+            spec,
+            transport: transport,
+            input: { try await input?.read() }, output: { frame in
+                let writer = frame.channel == .standardError ? standardError : standardOutput
+                try await writer.write(frame.data)
+            }
+        )
     }
 
     private static func build(
@@ -101,6 +111,16 @@ enum DevContainerDockerCommand {
             spec,
             transport: transport,
             output: DockerFrontendOutput(descriptor: STDOUT_FILENO)
+        )
+    }
+
+    private static func pull(
+        _ command: DockerPullCommand, invocation: DockerFrontendInvocation, frontend: DockerFrontend
+    ) async throws {
+        let socket = try invocation.socketPath ?? DevContainerRuntimeSelectionResolver.resolve().socket
+        let transport = try UnixDockerFrontendTransport(socketPath: socket, timeoutSeconds: 86400)
+        try await frontend.executePull(
+            command, transport: transport, output: DockerFrontendOutput(descriptor: STDOUT_FILENO)
         )
     }
 

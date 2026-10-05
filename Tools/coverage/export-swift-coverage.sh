@@ -17,6 +17,7 @@ readonly PROFILE_DATA="$PROFILE_DIRECTORY/default.profdata"
 readonly OUTPUT="$PROFILE_DIRECTORY/devcontainer.json"
 readonly DEVCONTAINER="$BIN_DIRECTORY/devcontainer"
 readonly DEVCONTAINER_COMPOSE="$BIN_DIRECTORY/devcontainer-compose"
+readonly DEVCONTAINER_DOCKER="$BIN_DIRECTORY/devcontainer-docker"
 readonly LLVM_PROFDATA="${SWIFT_LLVM_PROFDATA:-$(xcrun --find llvm-profdata)}"
 readonly LLVM_COV="${SWIFT_LLVM_COV:-$(xcrun --find llvm-cov)}"
 
@@ -34,7 +35,7 @@ if (( ${#TEST_BINARIES[@]} != 1 )); then
     "${#TEST_BINARIES[@]}" >&2
   exit 2
 fi
-for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE"; do
+for executable in "$DEVCONTAINER" "$DEVCONTAINER_COMPOSE" "$DEVCONTAINER_DOCKER"; do
   if [[ ! -x "$executable" ]]; then
     printf 'instrumented executable is missing: %s\n' "$executable" >&2
     exit 2
@@ -47,6 +48,7 @@ done
   "${TEST_BINARIES[0]}" \
   -object "$DEVCONTAINER" \
   -object "$DEVCONTAINER_COMPOSE" \
+  -object "$DEVCONTAINER_DOCKER" \
   >"$OUTPUT"
 
 printf '%s\n' "$OUTPUT"

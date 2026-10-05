@@ -95,6 +95,119 @@ struct DockerFrontendTests {
     }
 
     @Test
+    func `pull sends the complete tagged digest through image create and streams progress`() async throws {
+        let reference = "alpine:3.22@sha256:" + String(repeating: "a", count: 64)
+        let command = try DockerFrontendCommand.parse(["pull", reference])
+        guard case let .pull(spec) = command else { Issue.record("expected pull command"); return }
+        let transport = RecordingPullTransport(records: [
+            #"{"status":"Pulling","id":"alpine"}"# + "\n",
+            #"{"status":"Download complete","id":"alpine"}"# + "\n"
+        ])
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
+        try await DockerFrontend(version: "test").executePull(
+            spec, transport: transport,
+            output: DockerFrontendOutput(descriptor: pipe.fileHandleForWriting.fileDescriptor)
+        )
+        try pipe.fileHandleForWriting.close()
+        let output = String(bytes: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        #expect(output == "alpine: Pulling\nalpine: Download complete\n")
+        #expect(await transport.requests.map(\.target) == [
+            "/images/create?fromImage=alpine%3A3.22%40sha256%3A" + String(repeating: "a", count: 64)
+        ])
+    }
+
+    @Test
+    func `quiet pull consumes stream and propagates engine errors`() async throws {
+        let command = try DockerFrontendCommand.parse(["pull", "--quiet", "alpine"])
+        guard case let .pull(spec) = command else { Issue.record("expected pull command"); return }
+        let success = RecordingPullTransport(records: [#"{"status":"Pulling","id":"alpine"}"# + "\n"])
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
+        try await DockerFrontend(version: "test").executePull(
+            spec, transport: success, output: DockerFrontendOutput(descriptor: pipe.fileHandleForWriting.fileDescriptor)
+        )
+        try pipe.fileHandleForWriting.close()
+        #expect(pipe.fileHandleForReading.readDataToEndOfFile().isEmpty)
+
+        let failing = RecordingPullTransport(records: [#"{"error":"registry denied"}"# + "\n"])
+        let errorPipe = Pipe()
+        defer { try? errorPipe.fileHandleForWriting.close(); try? errorPipe.fileHandleForReading.close() }
+        await #expect(throws: DockerFrontendError.self) {
+            try await DockerFrontend(version: "test").executePull(
+                spec, transport: failing,
+                output: DockerFrontendOutput(descriptor: errorPipe.fileHandleForWriting.fileDescriptor)
+            )
+        }
+    }
+
+    @Test
+    func `pull emits a valid final progress record without a trailing newline`() async throws {
+        let command = try DockerFrontendCommand.parse(["pull", "alpine"])
+        guard case let .pull(spec) = command else { Issue.record("expected pull command"); return }
+        let transport = RecordingPullTransport(records: [#"{"status":"Download complete","id":"alpine"}"#])
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
+        try await DockerFrontend(version: "test").executePull(
+            spec, transport: transport,
+            output: DockerFrontendOutput(descriptor: pipe.fileHandleForWriting.fileDescriptor)
+        )
+        try pipe.fileHandleForWriting.close()
+        #expect(String(bytes: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+            == "alpine: Download complete\n")
+    }
+
+    @Test(arguments: [[], ["malformed progress"], [#"{"status":5}"#]])
+    func `pull rejects empty and malformed progress streams`(records: [String]) async throws {
+        let command = try DockerFrontendCommand.parse(["pull", "alpine"])
+        guard case let .pull(spec) = command else { Issue.record("expected pull command"); return }
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
+        await #expect(throws: DockerFrontendError.self) {
+            try await DockerFrontend(version: "test").executePull(
+                spec, transport: RecordingPullTransport(records: records),
+                output: DockerFrontendOutput(descriptor: pipe.fileHandleForWriting.fileDescriptor)
+            )
+        }
+    }
+
+    @Test
+    func `pull deadline and caller cancellation stop a slow transport`() async throws {
+        let command = try DockerFrontendCommand.parse(["pull", "alpine"])
+        guard case let .pull(spec) = command else { Issue.record("expected pull command"); return }
+        let deadlinePipe = Pipe()
+        defer { try? deadlinePipe.fileHandleForWriting.close(); try? deadlinePipe.fileHandleForReading.close() }
+        await #expect(throws: DockerFrontendError.self) {
+            try await DockerFrontend(version: "test", executionTimeout: .milliseconds(30)).executePull(
+                spec, transport: DelayedPullTransport(),
+                output: DockerFrontendOutput(descriptor: deadlinePipe.fileHandleForWriting.fileDescriptor)
+            )
+        }
+
+        let cancellationPipe = Pipe()
+        defer { try? cancellationPipe.fileHandleForWriting.close(); try? cancellationPipe.fileHandleForReading.close() }
+        let operation = Task {
+            try await DockerFrontend(version: "test", executionTimeout: .seconds(5)).executePull(
+                spec, transport: DelayedPullTransport(),
+                output: DockerFrontendOutput(descriptor: cancellationPipe.fileHandleForWriting.fileDescriptor)
+            )
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        operation.cancel()
+        await #expect(throws: CancellationError.self) { try await operation.value }
+    }
+
+    @Test
+    func `nonstreaming execute rejects pull without contacting transport`() async throws {
+        let command = try DockerFrontendCommand.parse(["pull", "alpine"])
+        let transport = RecordingFrontendTransport("unused")
+        await #expect(throws: DockerFrontendError.self) {
+            try await DockerFrontend(version: "test").execute(command, transport: transport)
+        }
+        #expect(await transport.requests.isEmpty)
+    }
+
+    @Test
     func `quiet list projects IDs and combines repeated filters losslessly`() async throws {
         let command = try DockerFrontendCommand.parse([
             "ps", "-q", "-a", "--filter", "label=owner=a=b", "--filter=label=second", "-f", "name=x/y"
@@ -157,7 +270,9 @@ struct DockerFrontendTests {
         ["inspect", "--type", "image", "one", "--", "two"], ["inspect", "--type", "image", "--"],
         ["inspect", "--type", "image", "--", "one", "two"], ["image", "inspect", "--type", "image", "one"],
         ["ps"], ["ps", "-q", "--size"], ["ps", "-q", "--filter", "label"],
-        ["ps", "-q", "--filter", "=value"], ["ps", "-q", "--filter", "label="]
+        ["ps", "-q", "--filter", "=value"], ["ps", "-q", "--filter", "label="],
+        ["pull"], ["pull", "--platform", "linux/amd64", "alpine"], ["pull", "alpine", "busybox"],
+        ["pull", "--", ""], ["pull", "bad image name"], ["pull", "-q", "--quiet", "alpine"]
     ])
     func `unsupported commands and flags fail before any transport exists`(arguments: [String]) {
         #expect(throws: DockerFrontendError.self) { try DockerFrontendCommand.parse(arguments) }
@@ -187,6 +302,28 @@ private actor RecordingFrontendTransport: DockerFrontendTransport {
     func send(_ request: DockerHTTPRequest) async throws -> Data {
         requests.append(request)
         return body
+    }
+}
+
+private actor RecordingPullTransport: DockerFrontendPullTransport {
+    private let records: [Data]
+    private(set) var requests: [DockerHTTPRequest] = []
+
+    init(records: [String]) {
+        self.records = records.map { Data($0.utf8) }
+    }
+
+    func pull(_ request: DockerHTTPRequest, onBody: @escaping @Sendable (Data) throws -> Void) async throws {
+        requests.append(request)
+        for record in records {
+            try onBody(record)
+        }
+    }
+}
+
+private struct DelayedPullTransport: DockerFrontendPullTransport {
+    func pull(_: DockerHTTPRequest, onBody _: @escaping @Sendable (Data) throws -> Void) async throws {
+        try await Task.sleep(for: .seconds(5))
     }
 }
 
