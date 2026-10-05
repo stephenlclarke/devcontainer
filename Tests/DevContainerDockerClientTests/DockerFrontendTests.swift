@@ -38,6 +38,16 @@ struct DockerFrontendTests {
         }
     }
 
+    @Test
+    func `forced removal preserves cancellation`() async throws {
+        let identifier = String(repeating: "a", count: 64)
+        await #expect(throws: CancellationError.self) {
+            try await DockerFrontend(version: "test").execute(
+                .parse(["rm", "-f", identifier]), transport: CancelledFrontendTransport()
+            )
+        }
+    }
+
     @Test(arguments: ["-v", "--version"])
     func `local version is honest and does not contact the engine`(flag: String) async throws {
         let transport = RecordingFrontendTransport("unused")
@@ -332,5 +342,11 @@ private enum TestFailure: Error { case unavailable }
 private struct UnavailableFrontendTransport: DockerFrontendTransport {
     func send(_: DockerHTTPRequest) async throws -> Data {
         throw TestFailure.unavailable
+    }
+}
+
+private struct CancelledFrontendTransport: DockerFrontendTransport {
+    func send(_: DockerHTTPRequest) async throws -> Data {
+        throw CancellationError()
     }
 }

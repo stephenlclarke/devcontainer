@@ -1,6 +1,7 @@
 // Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
 
 import ContainerEngineWire
+import ContainerUnixHTTPClient
 import Foundation
 
 public protocol DockerFrontendTransport: Sendable {
@@ -44,13 +45,7 @@ public struct DockerFrontend: Sendable {
         case .clientVersion:
             return versionOutput
         case let .remove(identifier):
-            let response = try await transport.send(.init(
-                method: .delete, target: "/containers/\(Self.escaped(identifier))?force=true"
-            ))
-            guard response.isEmpty else {
-                throw DockerFrontendError.invalidResponse("container removal returned an unexpected body")
-            }
-            return Data((identifier + "\n").utf8)
+            return try await remove(identifier: identifier, transport: transport)
         case let .version(format):
             let response = try await transport.send(.init(method: .get, target: "/version"))
             return try versionResponse(response, format: format)
@@ -83,6 +78,22 @@ public struct DockerFrontend: Sendable {
             }
             return Data(identifiers.joined().utf8)
         }
+    }
+
+    private func remove(identifier: String, transport: any DockerFrontendTransport) async throws -> Data {
+        let response: Data
+        do {
+            response = try await transport.send(.init(
+                method: .delete, target: "/containers/\(Self.escaped(identifier))?force=true"
+            ))
+        } catch ContainerUnixHTTPClientError.server(status: 404, message: _) {
+            // Forced removal can race another remover, as in VS Code rebuild.
+            return Data()
+        }
+        guard response.isEmpty else {
+            throw DockerFrontendError.invalidResponse("container removal returned an unexpected body")
+        }
+        return Data((identifier + "\n").utf8)
     }
 
     private func versionResponse(_ response: Data, format: String?) throws -> Data {

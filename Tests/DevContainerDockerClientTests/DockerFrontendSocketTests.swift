@@ -12,7 +12,7 @@ import Testing
 
 struct DockerFrontendSocketTests {
     @Test
-    func `real executable removes the exact ID and propagates missing container errors`() async throws {
+    func `real executable force removal accepts absence without reporting a removed ID`() async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("dr-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(
             at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
@@ -29,12 +29,44 @@ struct DockerFrontendSocketTests {
             #expect(success.exitCode == 0)
             #expect(success.standardOutput == Data((identifier + "\n").utf8))
             #expect(success.standardError.isEmpty)
-            let failure = try await FrontendExecutable.run(
+            let absent = try await FrontendExecutable.run(
                 ["rm", "-f", String(repeating: "b", count: 64)], socket: socket
             )
-            #expect(failure.exitCode == 1)
-            #expect(failure.standardOutput.isEmpty)
-            #expect(String(data: failure.standardError, encoding: .utf8)?.contains("not found") == true)
+            #expect(absent.exitCode == 0)
+            #expect(absent.standardOutput.isEmpty)
+            let inspection = try await FrontendExecutable.run(
+                ["inspect", "--type", "container", String(repeating: "b", count: 64)], socket: socket
+            )
+            #expect(inspection.exitCode == 1)
+            #expect(inspection.standardOutput.isEmpty)
+            #expect(String(data: inspection.standardError, encoding: .utf8)?.contains("not found") == true)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+    }
+
+    @Test(arguments: [403, 409, 500, 503])
+    func `real forced removal preserves permission conflict and server failures`(status: Int) async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let server = ContainerUnixHTTPServer(
+            responder: RemovalFailureResponder(status: status), socketPath: socket,
+            logger: Logger(label: "frontend-removal-failure-test")
+        )
+        try await server.start()
+        do {
+            let result = try await FrontendExecutable.run(
+                ["rm", "--force", String(repeating: "c", count: 64)], socket: socket
+            )
+            #expect(result.exitCode == 1)
+            #expect(result.standardOutput.isEmpty)
+            #expect(String(data: result.standardError, encoding: .utf8)?.contains("HTTP \(status)") == true)
         } catch {
             try await server.shutdown()
             throw error
@@ -633,5 +665,16 @@ private actor RunSocketSession: DockerHijackSession {
 
     func cancel() {
         continuation.finish()
+    }
+}
+
+private struct RemovalFailureResponder: DockerHTTPResponder {
+    let status: Int
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        guard request.method == .delete,
+              request.target == "/containers/\(String(repeating: "c", count: 64))?force=true"
+        else { return .text("unexpected request", status: 400) }
+        return .text(#"{"message":"removal rejected"}"#, status: status, contentType: "application/json")
     }
 }
