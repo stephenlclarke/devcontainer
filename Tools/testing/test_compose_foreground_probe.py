@@ -677,7 +677,7 @@ class ComposeSignalTests(unittest.TestCase):
         self.assertTrue(configuration["services"]["app"]["tty"])
         self.assertEqual(arguments[-3:-1], ["--no-tty=false", "--interactive=false"])
         self.assertNotIn("-T", arguments)
-        self.assertEqual(self.guest()["Config"]["OpenStdin"], False)
+        self.assertFalse(self.guest()["Config"]["OpenStdin"])
 
     def test_real_pty_has_exact_lf_and_single_signal_traps(self):
         master, slave = pty.openpty()
