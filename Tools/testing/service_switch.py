@@ -277,8 +277,19 @@ class ServiceSwitch:
         return owned
 
     def remove_owned(self, owned: list[dict]):
-        # Stop the parent before its plugin jobs so it cannot register more.
-        owned.sort(key=lambda item: (item["label"] != API, item["label"]))
+        # Stop the selected API, runtime workers, then dependent provider helpers.
+        # Helpers may refuse bootout while their API or BuildKit dependency runs.
+        def stop_priority(item):
+            label = item["label"]
+            if label == API:
+                return 0
+            if label.startswith("com.apple.container.container-runtime-linux."):
+                return 1
+            if label in BASE_SERVICES - {API}:
+                return 3
+            return 2
+
+        owned.sort(key=lambda item: (stop_priority(item), item["label"]))
         for current in owned:
             actual = self.launchd.inspect(current["label"])
             if actual is None:

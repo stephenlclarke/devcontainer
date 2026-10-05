@@ -2000,7 +2000,6 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
         cleanup_error = RuntimeError(f"{lane} fixture cleanup is incomplete; preserving active provider and quarantine")
     if runtime.switch is not None and cleanup_error is None:
         try:
-            runtime.restore_provider_helper_definitions()
             runtime.restore()
             restored = True
             provider_stopped = True

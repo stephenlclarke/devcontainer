@@ -630,9 +630,10 @@ class ControlledRuntime:
         return {"status": "private-home-ready", "helpers": len(selected)}
 
     def restore_provider_helper_definitions(self) -> dict:
-        """Restore exact generated helper bytes before the selected runtime is removed."""
+        """Restore exact generated helper bytes after selected runtime processes stop."""
         if self.provider_helper_originals is None:
             return {"status": "not-needed", "helpers": 0}
+        self.validate_provider_helper_definitions_for_restore()
         selected = self.provider_helper_originals
         still_registered = [entry for entry in selected
                             if self.launchd.inspect(entry["label"]) is not None]
@@ -671,6 +672,21 @@ class ControlledRuntime:
         self.provider_helper_originals = None
         self.provider_helper_selected = None
         return {"status": "restored", "helpers": len(selected)}
+
+    def validate_provider_helper_definitions_for_restore(self) -> None:
+        """Reject changed helper registrations before owned-service removal."""
+        if self.provider_helper_originals is None:
+            return
+        for entry in self.provider_helper_originals:
+            service_path = Path(entry["path"])
+            _require_canonical_owned_parent(service_path, self.root)
+            if canonical_file(service_path) not in {entry["payload"], entry["selectedPayload"]}:
+                raise ValueError("Foreign provider helper prevents private HOME restoration")
+            current = self.launchd.inspect(entry["label"])
+            if current is not None:
+                expected_job = {key: entry[key] for key in ("label", "path", "program")}
+                if current != expected_job:
+                    raise ValueError("Foreign provider helper prevents private HOME restoration")
 
     def require_idle_before_selection(self, prior):
         # Homebrew's registered one-shot `container system start` is itself an
@@ -716,7 +732,17 @@ class ControlledRuntime:
             return
         require_probe_stopped(self.journal.records())
         require_keychain_stopped(self.journal.records())
-        self.switch.restore(before_originals=lambda: wait_stopped(self.require_selected_stopped))
+        # Validate every selected helper identity before ServiceSwitch is
+        # allowed to remove anything under the private HOME. The helper jobs
+        # can depend on selected API/build services, so restore their exact
+        # definitions only after those owned processes have stopped.
+        self.validate_provider_helper_definitions_for_restore()
+
+        def before_originals():
+            wait_stopped(self.require_selected_stopped)
+            self.restore_provider_helper_definitions()
+
+        self.switch.restore(before_originals=before_originals)
 
     def require_selected_stopped(self):
         install = self.executable.parent.parent

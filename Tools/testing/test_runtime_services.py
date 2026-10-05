@@ -399,12 +399,102 @@ class RuntimeServicesTests(unittest.TestCase):
             environment = definition["EnvironmentVariables"]
             for key in ("HOME", "TMPDIR", "TMP", "TEMP"):
                 self.assertEqual(environment[key], str(self.owned))
-        runtime.restore_provider_helper_definitions()
+        runtime.restore()
         for label in trusted:
             self.assertEqual(paths[label].read_bytes(), originals[label])
-            self.assertIsNone(self.launchd.inspect(label))
-        runtime.restore()
         self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_restore_stops_owned_jobs_before_helper_bytes_and_original_services(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider, trusted = self.generated_provider_helpers(runtime)
+        quiescent = {
+            "status": "running", "containerCount": 0, "resourceCount": 0,
+            "guestCount": 0, "clientCount": 0,
+        }
+        helper_paths = {
+            label: Path(self.launchd.inspect(label)["path"])
+            for label in trusted
+        }
+        originals = {label: path.read_bytes() for label, path in helper_paths.items()}
+        runtime.propagate_provider_helper_home(provider, trusted, Mock(return_value=quiescent))
+        buildkit_label = "com.apple.container.container-runtime-linux.buildkit"
+        buildkit_program = self.root / "provider/bin/buildkitd"
+        buildkit_program.parent.mkdir(parents=True, exist_ok=True)
+        buildkit_program.write_bytes(b"owned BuildKit fixture")
+        buildkit_path = runtime.root / "container/containers/buildkit/service.plist"
+        buildkit_path.parent.mkdir(parents=True, exist_ok=True)
+        buildkit_path.write_bytes(plistlib.dumps({
+            "Label": buildkit_label,
+            "ProgramArguments": [str(buildkit_program), "start"],
+        }))
+        self.launchd.bootstrap(buildkit_path)
+
+        events = []
+        original_bootout = self.launchd.bootout
+        original_bootstrap = self.launchd.bootstrap
+        original_replace = runtime_services.atomic_replace_private_file
+        actual_require_stopped = runtime.require_selected_stopped
+        core_images = "com.apple.container.container-core-images"
+
+        def dependent_bootout(label):
+            if label == core_images and (API in self.launchd.jobs or buildkit_label in self.launchd.jobs):
+                self.launchd.mutations.append(("bootout-blocked", label))
+                return
+            original_bootout(label)
+
+        def track_selected_stopped():
+            actual_require_stopped()
+            events.append("selected-stopped")
+
+        def track_helper_replace(*args, **kwargs):
+            self.assertEqual(self.launchd.jobs, {})
+            events.append("helper-bytes")
+            return original_replace(*args, **kwargs)
+
+        def track_original_bootstrap(path):
+            if Path(path).is_relative_to(self.original):
+                self.assertTrue(all(helper_paths[label].read_bytes() == payload
+                                    for label, payload in originals.items()))
+                events.append("original-bootstrap")
+            return original_bootstrap(path)
+
+        with patch.object(self.launchd, "bootout", side_effect=dependent_bootout), \
+             patch.object(self.launchd, "bootstrap", side_effect=track_original_bootstrap), \
+             patch.object(runtime, "require_selected_stopped", side_effect=track_selected_stopped), \
+             patch("runtime_services.atomic_replace_private_file", side_effect=track_helper_replace):
+            runtime.restore()
+
+        self.assertNotIn(("bootout-blocked", core_images), self.launchd.mutations)
+        self.assertLess(events.index("selected-stopped"), events.index("helper-bytes"))
+        self.assertLess(events.index("helper-bytes"), events.index("original-bootstrap"))
+        self.assertEqual(self.launchd.jobs, self.original_jobs)
+
+    def test_restore_rejects_foreign_helper_before_any_original_bootstrap(self):
+        runtime = self.runtime()
+        runtime.start()
+        provider, trusted = self.generated_provider_helpers(runtime)
+        quiescent = {
+            "status": "running", "containerCount": 0, "resourceCount": 0,
+            "guestCount": 0, "clientCount": 0,
+        }
+        runtime.propagate_provider_helper_home(provider, trusted, Mock(return_value=quiescent))
+        label = "com.apple.container.container-core-images"
+        helper_path = self.launchd.inspect(label)["path"]
+        foreign_program = str(self.root / "foreign-helper")
+        self.launchd.jobs[label] = {
+            "label": label, "path": helper_path,
+            "program": foreign_program,
+        }
+        before_mutations = list(self.launchd.mutations)
+
+        with self.assertRaisesRegex(ValueError, "Foreign provider helper"):
+            runtime.restore()
+
+        self.assertEqual(self.launchd.mutations, before_mutations)
+        self.assertEqual(self.launchd.jobs[label]["program"], foreign_program)
+        self.assertFalse(any(operation == "bootstrap"
+                             for operation, _ in self.launchd.mutations[len(before_mutations):]))
 
     def test_provider_helper_home_refuses_unowned_path_and_extra_environment(self):
         runtime = self.runtime()
