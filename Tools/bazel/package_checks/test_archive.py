@@ -23,6 +23,8 @@ REFERENCE = "libexec/devcontainer/reference/"
 REFERENCE_FILES = {"node", "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
                    "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
                    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt"}
+TERMINAL = "libexec/devcontainer/terminal-launcher/"
+TERMINAL_EXECUTABLES = {"devcontainer-terminal-linux-arm64", "devcontainer-terminal-linux-amd64"}
 
 
 class ArchiveTests(unittest.TestCase):
@@ -41,7 +43,9 @@ class ArchiveTests(unittest.TestCase):
                 "LICENSE", "NOTICE.md", "THIRD-PARTY-NOTICES.txt", "Package.resolved", "candidate.json",
                 "com.github.stephenlclarke.devcontainer.plist.in",
             )
-        } | {PLUGIN + "/config.toml", PLUGIN + "/bin/devcontainer"} | {REFERENCE + name for name in REFERENCE_FILES}
+        } | {PLUGIN + "/config.toml", PLUGIN + "/bin/devcontainer"} | {REFERENCE + name for name in REFERENCE_FILES} | {
+            TERMINAL + name for name in TERMINAL_EXECUTABLES | {"GO-LICENSE.txt"}
+        }
         directories = {cls.root.name}
         files = {cls.root.name + "/" + name for name in expected}
         for name in files:
@@ -62,7 +66,10 @@ class ArchiveTests(unittest.TestCase):
                 total += entry.size
                 if total > 1024**3:
                     raise ValueError("Archive exceeds package size bound")
-                mode = 0o755 if Path(entry.name).parent.name == "bin" or entry.name == cls.root.name + "/" + REFERENCE + "node" else 0o644
+                executable = (Path(entry.name).parent.name == "bin"
+                              or entry.name == cls.root.name + "/" + REFERENCE + "node"
+                              or entry.name in {cls.root.name + "/" + TERMINAL + name for name in TERMINAL_EXECUTABLES})
+                mode = 0o755 if executable else 0o644
                 if entry.mode != mode or (entry.uid, entry.gid) != (0, 0):
                     raise ValueError("Invalid archive file ownership or mode")
                 output = cls.base / entry.name
@@ -138,6 +145,20 @@ class ArchiveTests(unittest.TestCase):
         self.assertRegex(identity["commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(set(identity["products"]), PRODUCTS)
         self.assertEqual(identity["schemaVersion"], 2)
+        self.assertEqual(set(identity["terminalLaunchers"]), {"arm64", "amd64"})
+        for architecture, machine in (("arm64", 183), ("amd64", 62)):
+            data = (self.root / TERMINAL / ("devcontainer-terminal-linux-" + architecture)).read_bytes()
+            self.assertEqual(data[:7], b"\x7fELF\x02\x01\x01")
+            self.assertEqual(struct.unpack_from("<H", data, 18)[0], machine)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), identity["terminalLaunchers"][architecture])
+            offset = struct.unpack_from("<Q", data, 32)[0]
+            entry_size, count = struct.unpack_from("<HH", data, 54)
+            self.assertGreaterEqual(entry_size, 56)
+            self.assertLessEqual(offset + entry_size * count, len(data))
+            self.assertNotIn(3, [struct.unpack_from("<I", data, offset + index * entry_size)[0]
+                                for index in range(count)], "Linux launcher must not require an ELF interpreter")
+        self.assertEqual(hashlib.sha256((self.root / TERMINAL / "GO-LICENSE.txt").read_bytes()).hexdigest(),
+                         identity["goSDKLicenseSHA256"])
         reference = identity["referenceRuntime"]
         self.assertEqual(set(reference["files"]), REFERENCE_FILES)
         for name, expected in reference["files"].items():
