@@ -4,6 +4,7 @@ load("@build_bazel_rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hi
 load("//Tools/bazel:swift_rules.bzl", "swift_binary", "swift_library", "swift_test")
 load("//Tools/bazel:build_identity.bzl", "build_identity")
 load("//Tools/bazel:candidate_archive.bzl", "candidate_archive")
+load("//Tools/bazel:terminal_launcher_identity.bzl", "terminal_launcher_identity")
 load("//Tools/bazel:docc.bzl", "native_docc")
 
 package(default_visibility = ["//visibility:public"])
@@ -82,6 +83,13 @@ exports_files([
 candidate_archive(
     name = "candidate_archive",
     binaries = [":devcontainer", ":devcontainer-compose", ":devcontainer-engine", ":devcontainer-docker"],
+    terminal_launchers = [
+        "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-arm64",
+        "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-amd64",
+    ],
+    terminal_launcher_arm64 = "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-arm64",
+    terminal_launcher_amd64 = "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-amd64",
+    go_sdk_license = "@main___download_0//:LICENSE",
     reference_node = "@devcontainer_reference_node//:bin/node",
     reference_node_license = "@devcontainer_reference_node//:LICENSE",
     reference_cli = "@devcontainer_reference_cli//:runtime",
@@ -90,6 +98,12 @@ candidate_archive(
     resolved = select({":stock_runtime": "Package.stock.resolved", "//conditions:default": "Package.resolved"}),
     profile = select({":stock_runtime": "stock", "//conditions:default": "enhanced"}),
     resources = ["LICENSE", "NOTICE.md", "Packaging/devcontainer-plugin-config.toml", "Packaging/com.github.stephenlclarke.devcontainer.plist.in"],
+)
+
+terminal_launcher_identity(
+    name = "DevContainerTerminalLauncherIdentity",
+    arm64 = "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-arm64",
+    amd64 = "//Tools/terminal-launcher/cmd/terminal-launcher:terminal-launcher-linux-amd64",
 )
 
 config_setting(
@@ -254,9 +268,9 @@ swift_test(
 
 swift_library(
     name = "DevContainerAppleRuntime",
-    srcs = glob(["Sources/DevContainerAppleRuntime/*.swift"]),
+    srcs = glob(["Sources/DevContainerAppleRuntime/*.swift"]) + [":DevContainerTerminalLauncherIdentity"],
     module_name = "DevContainerAppleRuntime",
-    copts = RUNTIME_COPTS,
+    copts = RUNTIME_COPTS + ["-DDEVCONTAINER_NATIVE_TERMINAL_LAUNCHER"],
     deps = [
         ":DevContainerModel", ":DevContainerProcess", ":DevContainerRuntimeSPI",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",

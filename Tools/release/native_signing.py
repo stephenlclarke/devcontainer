@@ -49,12 +49,19 @@ REFERENCE = "libexec/devcontainer/reference/"
 PLUGIN = "libexec/container/plugins/devcontainer/bin/devcontainer"
 NODE = REFERENCE + "node"
 BINARIES = tuple("bin/" + name for name in PRODUCTS) + (PLUGIN, NODE)
+TERMINAL_LAUNCHERS = {
+    "arm64": "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-arm64",
+    "amd64": "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-amd64",
+}
+GO_LICENSE = "libexec/devcontainer/terminal-launcher/GO-LICENSE.txt"
+PACKAGE_EXECUTABLES = BINARIES + tuple(TERMINAL_LAUNCHERS.values())
 REFERENCE_FILES = {"node", "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
                    "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
                    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt"}
 JIT = {"com.apple.security.cs.allow-jit": True}
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 SHA = re.compile(r"[0-9a-f]{64}")
+ELF_MACHINES = {"arm64": 183, "amd64": 62}
 
 
 def digest(path: Path) -> str:
@@ -169,6 +176,21 @@ def authenticate(stage: Path, receipt_path: Path, expected: str, evidence: Path)
     expected_binaries = {"bin/" + key: value for key, value in receipt["products"].items()}
     expected_binaries[PLUGIN] = receipt["products"]["devcontainer"]
     expected_binaries[NODE] = reference["files"]["node"]
+    launchers = receipt.get("terminalLaunchers")
+    license_sha256 = receipt.get("goSDKLicenseSHA256")
+    if (not isinstance(launchers, dict) or set(launchers) != set(TERMINAL_LAUNCHERS)
+            or any(not isinstance(value, str) or not SHA.fullmatch(value) for value in launchers.values())
+            or not isinstance(license_sha256, str) or not SHA.fullmatch(license_sha256)):
+        raise ValueError("Candidate terminal launcher identity is invalid")
+    for architecture, relative in TERMINAL_LAUNCHERS.items():
+        launcher = stage / relative
+        if (tree.get(relative, {}).get("sha256") != launchers[architecture]
+                or tree.get(relative, {}).get("mode") != 0o755):
+            raise ValueError("Terminal launcher checksum or mode differs: " + architecture)
+        validate_terminal_launcher(launcher, architecture)
+    if (tree.get(GO_LICENSE, {}).get("sha256") != license_sha256
+            or tree.get(GO_LICENSE, {}).get("mode") != 0o644):
+        raise ValueError("Go SDK license checksum or mode differs")
     macho = set()
     for relative in tree:
         path = stage / relative
@@ -201,6 +223,8 @@ def authenticate_provenance(path: Path, expected: str, receipt: dict, tree: dict
             or not SHA.fullmatch(receipt["archiveSHA256"])
             or value.get("candidateAssetSHA256") != receipt["archiveSHA256"]
             or value.get("candidateProducts") != receipt["products"]
+            or value.get("candidateTerminalLaunchers") != receipt.get("terminalLaunchers")
+            or value.get("goSDKLicenseSHA256") != receipt.get("goSDKLicenseSHA256")
             or value.get("selectedLockSHA256") != receipt["dependencyLockSHA256"]
             or value.get("privateRuntime") != receipt["referenceRuntime"]
             or value.get("legalCompleteness") is not True
@@ -210,6 +234,11 @@ def authenticate_provenance(path: Path, expected: str, receipt: dict, tree: dict
     payload = value.get("unsignedPayloadInventory")
     if not isinstance(payload, dict) or not payload or payload != tree:
         raise ValueError("Unsigned package metadata or payload differs from stage provenance")
+    for architecture, relative in TERMINAL_LAUNCHERS.items():
+        if payload.get(relative, {}).get("sha256") != value["candidateTerminalLaunchers"][architecture]:
+            raise ValueError("Terminal launcher differs from authenticated provenance: " + architecture)
+    if payload.get(GO_LICENSE, {}).get("sha256") != value["goSDKLicenseSHA256"]:
+        raise ValueError("Go SDK license differs from authenticated provenance")
     for name, row in payload.items():
         if (not isinstance(name, str) or name.startswith("/")
                 or any(part in {"", ".", ".."} for part in name.split("/"))
@@ -221,11 +250,19 @@ def authenticate_provenance(path: Path, expected: str, receipt: dict, tree: dict
     return value
 
 
+def validate_terminal_launcher(path: Path, architecture: str) -> None:
+    """Require the authenticated helper to be a little-endian Linux ELF64 for its name."""
+    header = path.read_bytes()[:64]
+    if (len(header) < 64 or header[:6] != b"\x7fELF\x02\x01"
+            or struct.unpack_from("<H", header, 18)[0] != ELF_MACHINES[architecture]):
+        raise ValueError("Terminal launcher has the wrong ELF architecture: " + architecture)
+
+
 def require_signed_payload(unsigned: dict, signed: dict) -> None:
     """Only the six authenticated Mach-O files may change during signing."""
     if set(signed) != set(unsigned) or any(
             signed[name] != value for name, value in unsigned.items() if name not in BINARIES):
-        raise ValueError("Signing modified non-executable package content")
+        raise ValueError("Signing modified content outside the six declared Mach-O executables")
 
 def run_owned(command: list[str], *, cwd: Path, env: dict, stdout, stderr, timeout: int) -> int:
     """Protect the spawn/handle boundary, then reuse maintained exact-session cleanup."""

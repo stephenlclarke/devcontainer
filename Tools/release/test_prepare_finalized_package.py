@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import struct
 from pathlib import Path
 import plistlib
 import subprocess
@@ -76,6 +77,17 @@ class FinalizedAdmissionTests(unittest.TestCase):
         product_hashes = {name: digest(name.encode()) for name in (
             "devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker")}
         harness.candidate["products"] = product_hashes
+        helper_bytes = {}
+        for architecture, machine in (("arm64", 183), ("amd64", 62)):
+            header = bytearray(64)
+            header[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", header, 18, machine)
+            helper_bytes[architecture] = bytes(header) + architecture.encode()
+        go_license = b"Go BSD license notice\n"
+        harness.candidate["terminalLaunchers"] = {
+            architecture: digest(content) for architecture, content in helper_bytes.items()
+        }
+        harness.candidate["goSDKLicenseSHA256"] = digest(go_license)
         candidate_archive = b"retained original unsigned candidate archive"
         receipt = {**harness.candidate, "archiveSHA256": digest(candidate_archive),
                    "archiveSize": len(candidate_archive)}
@@ -89,6 +101,10 @@ class FinalizedAdmissionTests(unittest.TestCase):
         def add_selected_ledger(payload: dict) -> None:
             payload[f"devcontainer-{VERSION}/share/devcontainer/dependency-licenses.selected.json"] = (
                 selected_ledger, 0o644)
+            helper_root = f"devcontainer-{VERSION}/libexec/devcontainer/terminal-launcher/"
+            for architecture, content in helper_bytes.items():
+                payload[helper_root + f"devcontainer-terminal-linux-{architecture}"] = (content, 0o755)
+            payload[helper_root + "GO-LICENSE.txt"] = (go_license, 0o644)
 
         archive, checksum = harness.archive(add_selected_ledger)
         verification = self.root / "initial-verification.json"
@@ -131,6 +147,8 @@ class FinalizedAdmissionTests(unittest.TestCase):
             "schema": 1, "scope": "unsigned-native-package-stage", "sourceCommit": COMMIT,
             "profile": "stock", "candidateAssetSHA256": receipt["archiveSHA256"],
             "candidateProducts": product_hashes,
+            "candidateTerminalLaunchers": receipt["terminalLaunchers"],
+            "goSDKLicenseSHA256": receipt["goSDKLicenseSHA256"],
             "selectedLockSHA256": receipt["dependencyLockSHA256"],
             "privateRuntime": receipt["referenceRuntime"], "legalCompleteness": True,
             "distributionReady": False, "signingComplete": False, "notarizationComplete": False,

@@ -21,6 +21,19 @@ class CandidateTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
         self.manifest = {"binaries": {}, "files": {}, "profile": "stock", "commit": "b" * 40, "epoch": "0"}
+        self.manifest["terminalLaunchers"] = {}
+        for architecture, machine in {"arm64": 183, "amd64": 62}.items():
+            path = self.root / f"terminal-{architecture}"
+            data = bytearray(64)
+            data[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", data, 18, machine)
+            struct.pack_into("<Q", data, 32, 64)
+            struct.pack_into("<HH", data, 54, 56, 0)
+            path.write_bytes(data)
+            self.manifest["terminalLaunchers"][architecture] = str(path)
+        go_license = self.root / "go-sdk-license"
+        go_license.write_text("Go BSD license notice")
+        self.manifest["goSDKLicense"] = str(go_license)
         for name in PRODUCTS:
             path = self.root / name
             path.write_bytes(struct.pack("<II", 0xFEEDFACF, 0x0100000C) + b"fixture-not-executable")
@@ -60,6 +73,8 @@ class CandidateTests(unittest.TestCase):
         self.assertFalse(receipt["distributionReady"])
         self.assertEqual(receipt["runtimeProfile"], "stock")
         self.assertEqual(set(receipt["products"]), PRODUCTS)
+        self.assertEqual(set(receipt["terminalLaunchers"]), {"arm64", "amd64"})
+        self.assertEqual(receipt["goSDKLicenseSHA256"], hashlib.sha256(b"Go BSD license notice").hexdigest())
         self.assertEqual(receipt["schemaVersion"], 2)
         self.assertEqual(receipt["referenceRuntime"]["nodeVersion"], "24.21.0")
         with tarfile.open(self.archive) as archive:
@@ -75,6 +90,12 @@ class CandidateTests(unittest.TestCase):
                 self.assertTrue(member.isfile())
                 self.assertEqual(member.mode, 0o755 if name == "node" else 0o644)
                 self.assertEqual(hashlib.sha256(archive.extractfile(member).read()).hexdigest(), expected)
+            launchers = "devcontainer-1.2.3/libexec/devcontainer/terminal-launcher/"
+            for architecture, expected in receipt["terminalLaunchers"].items():
+                member = archive.getmember(launchers + f"devcontainer-terminal-linux-{architecture}")
+                self.assertEqual(member.mode, 0o755)
+                self.assertEqual(hashlib.sha256(archive.extractfile(member).read()).hexdigest(), expected)
+            self.assertEqual(archive.extractfile(launchers + "GO-LICENSE.txt").read(), b"Go BSD license notice")
         self.assertFalse(list(self.root.glob("candidate-stage-*")))
 
     def test_source_or_profile_change_changes_candidate_identity(self) -> None:
@@ -121,6 +142,32 @@ class CandidateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.build()
                 self.manifest[key] = before
+
+    def test_rejects_missing_wrong_architecture_and_dynamic_terminal_launchers(self) -> None:
+        amd64 = self.manifest["terminalLaunchers"].pop("amd64")
+        with self.assertRaisesRegex(ValueError, "both Linux terminal launchers"):
+            self.build()
+        self.manifest["terminalLaunchers"]["amd64"] = amd64
+        Path(self.manifest["terminalLaunchers"]["arm64"]).write_bytes(bytes(64))
+        with self.assertRaisesRegex(ValueError, "little-endian ELF64"):
+            self.build()
+        arm64 = bytearray(64)
+        arm64[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", arm64, 18, 62)
+        struct.pack_into("<Q", arm64, 32, 64)
+        struct.pack_into("<HH", arm64, 54, 56, 0)
+        Path(self.manifest["terminalLaunchers"]["arm64"]).write_bytes(arm64)
+        with self.assertRaisesRegex(ValueError, "wrong ELF architecture"):
+            self.build()
+        arm64 = bytearray(120)
+        arm64[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", arm64, 18, 183)
+        struct.pack_into("<Q", arm64, 32, 64)
+        struct.pack_into("<HH", arm64, 54, 56, 1)
+        struct.pack_into("<I", arm64, 64, 3)
+        Path(self.manifest["terminalLaunchers"]["arm64"]).write_bytes(arm64)
+        with self.assertRaisesRegex(ValueError, "statically linked"):
+            self.build()
         self.manifest["files"]["../escape"] = str(self.root / "LICENSE")
         with self.assertRaisesRegex(ValueError, "Unsafe"):
             self.build()

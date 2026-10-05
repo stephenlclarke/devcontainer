@@ -3,6 +3,7 @@
 struct DockerInspectHostConfig: Encodable {
     let autoRemove: Bool
     let binds: [String]
+    var consoleSize: [UInt16]?
     var portBindings: [String: [DockerNetworkPortBinding]] = [:]
     var networkMode = "bridge"
     var dns: [String] = []
@@ -17,6 +18,7 @@ struct DockerInspectHostConfig: Encodable {
     enum CodingKeys: String, CodingKey {
         case autoRemove = "AutoRemove"
         case binds = "Binds"
+        case consoleSize = "ConsoleSize"
         case networkMode = "NetworkMode"
         case portBindings = "PortBindings"
         case dns = "Dns"

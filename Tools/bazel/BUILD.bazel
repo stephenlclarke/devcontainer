@@ -26,6 +26,11 @@ exports_files([
     "prepare_guest_images.py",
     "oci_image_layout.py",
     "candidate_archive.py",
+    "terminal_launcher_identity.py",
+    "terminal_launcher_identity.bzl",
+    "test_terminal_launcher_identity.py",
+    "rules-go-sdk-notices.patch",
+    "rules-go-sanitizer-isolation.patch",
     "package_checks/cli_process.py",
     "build_identity.bzl",
     "rules-swift-sandbox-output.patch",
@@ -41,6 +46,7 @@ sh_binary(
     srcs = ["ssd-test-runner.sh"],
     visibility = ["//visibility:public"],
 )
+
 
 # Keep compiler qualification separate from the production coverage denominator.
 swift_binary(

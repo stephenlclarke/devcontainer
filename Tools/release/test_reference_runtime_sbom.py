@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import subprocess
+import struct
 import sys
 import tarfile
 import tempfile
@@ -57,10 +58,20 @@ class RuntimeSBOMTests(unittest.TestCase):
             "cli/scripts/updateUID.Dockerfile": b"FROM fixture",
         }
         self.resolved = (ROOT / "Package.resolved").read_bytes()
+        self.launchers = {}
+        for architecture, machine in (("arm64", 183), ("amd64", 62)):
+            image = bytearray(64)
+            image[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", image, 18, machine)
+            self.launchers[architecture] = bytes(image) + architecture.encode()
+        self.go_license = b"Go BSD license notice\n"
         self.candidate = {
             "schemaVersion": 2, "kind": "unsigned-native-candidate", "version": VERSION, "commit": COMMIT,
             "runtimeProfile": "stock", "architecture": "arm64", "compilationMode": "opt", "distributionReady": False,
             "dependencyLockSHA256": digest(self.resolved),
+            "terminalLaunchers": {architecture: digest(content)
+                                  for architecture, content in self.launchers.items()},
+            "goSDKLicenseSHA256": digest(self.go_license),
             "referenceRuntime": {"nodeVersion": "24.21.0", "cliVersion": "0.88.0", "lockSHA256": digest(self.files["runtime-lock.json"]),
                                  "files": {name: digest(content) for name, content in self.files.items()}},
         }
@@ -104,6 +115,9 @@ class RuntimeSBOMTests(unittest.TestCase):
         for name, content in self.files.items():
             # A signed Node differs from the unsigned candidate; this test does not claim signature admission.
             payload[f"{prefix}/libexec/devcontainer/reference/{name}"] = (b"signed-node-fixture" if name == "node" else content, 0o755 if name == "node" else 0o644)
+        for architecture, content in self.launchers.items():
+            payload[f"{prefix}/libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-{architecture}"] = (content, 0o755)
+        payload[f"{prefix}/libexec/devcontainer/terminal-launcher/GO-LICENSE.txt"] = (self.go_license, 0o644)
         if mutate:
             mutate(payload)
         with tarfile.open(archive, "w:gz") as target:
@@ -126,6 +140,26 @@ class RuntimeSBOMTests(unittest.TestCase):
         self.assertEqual(len(first["packages"]), len(json.loads((ROOT / "Package.resolved").read_bytes())["pins"]) + 3)
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_archive_rejects_terminal_launcher_architecture_and_license_mismatch(self) -> None:
+        prefix = f"devcontainer-{VERSION}/libexec/devcontainer/terminal-launcher/"
+
+        def wrong_architecture(payload):
+            name = prefix + "devcontainer-terminal-linux-arm64"
+            content, mode = payload[name]
+            changed = bytearray(content)
+            struct.pack_into("<H", changed, 18, 62)
+            payload[name] = (bytes(changed), mode)
+
+        def changed_license(payload):
+            payload[prefix + "GO-LICENSE.txt"] = (b"changed license\n", 0o644)
+
+        for mutate in (wrong_architecture, changed_license):
+            with self.subTest(mutate=mutate.__name__):
+                result = self.verify(mutate)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("terminal launcher" if mutate is wrong_architecture else "Go SDK license",
+                              result.stderr)
 
     def test_rejects_changed_runtime_version_or_archive_origin(self) -> None:
         for field, value in (("version", "99.0.0"), ("url", "https://untrusted.invalid/node.tar.gz")):

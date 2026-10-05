@@ -14,6 +14,7 @@ import tempfile
 
 
 PRODUCTS = {"devcontainer", "devcontainer-compose", "devcontainer-engine", "devcontainer-docker"}
+TERMINAL_LAUNCHERS = {"arm64": 183, "amd64": 62}
 CLI_FILES = {"devcontainer.js", "dist/spec-node/devContainersSpecCLI.js", "scripts/updateUID.Dockerfile",
              "package.json", "LICENSE.txt", "ThirdPartyNotices.txt"}
 
@@ -50,10 +51,28 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def validate_terminal_launcher(path: Path, architecture: str) -> None:
+    """Require the expected static little-endian Linux ELF64 image."""
+    data = path.read_bytes()
+    if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01":
+        raise ValueError("Terminal launcher is not a little-endian ELF64 image")
+    if struct.unpack_from("<H", data, 18)[0] != TERMINAL_LAUNCHERS[architecture]:
+        raise ValueError("Terminal launcher has the wrong ELF architecture")
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    entry_size, count = struct.unpack_from("<HH", data, 54)
+    if entry_size < 56 or program_offset + entry_size * count > len(data):
+        raise ValueError("Terminal launcher has an invalid ELF program table")
+    for index in range(count):
+        if struct.unpack_from("<I", data, program_offset + index * entry_size)[0] == 3:
+            raise ValueError("Terminal launcher must be statically linked")
+
+
 def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) -> None:
     """Only copy declared inputs; never discover a build or run a compiler."""
     if set(manifest["binaries"]) != PRODUCTS:
         raise ValueError("Candidate must contain exactly the four native products")
+    if set(manifest.get("terminalLaunchers", {})) != set(TERMINAL_LAUNCHERS):
+        raise ValueError("Candidate must contain both Linux terminal launchers")
     version_match = re.search(r"^DEVCONTAINER_VERSION\s*\?=\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", Path(manifest["makefile"]).read_text(), re.M)
     if not version_match:
         raise ValueError("Missing semantic version in Makefile")
@@ -99,12 +118,31 @@ def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) ->
         (shared / "THIRD-PARTY-NOTICES.txt").write_text("\n\n".join(path + "\n\n" + Path(path).read_text() for path in texts))
         shutil.copyfile(manifest["resolved"], shared / "Package.resolved")
         reference = bundle_reference(manifest, stage)
+        launcher_root = stage / "libexec/devcontainer/terminal-launcher"
+        launcher_root.mkdir(parents=True)
+        terminal_launchers = {}
+        for architecture in TERMINAL_LAUNCHERS:
+            source = Path(manifest["terminalLaunchers"][architecture])
+            validate_terminal_launcher(source, architecture)
+            name = f"devcontainer-terminal-linux-{architecture}"
+            destination = launcher_root / name
+            shutil.copyfile(source, destination)
+            destination.chmod(0o755)
+            terminal_launchers[architecture] = sha256(destination)
+        go_license_source = Path(manifest["goSDKLicense"])
+        if not go_license_source.is_file() or go_license_source.stat().st_size == 0:
+            raise ValueError("Missing Go SDK license notice")
+        go_license = launcher_root / "GO-LICENSE.txt"
+        shutil.copyfile(go_license_source, go_license)
+        go_license.chmod(0o644)
         identity = {
             "schemaVersion": 2, "kind": "unsigned-native-candidate", "version": version,
             "commit": commit, "runtimeProfile": manifest["profile"], "architecture": "arm64",
             "compilationMode": "opt", "distributionReady": False,
             "dependencyLockSHA256": sha256(Path(manifest["resolved"])),
             "products": {name: sha256(binary_root / name) for name in sorted(PRODUCTS)},
+            "terminalLaunchers": terminal_launchers,
+            "goSDKLicenseSHA256": sha256(go_license),
             "referenceRuntime": reference,
         }
         (shared / "candidate.json").write_text(json.dumps(identity, sort_keys=True, indent=2) + "\n")
@@ -112,7 +150,7 @@ def package(manifest: dict, archive: Path, receipt: Path, archive_tool: Path) ->
         for path in [stage, *stage.rglob("*")]:
             if path.is_dir():
                 path.chmod(0o755)
-            elif path.parent.name != "bin" and path != stage / "libexec/devcontainer/reference/node":
+            elif path.parent.name not in {"bin", "terminal-launcher"} and path != stage / "libexec/devcontainer/reference/node":
                 path.chmod(0o644)
         module.create_archive(stage, archive, epoch)
     identity["archiveSHA256"] = sha256(archive)

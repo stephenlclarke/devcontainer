@@ -160,6 +160,8 @@ class NativeStageTests(unittest.TestCase):
                                   "development", legal_bundle=self.bundle, legal_sha256=self.bundle_sha,
                                   ssd_root=self.root)
         self.assertEqual(set(result["candidateProducts"]), MODULE.PRODUCTS)
+        self.assertEqual(result["candidateTerminalLaunchers"], self.fixture.receipt["terminalLaunchers"])
+        self.assertEqual(result["goSDKLicenseSHA256"], self.fixture.receipt["goSDKLicenseSHA256"])
         self.assertEqual(set(result["privateRuntime"]["files"]), set(self.fixture.receipt["referenceRuntime"]["files"]))
         self.assertEqual(result["selectedLockSHA256"], MODULE.digest(self.lock))
         self.assertEqual(set(scripts), {"write-build-info.py", "render-package-readme.py", "write-sbom.py"})
@@ -178,6 +180,9 @@ class NativeStageTests(unittest.TestCase):
                          b"authenticated notices")
         self.assertTrue((self.destination / "devcontainer-1.2.3/bin/devcontainer-docker").is_file())
         self.assertTrue((self.destination / "devcontainer-1.2.3/libexec/devcontainer/reference/node").is_file())
+        self.assertTrue((self.destination / "devcontainer-1.2.3/libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-arm64").is_file())
+        self.assertTrue((self.destination / "devcontainer-1.2.3/libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-amd64").is_file())
+        self.assertTrue((self.destination / "devcontainer-1.2.3/libexec/devcontainer/terminal-launcher/GO-LICENSE.txt").is_file())
         tree = self.destination / "devcontainer-1.2.3"
         expected_payload = {name: {field: entry[field] for field in ("sha256", "size", "mode")}
                             for name, entry in prepare_releases.inventory(tree).items()

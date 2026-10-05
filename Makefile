@@ -126,6 +126,7 @@ bazel-qualify:
 
 bazel-test-tools:
 	Tools/bazel/run.sh test-tools
+	Tools/bazel/run.sh test //Tools/terminal-launcher:terminal-launcher-tests
 
 bazel-harness:
 	Tools/bazel/run.sh test //Tools/testing:case_evidence_tests //Tools/bazel:release_preparation_tests //Tools/bazel:reference_runtime_test

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import struct
 import tarfile
 import tempfile
 import unittest
@@ -18,6 +19,15 @@ from retain_evidence import digest
 
 
 class CandidateAdmissionTests(unittest.TestCase):
+    @staticmethod
+    def _elf(machine):
+        value = bytearray(64)
+        value[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", value, 18, machine)
+        struct.pack_into("<Q", value, 32, 64)
+        struct.pack_into("<HH", value, 54, 56, 0)
+        return bytes(value)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
         self.addCleanup(self.temporary.cleanup)
@@ -76,6 +86,10 @@ class CandidateAdmissionTests(unittest.TestCase):
             "nodeVersion": "24.21.0", "cliVersion": "0.88.0", "lockSHA256": digest(runtime["runtime-lock.json"]),
             "files": {name: digest(data) for name, data in runtime.items()}})
         self.receipt["products"]["devcontainer-docker"] = digest(b"frontend")
+        launchers = {"arm64": self._elf(183), "amd64": self._elf(62)}
+        go_license = b"Go SDK BSD license"
+        self.receipt["terminalLaunchers"] = {arch: digest(data) for arch, data in launchers.items()}
+        self.receipt["goSDKLicenseSHA256"] = digest(go_license)
         embedded = {key: value for key, value in self.receipt.items() if key not in {"archiveSHA256", "archiveSize"}}
         output = io.BytesIO()
         with tarfile.open(fileobj=io.BytesIO(self.contents["artifact:candidate_archive.tar.gz"]), mode="r:gz") as original, \
@@ -84,6 +98,9 @@ class CandidateAdmissionTests(unittest.TestCase):
                      for entry in original}
             files["share/devcontainer/candidate.json"] = (canonical(embedded).encode(), 0o644)
             files["bin/devcontainer-docker"] = (b"frontend", 0o755)
+            files.update({"libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-" + arch:
+                          (data, 0o755) for arch, data in launchers.items()})
+            files["libexec/devcontainer/terminal-launcher/GO-LICENSE.txt"] = (go_license, 0o644)
             files.update({"libexec/devcontainer/reference/" + name: (data, 0o755 if name == "node" else 0o644)
                           for name, data in runtime.items()})
             for name, (data, mode) in files.items():
@@ -104,7 +121,8 @@ class CandidateAdmissionTests(unittest.TestCase):
         self.upgrade_runtime()
         current = self.prepare()
         self.assertNotEqual(legacy["preparationSHA256"], current["preparationSHA256"])
-        self.assertEqual(set(current["executables"]), PRODUCTS | {"devcontainer-docker", "reference-node"})
+        self.assertEqual(set(current["executables"]), PRODUCTS | {"devcontainer-docker", "reference-node",
+                                                                    "terminal-launcher-arm64", "terminal-launcher-amd64"})
         shutil.rmtree(self.scratch)
         self.assertEqual(current, admit_candidate(self.retained, self.invocation, "stock"))
         self.assertTrue(Path(legacy["root"]).is_dir())
@@ -146,6 +164,29 @@ class CandidateAdmissionTests(unittest.TestCase):
                 self.contents["artifact:candidate_archive.json"] = canonical(receipt).encode()
                 self.save()
                 with self.assertRaisesRegex(ValueError, "private runtime digests"):
+                    self.prepare()
+
+    def test_terminal_launcher_payload_and_license_must_match_declared_digests(self):
+        self.upgrade_runtime()
+        original = dict(self.contents)
+        for member in ("devcontainer-terminal-linux-arm64", "GO-LICENSE.txt"):
+            with self.subTest(member=member):
+                self.invocation = "altered-launcher-" + member
+                output = io.BytesIO()
+                with tarfile.open(fileobj=io.BytesIO(original["artifact:candidate_archive.tar.gz"]), mode="r:gz") as source, \
+                        tarfile.open(fileobj=output, mode="w:gz") as target:
+                    for entry in source:
+                        data = source.extractfile(entry).read()
+                        if entry.name.endswith("/terminal-launcher/" + member):
+                            data = b"changed-terminal-launcher-payload"
+                        entry.size = len(data)
+                        target.addfile(entry, io.BytesIO(data))
+                payload = output.getvalue()
+                self.contents["artifact:candidate_archive.tar.gz"] = payload
+                receipt = dict(self.receipt, archiveSHA256=digest(payload), archiveSize=len(payload))
+                self.contents["artifact:candidate_archive.json"] = canonical(receipt).encode()
+                self.save()
+                with self.assertRaisesRegex(ValueError, "terminal launcher bytes"):
                     self.prepare()
 
     def test_preparation_reuses_assets_and_admission_survives_all_scratch_removal(self):

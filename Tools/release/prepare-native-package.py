@@ -478,6 +478,8 @@ def stage(repository: Path, retained: Path, scratch: Path, invocation: str, prof
                       "candidateInvocation": invocation, "candidateAssetSHA256": admitted["assetSHA256"],
                       "candidatePreparationSHA256": admitted["preparationSHA256"],
                       "candidateOutputsBEP": output_hashes, "candidateProducts": receipt["products"],
+                      "candidateTerminalLaunchers": receipt["terminalLaunchers"],
+                      "goSDKLicenseSHA256": receipt["goSDKLicenseSHA256"],
                       "compiledConsumer": proof, "selectedLockSHA256": receipt["dependencyLockSHA256"],
                       "selectedLicenseLedgerSHA256": digest(ledger), "privateRuntime": receipt["referenceRuntime"],
                       "legalBundle": legal, "privateRuntimeLegalFiles": runtime_legal,

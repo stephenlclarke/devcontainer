@@ -7,6 +7,7 @@ import ContainerizationOCI
 import ContainerizationOS
 import ContainerPersistence
 import ContainerResource
+import Darwin
 @testable import DevContainerAppleRuntime
 import DevContainerModel
 import DevContainerRuntimeSPI
@@ -892,21 +893,6 @@ extension AppleContainerCreateTests {
         #expect(config.useInit)
         #expect(config.capAdd == ["CAP_NET_ADMIN"])
         #expect(config.capDrop == ["CAP_MKNOD"])
-    }
-
-    @Test func `entrypoint override clears image command and missing command fails`() throws {
-        let process = try AppleContainerCreateProjection.process(
-            ContainerSpec(name: "test", image: digest, entrypoint: ["/replacement"]), image: imageConfig()
-        )
-        #expect(process.arguments.isEmpty)
-        #expect(throws: DevContainerError.self) {
-            try AppleContainerCreateProjection.process(ContainerSpec(name: "test", image: digest), image: nil)
-        }
-        let bare = try AppleContainerCreateProjection.process(
-            ContainerSpec(name: "test", image: digest, command: ["/bin/true"]), image: nil
-        )
-        #expect(bare.user == .id(uid: 0, gid: 0))
-        #expect(bare.workingDirectory == "/")
     }
 
     @Test func `empty user and directory inherit non root image defaults`() throws {

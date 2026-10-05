@@ -303,7 +303,7 @@ extension AppleContainerRuntime {
             image: (configuration["image"] as? [String: Any])?["reference"] as? String ?? "",
             command: executable.isEmpty ? arguments : [executable] + arguments,
             environment: environmentDictionary(process["environment"] as? [String] ?? []),
-            labels: labels,
+            labels: labels.filter { $0.key != NativeTerminalLauncher.label },
             workingDirectory: process["workingDirectory"] as? String,
             user: user(process["user"]),
             hostname: configuration["hostname"] as? String,
@@ -365,7 +365,8 @@ extension AppleContainerRuntime {
         if requested.hostname?.isEmpty ?? true {
             spec.hostname = observed.hostname
         }
-        spec.labels.merge(observed.labels) { _, observedValue in observedValue }
+        let observedLabels = observed.labels.filter { $0.key != NativeTerminalLauncher.label }
+        spec.labels.merge(observedLabels) { _, observedValue in observedValue }
         return spec
     }
 

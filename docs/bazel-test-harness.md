@@ -1,5 +1,9 @@
 # Bazel test-harness replacement
 
+Finalized native lifecycle fixtures use the package's installation-owned Docker and Compose adapters. Development and Docker lanes retain explicit backend paths; workload arguments after `--` are preserved. See [the lifecycle harness fix](PR-finalized-lifecycle-backend.md). The failed D26 campaign remains failed, and these changes require a fresh complete release campaign.
+
+Qualification creates a disposable private keychain and configures its locking settings through that exact newly created reference. It verifies the canonical path, no sleep lock, no timeout and unlocked state before accepting setup. It does not change the operator's default keychain or search list. Focused settings tests and a real create/settings/delete smoke passed; long-duration qualification remains pending. See [the private keychain fix](PR-disposable-keychain-settings.md).
+
 Status: implementation in progress, not release qualification. The existing harnesses remain until their replacement covers their complete scenario inventory. The operator explicitly authorised replacing them on 17 September 2026. The new implementation must be simpler, faster, recoverable and at least as comprehensive; wrapping the existing lane-wide runner is not the destination.
 
 ## Execution boundaries

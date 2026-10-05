@@ -55,6 +55,8 @@ profile resolves the exact Stephen-owned revisions recorded in
 runtime-parity baseline; the new Devcontainer release still requires its complete
 exact-source runtime qualification.
 
+The development candidate also carries Docker create-time `HostConfig.ConsoleSize` into TTY guest startup using a package-owned Linux launcher whose hash is embedded in the signed engine. This work is not yet covered by a fresh E15 first-instruction parity run or the complete 84-cell release campaign.
+
 ## See it work
 
 ![Live terminal recording of a Dev Container starting and running on stock Apple container](docs/images/devcontainer-demo.gif)

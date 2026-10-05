@@ -50,6 +50,10 @@ class Signer:
     """Only the signer operations needed for portable finalizer admission tests."""
 
     BINARIES = ("bin/devcontainer",)
+    PACKAGE_EXECUTABLES = BINARIES + (
+        "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-arm64",
+        "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-amd64",
+    )
     NODE = "bin/devcontainer"
     JIT = {"com.apple.security.cs.allow-jit": True}
 
@@ -215,6 +219,11 @@ class FinalizationTests(unittest.TestCase):
         binary = tree / "bin/devcontainer"
         binary.write_bytes(b"signed")
         binary.chmod(0o755)
+        for relative in self.signer.PACKAGE_EXECUTABLES[1:]:
+            helper = tree / relative
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_bytes(b"ELF helper")
+            helper.chmod(0o600)
         metadata = tree / "share/devcontainer/candidate.json"
         metadata.write_bytes(b"metadata")
         metadata.chmod(0o600)
@@ -225,6 +234,8 @@ class FinalizationTests(unittest.TestCase):
         self.assertEqual(metadata.read_bytes(), b"metadata")
         self.assertEqual(result["share/devcontainer/candidate.json"]["mode"], 0o644)
         self.assertEqual(result["bin/devcontainer"]["mode"], 0o755)
+        for relative in self.signer.PACKAGE_EXECUTABLES[1:]:
+            self.assertEqual(result[relative]["mode"], 0o755)
         self.assertEqual((tree / "share/devcontainer/notarization.json").read_bytes(), self.evidence.read_bytes())
 
     def test_extra_signed_payload_fails_before_normalization(self):

@@ -133,7 +133,7 @@ def normalized_inventory(tree: Path, signed: dict, acceptance: bytes, signer) ->
     for path in sorted(tree.rglob("*")):
         if path.is_symlink():
             raise ValueError("Signed package contains a symbolic link")
-        path.chmod(0o755 if path.is_dir() or path.relative_to(tree).as_posix() in signer.BINARIES else 0o644)
+        path.chmod(0o755 if path.is_dir() or path.relative_to(tree).as_posix() in signer.PACKAGE_EXECUTABLES else 0o644)
     notarization = tree / "share/devcontainer/notarization.json"
     if notarization.exists() or notarization.is_symlink():
         raise ValueError("Notarization file was already present in signed tree")
@@ -144,7 +144,7 @@ def normalized_inventory(tree: Path, signed: dict, acceptance: bytes, signer) ->
         raise ValueError("Final package file closure differs")
     for name, entry in signed.items():
         if (after[name]["sha256"] != entry["sha256"] or after[name]["size"] != entry["size"]
-                or after[name]["mode"] != (0o755 if name in signer.BINARIES else 0o644)):
+                or after[name]["mode"] != (0o755 if name in signer.PACKAGE_EXECUTABLES else 0o644)):
             raise ValueError("Signed payload bytes or normalized mode differ: " + name)
     if after["share/devcontainer/notarization.json"] != {
             "sha256": hashlib.sha256(acceptance).hexdigest(), "size": len(acceptance), "mode": 0o644}:

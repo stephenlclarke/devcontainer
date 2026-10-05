@@ -45,7 +45,8 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         let builtinNetwork = try await networkClient.builtin?.id
         var configuration = try AppleContainerCreateProjection.configuration(
             spec: spec, identity: (description, platform),
-            imageConfig: imageConfig, system: system, builtinNetwork: builtinNetwork
+            imageConfig: imageConfig, system: system, builtinNetwork: builtinNetwork,
+            terminalLauncher: Self.terminalLauncher(for: spec)
         )
         for network in configuration.networks {
             _ = try await networkClient.get(id: network.network)
@@ -62,6 +63,11 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         return configuration
     }
 
+    private static func terminalLauncher(for spec: ContainerSpec) throws -> NativeTerminalLauncherAsset? {
+        guard try NativeTerminalLauncher.requestedSize(spec: spec) != nil else { return nil }
+        return try NativeTerminalLauncher.resolveInstalled()
+    }
+
     func create(
         configuration: ContainerConfiguration, mountOptions: [String], context: RuntimeRequestContext,
         recordIntent: @Sendable (ContainerConfiguration) async throws -> RuntimeContainerCreation
@@ -72,6 +78,7 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         // Runtime-owned file mounts use the typed API: the CLI parser accepts
         // only directories. Preserve them in the journal and native submission.
         configuration.mounts += requestedMounts
+        _ = try NativeTerminalLauncher.verify(configuration: configuration)
         let kernel = try await loadKernel()
         try context.checkActive()
         // Finish fallible local preparation before recording possible submission.
@@ -79,6 +86,7 @@ struct LiveAppleContainerCreateClient: AppleContainerCreateClient {
         let creation = try await recordIntent(configuration)
         // The API consumes this descriptor, not its mutable reference. Missing
         // local content fails; it must never turn into a pull of a replacement tag.
+        _ = try NativeTerminalLauncher.verify(configuration: configuration)
         try await client.create(configuration: configuration, kernel: kernel)
         let created = try await client.get(id: configuration.id)
         try AppleContainerCreateProjection.verify(created.configuration, expected: configuration)
@@ -163,7 +171,8 @@ extension ResolvedAppleImage {
 enum AppleContainerCreateProjection {
     static func configuration(
         spec: ContainerSpec, identity: (image: ImageDescription, platform: Platform),
-        imageConfig: ImageConfig?, system: ContainerSystemConfig, builtinNetwork: String?
+        imageConfig: ImageConfig?, system: ContainerSystemConfig, builtinNetwork: String?,
+        terminalLauncher: NativeTerminalLauncherAsset? = nil
     ) throws -> ContainerConfiguration {
         let (image, platform) = identity
         try spec.dns?.validate()
@@ -177,6 +186,9 @@ enum AppleContainerCreateProjection {
             defaultCPUs: system.container.cpus, defaultMemory: system.container.memory
         )
         configuration.labels = (imageConfig?.labels ?? [:]).merging(spec.labels) { _, requested in requested }
+        guard configuration.labels[NativeTerminalLauncher.label] == nil else {
+            throw DevContainerError(.invalidRequest, message: "terminal launcher label is runtime-owned")
+        }
         configuration.useInit = spec.initProcess
         configuration.stopSignal = imageConfig?.stopSignal
         try AppleContainerExecutionSettings.apply(spec.executionSettings, to: &configuration)
@@ -207,7 +219,27 @@ enum AppleContainerCreateProjection {
                 )
             }
         #endif
+        try applyTerminalLauncher(spec: spec, asset: terminalLauncher, to: &configuration)
         return configuration
+    }
+
+    private static func applyTerminalLauncher(
+        spec: ContainerSpec, asset: NativeTerminalLauncherAsset?, to configuration: inout ContainerConfiguration
+    ) throws {
+        guard try NativeTerminalLauncher.requestedSize(spec: spec) != nil else { return }
+        guard let asset else {
+            throw DevContainerError(
+                .unsupportedCapability, message: "a trusted native initial-terminal-size launcher is unavailable"
+            )
+        }
+        let originalProcess = configuration.initProcess
+        configuration.initProcess = try NativeTerminalLauncher.invocation(process: originalProcess, spec: spec)
+        configuration.labels[NativeTerminalLauncher.label] = try NativeTerminalLauncher.processAttestation(
+            originalProcess, asset: asset
+        )
+        configuration.mounts.append(.virtiofs(
+            source: asset.source.path, destination: NativeTerminalLauncher.mountDestination, options: ["ro"]
+        ))
     }
 
     static func process(_ spec: ContainerSpec, image: ImageConfig?) throws -> ProcessConfiguration {

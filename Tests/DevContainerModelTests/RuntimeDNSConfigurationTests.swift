@@ -8,13 +8,20 @@ struct RuntimeDNSConfigurationTests {
     @Test func `round trip and legacy state`() throws {
         let legacy = ContainerSpec(name: "fixture", image: "alpine")
         let data = try JSONEncoder().encode(legacy)
-        #expect(try JSONDecoder().decode(ContainerSpec.self, from: data).dns == nil)
+        let decodedLegacy = try JSONDecoder().decode(ContainerSpec.self, from: data)
+        #expect(decodedLegacy.dns == nil)
+        #expect(decodedLegacy.terminalWidth == nil)
+        #expect(decodedLegacy.terminalHeight == nil)
         var configured = legacy
         configured.dns = .init(
             nameservers: ["192.0.2.53", "2001:db8::53"], searchDomains: ["example.test"], options: ["ndots:2"]
         )
         try configured.dns?.validate()
         #expect(try JSONDecoder().decode(ContainerSpec.self, from: JSONEncoder().encode(configured)) == configured)
+        configured.terminalWidth = 113
+        configured.terminalHeight = 37
+        let decodedConfigured = try JSONDecoder().decode(ContainerSpec.self, from: JSONEncoder().encode(configured))
+        #expect(decodedConfigured == configured)
         try RuntimeDNSConfiguration().validate()
     }
 

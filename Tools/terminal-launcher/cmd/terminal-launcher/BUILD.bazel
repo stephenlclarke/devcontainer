@@ -1,0 +1,22 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_go//go:def.bzl", "go_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+go_binary(
+    name = "terminal-launcher-linux-arm64",
+    srcs = ["main.go"],
+    deps = ["//Tools/terminal-launcher:terminal-launcher-lib"],
+    goos = "linux",
+    goarch = "arm64",
+    pure = "on",
+)
+
+go_binary(
+    name = "terminal-launcher-linux-amd64",
+    srcs = ["main.go"],
+    deps = ["//Tools/terminal-launcher:terminal-launcher-lib"],
+    goos = "linux",
+    goarch = "amd64",
+    pure = "on",
+)

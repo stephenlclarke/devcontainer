@@ -314,6 +314,10 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
     public var ports: [PortBinding]
     public var networks: [NetworkAttachment]
     public var terminal: Bool
+    /// Initial terminal dimensions requested when creating a TTY container.
+    /// Nil preserves legacy metadata and means the runtime default.
+    public var terminalWidth: UInt16?
+    public var terminalHeight: UInt16?
     public var openStandardInput: Bool
     /// Nil preserves legacy metadata; true closes non-TTY stdin after its attached client disconnects.
     public var standardInputOnce: Bool?
@@ -355,6 +359,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         ports: [PortBinding] = [],
         networks: [NetworkAttachment] = [],
         terminal: Bool = false,
+        terminalWidth: UInt16? = nil,
+        terminalHeight: UInt16? = nil,
         openStandardInput: Bool = false,
         standardInputOnce: Bool? = nil,
         privileged: Bool = false,
@@ -386,6 +392,8 @@ public struct ContainerSpec: Codable, Equatable, Sendable {
         self.ports = ports
         self.networks = networks
         self.terminal = terminal
+        self.terminalWidth = terminalWidth
+        self.terminalHeight = terminalHeight
         self.openStandardInput = openStandardInput
         self.standardInputOnce = standardInputOnce
         self.privileged = privileged

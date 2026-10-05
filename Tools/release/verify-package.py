@@ -372,6 +372,36 @@ def verify_archive(
             runtime_packages = reference_packages(candidate, files, version=version, commit=commit,
                                                   resolved_sha256=resolved_sha256)
             required_executables.update({f"{root}/bin/devcontainer-docker", reference_root + "node"})
+            if candidate.get("schemaVersion") == 2:
+                launcher_root = f"{root}/libexec/devcontainer/terminal-launcher/"
+                launcher_hashes = candidate.get("terminalLaunchers")
+                license_hash = candidate.get("goSDKLicenseSHA256")
+                if (not isinstance(launcher_hashes, dict)
+                        or set(launcher_hashes) != {"arm64", "amd64"}
+                        or not isinstance(license_hash, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", license_hash)):
+                    raise ValueError("native terminal launcher receipt is invalid")
+                for architecture, machine in (("arm64", 183), ("amd64", 62)):
+                    relative = "devcontainer-terminal-linux-" + architecture
+                    path = launcher_root + relative
+                    required_executables.add(path)
+                    member = by_name.get(path)
+                    stream = archive.extractfile(member) if member is not None and member.isfile() else None
+                    header = stream.read(64) if stream is not None else b""
+                    if (member is None or not member.mode & 0o111 or len(header) < 64
+                            or header[:6] != b"\x7fELF\x02\x01"
+                            or int.from_bytes(header[18:20], "little") != machine):
+                        raise ValueError("native terminal launcher has an invalid ELF layout: " + architecture)
+                    stream = archive.extractfile(member)
+                    if stream is None or hashlib.sha256(stream.read()).hexdigest() != launcher_hashes[architecture]:
+                        raise ValueError("native terminal launcher differs from candidate receipt: " + architecture)
+                license_path = launcher_root + "GO-LICENSE.txt"
+                require_nonempty_regular_member(archive, license_path)
+                license_member = by_name[license_path]
+                license_stream = archive.extractfile(license_member)
+                if (license_member.mode & 0o111 or license_stream is None
+                        or hashlib.sha256(license_stream.read()).hexdigest() != license_hash):
+                    raise ValueError("native Go SDK license differs from candidate receipt")
         elif any(name.startswith(reference_root) for name in by_name) or f"{root}/bin/devcontainer-docker" in by_name:
             raise ValueError("native runtime closure requires candidate.json")
         for executable in required_executables:

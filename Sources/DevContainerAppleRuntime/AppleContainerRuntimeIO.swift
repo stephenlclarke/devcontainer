@@ -23,6 +23,14 @@ extension AppleContainerRuntime {
                     message: "Managed hosts startup requires direct process APIs"
                 )
             }
+            if let metadata = try await metadataStore?.containerMetadata(id: id),
+               try NativeTerminalLauncher.requestedSize(spec: metadata.spec) != nil
+            {
+                let snapshot = try await inspectContainer(id: id, context: context)
+                try await verifyInitialTerminalLauncher(
+                    id: snapshot.runtimeID.rawValue, createdAt: snapshot.createdAt, spec: snapshot.spec
+                )
+            }
             try await requireSuccess(
                 command(["start", id]),
                 operation: "container start"
@@ -51,7 +59,13 @@ extension AppleContainerRuntime {
                 configuration: hostsConfiguration, includeAllocatedSelf: true, context: context
             )
         }
-        try await startPreparedProcess(process, channel: channel)
+        try await startPreparedProcess(process, id: snapshot.runtimeID.rawValue, spec: snapshot.spec, channel: channel)
+        return try await registerAndConfirmContainerProcess(process, id: id, channel: channel)
+    }
+
+    private func registerAndConfirmContainerProcess(
+        _ process: any ClientProcess, id: String, channel: AppleContainerIO
+    ) async throws -> UUID? {
         let registration = trackContainerProcess(process, id: id, channel: channel)
         do {
             try await confirmContainerProcess(id: id, channel: channel)
@@ -62,8 +76,27 @@ extension AppleContainerRuntime {
         return registration
     }
 
-    private func startPreparedProcess(_ process: any ClientProcess, channel: AppleContainerIO) async throws {
+    private func verifyInitialTerminalLauncher(id: String, createdAt: Date, spec: ContainerSpec) async throws {
+        guard try NativeTerminalLauncher.requestedSize(spec: spec) != nil else { return }
+        let native = try await inventoryClient.get(id: id)
+        guard native.configuration.creationDate == createdAt else {
+            throw DevContainerError(.conflict, message: "Container changed before terminal launcher verification")
+        }
+        try NativeTerminalLauncher.verify(configuration: native.configuration, spec: spec)
+        let size = try NativeTerminalLauncher.requestedSize(spec: spec)
+        guard (size != nil) == (native.configuration.labels[NativeTerminalLauncher.label] != nil) else {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "initial terminal size and native launcher configuration disagree"
+            )
+        }
+    }
+
+    private func startPreparedProcess(
+        _ process: any ClientProcess, id: String, spec: ContainerSpec, channel: AppleContainerIO
+    ) async throws {
         do {
+            try await verifyInitialTerminalLauncher(id: id, createdAt: channel.createdAt, spec: spec)
             try channel.reserveStart()
             try await process.start()
         } catch {

@@ -342,10 +342,6 @@ func `known unsupported create fields fail before runtime side effects`() async 
             "HostConfig.MemorySwappiness"
         ),
         (
-            #"{"Image":"alpine:test","Tty":true,"HostConfig":{"ConsoleSize":[24,80]}}"#,
-            "HostConfig.ConsoleSize"
-        ),
-        (
             #"{"Image":"alpine:test","HostConfig":{"DeviceRequests":[{"Count":-1,"Capabilities":[["gpu"]]}]}}"#,
             "HostConfig.DeviceRequests"
         ),

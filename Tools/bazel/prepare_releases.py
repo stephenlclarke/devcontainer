@@ -54,11 +54,14 @@ def layout(asset: dict) -> dict:
         return {"format": "tar", "executables": {
             **{key: prefix + "bin/" + key for key in
                ("devcontainer", "devcontainer-engine", "devcontainer-compose", "devcontainer-docker")},
-            "reference-node": reference + "node"}, "files": {
+            "reference-node": reference + "node",
+            "terminal-launcher-arm64": prefix + "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-arm64",
+            "terminal-launcher-amd64": prefix + "libexec/devcontainer/terminal-launcher/devcontainer-terminal-linux-amd64"}, "files": {
                 name: reference + name for name in (
                     "NODE-LICENSE.txt", "runtime-lock.json", "cli/devcontainer.js",
                     "cli/dist/spec-node/devContainersSpecCLI.js", "cli/scripts/updateUID.Dockerfile",
-                    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt")}}
+                    "cli/package.json", "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt")}
+                | {"terminal-launcher-go-license": prefix + "libexec/devcontainer/terminal-launcher/GO-LICENSE.txt"}}
     if (repository, asset["tag"], name) == ("kata-containers/kata-containers", "3.32.0", "kata-static-3.32.0-arm64.tar.zst"):
         return {"format": "kernel-zstd", "executables": {}, "files": {"kernel": "kernel/vmlinux"}}
     if repository == "stephenlclarke/devcontainer" and name == "devcontainer-release-arm64.tar.gz":

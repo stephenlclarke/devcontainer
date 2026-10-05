@@ -10,13 +10,19 @@ def _candidate_archive_impl(ctx):
     receipt = ctx.actions.declare_file(ctx.label.name + ".json")
     manifest = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     licenses = ctx.actions.declare_file(ctx.label.name + ".licenses.json")
-    license_files = write_licenses_info(ctx, ctx.attr.binaries, licenses)
+    license_targets = ctx.attr.binaries + ctx.attr.terminal_launchers
+    license_files = write_licenses_info(ctx, license_targets, licenses)
     binaries = [target[DefaultInfo].files_to_run.executable for target in ctx.attr.binaries]
     if None in binaries:
         fail("Every candidate product must be an executable")
     ctx.actions.write(manifest, json.encode({
         "binaries": {binary.basename: binary.path for binary in binaries},
         "files": {file.basename: file.path for file in ctx.files.resources},
+        "terminalLaunchers": {
+            "arm64": ctx.file.terminal_launcher_arm64.path,
+            "amd64": ctx.file.terminal_launcher_amd64.path,
+        },
+        "goSDKLicense": ctx.file.go_sdk_license.path,
         "licenses": licenses.path,
         "makefile": ctx.file.makefile.path,
         "resolved": ctx.file.resolved.path,
@@ -34,7 +40,9 @@ def _candidate_archive_impl(ctx):
         executable = "/usr/bin/python3",
         arguments = [ctx.file._packager.path, manifest.path, archive.path, receipt.path, ctx.file._archive_tool.path],
         inputs = depset([manifest, licenses, ctx.file.makefile, ctx.file.resolved, ctx.file._packager, ctx.file._archive_tool,
-                         ctx.file.reference_node, ctx.file.reference_node_license, ctx.file.reference_lock] + binaries + ctx.files.resources + ctx.files.reference_cli + license_files),
+                         ctx.file.reference_node, ctx.file.reference_node_license, ctx.file.reference_lock,
+                         ctx.file.terminal_launcher_arm64, ctx.file.terminal_launcher_amd64,
+                         ctx.file.go_sdk_license] + binaries + ctx.files.resources + ctx.files.reference_cli + license_files),
         outputs = [archive, receipt],
         mnemonic = "DevContainerCandidateArchive",
         progress_message = "Archiving native devcontainer candidate (no signing or publishing)",
@@ -49,6 +57,10 @@ candidate_archive = rule(
     implementation = _candidate_archive_impl,
     attrs = {
         "binaries": attr.label_list(aspects = [gather_licenses_info], mandatory = True),
+        "terminal_launchers": attr.label_list(aspects = [gather_licenses_info], mandatory = True),
+        "terminal_launcher_arm64": attr.label(allow_single_file = True, mandatory = True),
+        "terminal_launcher_amd64": attr.label(allow_single_file = True, mandatory = True),
+        "go_sdk_license": attr.label(allow_single_file = True, mandatory = True),
         "resources": attr.label_list(allow_files = True),
         "makefile": attr.label(allow_single_file = True, mandatory = True),
         "resolved": attr.label(allow_single_file = True, mandatory = True),

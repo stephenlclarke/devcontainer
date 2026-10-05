@@ -10,6 +10,7 @@ import re
 import sqlite3
 
 from prepare_releases import layout, prepare, retain_prepared, validate_prepared
+from candidate_archive import validate_terminal_launcher
 from release_inputs import canonical
 from retain_evidence import digest, restore_candidate
 
@@ -62,6 +63,11 @@ def retained_candidate(database: Path, invocation: str, family: str = "devcontai
             or receipt.get("archiveSHA256") != digest(archive) or receipt.get("archiveSize") != len(archive)
             or set(receipt.get("products", {})) != products):
         raise ValueError("Invalid native candidate identity")
+    if schema == 2 and (set(receipt.get("terminalLaunchers", {})) != {"arm64", "amd64"}
+                        or any(not re.fullmatch(r"[a-f0-9]{64}", value)
+                               for value in receipt["terminalLaunchers"].values())
+                        or not re.fullmatch(r"[a-f0-9]{64}", receipt.get("goSDKLicenseSHA256", ""))):
+        raise ValueError("Candidate terminal launcher inventory or Go SDK license is invalid")
     resolved = "Package.stock.resolved" if receipt["runtimeProfile"] == "stock" else "Package.resolved"
     if receipt.get("dependencyLockSHA256") != inputs.get("files", {}).get(resolved, {}).get("sha256"):
         raise ValueError("Candidate dependency lock differs from captured source")
@@ -110,18 +116,30 @@ def admit_candidate(retained: Path, invocation: str, profile: str, family: str =
         raise ValueError("Candidate product digests differ")
     if receipt["schemaVersion"] == 2:
         reference = receipt["referenceRuntime"]
-        prefix = f"devcontainer-{receipt['version']}/libexec/devcontainer/reference/"
-        expected_files = {"node": executables["reference-node"], **specification["layout"]["files"]}
-        if (set(reference.get("files", {})) != set(expected_files)
+        reference_prefix = f"devcontainer-{receipt['version']}/libexec/devcontainer/reference/"
+        if (set(reference.get("files", {})) != {"node", "NODE-LICENSE.txt", "runtime-lock.json",
+                                                   "cli/devcontainer.js", "cli/dist/spec-node/devContainersSpecCLI.js",
+                                                   "cli/scripts/updateUID.Dockerfile", "cli/package.json",
+                                                   "cli/LICENSE.txt", "cli/ThirdPartyNotices.txt"}
                 or reference["files"].get("runtime-lock.json") != reference["lockSHA256"]
-                or any(prepared["inventory"][prefix + name]["sha256"] != reference["files"][name]
-                       for name in expected_files)):
+                or prepared["inventory"][executables["reference-node"]]["sha256"] != reference["files"]["node"]
+                or any(prepared["inventory"][reference_prefix + name]["sha256"] != expected
+                       for name, expected in reference["files"].items() if name != "node")):
             raise ValueError("Candidate private runtime digests differ")
+        if (prepared["inventory"][executables["terminal-launcher-arm64"]]["sha256"] != receipt["terminalLaunchers"]["arm64"]
+                or prepared["inventory"][executables["terminal-launcher-amd64"]]["sha256"] != receipt["terminalLaunchers"]["amd64"]
+                or prepared["inventory"][specification["layout"]["files"]["terminal-launcher-go-license"]]["sha256"]
+                != receipt["goSDKLicenseSHA256"]):
+            raise ValueError("Candidate terminal launcher bytes differ from receipt")
+        validate_terminal_launcher(root / executables["terminal-launcher-arm64"], "arm64")
+        validate_terminal_launcher(root / executables["terminal-launcher-amd64"], "amd64")
     return {"assetSHA256": asset["sha256"], "preparationSHA256": key, "root": str(root),
             "inventorySHA256": digest(canonical(prepared["inventory"]).encode()),
             "executables": {name: str(root / path) for name, path in executables.items()},
             "scope": SCOPE, "candidateInvocation": invocation, "sourceCommit": receipt["commit"],
             "runtimeProfile": profile, "dependencyLockSHA256": receipt["dependencyLockSHA256"],
+            **({"terminalLaunchers": receipt["terminalLaunchers"],
+                "goSDKLicenseSHA256": receipt["goSDKLicenseSHA256"]} if receipt["schemaVersion"] == 2 else {}),
             **({"productFamily": family} if family == "container-compose" else {})}
 
 

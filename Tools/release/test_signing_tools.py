@@ -40,6 +40,17 @@ class Fixture:
             path.write_bytes(struct.pack("<IIII", 0xFEEDFACF, 0x0100000C, 0, 2) + relative.encode())
             path.chmod(0o755)
         (self.stage / signing.PLUGIN).write_bytes((self.stage / "bin/devcontainer").read_bytes())
+        for architecture, relative in signing.TERMINAL_LAUNCHERS.items():
+            path = self.stage / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            header = bytearray(64)
+            header[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", header, 18, signing.ELF_MACHINES[architecture])
+            path.write_bytes(header + architecture.encode())
+            path.chmod(0o755)
+        go_license = self.stage / signing.GO_LICENSE
+        go_license.parent.mkdir(parents=True, exist_ok=True)
+        go_license.write_text("Go BSD license notice\n")
         reference = self.stage / signing.REFERENCE
         for relative in signing.REFERENCE_FILES - {"node"}:
             path = reference / relative
@@ -57,6 +68,9 @@ class Fixture:
                         "compilationMode": "opt", "distributionReady": False,
                         "dependencyLockSHA256": signing.digest(shared / "Package.resolved"),
                         "products": {name: signing.digest(self.stage / "bin" / name) for name in signing.PRODUCTS},
+                        "terminalLaunchers": {architecture: signing.digest(self.stage / relative)
+                                              for architecture, relative in signing.TERMINAL_LAUNCHERS.items()},
+                        "goSDKLicenseSHA256": signing.digest(go_license),
                         "referenceRuntime": {"nodeVersion": "24.21.0", "cliVersion": "0.88.0",
                                              "lockSHA256": signing.digest(reference / "runtime-lock.json"),
                                              "files": {name: signing.digest(reference / name) for name in signing.REFERENCE_FILES}}}
@@ -68,6 +82,8 @@ class Fixture:
             "schema": 1, "scope": "unsigned-native-package-stage", "sourceCommit": self.receipt["commit"],
             "profile": self.receipt["runtimeProfile"], "candidateAssetSHA256": "f" * 64,
             "candidateProducts": self.receipt["products"], "selectedLockSHA256": self.receipt["dependencyLockSHA256"],
+            "candidateTerminalLaunchers": self.receipt["terminalLaunchers"],
+            "goSDKLicenseSHA256": self.receipt["goSDKLicenseSHA256"],
             "privateRuntime": self.receipt["referenceRuntime"], "legalCompleteness": True,
             "distributionReady": False, "signingComplete": False, "notarizationComplete": False,
             "unsignedPayloadInventory": signing.inventory(self.stage, root / "notarization.json"),
@@ -228,6 +244,54 @@ class SigningToolTests(unittest.TestCase):
         (self.fixture.stage / signing.PLUGIN).write_bytes(b"not the authenticated CLI")
         with self.assertRaises(ValueError): self.fixture.run()
         self.assertEqual(self.fixture.calls, [])
+
+    def test_terminal_launcher_architecture_and_provenance_hashes_are_authenticated(self):
+        for architecture, wrong_machine in (("arm64", signing.ELF_MACHINES["amd64"]),
+                                            ("amd64", signing.ELF_MACHINES["arm64"])):
+            with self.subTest(architecture=architecture):
+                root = self.fixture.root / architecture
+                root.mkdir()
+                f = Fixture(root)
+                path = f.stage / signing.TERMINAL_LAUNCHERS[architecture]
+                contents = bytearray(path.read_bytes())
+                struct.pack_into("<H", contents, 18, wrong_machine)
+                path.write_bytes(contents)
+                f.receipt["terminalLaunchers"][architecture] = signing.digest(path)
+                (f.stage / "share/devcontainer/candidate.json").write_text(json.dumps(f.receipt))
+                f.receipt_path.write_text(json.dumps({**f.receipt, "archiveSHA256": "f" * 64, "archiveSize": 100}))
+                f.provenance["candidateTerminalLaunchers"] = f.receipt["terminalLaunchers"]
+                f.provenance["unsignedPayloadInventory"] = signing.inventory(f.stage, f.args.evidence)
+                f.provenance_path.write_text(json.dumps(f.provenance))
+                f.args.candidate_sha256 = signing.digest(f.receipt_path)
+                f.args.stage_provenance_sha256 = signing.digest(f.provenance_path)
+                with self.assertRaisesRegex(ValueError, "ELF architecture"):
+                    f.run()
+                self.assertEqual(f.calls, [])
+
+    def test_terminal_launcher_and_go_license_provenance_mismatch_fails_before_signing(self):
+        for field in ("candidateTerminalLaunchers", "goSDKLicenseSHA256"):
+            with self.subTest(field=field):
+                root = self.fixture.root / field
+                root.mkdir()
+                f = Fixture(root)
+                if field == "candidateTerminalLaunchers":
+                    f.provenance[field] = {**f.provenance[field], "arm64": "0" * 64}
+                else:
+                    f.provenance[field] = "0" * 64
+                f.provenance_path.write_text(json.dumps(f.provenance))
+                f.args.stage_provenance_sha256 = signing.digest(f.provenance_path)
+                with self.assertRaisesRegex(ValueError, "authority differs"):
+                    f.run()
+                self.assertEqual(f.calls, [])
+
+    def test_helper_payload_cannot_change_during_signing(self):
+        f = self.fixture
+        unsigned = signing.inventory(f.stage, f.args.evidence)
+        signed = dict(unsigned)
+        relative = signing.TERMINAL_LAUNCHERS["arm64"]
+        signed[relative] = {**signed[relative], "sha256": "0" * 64}
+        with self.assertRaisesRegex(ValueError, "outside the six declared Mach-O"):
+            signing.require_signed_payload(unsigned, signed)
 
     def test_symlink_fails_closed(self):
         f = self.fixture

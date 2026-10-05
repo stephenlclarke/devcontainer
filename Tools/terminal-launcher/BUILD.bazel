@@ -1,0 +1,16 @@
+# Copyright 2026 devcontainer project authors. SPDX-License-Identifier: Apache-2.0
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "terminal-launcher-lib",
+    srcs = ["launcher.go", "window_darwin.go", "window_linux.go"],
+    importpath = "github.com/stephenlclarke/devcontainer/Tools/terminal-launcher",
+)
+
+go_test(
+    name = "terminal-launcher-tests",
+    srcs = ["main_test.go"],
+    embed = [":terminal-launcher-lib"],
+)

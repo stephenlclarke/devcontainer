@@ -308,16 +308,10 @@ extension DockerRouter {
         ] where value?.isEmpty == false {
             try unsupportedCreateField(field)
         }
-        let initialConsoleSize = try consoleSize(
+        _ = try consoleSize(
             host.consoleSize,
             name: "HostConfig.ConsoleSize"
         )
-        if request.tty == true,
-           let initialConsoleSize,
-           initialConsoleSize.width != 0 || initialConsoleSize.height != 0
-        {
-            try unsupportedCreateField("HostConfig.ConsoleSize")
-        }
         if (host.logConfig?.type?.isEmpty == false && host.logConfig?.type != "json-file")
             || host.logConfig?.config?.isEmpty == false
         {
@@ -653,6 +647,7 @@ extension DockerRouter {
     ) throws -> ContainerSpec {
         let environment = try ContainerEnvironmentOverrides(request.env ?? [])
         let networkMode = request.hostConfig?.networkMode ?? ""
+        let initialTerminalSize = try initialTerminalSize(from: request)
         return try ContainerSpec(
             name: requestedName.isEmpty
                 ? "devcontainer-\(UUID().uuidString.prefix(12).lowercased())" : requestedName,
@@ -671,6 +666,8 @@ extension DockerRouter {
             ),
             networks: networkAttachments(request),
             terminal: request.tty ?? false,
+            terminalWidth: initialTerminalSize?.width,
+            terminalHeight: initialTerminalSize?.height,
             openStandardInput: request.openStdin ?? false,
             standardInputOnce: request.stdinOnce,
             privileged: request.hostConfig?.privileged ?? false,
@@ -698,6 +695,13 @@ extension DockerRouter {
             requestedNetworkMode: ["", "default"].contains(networkMode) ? "bridge" : networkMode,
             outputLogFormat: request.hostConfig?.logConfig?.type == "json-file" ? .jsonFileV1 : nil
         )
+    }
+
+    private func initialTerminalSize(
+        from request: DockerCreateContainerRequest
+    ) throws -> (width: UInt16, height: UInt16)? {
+        let requested = try consoleSize(request.hostConfig?.consoleSize, name: "HostConfig.ConsoleSize")
+        return request.tty == true ? requested : nil
     }
 
     private func containerDNS(from request: DockerCreateContainerRequest) throws -> RuntimeDNSConfiguration? {
@@ -926,11 +930,20 @@ extension DockerRouter {
     }
 
     private func inspectHostConfig(_ spec: ContainerSpec) -> DockerInspectHostConfig {
-        DockerInspectHostConfig(
+        let consoleSize: [UInt16]? = if spec.terminal,
+                                        let width = spec.terminalWidth,
+                                        let height = spec.terminalHeight
+        {
+            [height, width]
+        } else {
+            nil
+        }
+        return DockerInspectHostConfig(
             autoRemove: spec.autoRemove,
             binds: spec.mounts.filter { $0.type == .bind }.map {
                 "\($0.source):\($0.destination)\($0.readOnly ? ":ro" : "")"
             },
+            consoleSize: consoleSize,
             portBindings: inspectPortBindings(spec.ports),
             networkMode: spec.requestedNetworkMode ?? (spec.networks.map(\.name) == ["none"] ? "none" : "bridge"),
             dns: spec.dns?.nameservers ?? [],
