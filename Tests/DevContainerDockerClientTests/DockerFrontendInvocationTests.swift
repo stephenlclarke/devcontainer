@@ -23,6 +23,27 @@ struct DockerFrontendInvocationTests {
     }
 
     @Test
+    func `VS Code neutral default context preserves its explicit local socket`() throws {
+        let invocation = try DockerFrontendInvocation(arguments: ["version", "--format", "{{json .}}"], environment: [
+            "DOCKER_CONTEXT": "default", "DOCKER_HOST": "unix:///private/test.sock"
+        ])
+        #expect(invocation.socketPath == "/private/test.sock")
+        #expect(invocation.command == .version(format: "{{json .}}"))
+    }
+
+    @Test(arguments: [
+        ["DOCKER_CONTEXT": "default"],
+        ["DOCKER_CONTEXT": "other", "DOCKER_HOST": "unix:///private/test.sock"],
+        ["DOCKER_CONTEXT": "default", "DOCKER_HOST": "tcp://localhost:2375"],
+        ["DOCKER_CONTEXT": "default", "DOCKER_HOST": ""]
+    ])
+    func `neutral context does not discover contexts or permit remote endpoints`(environment: [String: String]) {
+        #expect(throws: DockerFrontendError.self) {
+            try DockerFrontendInvocation(arguments: ["version"], environment: environment)
+        }
+    }
+
+    @Test
     func `local version ignores unavailable runtime configuration`() throws {
         let invocation = try DockerFrontendInvocation(arguments: ["-v"], environment: [
             "DOCKER_HOST": "invalid", "DOCKER_CONTEXT": "unavailable"

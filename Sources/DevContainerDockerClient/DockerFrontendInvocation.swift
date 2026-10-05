@@ -27,7 +27,10 @@ public struct DockerFrontendInvocation: Equatable, Sendable {
             socketPath = nil
             return
         }
-        guard host != nil || environment["DOCKER_CONTEXT", default: ""].isEmpty else {
+        let context = environment["DOCKER_CONTEXT", default: ""]
+        // The pinned VS Code extension marks an explicit host with the neutral default context.
+        let neutralContext = context == "default" && environment["DOCKER_HOST"] != nil
+        guard host != nil || context.isEmpty || neutralContext else {
             throw DockerFrontendError.usage("Docker contexts are unsupported; select an explicit local Unix endpoint")
         }
         if let selected = host ?? environment["DOCKER_HOST"] {
