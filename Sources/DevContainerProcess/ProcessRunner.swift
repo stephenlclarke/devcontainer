@@ -40,8 +40,8 @@ public struct CapturedProcessResult: Equatable, Sendable {
     }
 }
 
-// An open PTY may have no controlling terminal. Only its foreground owner
-// may transfer terminal control to a child process group.
+/// An open PTY may have no controlling terminal. Only its foreground owner
+/// may transfer terminal control to a child process group.
 func inheritedTerminalForegroundProcessGroup(
     terminalForegroundProcessGroup: pid_t,
     errorCode: Int32,
