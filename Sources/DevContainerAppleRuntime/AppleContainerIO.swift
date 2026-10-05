@@ -184,7 +184,8 @@ final class AppleContainerIO: @unchecked Sendable {
         closeTransferredEnds()
         let timeout = Task {
             do {
-                try await Task.sleep(for: drainTimeout)
+                let clock = ContinuousClock()
+                try await clock.sleep(until: clock.now.advanced(by: drainTimeout))
                 lock.withLock { drainTimedOut = true }
                 outputMonitor.cancel()
                 errorMonitor?.cancel()
