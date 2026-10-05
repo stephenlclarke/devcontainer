@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "f75d56b887f6ab382d774f3d9577f72b6b7491a46d047cb7cdd08555c04779f7",
+  "archiveSHA256": "7c4c75be4c5ec114c229dcb03d36cea8c94b42b8ad61e482bff0a04dbe6a05db",
   "asset": "container-sdk-stock-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "d76df753697bbe118296c4c5efa1ee8ea31d99a4622961070989a59263fcd92f",
+    "eventsSHA256": "9839003ce78cb4313d8590aa735a69e3d393511336a66794e5fe368190b02e74",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftdoc": {
         "sha256": "b4c454c274539f24a02339b2fa8f58c440f962ad2c69294e7a0a1c359b4a23de",
@@ -172,8 +172,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "container-sdk-stock-evidence.json",
-  "evidenceSHA256": "e575d9b947e8ca56e83e2cdc5a8354974aa388e0a18ccb80ed52d04d93682c7b",
+  "evidenceAsset": "qualification.json",
+  "evidenceSHA256": "4cb15dd85a8031f5e6f613d878c8fa0a6ac07a71298299bc18df21abb01ee558",
   "group": "container-sdk",
   "lower": {
     "argument-parser": {
@@ -187,9 +187,9 @@
       "tag": "layer-containerization-stock-658b080474af4d2f503d"
     },
     "engine-api": {
-      "archiveSHA256": "ccd9ae9143aefdf50bef448e9508b518b003b5c4d186d52cf71af9799d5e6537",
-      "evidenceSHA256": "3b8a1b553b51c1185d6fdfd41f9afd9c2c6a3aca6282ba54523c806b2e6548e6",
-      "tag": "layer-engine-api-stock-ccd9ae9143aefdf50bef"
+      "archiveSHA256": "c391c9793db88a625e6210bff447ce0f371c49dac978fe0cb992454f79dd7474",
+      "evidenceSHA256": "8a776fcf68b08c13349d4cc30079b02104912a0e1808bb2d5c7b7bfea75a7567",
+      "tag": "layer-engine-api-stock-c391c9793db88a625e62"
     },
     "foundation": {
       "archiveSHA256": "6f58d9f3390f33c9db3fecbc233ef46d62397a8b7223149b7e0555756fc0edc9",
@@ -197,7 +197,7 @@
       "tag": "layer-foundation-stock-6f58d9f3390f33c9db3f"
     }
   },
-  "producerCommit": "31e83f792e29c6d767b48981fa4aabf3524d4d18",
+  "producerCommit": "540267971968a87557ed5f6ac99d2e3376c783e2",
   "profile": "stock",
   "reachedSources": {
     "container": {
@@ -210,17 +210,17 @@
     "artifactBuild": "0b135d42637b994c24ce79f9b83c5708bcca1d4f2f415bef2d2e0f200eb8a0c2",
     "bazelConfiguration": "f038a75ea10af057b227b63b37934a64243b5ca70e0ba8cadc3a64486ebb321e",
     "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
-    "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
+    "dependencyExtension": "4a8cfa7026cdaec28ab6fd97ba480024a747c2c797eff42b822e4efd71f3fea1",
     "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
-    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
-    "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
-    "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
-    "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
-    "rootBuild": "f82ba9db41fce5694f865c33aa56e5fcb8cae1305ca5b5be367d1a5f23e562f3",
+    "launcher": "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923",
+    "moduleGraph": "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e",
+    "moduleRules": "594a401a02f4d1e25683d030ac6f50b3eefa9ed6e6756eaa13d057d161b057e5",
+    "producer": "4ed29109a7e12926f81ec611c0ebaf9c6acf71b5299ca21f4604edf99dc08ed9",
+    "rootBuild": "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c",
     "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
     "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
     "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
-    "swiftPackageManifest": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
+    "swiftPackageManifest": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
     "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
   },
   "repository": "stephenlclarke/container",
@@ -245,25 +245,25 @@
   "sourceGraph": {
     "receipt": {
       "argumentParserSource": "6a52f3251125d74daf04fcbd5e6f08a75d074382",
-      "devcontainerLockSHA256": "f9ba00f315a3f74a5dd5440c76dd092e98a4ac41bda1339227e9b4967bb9a562",
-      "devcontainerManifestSHA256": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
+      "devcontainerLockSHA256": "8a75925150ca36efd92d11767d4d2e4ee68f420361667228ba9abc9ed07c3325",
+      "devcontainerManifestSHA256": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
       "loadedContainerLockSHA256": "f81dd6ad3129356d93ad3e6a537db838ecfde65eca0e1a7b271c45d6ed4f2d03",
       "loadedContainerManifestSHA256": "98abcd5d2cfb4a9f7e49f459bb61c7d3b1c84927d31a12760a5072be5f67a2bc",
       "profile": "stock",
       "schema": 1,
       "source": {
         "container": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
-        "container-engine-api": "40436017e1e93012b8dab7cfc3c79783538065c3",
+        "container-engine-api": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
         "containerization": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d"
       },
-      "stockLockSHA256": "f7186c61b9e1571021ae2b1f58ef05f901043bfa872829e49546f766e41da37d"
+      "stockLockSHA256": "c5dc4990e57aae68e649864f7914605a4d374563950b460191eacec46c2c084d"
     },
-    "receiptSHA256": "e6f410dfdb2b903064b4fb0c2542bba34bb401750e2243ab01fbc52945e4813f"
+    "receiptSHA256": "de9bd46bcbbd9741f2fcc32eff4e042c42e9f830580eaeb248fa328f0c4f1cfd"
   },
   "sourcePins": {
     "container": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
   },
-  "tag": "layer-container-sdk-stock-f75d56b887f6ab382d77",
+  "tag": "layer-container-sdk-stock-7c4c75be4c5ec114c229",
   "targetCommit": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
   "toolchain": {
     "bazelVersion": "8.8.0",
