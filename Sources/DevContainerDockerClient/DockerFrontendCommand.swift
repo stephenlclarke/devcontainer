@@ -194,7 +194,8 @@ public struct DockerPullCommand: Equatable, Sendable {
     }
 
     func request() -> DockerHTTPRequest {
-        .init(method: .post, target: "/images/create?fromImage=" + DockerFrontend.escaped(reference))
+        let query = "fromImage=" + DockerFrontend.escaped(reference)
+        return .init(method: .post, target: "/images/create?" + query)
     }
 }
 

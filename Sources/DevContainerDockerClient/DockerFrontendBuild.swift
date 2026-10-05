@@ -35,13 +35,9 @@ public extension DockerFrontend {
             group.addTask {
                 try await withTaskCancellationHandler {
                     try Task.checkCancellation()
-                    try await transport.pull(command.request()) { bytes in
-                        try lines.consume(bytes) { data in
-                            if !command.quiet {
-                                try output.writeSynchronously(data)
-                            }
-                        }
-                    }
+                    try await transport.pull(
+                        command.request(), onBody: lines.outputHandler(output, quiet: command.quiet)
+                    )
                     if let tail = try lines.finish(), !command.quiet {
                         try await output.write(tail)
                     }
@@ -101,8 +97,16 @@ final class DockerBuildLines: @unchecked Sendable {
         try consume(bytes) { try output.writeSynchronously($0) }
     }
 
-    func outputHandler(_ output: DockerFrontendOutput) -> @Sendable (Data) throws -> Void {
-        { bytes in try self.consume(bytes, output: output) }
+    func outputHandler(
+        _ output: DockerFrontendOutput, quiet: Bool = false
+    ) -> @Sendable (Data) throws -> Void {
+        { bytes in
+            if quiet {
+                try self.consume(bytes) { _ in /* Validate progress without writing quiet output. */ }
+            } else {
+                try self.consume(bytes, output: output)
+            }
+        }
     }
 
     func finish() throws -> Data? {
