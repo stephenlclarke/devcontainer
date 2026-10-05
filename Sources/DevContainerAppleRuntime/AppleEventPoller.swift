@@ -133,7 +133,7 @@ actor AppleEventPoller {
             {
                 try Task.checkCancellation()
                 try context.checkActive()
-                try await Task.sleep(for: .milliseconds(20))
+                try await Task.sleep(nanoseconds: 20_000_000)
             }
         }
         preconditionFailure("The final snapshot attempt must return or throw")
