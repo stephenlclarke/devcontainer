@@ -331,7 +331,9 @@ class LaneRunner:
 
         self.admit_finalized()
         owned_fixtures = [fixture for fixture in fixtures
-                          if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"]
+                          if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"
+                          or (self.lane != "docker" and selected == {"E06-network-volume"}
+                              and fixture.identifier == "E06-network-volume")]
         if owned_fixtures:
             from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
 

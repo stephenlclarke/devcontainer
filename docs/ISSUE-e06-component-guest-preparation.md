@@ -1,0 +1,7 @@
+# Isolated native E06 lacks the authenticated default guest kernel
+
+The signed 455 E06-only component passed Docker but both native probes failed before guest startup with `notFound: default kernel not configured for architecture arm64`. The failed native stderr remains in the original component journal. The full campaign has selected owned guest fixtures and prepares the guest inputs before Engine startup; selecting legacy E06 alone produces no owned-guest preparation runner.
+
+For exactly isolated native E06, include its fixture as a preparation consumer without changing the legacy Engine execution route. Permit the existing native preparation method to provision E06 using retained admitted kernel/initialization/workload inputs, the authenticated private API and existing owner journal. Keep exact before/after input identities, active provider HOME and installed-kernel validation. No arbitrary download, user HOME change, new runtime or fixture assertion is introduced.
+
+Offline regressions must prove native ordering on both lanes, preparation failure blocks Engine startup, the existing API-only admission and single-provision boundary, and unchanged Docker/full selection. Actual signed component failure is RED. Against unchanged maintained 455 source, the 16-case focused offline run produced three failures and one error in the new E06 checks; the existing cases passed. After the correction all 16 pass. Fresh signed E06 and the complete release campaign remain required after GREEN.

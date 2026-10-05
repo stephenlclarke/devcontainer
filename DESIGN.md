@@ -562,3 +562,5 @@ A stable tag is prohibited until:
 | Overbroad Docker claim | Users assume unsupported production behavior | Advertise only the tested API range and Dev Containers compatibility scope |
 
 The finalized-package component mode accepts E06 network/volume or E13 Compose signals for phased feedback using the existing three-lane runner, exact comparator and owned cleanup. It emits only a nonqualifying component result naming the selected fixture, with V01 skipped and no release authority. A complete 84-cell campaign remains required for release.
+
+An isolated native E06 component prepares the retained, authenticated guest kernel and images through the existing owned-guest provider path before Engine startup. Its legacy network/volume probe and assertions remain unchanged. Preparation writes only the admitted active private provider HOME, verifies kernel bytes and source identity, and preserves failure and cleanup fences. Docker and full-campaign fixture selection retain their existing preparation behavior. The original missing-kernel component failure remains failed; all 16 focused offline regressions pass; fresh signed E06 proof remains required.

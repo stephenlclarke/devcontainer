@@ -527,7 +527,9 @@ class OwnedGuestFixtureRunner:
             raise ParityError("Docker image preparation uses its selected Engine endpoint")
         if self.preparation is not None or self.preparation_error is not None:
             raise ParityError("native guest provisioning may run only once")
-        first = next((fixture for fixture in self.fixtures if fixture.identifier in OWNED_GUEST_FIXTURES), None)
+        first = next((fixture for fixture in self.fixtures
+                      if fixture.identifier in OWNED_GUEST_FIXTURES
+                      or fixture.identifier == "E06-network-volume"), None)
         if first is None:
             return
         root, journal, owner = self._case_paths_for_preparation()

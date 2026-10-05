@@ -235,6 +235,34 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                     result = runner.run()
             return result, builder, events
 
+    def test_isolated_native_e06_prepares_authenticated_guest_before_engine(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, _builder, events = self._run_selection(
+                    lane, ("E06-network-volume",), "E06-network-volume", runtime_profile="stock")
+                self.assertEqual(result, 0)
+                self.assertEqual(events.count("provision"), 1)
+                self.assertLess(events.index("provision"), events.index("engine"))
+                self.assertLess(events.index("engine"), events.index("attach"))
+                self.assertLess(events.index("attach"), events.index("fixture:E06-network-volume"))
+                self.assertIn("guest-cleanup", events)
+
+    def test_docker_e06_does_not_acquire_native_guest_preparation(self) -> None:
+        result, _builder, events = self._run_selection(
+            "docker", ("E06-network-volume",), "E06-network-volume")
+        self.assertEqual(result, 0)
+        self.assertNotIn("provision", events)
+        self.assertNotIn("attach", events)
+        self.assertNotIn("docker-image-prepare", events)
+
+    def test_full_selection_keeps_preparation_once_for_existing_owned_route(self) -> None:
+        result, _builder, events = self._run_selection(
+            "apple-stock", ("E06-network-volume", "E07-init-attachment"), "")
+        self.assertEqual(result, 0)
+        self.assertEqual(events.count("provision"), 1)
+        self.assertLess(events.index("provision"), events.index("fixture:E06-network-volume"))
+        self.assertIn("fixture:E07-init-attachment", events)
+
     def test_selected_e13_component_skips_builder_on_docker_and_fork(self) -> None:
         for lane in ("docker", "container-compose"):
             with self.subTest(lane=lane):
@@ -448,6 +476,69 @@ class EngineRoutePreflightTests(unittest.TestCase):
             runner.finalized_identity, runner.cleanup_differences = None, []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
             with (mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
+                  mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
+                  mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
+                  mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", FailingBridge),
+                  mock.patch.object(runner, "admit_finalized"),
+                  mock.patch.object(runner, "start_engine") as start_engine,
+                  mock.patch.object(runner, "configure_devcontainer_client"),
+                  mock.patch.object(runner, "fingerprint", return_value={}),
+                  mock.patch.object(runner, "stop_builder"),
+                  mock.patch.object(runner, "check_runtime_state_cleanup"),
+                  mock.patch.object(runner, "readmit_finalized"),
+                  mock.patch.object(runner, "stop_engine") as stop_engine):
+                result = runner.run()
+
+            payload = json.loads((evidence / "results.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["fixtures"][0]["status"], "failed")
+            self.assertTrue(any("guest input preparation failed" in row
+                                for row in payload["cleanupDifferences"]))
+            self.assertTrue(runner._preserve_engine_on_uncertain_guest_cleanup)
+            start_engine.assert_not_called()
+            stop_engine.assert_not_called()
+            self.assertFalse(qualifier.cli_cleanup_is_complete(root, "apple-stock"))
+
+    def test_isolated_e06_provisioning_failure_skips_engine_start(self) -> None:
+        import qualify_finalized_package as qualifier
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            evidence = root / "apple-stock"
+            fixture = SimpleNamespace(identifier="E06-network-volume", runner="engine",
+                                      backends=("apple-stock",))
+            manifest = json.loads((Path(__file__).resolve().parents[2] /
+                                   "Tests/Parity/manifest.json").read_text())
+
+            class FailingBridge:
+                def __init__(self, *_args, **_kwargs):
+                    self.preparation_error = None
+
+                def attach_endpoint(self):
+                    # No endpoint is attached after API-only provisioning fails.
+                    pass
+
+                def prepare_native_provider(self):
+                    raise RuntimeError("guest provision command failed")
+
+                def run(self, row, _raw):
+                    return {"id": row.identifier, "status": "failed", "observations": {},
+                            "durationSeconds": 0.0, "differences": [],
+                            "diagnostic": self.preparation_error}
+
+                def cleanup(self):
+                    raise ParityError("owned guest preparation is incomplete")
+
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane, runner.repository, runner.manifest = "apple-stock", Path(__file__).resolve().parents[2], manifest
+            runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
+            runner.output, runner.finalized_selection = evidence, None
+            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner._preserve_engine_on_uncertain_guest_cleanup = False
+            with (mock.patch.dict("run_lane.os.environ",
+                                  {"DEVCONTAINER_PARITY_FIXTURES": "E06-network-volume"}),
+                  mock.patch("run_lane.implemented_fixtures", return_value=[fixture]),
                   mock.patch("owned_guest_fixture._retained_root", return_value=root / "retained"),
                   mock.patch("owned_guest_fixture.admit_guest_inputs", return_value={}),
                   mock.patch("owned_guest_fixture.OwnedGuestFixtureRunner", FailingBridge),

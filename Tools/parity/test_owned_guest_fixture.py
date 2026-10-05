@@ -526,61 +526,63 @@ class ActiveProviderHomeTests(unittest.TestCase):
 
 class NativeProvisionBeforeEngineTests(unittest.TestCase):
     def test_native_provision_uses_api_view_without_a_placeholder_socket_once(self) -> None:
-        import owned_guest_fixture
+        for identifier in ("E07-init-attachment", "E06-network-volume"):
+            with self.subTest(fixture=identifier):
+                import owned_guest_fixture
 
-        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
-        import guest_runtime
+                sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+                import guest_runtime
 
-        fixture = SimpleNamespace(identifier="E07-init-attachment")
-        inputs = {"kernel": {"sha256": "a" * 64},
-                  "initialization": {"archiveSHA256": "b" * 64},
-                  "workload": {"archiveSHA256": "c" * 64}}
-        events = []
-        owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
-        root = Path("/private/provider-home")
-        journal = mock.Mock()
+                fixture = SimpleNamespace(identifier=identifier)
+                inputs = {"kernel": {"sha256": "a" * 64},
+                          "initialization": {"archiveSHA256": "b" * 64},
+                          "workload": {"archiveSHA256": "c" * 64}}
+                events = []
+                owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
+                root = Path("/private/provider-home")
+                journal = mock.Mock()
 
-        class Runtime:
-            def __init__(self, *_args):
-                events.append("api-view")
+                class Runtime:
+                    def __init__(self, *_args):
+                        events.append("api-view")
 
-            def verify(self):
-                events.append("api-verify")
+                    def verify(self):
+                        events.append("api-verify")
 
-        guests = []
+                guests = []
 
-        class Guest:
-            def __init__(self, *args, **_kwargs):
-                self.socket = args[6]
-                guests.append(self)
-                events.append("guest-created")
+                class Guest:
+                    def __init__(self, *args, **_kwargs):
+                        self.socket = args[6]
+                        guests.append(self)
+                        events.append("guest-created")
 
-            def provision(self):
-                events.append("provision")
+                    def provision(self):
+                        events.append("provision")
 
-        bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
-        bridge.runner = SimpleNamespace(lane="apple-stock")
-        bridge.lane, bridge.repository = "apple-stock", REPOSITORY
-        bridge.fixtures, bridge.retained, bridge.inputs = [fixture], Path("/retained"), inputs
-        bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
-        bridge.preparation, bridge.preparation_error = None, None
-        bridge._provision_event_sequence = 0
-        bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+                bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+                bridge.runner = SimpleNamespace(lane="apple-stock")
+                bridge.lane, bridge.repository = "apple-stock", REPOSITORY
+                bridge.fixtures, bridge.retained, bridge.inputs = [fixture], Path("/retained"), inputs
+                bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
+                bridge.preparation, bridge.preparation_error = None, None
+                bridge._provision_event_sequence = 0
+                bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
 
-        with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
-              mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
-              mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
-              mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
-            bridge.prepare_native_provider()
-            with self.assertRaisesRegex(ParityError, "only once"):
-                bridge.prepare_native_provider()
+                with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
+                      mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
+                      mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
+                      mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+                    bridge.prepare_native_provider()
+                    with self.assertRaisesRegex(ParityError, "only once"):
+                        bridge.prepare_native_provider()
 
-        self.assertIsNone(bridge.socket)
-        self.assertIsNone(guests[0].socket)
-        self.assertEqual(admit.call_count, 2)
-        self.assertEqual(events.count("provision"), 1)
-        self.assertLess(events.index("api-verify"), events.index("provision"))
-        self.assertEqual(bridge.preparation[0], root)
+                self.assertIsNone(bridge.socket)
+                self.assertIsNone(guests[0].socket)
+                self.assertEqual(admit.call_count, 2)
+                self.assertEqual(events.count("provision"), 1)
+                self.assertLess(events.index("api-verify"), events.index("provision"))
+                self.assertEqual(bridge.preparation[0], root)
 
     def test_api_runtime_view_rechecks_home_api_pid_and_locked_server_bytes(self) -> None:
         import owned_guest_fixture

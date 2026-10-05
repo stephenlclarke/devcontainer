@@ -117,3 +117,5 @@ invalid timing evidence fails the parity gate. The full target is in
 See <doc:Performance> for the three-run matrix, variability, phase analysis,
 and optimization priorities. See <doc:Conformance> for properties that the
 release fixtures do not certify.
+
+An isolated native E06 component prepares the retained, authenticated guest kernel and images through the existing owned-guest provider path before Engine startup. Its legacy network/volume probe and assertions remain unchanged. Preparation writes only the admitted active private provider HOME, verifies kernel bytes and source identity, and preserves failure and cleanup fences. Docker and full-campaign fixture selection retain their existing preparation behavior. The original missing-kernel component failure remains failed; all 16 focused offline regressions pass; fresh signed E06 proof remains required.

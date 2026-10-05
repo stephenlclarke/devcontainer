@@ -391,3 +391,5 @@ Every stable candidate also requires:
 The implemented build, verification, parity, packaging, and runner commands
 are documented in [`BUILD.md`](BUILD.md) and exposed through the checked-in
 `Makefile`.
+
+An isolated native E06 component prepares the retained, authenticated guest kernel and images through the existing owned-guest provider path before Engine startup. Its legacy network/volume probe and assertions remain unchanged. Preparation writes only the admitted active private provider HOME, verifies kernel bytes and source identity, and preserves failure and cleanup fences. Docker and full-campaign fixture selection retain their existing preparation behavior. The original missing-kernel component failure remains failed; all 16 focused offline regressions pass; fresh signed E06 proof remains required.
