@@ -107,8 +107,7 @@ jobs:
           curl --fail --location --silent --show-error \
             "${scanner_url}.asc" --output "${scanner_signature}"
           gpg --homedir "${gpg_home}" --batch \
-            --keyserver hkps://keyserver.ubuntu.com \
-            --recv-keys "${SONAR_SCANNER_GPG_FINGERPRINT}"
+            --import "${GITHUB_WORKSPACE}/.github/keys/sonarsource-public.key"
           actual_fingerprint="$(
             gpg --homedir "${gpg_home}" --batch --with-colons \
               --fingerprint "${SONAR_SCANNER_GPG_FINGERPRINT}" \

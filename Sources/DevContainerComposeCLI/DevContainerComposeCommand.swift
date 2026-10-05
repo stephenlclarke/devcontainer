@@ -59,6 +59,7 @@ enum DevContainerComposeCommand {
             configuration: paths.configuration.path
         )
         paths.socket = selection.socket
+        paths.backend = selection.backend
         paths.containerExecutable = selection.containerExecutable
         paths.state = URL(fileURLWithPath: selection.stateDatabase)
         let provider = selection.composeProvider
@@ -368,6 +369,9 @@ enum DevContainerComposeCommand {
             // The facade's resolved selection is authoritative for discovery
             // and mutations alike; ambient Compose settings cannot redirect it.
             childEnvironment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = socket
+            childEnvironment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] = paths.backend == .stock
+                ? "stock"
+                : "enhanced"
             childEnvironment["CONTAINER_BIN"] = paths.containerExecutable
             childEnvironment["CONTAINER_COMPOSE_CONTAINER"] = paths.containerExecutable
             // The selected devcontainer adapter implements creation-time aliases
@@ -526,6 +530,7 @@ private struct Paths {
     let configuration: URL
     var state: URL
     var socket: String
+    var backend = BackendProvider.stock
     var containerExecutable = DevContainerPathDefaults.containerExecutable
     let docker: URL
     let dockerCompose: URL?

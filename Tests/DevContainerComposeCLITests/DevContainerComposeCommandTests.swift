@@ -107,6 +107,9 @@ struct DevContainerComposeCommandTests {
         environment["CONTAINER_COMPOSE_CONTAINER"] = "/another/container"
         environment["CONTAINER_COMPOSE_ENGINE_SOCKET"] = "/unrelated/engine.sock"
         environment["CONTAINER_COMPOSE_RUNTIME_CAPABILITIES"] = "unrelated-capability"
+        environment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] = backend == .stock
+            ? "enhanced"
+            : "stock"
         environment["DEVCONTAINER_DOCKER_BIN"] = "/missing/docker"
         environment["DEVCONTAINER_DOCKER_COMPOSE_BIN"] = "/missing/docker-compose"
         if useConfiguration {
@@ -129,7 +132,8 @@ struct DevContainerComposeCommandTests {
         ) == 0)
         let expectedEnvironment = [
             socket, runtime, runtime,
-            "io.github.stephenlclarke.container.compose.network-aliases.v1"
+            "io.github.stephenlclarke.container.compose.network-aliases.v1",
+            backend == .stock ? "stock" : "enhanced"
         ]
         #expect(try fixture.runtimeEnvironment() == (
             useConfiguration ? expectedEnvironment + expectedEnvironment : expectedEnvironment
@@ -154,12 +158,20 @@ struct DevContainerComposeCommandTests {
             provider: provider,
             backend: backend
         )
+        var environment = fixture.environment
+        environment["CONTAINER_COMPOSE_RUNTIME_PROFILE"] = backend == .stock
+            ? "enhanced"
+            : "stock"
         #expect(
             try await DevContainerComposeCommand.run(
                 arguments: ["--project-name", "selected-runtime", "up"],
-                environment: fixture.environment
+                environment: environment
             ) == 0
         )
+        if provider == .containerCompose {
+            let expectedProfile = backend == .stock ? "stock" : "enhanced"
+            #expect(try fixture.runtimeEnvironment().last == expectedProfile)
+        }
         let store = try SQLiteStateStore(path: fixture.state)
         let project = try await store.project(key: ProjectKey(rawValue: "\(getuid()):selected-runtime"))
         #expect(project?.provider == backend)
@@ -566,7 +578,8 @@ private final class ComposeCommandFixture {
         set -eu
         printf '%s\n' "$*" >> "$INVOCATION_LOG"
         printf '%s\n' "${CONTAINER_COMPOSE_ENGINE_SOCKET-}" "${CONTAINER_BIN-}" \\
-          "${CONTAINER_COMPOSE_CONTAINER-}" "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" >> "$RUNTIME_ENVIRONMENT_LOG"
+          "${CONTAINER_COMPOSE_CONTAINER-}" "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" \\
+          "${CONTAINER_COMPOSE_RUNTIME_PROFILE-}" >> "$RUNTIME_ENVIRONMENT_LOG"
         case " $* " in
           *" version --short "*|*" version -s "*)
             printf '%s\n' "${VERSION_OUTPUT-0.15.1}"
