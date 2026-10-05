@@ -435,7 +435,7 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
 
 
 class ActiveProviderHomeTests(unittest.TestCase):
-    def test_component_guard_is_bound_only_to_the_exact_signal_fixture_selection(self) -> None:
+    def test_component_guard_is_bound_only_to_each_exact_supported_fixture_selection(self) -> None:
         with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             base = Path(temporary).resolve()
             campaign = base / "campaign"
@@ -464,15 +464,23 @@ class ActiveProviderHomeTests(unittest.TestCase):
                 finalized_identity={"sourceCommit": "a" * 40},
             )
 
-            self.assertEqual(
-                _active_provider_home(runner, fixture_selection=("E13-compose-signals",)),
-                (home, owner),
-            )
-            for selection in (None, (), ("E10-compose-redirected",),
+            for selection in (("E06-network-volume",), ("E13-compose-signals",)):
+                with self.subTest(selection=selection):
+                    self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
+            for selection in (None, (), ("unknown-component",), ("E10-compose-redirected",),
+                              ("E06-network-volume", "E13-compose-signals"),
+                              ("E06-network-volume", "E06-network-volume"),
                               ("E13-compose-signals", "E14-compose-terminal-size")):
                 with self.subTest(selection=selection), self.assertRaisesRegex(
                         ParityError, "campaign guard differs"):
                     _active_provider_home(runner, fixture_selection=selection)
+
+            owner["identity"]["sourceCommit"] = "b" * 40
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            with self.assertRaisesRegex(ParityError, "ownership marker differs"):
+                _active_provider_home(runner, fixture_selection=("E06-network-volume",))
+            owner["identity"]["sourceCommit"] = "a" * 40
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
 
             guard["identity"]["scope"] = "unrecognized-component-scope"
             guard_path.write_text(json.dumps(guard, sort_keys=True))
