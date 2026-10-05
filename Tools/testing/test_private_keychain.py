@@ -214,19 +214,82 @@ class PrivateKeychainTests(unittest.TestCase):
             flags._obj.value = 1
             return 0
         security.SecKeychainGetStatus.side_effect = status
+        security.SecKeychainSetSettings.return_value = 0
+        def settings(reference, output):
+            self.assertEqual(reference.value, 42)
+            output._obj.lockOnSleep = False
+            output._obj.lockInterval = 2147483647
+            # Security.framework does not populate this output field.
+            output._obj.useLockInterval = 99
+            return 0
+        security.SecKeychainCopySettings.side_effect = settings
         with patch('private_keychain.ctypes.CDLL', side_effect=[security, core]):
             api = KeychainAPI()
         api.create(self.path)
+        self.assertEqual([call[0] for call in security.method_calls], [
+            'SecKeychainSetUserInteractionAllowed', 'SecKeychainCreate',
+            'SecKeychainGetPath', 'SecKeychainGetStatus', 'SecKeychainSetSettings',
+            'SecKeychainCopySettings', 'SecKeychainGetPath', 'SecKeychainGetStatus'])
         self.assertEqual(api.default(), {'path': str(self.path), 'unlocked': True})
         api.delete(self.path)
         security.SecKeychainSetUserInteractionAllowed.assert_called_once_with(False)
         self.assertFalse(security.SecKeychainCreate.call_args.args[3])
+        reference, settings_pointer = security.SecKeychainSetSettings.call_args.args
+        self.assertEqual(reference.value, 42)
+        setting = settings_pointer._obj
+        self.assertEqual((setting.version, setting.lockOnSleep, setting.useLockInterval,
+                          setting.lockInterval), (1, 0, 0, 2147483647))
+        self.assertFalse(security.SecKeychainSetDefault.called)
+        self.assertFalse(security.SecKeychainSetSearchList.called)
+        self.assertFalse(security.SecKeychainUnlock.called)
         self.assertEqual(core.CFRelease.call_count, 3)
         security.SecKeychainGetPath.side_effect = None
         security.SecKeychainGetPath.return_value = -1
         with self.assertRaises(RuntimeError):
             api.default()
         self.assertEqual(core.CFRelease.call_count, 4)
+
+    def test_creation_settings_fail_closed_and_release_only_the_created_reference(self):
+        for failure in ('null', 'wrong-path', 'locked', 'set', 'copy', 'interval', 'sleep',
+                        'post-locked', 'post-wrong-path'):
+            with self.subTest(failure=failure):
+                security, core = Mock(), Mock()
+                security.SecKeychainSetUserInteractionAllowed.return_value = 0
+                def create(*args):
+                    args[-1]._obj.value = None if failure == 'null' else 42
+                    return 0
+                security.SecKeychainCreate.side_effect = create
+                def path(reference, _size, buffer):
+                    self.assertEqual(reference.value, 42)
+                    wrong = failure == 'wrong-path' or (
+                        failure == 'post-wrong-path' and security.SecKeychainGetPath.call_count > 1)
+                    buffer.value = os.fsencode('/operator/login.keychain-db' if wrong else self.path)
+                    return 0
+                security.SecKeychainGetPath.side_effect = path
+                def status(reference, flags):
+                    self.assertEqual(reference.value, 42)
+                    locked = failure == 'locked' or (
+                        failure == 'post-locked' and security.SecKeychainGetStatus.call_count > 1)
+                    flags._obj.value = 0 if locked else 1
+                    return 0
+                security.SecKeychainGetStatus.side_effect = status
+                security.SecKeychainSetSettings.return_value = -1 if failure == 'set' else 0
+                def copy(reference, settings):
+                    self.assertEqual(reference.value, 42)
+                    settings._obj.lockInterval = 0 if failure == 'interval' else 2147483647
+                    settings._obj.lockOnSleep = failure == 'sleep'
+                    return -1 if failure == 'copy' else 0
+                security.SecKeychainCopySettings.side_effect = copy
+                with patch('private_keychain.ctypes.CDLL', side_effect=[security, core]):
+                    api = KeychainAPI()
+                with self.assertRaises((RuntimeError, ValueError)):
+                    api.create(self.path)
+                self.assertEqual(core.CFRelease.call_count, int(failure != 'null'))
+                self.assertEqual(security.SecKeychainSetSettings.call_count,
+                                 int(failure not in ('null', 'wrong-path', 'locked')))
+                self.assertFalse(security.SecKeychainSetDefault.called)
+                self.assertFalse(security.SecKeychainSetSearchList.called)
+                self.assertFalse(security.SecKeychainUnlock.called)
 
 
 if __name__ == '__main__':

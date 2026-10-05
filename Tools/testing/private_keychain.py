@@ -15,6 +15,13 @@ import stat
 import time
 
 
+class KeychainSettings(ctypes.Structure):
+    """Security.framework's naturally aligned SecKeychainSettings layout."""
+
+    _fields_ = [('version', ctypes.c_uint32), ('lockOnSleep', ctypes.c_ubyte),
+                ('useLockInterval', ctypes.c_ubyte), ('lockInterval', ctypes.c_uint32)]
+
+
 class KeychainAPI:
     """Small Security.framework boundary; passwords never enter arguments/logs."""
 
@@ -27,6 +34,10 @@ class KeychainAPI:
         self.security.SecKeychainOpen.argtypes = [ctypes.c_char_p, ctypes.POINTER(ref)]
         self.security.SecKeychainGetPath.argtypes = [ref, ctypes.POINTER(ctypes.c_uint32), ref]
         self.security.SecKeychainGetStatus.argtypes = [ref, ctypes.POINTER(ctypes.c_uint32)]
+        self.security.SecKeychainSetSettings.argtypes = [ref, ctypes.POINTER(KeychainSettings)]
+        self.security.SecKeychainCopySettings.argtypes = [ref, ctypes.POINTER(KeychainSettings)]
+        self.security.SecKeychainSetSettings.restype = ctypes.c_int32
+        self.security.SecKeychainCopySettings.restype = ctypes.c_int32
         self.security.SecKeychainDelete.argtypes = [ref]
         self.core.CFRelease.argtypes = [ref]
         self.check(self.security.SecKeychainSetUserInteractionAllowed(False))
@@ -42,6 +53,22 @@ class KeychainAPI:
         try:
             self.check(self.security.SecKeychainCreate(
                 os.fsencode(path), len(password), password, False, None, ctypes.byref(reference)))
+            if not reference.value:
+                raise ValueError('Private keychain creation returned no explicit reference')
+            expected = path.with_name('login.keychain-db') if path.name == 'login.keychain' else path
+            if self.describe(reference) != {'path': str(expected), 'unlocked': True}:
+                raise ValueError('Created keychain is not the unlocked canonical private keychain')
+            # SecurityTool uses INT_MAX for no automatic timeout. A zero
+            # interval can lock immediately; useLockInterval is not read back
+            # by Security.framework. Only this newly-created private ref is set.
+            settings = KeychainSettings(1, False, False, 2147483647)
+            self.check(self.security.SecKeychainSetSettings(reference, ctypes.byref(settings)))
+            observed = KeychainSettings(1, False, False, 0)
+            self.check(self.security.SecKeychainCopySettings(reference, ctypes.byref(observed)))
+            if observed.lockOnSleep or observed.lockInterval != settings.lockInterval:
+                raise ValueError('Private keychain unattended settings were not retained')
+            if self.describe(reference) != {'path': str(expected), 'unlocked': True}:
+                raise ValueError('Configured private keychain is not unlocked at its canonical path')
         finally:
             if reference.value:
                 self.core.CFRelease(reference)
@@ -50,13 +77,17 @@ class KeychainAPI:
         reference = ctypes.c_void_p()
         self.check(self.security.SecKeychainCopyDefault(ctypes.byref(reference)))
         try:
-            buffer = ctypes.create_string_buffer(4096)
-            size, status = ctypes.c_uint32(len(buffer)), ctypes.c_uint32()
-            self.check(self.security.SecKeychainGetPath(reference, ctypes.byref(size), buffer))
-            self.check(self.security.SecKeychainGetStatus(reference, ctypes.byref(status)))
-            return {'path': os.fsdecode(buffer.value), 'unlocked': bool(status.value & 1)}
+            return self.describe(reference)
         finally:
             self.core.CFRelease(reference)
+
+    def describe(self, reference) -> dict:
+        """Read only path and lock state from an explicit keychain reference."""
+        buffer = ctypes.create_string_buffer(4096)
+        size, status = ctypes.c_uint32(len(buffer)), ctypes.c_uint32()
+        self.check(self.security.SecKeychainGetPath(reference, ctypes.byref(size), buffer))
+        self.check(self.security.SecKeychainGetStatus(reference, ctypes.byref(status)))
+        return {'path': os.fsdecode(buffer.value), 'unlocked': bool(status.value & 1)}
 
     def delete(self, path: Path):
         reference = ctypes.c_void_p()
