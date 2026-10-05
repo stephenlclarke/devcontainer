@@ -13,5 +13,6 @@ Carry Docker `HostConfig.ConsoleSize` through container metadata and inspect, th
 - Launcher identity admission, process projection and attestation, partial
   zero dimensions, and conflicting mount rejection.
 - Enhanced process policy is applied before the process attestation is made.
+- The verifier uses an already-admitted test asset for malformed identity, changed process, size, mount, missing-helper, and runtime-generation cases.
 
-Root-owned Bazel invocation `4c22f481-5f55-41dc-a5c9-bd86d6f48242` passes compilation and all four focused targets at the development snapshot. The unchanged E15 first-instruction fixture and complete 84-cell campaign have not been run, so this change does not establish release parity.
+The first retained SwiftPM CI run passed 769 tests but failed the unchanged 90% changed-line coverage threshold; additional focused verifier and runtime-generation tests are awaiting rerun. Root-owned Bazel invocation `4c22f481-5f55-41dc-a5c9-bd86d6f48242` passes compilation and all four focused targets at the development snapshot. The unchanged E15 first-instruction fixture and complete 84-cell campaign have not been run, so this change does not establish release parity.

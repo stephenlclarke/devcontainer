@@ -5,6 +5,7 @@ import ContainerResource
 import CryptoKit
 @testable import DevContainerAppleRuntime
 import DevContainerModel
+import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
@@ -161,6 +162,14 @@ struct NativeTerminalLauncherTests {
         #expect(admitted.source == helper)
         #expect(admitted.sha256 == hash)
         #expect(admitted.attestation.hasPrefix("arm64:\(hash):"))
+        #expect(try NativeTerminalLauncher.resolveInstalled(
+            architecture: "arm64", executableURL: executable, sha256ByArchitecture: ["arm64": hash]
+        ) == admitted)
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.resolveInstalled(
+                architecture: "arm64", executableURL: nil, sha256ByArchitecture: ["arm64": hash]
+            )
+        }
         #expect(throws: DevContainerError.self) {
             try NativeTerminalLauncher.resolve(
                 executableURL: executable,
@@ -173,6 +182,113 @@ struct NativeTerminalLauncherTests {
                 executableURL: executable, architecture: "arm64", sha256ByArchitecture: [:]
             )
         }
+    }
+
+    @Test func `stored launcher attestation rejects malformed and changed configuration`() throws {
+        let spec = ContainerSpec(
+            name: "fixture", image: digest, command: ["/bin/true"], terminal: true,
+            terminalWidth: 80, terminalHeight: 24
+        )
+        let asset = testAsset()
+        let config = try configuration(spec, asset: asset)
+        #expect(try NativeTerminalLauncher.verify(configuration: config, asset: asset) == asset)
+
+        var malformed = config
+        malformed.labels[NativeTerminalLauncher.label] = "not-an-attestation"
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: malformed, asset: asset)
+        }
+
+        var changedIdentity = config
+        changedIdentity.labels[NativeTerminalLauncher.label] = "amd64:" + String(repeating: "b", count: 64) + ":4:9:" +
+            String(repeating: "c", count: 64)
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: changedIdentity, asset: asset)
+        }
+
+        var changedSize = config
+        changedSize.initProcess.arguments[0] = "invalid"
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: changedSize, asset: asset)
+        }
+        changedSize = config
+        changedSize.initProcess.arguments[0] = "0"
+        changedSize.initProcess.arguments[1] = "0"
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: changedSize, asset: asset)
+        }
+
+        var changedProcess = config
+        changedProcess.initProcess.arguments[3] = "/changed"
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: changedProcess, asset: asset)
+        }
+        var changedMount = config
+        changedMount.mounts[0] = .virtiofs(
+            source: asset.source.path, destination: NativeTerminalLauncher.mountDestination, options: []
+        )
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: changedMount, asset: asset)
+        }
+    }
+
+    @Test func `launcher verifier preserves the no launcher default and rejects missing identity`() throws {
+        let defaultSpec = ContainerSpec(name: "fixture", image: digest, command: ["/bin/true"])
+        let defaultConfig = try configuration(defaultSpec)
+        let identities = NativeTerminalLauncher.expectedSHA256ByArchitecture()
+        #expect(Set(identities.keys).isSubset(of: ["arm64", "amd64"]))
+        #expect(identities.values.allSatisfy { $0.count == 64 })
+        try NativeTerminalLauncher.verify(configuration: defaultConfig, spec: defaultSpec)
+        try NativeTerminalLauncher.verify(configuration: defaultConfig, spec: defaultSpec, asset: testAsset())
+        #expect(defaultConfig.labels[NativeTerminalLauncher.label] == nil)
+
+        let sizedSpec = ContainerSpec(
+            name: "fixture", image: digest, command: ["/bin/true"], terminal: true,
+            terminalWidth: 80, terminalHeight: 24
+        )
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: defaultConfig, spec: sizedSpec)
+        }
+
+        let projected = try configuration(sizedSpec, asset: testAsset())
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: projected)
+        }
+        #expect(throws: DevContainerError.self) {
+            try NativeTerminalLauncher.verify(configuration: projected, spec: defaultSpec, asset: testAsset())
+        }
+        let nonTTY = ContainerSpec(
+            name: "fixture", image: digest, command: ["/bin/true"], terminal: false,
+            terminalWidth: 80, terminalHeight: 24
+        )
+        #expect(try NativeTerminalLauncher.requestedSize(spec: nonTTY) == nil)
+    }
+
+    @Test func `runtime revalidation skips default sizes and rejects a replaced generation`() async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inventory = FakeContainerInventory(snapshots: [nativeSnapshot(
+            id: "fixture", labels: [:], status: .stopped
+        )])
+        let runtime = try fixture.runtime(inventory: inventory)
+        let originalDate = Date(timeIntervalSince1970: 1)
+        let defaultSpec = ContainerSpec(name: "fixture", image: digest, command: ["/bin/true"])
+
+        try await runtime.verifyInitialTerminalLauncher(
+            id: "fixture", createdAt: originalDate, spec: defaultSpec
+        )
+        #expect(await inventory.getCallCount() == 0)
+
+        let sizedSpec = ContainerSpec(
+            name: "fixture", image: digest, command: ["/bin/true"], terminal: true,
+            terminalWidth: 80, terminalHeight: 24
+        )
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.verifyInitialTerminalLauncher(
+                id: "fixture", createdAt: originalDate.addingTimeInterval(1), spec: sizedSpec
+            )
+        }
+        #expect(await inventory.getCallCount() == 1)
     }
 
     private func testAsset() -> NativeTerminalLauncherAsset {

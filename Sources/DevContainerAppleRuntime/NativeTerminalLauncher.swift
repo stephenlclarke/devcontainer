@@ -167,14 +167,36 @@ enum NativeTerminalLauncher {
     @discardableResult
     static func verify(configuration: ContainerConfiguration) throws -> NativeTerminalLauncherAsset? {
         guard let attestation = configuration.labels[label] else { return nil }
+        let fields = try attestationFields(attestation)
+        let asset = try resolveInstalled(architecture: String(fields[0]))
+        return try verify(configuration: configuration, fields: fields, asset: asset)
+    }
+
+    /// Validates stored launcher metadata using an asset already admitted by the package resolver.
+    @discardableResult
+    static func verify(
+        configuration: ContainerConfiguration,
+        asset: NativeTerminalLauncherAsset
+    ) throws -> NativeTerminalLauncherAsset? {
+        guard let attestation = configuration.labels[label] else { return nil }
+        return try verify(configuration: configuration, fields: attestationFields(attestation), asset: asset)
+    }
+
+    private static func attestationFields(_ attestation: String) throws -> [Substring] {
         let fields = attestation.split(separator: ":", omittingEmptySubsequences: false)
         guard fields.count == 5, !fields[0].isEmpty,
               UInt64(fields[2]) != nil, UInt64(fields[3]) != nil
         else {
             throw DevContainerError(.stateCorruption, message: "native terminal launcher identity is malformed")
         }
-        let architecture = String(fields[0])
-        let asset = try resolveInstalled(architecture: architecture)
+        return fields
+    }
+
+    private static func verify(
+        configuration: ContainerConfiguration,
+        fields: [Substring],
+        asset: NativeTerminalLauncherAsset
+    ) throws -> NativeTerminalLauncherAsset {
         let arguments = configuration.initProcess.arguments
         guard asset.attestation == fields.prefix(4).joined(separator: ":"),
               arguments.count >= 4,

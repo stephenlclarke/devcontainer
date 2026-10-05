@@ -76,20 +76,14 @@ extension AppleContainerRuntime {
         return registration
     }
 
-    private func verifyInitialTerminalLauncher(id: String, createdAt: Date, spec: ContainerSpec) async throws {
+    /// Revalidates a non-default helper against the same stored native generation immediately before start.
+    func verifyInitialTerminalLauncher(id: String, createdAt: Date, spec: ContainerSpec) async throws {
         guard try NativeTerminalLauncher.requestedSize(spec: spec) != nil else { return }
         let native = try await inventoryClient.get(id: id)
         guard native.configuration.creationDate == createdAt else {
             throw DevContainerError(.conflict, message: "Container changed before terminal launcher verification")
         }
         try NativeTerminalLauncher.verify(configuration: native.configuration, spec: spec)
-        let size = try NativeTerminalLauncher.requestedSize(spec: spec)
-        guard (size != nil) == (native.configuration.labels[NativeTerminalLauncher.label] != nil) else {
-            throw DevContainerError(
-                .providerProtocolMismatch,
-                message: "initial terminal size and native launcher configuration disagree"
-            )
-        }
     }
 
     private func startPreparedProcess(
