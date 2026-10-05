@@ -159,7 +159,7 @@ class FinalizedSelectionTests(unittest.TestCase):
 
 
 class ComponentBuilderSelectionTests(unittest.TestCase):
-    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str):
+    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str, runtime_profile=None):
         import sys
 
         repository = Path(__file__).resolve().parents[2]
@@ -196,7 +196,10 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             runner.lane, runner.repository, runner.manifest = lane, repository, manifest
             runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
             runner.output, runner.finalized_selection = base / "evidence" / lane, {}
-            runner.finalized_identity, runner.cleanup_differences = None, []
+            runner.provider_hashes = {}
+            runner.harness_sha256 = "f" * 64
+            runner.finalized_identity = {"runtimeProfile": runtime_profile} if runtime_profile else None
+            runner.cleanup_differences = []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
             builder = mock.Mock()
 
@@ -256,6 +259,18 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                     lane, ("E13-compose-signals", "E04-image-build"), "")
                 self.assertEqual(result, 0)
                 builder.assert_called_once_with()
+
+    def test_finalized_stock_native_lanes_use_native_api_builder(self) -> None:
+        for lane in ("apple-stock", "container-compose", "docker"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("E13-compose-signals", "E04-image-build"), "", "stock")
+                self.assertEqual(result, 0)
+                self.assertIn("fixture:E04-image-build", events)
+                if lane == "docker":
+                    builder.assert_called_once_with()
+                else:
+                    builder.assert_not_called()
 
 
 class SafeEnvironmentTests(unittest.TestCase):
@@ -1086,8 +1101,10 @@ class BuilderCleanupTests(unittest.TestCase):
             runner.devcontainer_docker = runner.docker
             runner.socket_root = root
             runner.environment = {}
+            runner.finalized_identity = {"runtimeProfile": "stock"}
 
             runner.configure_devcontainer_client()
+            buildx = subprocess.run([runner.devcontainer_docker, "buildx", "version"], capture_output=True, check=False)
             compose_version = subprocess.run(
                 [runner.devcontainer_docker, "compose", "version", "--short"],
                 capture_output=True,
@@ -1104,6 +1121,8 @@ class BuilderCleanupTests(unittest.TestCase):
                 encoding="utf-8"
             )
 
+        self.assertEqual(buildx.returncode, 1)
+        self.assertEqual(runner.environment["DOCKER_BUILDKIT"], "0")
         self.assertEqual(compose_version.returncode, 0)
         self.assertEqual(compose_version.stdout.strip(), "compose:version --short")
         self.assertEqual(docker_version.returncode, 0)

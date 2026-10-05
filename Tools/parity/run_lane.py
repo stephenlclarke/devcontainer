@@ -382,7 +382,11 @@ class LaneRunner:
                            for fixture in fixtures]
             else:
                 self.configure_devcontainer_client()
-                if self.lane != "apple-stock" and not component_e13_only:
+                native_stock_package = (
+                    self.lane != "docker" and self.finalized_identity is not None
+                    and self.finalized_identity.get("runtimeProfile") == "stock"
+                )
+                if self.lane != "apple-stock" and not native_stock_package and not component_e13_only:
                     self.prepare_builder()
                 atomic_json(self.output / "fingerprint.json", self.fingerprint())
                 for fixture in fixtures:
@@ -515,6 +519,11 @@ class LaneRunner:
         """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
+        identity = getattr(self, "finalized_identity", None)
+        if self.lane == "apple-stock" or (
+                self.lane == "container-compose" and identity is not None
+                and identity.get("runtimeProfile") == "stock"):
+            self.configure_stock_builder_client()
         if self.lane == "container-compose":
             if self.socket_root is None or not self.docker:
                 raise ParityError(
@@ -543,8 +552,10 @@ class LaneRunner:
             self.devcontainer_docker = str(wrapper)
             self.environment["DEVCONTAINER_DOCKER_BIN"] = str(wrapper)
             return
-        if self.lane != "apple-stock":
-            return
+
+    def configure_stock_builder_client(self) -> None:
+        """Expose the native API builder without advertising privileged Buildx."""
+
         if self.socket_root is None or not self.docker:
             raise ParityError("stock Docker client wrapper requires a live engine")
         self.environment["DOCKER_BUILDKIT"] = "0"
