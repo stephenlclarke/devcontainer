@@ -270,6 +270,43 @@ struct DockerFrontendSocketTests {
         #expect(!FileManager.default.fileExists(atPath: socket))
     }
 
+    @Test(arguments: [false, true])
+    func `real executable carries TTY allocation and raw output over the Unix socket`(interactive: Bool) async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("dt-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socket = root.appendingPathComponent("engine.sock").path
+        let responder = TTYExecSocketResponder()
+        let server = ContainerUnixHTTPServer(
+            responder: responder, socketPath: socket, logger: Logger(label: "frontend-exec-tty-test")
+        )
+        try await server.start()
+        do {
+            let flags = interactive ? ["-i", "-t"] : ["-t"]
+            let result = try await FrontendExecutable.run(
+                ["exec"] + flags + ["box", "/bin/sh"],
+                socket: socket,
+                input: Data("stdin payload\n".utf8)
+            )
+            #expect(result.exitCode == 7)
+            #expect(result.standardOutput == Data("stdoutstderr\n".utf8))
+            #expect(result.standardError.isEmpty)
+            #expect(await responder.createTTY == true)
+            #expect(await responder.createStdin == interactive)
+            #expect(await responder.startTTY == true)
+            let session = responder.session
+            #expect(await session.input == (interactive ? Data("stdin payload\n".utf8) : Data()))
+            #expect(await session.stdinClosed)
+        } catch {
+            try await server.shutdown()
+            throw error
+        }
+        try await server.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: socket))
+    }
+
     @Test
     func `frontend reaches the selected private socket and preserves server failures`() async throws {
         let root = TestStorage.temporaryDirectory.appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
@@ -455,6 +492,75 @@ private actor FrontendEchoSession: DockerHijackSession {
 
     func closeStandardInput() {
         continuation.yield(.init(channel: .standardOutput, data: input))
+        continuation.yield(.init(channel: .standardError, data: Data("stderr\n".utf8)))
+        continuation.finish()
+    }
+
+    func wait() -> Int32 {
+        7
+    }
+
+    func cancel() {
+        continuation.finish()
+    }
+}
+
+private actor TTYExecSocketResponder: DockerHTTPResponder {
+    private let identifier = "c9e1deac-d20d-4b9a-ace8-4456740fed63"
+    let session = TTYExecSocketSession()
+    private(set) var createTTY: Bool?
+    private(set) var createStdin: Bool?
+    private(set) var startTTY: Bool?
+
+    func respond(to request: DockerHTTPRequest) async -> DockerHTTPResponse {
+        if request.method == .post, request.target == "/containers/box/exec" {
+            guard let fields = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let terminal = fields["Tty"] as? Bool,
+                  let attachStdin = fields["AttachStdin"] as? Bool
+            else { return .text("invalid exec create body", status: 400) }
+            createTTY = terminal
+            createStdin = attachStdin
+            return .text("{\"Id\":\"\(identifier)\"}", contentType: "application/json")
+        }
+        if request.method == .post, request.target == "/exec/\(identifier)/start" {
+            guard let fields = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let terminal = fields["Tty"] as? Bool,
+                  terminal
+            else { return .text("TTY was not requested at exec start", status: 400) }
+            startTTY = terminal
+            return DockerHTTPResponse(
+                status: 200,
+                headers: ["Connection": "Upgrade", "Upgrade": "tcp"],
+                body: .hijack(session, terminal: terminal)
+            )
+        }
+        if request.method == .get, request.target == "/exec/\(identifier)/json" {
+            return .text(
+                "{\"ID\":\"\(identifier)\",\"Running\":false,\"ExitCode\":7}",
+                contentType: "application/json"
+            )
+        }
+        return .text("unexpected request", status: 400)
+    }
+}
+
+private actor TTYExecSocketSession: DockerHijackSession {
+    nonisolated let frames: AsyncThrowingStream<DockerStreamFrame, any Error>
+    private let continuation: AsyncThrowingStream<DockerStreamFrame, any Error>.Continuation
+    private(set) var input = Data()
+    private(set) var stdinClosed = false
+
+    init() {
+        (frames, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    func write(_ data: Data) {
+        input.append(data)
+    }
+
+    func closeStandardInput() {
+        stdinClosed = true
+        continuation.yield(.init(channel: .standardOutput, data: Data("stdout".utf8)))
         continuation.yield(.init(channel: .standardError, data: Data("stderr\n".utf8)))
         continuation.finish()
     }

@@ -336,6 +336,42 @@ class SafeEnvironmentTests(unittest.TestCase):
         self.assertNotIn("DEVCONTAINER_COMPOSE_PROVIDER", environment)
 
 
+class NativeBackendSelectionTests(unittest.TestCase):
+    def test_engine_setup_recomputes_backend_for_actual_cli_and_compose_children(self) -> None:
+        for lane, backend in (("apple-stock", "stock"), ("container-compose", "container-compose")):
+            with self.subTest(lane=lane), TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                socket_root = root / "socket"
+                socket_root.mkdir()
+                (socket_root / "docker.sock").touch()
+                runner = LaneRunner.__new__(LaneRunner)
+                runner.lane, runner.repository = lane, root
+                runner.runtime_root, runner.output = root / "runtime", root
+                runner.finalized_selection = {}
+                runner.docker = "/pinned/docker"
+                runner.environment = safe_environment({"DEVCONTAINER_BACKEND": "operator-choice"})
+                self.assertNotIn("DEVCONTAINER_BACKEND", runner.environment)
+                runner.package_executable = mock.Mock(return_value="/pinned/engine")
+                runner.provider_executable = mock.Mock(return_value="/pinned/provider")
+                runner.devcontainers_command = mock.Mock(return_value=["/pinned/devcontainer"])
+                process = mock.Mock()
+                process.poll.return_value = None
+                result = subprocess.CompletedProcess([], 0, "", "")
+                with (mock.patch("run_lane.platform.system", return_value="Darwin"),
+                      mock.patch("run_lane.platform.machine", return_value="arm64"),
+                      mock.patch("run_lane.create_socket_root", return_value=socket_root),
+                      mock.patch("run_lane.subprocess.Popen", return_value=process) as launch,
+                      mock.patch("run_lane.subprocess.run", return_value=result) as execute):
+                    try:
+                        runner.start_engine()
+                        self.assertEqual(launch.call_args.args[0][-1], backend)
+                        runner.devcontainer(["up"], timeout=30)
+                        self.assertEqual(execute.call_args.kwargs["env"]["DEVCONTAINER_BACKEND"], backend)
+                        self.assertEqual(runner.compose_environment()["DEVCONTAINER_BACKEND"], backend)
+                    finally:
+                        runner.engine_log.close()
+
+
 class EngineRoutePreflightTests(unittest.TestCase):
     def test_unknown_engine_route_fails_before_output_or_runtime_admission(self) -> None:
         with TemporaryDirectory() as temporary:

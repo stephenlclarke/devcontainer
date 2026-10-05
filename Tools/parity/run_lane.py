@@ -479,6 +479,9 @@ class LaneRunner:
         self.environment["DEVCONTAINER_CONFIG"] = str(
             self.runtime_root / "missing-config.toml"
         )
+        self.environment["DEVCONTAINER_BACKEND"] = (
+            "container-compose" if self.lane == "container-compose" else "stock"
+        )
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self.engine.poll() is not None:

@@ -940,6 +940,10 @@ class VSCodeLane:
             self.runtime.environment,
             user_data.parent,
         )
+        if self.lane != "docker":
+            environment["DEVCONTAINER_BACKEND"] = (
+                "container-compose" if self.lane == "container-compose" else "stock"
+            )
         if self.lane == "container-compose":
             environment["DEVCONTAINER_COMPOSE_PROVIDER"] = "container-compose"
             environment["DEVCONTAINER_COMPOSE_BIN"] = self.runtime.provider_executable(

@@ -298,6 +298,29 @@ class VSCodeParityTests(unittest.TestCase):
             100.0,
         )
 
+    def test_gui_launch_recomputes_native_backend_after_environment_filtering(self) -> None:
+        for selected, backend in (("apple-stock", "stock"), ("container-compose", "container-compose")):
+            with self.subTest(lane=selected), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                lane = VSCodeLane.__new__(VSCodeLane)
+                lane.lane, lane.repository, lane.output = selected, root, root
+                lane.runtime = mock.Mock(environment={"DEVCONTAINER_BACKEND": "operator-choice"})
+                lane.runtime.provider_executable.return_value = "/pinned/container-compose"
+                lane.vscode_gui = root / "Code"
+                lane.devcontainer_docker_path = mock.Mock(return_value="/pinned/docker")
+                lane.process = None
+                result = root / "driver-result.json"
+                result.write_text('{}\n')
+                process = mock.Mock()
+                process.poll.return_value = 0
+                filtered = vscode_environment(lane.runtime.environment, root / "filter-check")
+                self.assertNotIn("DEVCONTAINER_BACKEND", filtered)
+                with (mock.patch("run_vscode.subprocess.Popen", return_value=process) as launch,
+                      mock.patch("run_vscode.terminate_isolated_vscode")):
+                    lane.launch(root / "workspace", root / "profile/data", root / "profile/extensions",
+                                root / "driver-state.json", result)
+                self.assertEqual(launch.call_args.kwargs["env"]["DEVCONTAINER_BACKEND"], backend)
+
     def test_launch_enforces_phase_deadline_after_extension_timer_is_gone(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

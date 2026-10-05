@@ -44,10 +44,16 @@ extension DockerFrontend {
         let connection = try await transport.open(.init(
             method: .post, target: path + "/start",
             headers: .init([.init(name: "Content-Type", value: "application/json")]),
-            body: Data(#"{"Detach":false,"Tty":false}"#.utf8)
+            body: Data("{\"Detach\":false,\"Tty\":\(spec.terminal)}".utf8)
         ))
         defer { connection.close() }
-        try await exchange(connection, interactive: spec.interactive, input: input, output: output)
+        try await exchange(
+            connection,
+            interactive: spec.interactive,
+            terminal: spec.terminal,
+            input: input,
+            output: output
+        )
         return try await terminalStatus(id: created.id, transport: transport)
     }
 
@@ -79,7 +85,9 @@ extension DockerFrontend {
     }
 
     private func exchange(
-        _ connection: any DockerFrontendConnection, interactive: Bool,
+        _ connection: any DockerFrontendConnection,
+        interactive: Bool,
+        terminal: Bool,
         input: @escaping @Sendable () async throws -> Data?,
         output: @escaping @Sendable (DockerStreamFrame) async throws -> Void
     ) async throws {
@@ -101,11 +109,17 @@ extension DockerFrontend {
             group.addTask {
                 var decoder = DockerMultiplexDecoder()
                 while let bytes = try await connection.read() {
-                    for frame in try decoder.consume(bytes) {
-                        try await output(frame)
+                    if terminal {
+                        try await output(.init(channel: .standardOutput, data: bytes))
+                    } else {
+                        for frame in try decoder.consume(bytes) {
+                            try await output(frame)
+                        }
                     }
                 }
-                try decoder.finish()
+                if !terminal {
+                    try decoder.finish()
+                }
                 return true
             }
             do {

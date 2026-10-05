@@ -20,8 +20,8 @@ struct DockerExecTests {
         ])
     }
 
-    @Test
-    func `blocked output cancels and joins without changing inherited pipe flags`() async throws {
+    @Test(arguments: [false, true])
+    func `blocked output cancels and joins without changing inherited pipe flags`(terminal: Bool) async throws {
         let pipe = Pipe()
         defer { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
         let descriptor = pipe.fileHandleForWriting.fileDescriptor
@@ -34,9 +34,12 @@ struct DockerExecTests {
         let flags = fcntl(descriptor, F_GETFL)
         let signalFlags = fcntl(descriptor, F_GETNOSIGPIPE)
         let writer = try DockerFrontendOutput(descriptor: descriptor)
-        let connection = ExecTestConnection(immediate: true)
+        let connection = ExecTestConnection(
+            immediate: true,
+            terminalChunks: terminal ? [Data(repeating: 97, count: 1024 * 1024)] : nil
+        )
         let transport = ExecTestTransport(connection: connection)
-        let spec = try command(["-i", "box", "sh"])
+        let spec = try command([terminal ? "-it" : "-i", "box", "sh"])
         let start = ContinuousClock.now
         await #expect(throws: DockerFrontendError.self) {
             try await DockerFrontend(version: "test", executionTimeout: .milliseconds(100)).executeExec(
@@ -131,9 +134,32 @@ struct DockerExecTests {
         #expect(try command(["box", "sh", ""]).command == ["sh", ""])
     }
 
+    @Test
+    func `exec parses TTY allocation independently of interactive input`() throws {
+        let terminal = try command(["-t", "box", "sh"])
+        #expect(terminal.terminal)
+        #expect(!terminal.interactive)
+        #expect(try command(["--tty", "box", "sh"]).terminal)
+        let combined = try command(["-ti", "box", "sh"])
+        #expect(combined.terminal)
+        #expect(combined.interactive)
+        let combinedBody = try #require(JSONSerialization.jsonObject(with: combined.createBody()) as? [String: Any])
+        #expect(combinedBody["Tty"] as? Bool == true)
+        #expect(combinedBody["AttachStdin"] as? Bool == true)
+
+        let vscodeExec = try command(["-i", "-t", "-u", "root", "-e", "X=1", "-w", "/work", "box", "sh", "-t"])
+        #expect(vscodeExec.interactive)
+        #expect(vscodeExec.terminal)
+        #expect(vscodeExec.user == "root")
+        #expect(vscodeExec.environment == ["X=1"])
+        #expect(vscodeExec.workingDirectory == "/work")
+        #expect(vscodeExec.command == ["sh", "-t"])
+    }
+
     @Test(arguments: [
-        [], ["box"], ["box", ""], ["", "sh"], ["box", "sh\0"], ["-t", "box", "sh"],
-        ["-i=true", "box", "sh"], ["-e", "NAME", "box", "sh"], ["-e", "=bad", "box", "sh"],
+        [], ["box"], ["box", ""], ["", "sh"], ["box", "sh\0"], ["-t=true", "box", "sh"],
+        ["-it=true", "box", "sh"], ["-itx", "box", "sh"], ["-i=true", "box", "sh"],
+        ["-e", "NAME", "box", "sh"], ["-e", "=bad", "box", "sh"],
         ["-u", "root", "-u", "user", "box", "sh"], ["-w", "/", "-w", "/tmp", "box", "sh"],
         ["--"], ["-u"], ["-e", "A=nul\0", "box", "sh"], ["--detach", "box", "sh"]
     ])
@@ -167,6 +193,37 @@ struct DockerExecTests {
         #expect(body["AttachStdin"] as? Bool == true)
         #expect(body["Tty"] as? Bool == false)
         #expect(requests[1].body == Data(#"{"Detach":false,"Tty":false}"#.utf8))
+    }
+
+    @Test
+    func `TTY exec preserves fragmented raw output and reports terminal exit status`() async throws {
+        let terminalBytes = Data([1, 0, 0, 0, 0, 0, 0, 3, 0x1B, 0x5B, 0x33, 0x31, 0x6D, 0xFF])
+        let connection = ExecTestConnection(
+            terminalChunks: [Data(terminalBytes.prefix(5)), Data(terminalBytes.dropFirst(5))]
+        )
+        let transport = ExecTestTransport(connection: connection)
+        let output = ExecTestOutput()
+        let status = try await DockerFrontend(version: "test").executeExec(
+            command(["-t", "box", "sh"]),
+            transport: transport,
+            input: {
+                Issue.record("TTY without -i must not read caller stdin")
+                return nil
+            },
+            output: { await output.append($0) }
+        )
+
+        #expect(status == 7)
+        #expect(await output.stdout == terminalBytes)
+        #expect(await output.stderr == Data())
+        #expect(connection.written.isEmpty)
+        #expect(connection.closed)
+
+        let requests = await transport.requests
+        let createBody = try #require(JSONSerialization.jsonObject(with: requests[0].body) as? [String: Any])
+        #expect(createBody["Tty"] as? Bool == true)
+        #expect(createBody["AttachStdin"] as? Bool == false)
+        #expect(requests[1].body == Data(#"{"Detach":false,"Tty":true}"#.utf8))
     }
 
     @Test
@@ -333,9 +390,12 @@ private final class ExecTestConnection: DockerFrontendConnection, @unchecked Sen
     private var inputFinished: Bool
     private var didClose = false
     private var didRead = false
+    private let terminalChunks: [Data]?
+    private var nextTerminalChunk = 0
 
-    init(immediate: Bool = false) {
+    init(immediate: Bool = false, terminalChunks: [Data]? = nil) {
         inputFinished = immediate
+        self.terminalChunks = terminalChunks
     }
 
     var closed: Bool {
@@ -351,6 +411,11 @@ private final class ExecTestConnection: DockerFrontendConnection, @unchecked Sen
             try await Task.sleep(for: .milliseconds(1))
         }
         return try lock.withLock {
+            if let terminalChunks {
+                guard nextTerminalChunk < terminalChunks.count else { return nil }
+                defer { nextTerminalChunk += 1 }
+                return terminalChunks[nextTerminalChunk]
+            }
             guard !didRead else { return nil }
             didRead = true
             return try DockerStreamFraming.encode(

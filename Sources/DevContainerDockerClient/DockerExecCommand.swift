@@ -6,6 +6,7 @@ public struct DockerExecCommand: Equatable, Sendable {
     public let container: String
     public let command: [String]
     public let interactive: Bool
+    public let terminal: Bool
     public let user: String?
     public let environment: [String]
     public let workingDirectory: String?
@@ -36,6 +37,7 @@ public struct DockerExecCommand: Equatable, Sendable {
             container: container,
             command: command,
             interactive: values.interactive,
+            terminal: values.terminal,
             user: values.user,
             environment: values.environment,
             workingDirectory: values.workingDirectory
@@ -45,7 +47,7 @@ public struct DockerExecCommand: Equatable, Sendable {
     func createBody() throws -> Data {
         var fields: [String: Any] = [
             "AttachStdin": interactive, "AttachStdout": true, "AttachStderr": true,
-            "Tty": false, "Cmd": command, "Env": environment
+            "Tty": terminal, "Cmd": command, "Env": environment
         ]
         fields["User"] = user
         fields["WorkingDir"] = workingDirectory
@@ -55,15 +57,15 @@ public struct DockerExecCommand: Equatable, Sendable {
 
 private struct ExecOptions {
     var interactive = false
+    var terminal = false
     var user: String?
     var environment: [String] = []
     var workingDirectory: String?
 
     mutating func consume(_ argument: String, options: inout DockerFrontendArguments) throws {
         switch argument.split(separator: "=", maxSplits: 1).first.map(String.init) {
-        case "-i", "--interactive":
-            guard !argument.contains("=") else { throw DockerFrontendError.usage("unsupported exec boolean flag") }
-            interactive = true
+        case "-i", "--interactive", "-t", "--tty", "-it", "-ti":
+            try consumeBoolean(argument)
         case "-u", "--user":
             guard user == nil else { throw DockerFrontendError.usage("duplicate exec user") }
             user = try options.value(for: argument)
@@ -78,6 +80,19 @@ private struct ExecOptions {
             workingDirectory = try options.value(for: argument)
         default:
             throw DockerFrontendError.usage("unsupported exec option: \(argument)")
+        }
+    }
+
+    private mutating func consumeBoolean(_ argument: String) throws {
+        guard !argument.contains("=") else { throw DockerFrontendError.usage("unsupported exec boolean flag") }
+        switch argument {
+        case "-i", "--interactive":
+            interactive = true
+        case "-t", "--tty":
+            terminal = true
+        default:
+            interactive = true
+            terminal = true
         }
     }
 }
