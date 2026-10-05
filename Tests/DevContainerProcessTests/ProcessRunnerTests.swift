@@ -111,16 +111,7 @@ struct ProcessRunnerTests {
     @Test
     func `interactive child owns the terminal before reading and restores its parent`() async throws {
         let environment = ProcessInfo.processInfo.environment
-        let probe: URL
-        if environment["BAZEL_TEST"] == "1" {
-            let root = try #require(environment["TEST_SRCDIR"])
-            let workspace = try #require(environment["TEST_WORKSPACE"])
-            let runfile = try #require(environment["DEVCONTAINER_PROCESS_TEST_RUNFILE"])
-            probe = URL(fileURLWithPath: root).appendingPathComponent(workspace).appendingPathComponent(runfile)
-        } else {
-            probe = Bundle(for: ProcessProbeBundle.self).bundleURL.deletingLastPathComponent()
-                .appendingPathComponent("DevContainerProcessProbe")
-        }
+        let probe = try processProbeURL()
         try #require(FileManager.default.isExecutableFile(atPath: probe.path))
         var childEnvironment = ["TERM": "dumb"]
         var profileDirectory: URL?
@@ -420,6 +411,47 @@ struct ProcessRunnerTests {
             executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 19"], environment: [:]
         )
         #expect(status == 19)
+    }
+
+    @Test
+    func `foreground lease requires the current positive foreground process group`() throws {
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: 42, errorCode: 0, processGroup: 42
+        ) == 42)
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: 43, errorCode: 0, processGroup: 42
+        ) == nil)
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: 0, errorCode: 0, processGroup: 42
+        ) == nil)
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: 42, errorCode: 0, processGroup: 0
+        ) == nil)
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: -1, errorCode: ENOTTY, processGroup: 42
+        ) == nil)
+        #expect(throws: POSIXError(.EBADF)) {
+            try inheritedTerminalForegroundProcessGroup(
+                terminalForegroundProcessGroup: -1, errorCode: EBADF, processGroup: 42
+            )
+        }
+        #expect(throws: POSIXError(.EIO)) {
+            try inheritedTerminalForegroundProcessGroup(
+                terminalForegroundProcessGroup: -1, errorCode: EIO, processGroup: 42
+            )
+        }
+    }
+
+    @Test
+    func `inherited runner uses a noncontrolling PTY without changing standard output`() async throws {
+        let result = try await ProcessRunner.captured(
+            executable: processProbeURL(),
+            arguments: ["--noncontrolling-pty"],
+            environment: [:]
+        )
+        #expect(result.exitCode == 0)
+        #expect(result.standardOutput == Data("inherited-pty-ok\n".utf8))
+        #expect(result.standardError.isEmpty)
     }
 
     @Test

@@ -40,6 +40,28 @@ public struct CapturedProcessResult: Equatable, Sendable {
     }
 }
 
+// An open PTY may have no controlling terminal. Only its foreground owner
+// may transfer terminal control to a child process group.
+func inheritedTerminalForegroundProcessGroup(
+    terminalForegroundProcessGroup: pid_t,
+    errorCode: Int32,
+    processGroup: pid_t
+) throws -> pid_t? {
+    guard terminalForegroundProcessGroup != -1 else {
+        if errorCode == ENOTTY {
+            return nil
+        }
+        throw POSIXError(POSIXErrorCode(rawValue: errorCode) ?? .EIO)
+    }
+    guard terminalForegroundProcessGroup > 0,
+          processGroup > 0,
+          terminalForegroundProcessGroup == processGroup
+    else {
+        return nil
+    }
+    return processGroup
+}
+
 public enum ProcessRunner {
     public static func capturedSync(
         executable: URL,
@@ -206,11 +228,16 @@ public enum ProcessRunner {
         command.stdin = FileHandle.standardInput
         command.stdout = FileHandle.standardOutput
         command.stderr = FileHandle.standardError
+        let terminalForegroundProcessGroup = tcgetpgrp(STDIN_FILENO)
+        let terminalErrorCode = terminalForegroundProcessGroup == -1 ? errno : 0
+        let parentProcessGroup = try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: terminalForegroundProcessGroup,
+            errorCode: terminalErrorCode,
+            processGroup: getpgrp()
+        )
         let signalRelay = try ProcessSignalRelay(command: command)
-        let ownsTerminal = isatty(STDIN_FILENO) == 1
-        let parentProcessGroup = ownsTerminal ? getpgrp() : nil
         defer { restoreForegroundProcessGroup(parentProcessGroup) }
-        command.attributes.setForegroundProcessGroup = ownsTerminal
+        command.attributes.setForegroundProcessGroup = parentProcessGroup != nil
         let termination = OwnedProcessTermination()
         do {
             try command.start()

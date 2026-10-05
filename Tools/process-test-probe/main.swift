@@ -4,6 +4,11 @@ import Darwin
 import DevContainerProcess
 import Foundation
 
+if CommandLine.arguments.dropFirst().first == "--noncontrolling-pty" {
+    try await runNoncontrollingPTYProbe()
+    exit(0)
+}
+
 if CommandLine.arguments.dropFirst().first == "--forward-signals" {
     let environment = ProcessInfo.processInfo.environment
     guard let readyMarker = environment["RELAY_READY_MARKER"],
@@ -145,6 +150,49 @@ alarm(0)
 
 private func handlerAddress(_ handler: (@convention(c) (Int32) -> Void)?) -> UInt {
     unsafeBitCast(handler, to: UInt.self)
+}
+
+private func runNoncontrollingPTYProbe() async throws {
+    alarm(10)
+    var master: Int32 = -1
+    var slave: Int32 = -1
+    guard openpty(&master, &slave, nil, nil, nil) == 0 else {
+        exit(93)
+    }
+    defer { _ = Darwin.close(master) }
+
+    errno = 0
+    let foregroundProcessGroup = tcgetpgrp(slave)
+    let terminalErrorCode = errno
+    guard foregroundProcessGroup == -1, terminalErrorCode == ENOTTY else {
+        exit(94)
+    }
+    guard dup2(slave, STDIN_FILENO) == STDIN_FILENO,
+          Darwin.close(slave) == 0
+    else {
+        exit(95)
+    }
+
+    let input = Array("fixture\n".utf8)
+    let written = input.withUnsafeBytes { bytes in
+        Darwin.write(master, bytes.baseAddress, bytes.count)
+    }
+    guard written == input.count else {
+        exit(96)
+    }
+    let status = try await ProcessRunner.inherited(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: [
+            "-c",
+            "IFS= read -r line || exit 91; test \"$line\" = fixture || exit 92; "
+                + "printf 'inherited-pty-ok\\n'; exit 3"
+        ],
+        environment: [:]
+    )
+    guard status == 3 else {
+        exit(97)
+    }
+    alarm(0)
 }
 
 @discardableResult
