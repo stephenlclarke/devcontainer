@@ -35,7 +35,8 @@ struct AppleContainerRuntimeOptimisationTests {
             context: RuntimeRequestContext()
         )
 
-        try await Task.sleep(for: .milliseconds(10))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         let second = AsyncThrowingStream<RuntimeEvent, any Error>.makeStream()
         async let secondIdentifier = poller.subscribe(
             continuation: second.continuation,
@@ -112,7 +113,8 @@ struct AppleContainerRuntimeOptimisationTests {
             context: RuntimeRequestContext()
         )
 
-        try await Task.sleep(for: .milliseconds(50))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(50)))
 
         await poller.shutdown()
     }
@@ -190,7 +192,8 @@ struct AppleContainerRuntimeOptimisationTests {
             }
         }
 
-        try await Task.sleep(for: .milliseconds(25))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(25)))
 
         let second = AsyncThrowingStream<RuntimeEvent, any Error>.makeStream()
         let secondIdentifier = try await poller.subscribe(
@@ -251,7 +254,8 @@ struct AppleContainerRuntimeOptimisationTests {
             return nil
         }
 
-        try await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(100)))
         await source.set(snapshot: .fixture)
 
         #expect(try await nextEvent.value == nil)
@@ -330,7 +334,8 @@ private actor EventSnapshotSource {
             if count >= expected {
                 return true
             }
-            try? await Task.sleep(for: .milliseconds(10))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         }
         return count >= expected
     }
@@ -341,7 +346,8 @@ private actor DelayedEventSnapshotSource {
 
     func snapshot() async -> [String: ContainerSnapshot] {
         count += 1
-        try? await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(100)))
         return [:]
     }
 

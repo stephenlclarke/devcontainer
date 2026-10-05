@@ -98,7 +98,8 @@ struct AppleEventSnapshotConflictTests {
         try await source.waitUntilHeld(deadline: expiry)
         let remaining = expiry.timeIntervalSinceNow
         if remaining > 0 {
-            try await Task.sleep(for: .seconds(remaining))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .seconds(remaining)))
         }
         #expect(Date() >= expiry)
         await source.release()
@@ -194,7 +195,8 @@ private actor ExpiringRetrySnapshotSource {
             guard Date() < deadline else {
                 throw DevContainerError(.deadlineExceeded, message: "retry never reached the test barrier")
             }
-            try await Task.sleep(for: .milliseconds(10))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         }
     }
 

@@ -72,7 +72,8 @@ actor TestMetadataStore: RuntimeCreationStore {
         _ metadata: RuntimeContainerMetadata
     ) async {
         if let recordDelay {
-            try? await Task.sleep(for: recordDelay)
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: recordDelay))
         }
         records += 1
         values[metadata.runtimeID.rawValue] = metadata

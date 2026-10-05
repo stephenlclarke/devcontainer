@@ -174,7 +174,8 @@ struct AppleRuntimeStreamTests {
             environment: [:]
         )
         for _ in 0 ..< 100 where !FileManager.default.fileExists(atPath: pidFile.path) {
-            try await Task.sleep(for: .milliseconds(10))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         }
         let identifiers = try String(contentsOf: pidFile, encoding: .utf8)
             .split(separator: " ")
@@ -184,7 +185,8 @@ struct AppleRuntimeStreamTests {
         session.cancel()
         #expect(try await session.wait() != 0)
         for _ in 0 ..< 100 where identifiers.contains(where: Self.processExists) {
-            try await Task.sleep(for: .milliseconds(10))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         }
         #expect(!identifiers.contains(where: Self.processExists))
     }

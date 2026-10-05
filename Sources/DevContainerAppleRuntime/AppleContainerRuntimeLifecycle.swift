@@ -658,7 +658,8 @@ public extension AppleContainerRuntime {
                     return observedExit?.exit.code ?? 0
                 }
             }
-            try await Task.sleep(for: .milliseconds(200))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(200)))
         }
         throw DevContainerError(.cancelled, message: "container wait was cancelled")
     }

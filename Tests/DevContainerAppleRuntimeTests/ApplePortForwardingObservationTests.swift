@@ -25,7 +25,8 @@ import Testing
                 }
                 // The held read ignores cancellation deliberately. Shutdown
                 // must join that retired observer, not merely cancel it.
-                try await Task.sleep(for: .milliseconds(100))
+                let clock = ContinuousClock()
+                try await clock.sleep(until: clock.now.advanced(by: .milliseconds(100)))
                 #expect(await !completed.value)
                 await inventory.releaseGet()
                 await shutdown.value
@@ -129,7 +130,8 @@ import Testing
                 if await predicate() {
                     return true
                 }
-                try? await Task.sleep(for: .milliseconds(10))
+                let clock = ContinuousClock()
+                try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
             }
             return await predicate()
         }

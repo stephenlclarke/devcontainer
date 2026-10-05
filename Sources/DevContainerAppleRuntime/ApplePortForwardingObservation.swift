@@ -19,7 +19,10 @@ extension AppleContainerRuntime {
                 guard let shouldContinue = await self?.reconcilePortForwarding(
                     snapshot: snapshot, generation: generation
                 ), shouldContinue else { break }
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { break }
+                let clock = ContinuousClock()
+                do {
+                    try await clock.sleep(until: clock.now.advanced(by: .milliseconds(200)))
+                } catch { break }
             }
             await self?.finishPortForwardingObservation(id: id, generation: generation)
         }

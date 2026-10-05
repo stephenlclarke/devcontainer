@@ -99,7 +99,8 @@ struct AppleContainerAttachmentTests {
             ready.mark()
             return waiter
         }
-        try await Task.sleep(for: .milliseconds(20))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(20)))
         #expect(!ready.finished)
         try output.close()
         let second = try await next.value

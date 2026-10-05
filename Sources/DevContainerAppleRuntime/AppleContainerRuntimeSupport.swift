@@ -894,7 +894,8 @@ extension AppleContainerRuntime {
                     automaticRemovalRegistrations.removeValue(forKey: identifier)
                 }
             }
-            try? await Task.sleep(for: .seconds(1))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .seconds(1)))
             guard automaticRemovalRegistrations[id] == registration,
                   containerStartOperations[id] == nil,
                   containerExitRegistrations[id] == nil,

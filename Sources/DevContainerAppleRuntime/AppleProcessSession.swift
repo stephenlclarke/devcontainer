@@ -739,7 +739,8 @@ final class ApplePollingLogSession: RuntimeProcessSession, @unchecked Sendable {
                         continuation.finish()
                         return value.exitCode
                     }
-                    try await Task.sleep(for: .milliseconds(100))
+                    let clock = ContinuousClock()
+                    try await clock.sleep(until: clock.now.advanced(by: .milliseconds(100)))
                 }
                 throw CancellationError()
             } catch {

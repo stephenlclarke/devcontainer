@@ -37,7 +37,8 @@ struct ProcessPipeMonitorCancellationTests {
         for await _ in waiting { /* The cancelled waiter has begun its join. */ }
         // Allow a cancellation-short-circuited join to expose premature return
         // while the worker remains deterministically held in delivery.
-        try await Task.sleep(for: .milliseconds(50))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(50)))
         monitor.cancel()
         #expect(delivery.snapshot() == [1])
         #expect(joined.snapshot().isEmpty)

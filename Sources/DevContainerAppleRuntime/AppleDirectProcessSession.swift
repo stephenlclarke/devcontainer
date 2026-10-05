@@ -175,7 +175,8 @@ final class AppleDirectProcessSession: RuntimeProcessSession, @unchecked Sendabl
                 while !streams.drainState.isDrained(idleNanoseconds: 250_000_000),
                       ContinuousClock.now < deadline
                 {
-                    try await Task.sleep(for: .milliseconds(20))
+                    let clock = ContinuousClock()
+                    try await clock.sleep(until: clock.now.advanced(by: .milliseconds(20)))
                 }
                 monitors.output?.cancel()
                 monitors.error?.cancel()

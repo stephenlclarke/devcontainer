@@ -242,7 +242,8 @@ actor AppleEventPoller {
 
     private func scheduleChangeWaiterTimeout(_ identifier: UUID) {
         Task {
-            try? await Task.sleep(for: .milliseconds(200))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(200)))
             self.resumeChangeWaiter(identifier)
         }
     }

@@ -434,7 +434,8 @@ extension AppleContainerRuntimeTests {
             if !snapshot.running {
                 return snapshot
             }
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
         Issue.record("exec did not finish")
         return try await runtime.inspectExec(id: id, context: context)

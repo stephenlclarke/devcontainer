@@ -26,7 +26,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         while !((try? fixture.log()) ?? "").contains("start fixture"),
               ContinuousClock.now < deadline
         {
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
         #expect(try fixture.log().contains("start fixture"))
         try await runtime.restartContainer(
@@ -64,7 +65,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         )
 
         try fixture.setState("running")
-        try await Task.sleep(for: .milliseconds(1100))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(1100)))
 
         #expect(try !fixture.log().contains("delete --force fixture"))
     }
@@ -75,7 +77,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         try fixture.setState("stopped")
         let runtime = try fixture.runtime()
         let operation = Task {
-            try await Task.sleep(for: .seconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .seconds(5)))
         }
         await runtime.registerTestStartOperation(
             id: "fixture",
@@ -83,7 +86,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         )
 
         await runtime.scheduleAutomaticRemoval(id: "fixture")
-        try await Task.sleep(for: .milliseconds(1100))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(1100)))
 
         #expect(!((try? fixture.log()) ?? "").contains("delete --force fixture"))
         operation.cancel()
@@ -115,7 +119,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         let initialInventoryCount = ((try? fixture.log()) ?? "")
             .components(separatedBy: "list --all").count
         let oldTask = Task {
-            try await Task.sleep(for: .milliseconds(500))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(500)))
             return AppleContainerRuntime.ContainerExit(
                 code: 11,
                 finishedAt: Date()
@@ -132,11 +137,14 @@ struct AppleContainerRuntimeLifecycleRaceTests {
             .components(separatedBy: "list --all").count <= initialInventoryCount,
             ContinuousClock.now < deadline
         {
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
-        try await Task.sleep(for: .milliseconds(20))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(20)))
         let newTask = Task {
-            try await Task.sleep(for: .milliseconds(700))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(700)))
             try fixture.setState("stopped")
             return AppleContainerRuntime.ContainerExit(
                 code: 22,
@@ -165,11 +173,13 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         defer { waiting.cancel() }
         let deadline = ContinuousClock.now + .seconds(5)
         while await runtime.containerExits["fixture"] == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
         #expect(await runtime.containerExits["fixture"]?.code == 42)
         // Allow the old early-return path to finish while inventory still says running.
-        try await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(100)))
         #expect(await !completion.finished)
         try fixture.setState("stopped")
         #expect(try await waiting.value == 42)
@@ -215,7 +225,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
         defer { waiting.cancel() }
         let deadline = ContinuousClock.now + .seconds(3)
         while await runtime.containerExits["fixture"] == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
         #expect(await runtime.containerExits["fixture"]?.code == 42)
         // Model automatic removal winning the next native inventory read,
@@ -245,7 +256,8 @@ struct AppleContainerRuntimeLifecycleRaceTests {
             .components(separatedBy: "list --all").count <= initialInventoryCount,
             ContinuousClock.now < deadline
         {
-            try await Task.sleep(for: .milliseconds(5))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(5)))
         }
 
         _ = try await runtime.copyArchiveFromContainer(

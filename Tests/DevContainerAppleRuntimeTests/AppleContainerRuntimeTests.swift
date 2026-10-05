@@ -586,7 +586,8 @@ struct AppleContainerRuntimeTests {
         while await store.containerMetadata(id: "fixture") != nil,
               ContinuousClock.now < deadline
         {
-            try await Task.sleep(for: .milliseconds(25))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(25)))
         }
         #expect(try fixture.log().contains("delete --force fixture"))
         #expect(await store.containerMetadata(id: "fixture") == nil)

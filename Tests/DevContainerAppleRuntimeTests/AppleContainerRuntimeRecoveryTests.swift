@@ -81,7 +81,8 @@ struct AppleContainerRuntimeRecoveryTests {
     private func expectListenerClosed(_ runtime: AppleContainerRuntime, id: String) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while await runtime.portForwarding.hasListeners(containerID: id), ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         }
         #expect(await !runtime.portForwarding.hasListeners(containerID: id))
     }

@@ -1292,7 +1292,8 @@ public extension AppleContainerRuntime {
             if current == expected || (acceptsStopped && current == .stopped) {
                 return
             }
-            try await Task.sleep(for: .milliseconds(20))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(20)))
         }
         throw DevContainerError(
             .deadlineExceeded,

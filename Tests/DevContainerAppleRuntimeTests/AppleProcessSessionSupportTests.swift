@@ -26,7 +26,8 @@ struct AppleProcessSessionSupportTests {
     func `deferred session replays ordered operations after launch`() async throws {
         let launched = RecordingRuntimeSession()
         let deferred = DeferredAppleProcessSession {
-            try await Task.sleep(for: .milliseconds(30))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .milliseconds(30)))
             return launched
         }
 
@@ -55,7 +56,8 @@ struct AppleProcessSessionSupportTests {
     @Test
     func `deferred cancellation before activation fails the session`() async {
         let deferred = DeferredAppleProcessSession {
-            try await Task.sleep(for: .seconds(1))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .seconds(1)))
             return RecordingRuntimeSession()
         }
         await deferred.cancel()
@@ -125,7 +127,8 @@ struct AppleProcessSessionSupportTests {
         let monitored = MonitoredAppleProcessSession(
             process: monitoredProcess
         ) {
-            try? await Task.sleep(for: .milliseconds(30))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .milliseconds(30)))
         }
         #expect(try await monitored.wait() == 0)
 
@@ -135,7 +138,8 @@ struct AppleProcessSessionSupportTests {
             environment: [:]
         )
         let normal = MonitoredAppleProcessSession(process: normalProcess) {
-            try? await Task.sleep(for: .seconds(2))
+            let clock = ContinuousClock()
+            try? await clock.sleep(until: clock.now.advanced(by: .seconds(2)))
         }
         try await normal.write(Data("forwarded".utf8))
         try await normal.closeStandardInput()

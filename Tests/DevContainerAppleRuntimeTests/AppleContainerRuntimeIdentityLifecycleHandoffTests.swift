@@ -162,7 +162,8 @@ struct AppleRuntimeHandoffTests {
             metadata: nil,
             imageID: nil
         )
-        try await Task.sleep(for: .milliseconds(10))
+        let clock = ContinuousClock()
+        try await clock.sleep(until: clock.now.advanced(by: .milliseconds(10)))
         let replacementSnapshot = try await runtime.containerSnapshotWithMetadata(
             replacement,
             metadata: nil,

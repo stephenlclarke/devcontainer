@@ -139,7 +139,8 @@ extension AppleContainerCreateTests {
         func wait() async throws -> Int32 {
             // This lifecycle fixture stays running until engine shutdown cancels
             // its wait; a transport error must not impersonate a live process.
-            try await Task.sleep(for: .seconds(3600))
+            let clock = ContinuousClock()
+            try await clock.sleep(until: clock.now.advanced(by: .seconds(3600)))
             return 0
         }
 
