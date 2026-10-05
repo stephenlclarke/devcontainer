@@ -655,7 +655,7 @@ extension DockerRouter {
             command: request.cmd ?? [],
             entrypoint: request.entrypoint?.values ?? [],
             environment: environment.values,
-            labels: request.labels ?? [:],
+            labels: RuntimeLabels.importDockerComposeServiceLabels(request.labels ?? [:]),
             workingDirectory: request.workingDir,
             user: request.user,
             hostname: request.hostname,

@@ -26,6 +26,15 @@ struct AppleComposeNetworkIdentityTests {
     }
 
     @Test
+    func `docker Compose capitalized false mirror preserves native service alias`() {
+        var value = labels
+        value["com.docker.compose.oneoff"] = "False"
+        #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == "database")
+        value["com.docker.compose.oneoff"] = "True"
+        #expect(AppleContainerRuntime.nativeComposeServiceName(labels: value) == nil)
+    }
+
+    @Test
     func `native identity does not require Docker response projection`() {
         let native = labels.filter { !$0.key.hasPrefix("com.docker.compose.") }
         #expect(AppleContainerRuntime.nativeComposeServiceName(labels: native) == "database")

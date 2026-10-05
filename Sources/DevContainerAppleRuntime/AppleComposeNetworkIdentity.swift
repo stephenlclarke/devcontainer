@@ -15,7 +15,7 @@ extension AppleContainerRuntime {
               let service = labels[native + "service"],
               labels[docker + "service"].map({ $0 == service }) ?? true,
               labels[native + "oneoff"] == "false",
-              labels[docker + "oneoff"].map({ $0 == "false" }) ?? true,
+              labels[docker + "oneoff"].map({ ["false", "False"].contains($0) }) ?? true,
               isSafeHostName(service)
         else {
             return nil

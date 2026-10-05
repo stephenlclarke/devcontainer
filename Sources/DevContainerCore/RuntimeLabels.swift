@@ -70,6 +70,36 @@ public enum RuntimeLabels {
         return identifier
     }
 
+    /// Import only a complete Docker Compose service identity at the HTTP boundary.
+    /// Native provider labels remain authoritative when both forms are present.
+    public static func importDockerComposeServiceLabels(
+        _ labels: [String: String]
+    ) throws -> [String: String] {
+        let docker = "com.docker.compose."
+        let native = "com.apple.container.compose."
+        guard let project = labels[docker + "project"], !project.isEmpty,
+              let service = labels[docker + "service"], !service.isEmpty,
+              let oneoff = labels[docker + "oneoff"],
+              ["false", "False", "true", "True"].contains(oneoff)
+        else {
+            return labels
+        }
+        let identity = [
+            native + "version": "1",
+            native + "project": project,
+            native + "service": service,
+            native + "oneoff": oneoff.lowercased()
+        ]
+        var result = labels
+        for (key, value) in identity {
+            if let existing = labels[key], existing != value {
+                throw DevContainerError(.conflict, message: "conflicting Compose service identity")
+            }
+            result[key] = value
+        }
+        return result
+    }
+
     public static func projectComposeLabels(
         _ labels: [String: String]
     ) throws -> [String: String] {
@@ -78,7 +108,13 @@ public enum RuntimeLabels {
             guard let nativeValue = labels[native] else {
                 continue
             }
-            if let dockerValue = labels[docker], dockerValue != nativeValue {
+            if let dockerValue = labels[docker] {
+                let matchingOneoff = native == "com.apple.container.compose.oneoff"
+                    && ["false", "true"].contains(nativeValue)
+                    && [nativeValue, nativeValue == "false" ? "False" : "True"].contains(dockerValue)
+                if dockerValue == nativeValue || matchingOneoff {
+                    continue
+                }
                 throw DevContainerError(
                     .conflict,
                     message: "native label \(native) conflicts with Docker label \(docker)"

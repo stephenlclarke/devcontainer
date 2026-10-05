@@ -240,6 +240,31 @@ struct CoreBehaviorTests {
         }
     }
 
+    @Test(arguments: ["false", "False", "true", "True"])
+    func `complete Docker Compose service identity is imported without changing wire labels`(oneoff: String) throws {
+        let docker = "com.docker.compose."
+        let native = "com.apple.container.compose."
+        let labels = [docker + "project": "example", docker + "service": "database", docker + "oneoff": oneoff]
+        let imported = try RuntimeLabels.importDockerComposeServiceLabels(labels)
+        #expect(imported[native + "version"] == "1")
+        #expect(imported[native + "project"] == "example")
+        #expect(imported[native + "service"] == "database")
+        #expect(imported[native + "oneoff"] == oneoff.lowercased())
+        #expect(try RuntimeLabels.projectComposeLabels(imported)[docker + "oneoff"] == oneoff)
+        for key in labels.keys {
+            var partial = labels
+            partial.removeValue(forKey: key)
+            #expect(try RuntimeLabels.importDockerComposeServiceLabels(partial) == partial)
+        }
+        for key in ["version", "project", "service", "oneoff"] {
+            var conflicting = labels
+            conflicting[native + key] = "conflict"
+            #expect(throws: DevContainerError.self) {
+                try RuntimeLabels.importDockerComposeServiceLabels(conflicting)
+            }
+        }
+    }
+
     @Test
     func `labels project and translate without overwriting conflicts`() throws {
         let native = "com.apple.container.compose.project"
