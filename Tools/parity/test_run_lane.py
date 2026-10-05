@@ -45,6 +45,39 @@ class FinalizedSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ParityError, "all four"):
             finalized_selection(invalid_arguments)
 
+    def test_lifecycle_backend_arguments_follow_lane_and_finalization(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.devcontainer_docker = "/qualified/docker"
+        for lane, selection, expected in (
+            ("apple-stock", {"release": True}, []),
+            ("container-compose", {"release": True}, []),
+            ("docker", {"release": True}, ["--docker-path", "/qualified/docker"]),
+            ("apple-stock", None, ["--docker-path", "/qualified/docker"]),
+            ("container-compose", None, ["--docker-path", "/qualified/docker"]),
+            ("docker", None, ["--docker-path", "/qualified/docker"]),
+        ):
+            with self.subTest(lane=lane, finalized=selection is not None):
+                runner.lane = lane
+                runner.finalized_selection = selection
+                self.assertEqual(runner.lifecycle_backend_arguments(), expected)
+
+    def test_devcontainer_preserves_literal_backend_flag_after_separator(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/repository")
+        runner.finalized_selection = {"release": True}
+        runner.finalized = {"executables": {"devcontainer": "/signed/devcontainer"}}
+        runner.environment = {}
+        arguments = ["exec", "--workspace-folder", "/fixture", "--", "--docker-path", "/literal"]
+
+        with mock.patch("run_lane.subprocess.run", return_value=mock.Mock(returncode=0)) as invoke:
+            runner.devcontainer(arguments, 10)
+
+        self.assertEqual(
+            invoke.call_args.args[0],
+            ["/signed/devcontainer", "exec", "--workspace-folder", "/fixture", "--", "--docker-path", "/literal"],
+        )
+
     def test_release_uses_signed_binaries_and_private_reference(self) -> None:
         runner = LaneRunner.__new__(LaneRunner)
         runner.lane = "container-compose"
@@ -595,6 +628,8 @@ class FixtureProbeTests(unittest.TestCase):
             runner.output = root / "evidence"
             runner.repository = repository
             runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
             fixture = Fixture(
                 directory=source,
                 identifier="fixture",
@@ -621,10 +656,19 @@ class FixtureProbeTests(unittest.TestCase):
             runner.devcontainer = devcontainer
             runner.additional_fixture_observations = mock.Mock(return_value={})
             runner.cleanup_fixture = mock.Mock(return_value="")
-            with mock.patch("run_lane.assert_contract", return_value=[]):
+            with (
+                mock.patch("run_lane.assert_contract", return_value=[]),
+                mock.patch.object(
+                    runner,
+                    "lifecycle_backend_arguments",
+                    wraps=runner.lifecycle_backend_arguments,
+                ) as backend_arguments,
+            ):
                 result = runner.run_fixture(fixture)
 
         self.assertEqual(result["status"], "passed")
+        backend_arguments.assert_called_once_with()
+        self.assertNotIn("--docker-path", calls[0])
         self.assertEqual(
             calls[1][-6:],
             [
@@ -636,6 +680,54 @@ class FixtureProbeTests(unittest.TestCase):
                 "/workspaces/fixture",
             ],
         )
+
+    def test_frozen_reuse_and_rebuild_construction_uses_backend_helper(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            workspace = root / "fixture"
+            devcontainer_dir = workspace / ".devcontainer"
+            devcontainer_dir.mkdir(parents=True)
+            (devcontainer_dir / "devcontainer-lock.json").write_text("{}", encoding="utf-8")
+            raw = root / "raw"
+            raw.mkdir()
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
+            runner.devcontainer_docker = "/qualified/docker"
+            runner.repository = repository
+            runner.environment = {}
+            runner.docker = "/qualified/docker"
+            fixture = Fixture(
+                directory=workspace,
+                identifier="D07-reuse-cleanup",
+                expected={},
+                backends=("docker",),
+                runner="devcontainer",
+            )
+            frozen = mock.Mock(returncode=1, stdout="", stderr="frozen rejection")
+            reused = mock.Mock(returncode=0, stdout='{"containerId":"reused"}', stderr="")
+            rebuilt = mock.Mock(returncode=0, stdout='{"containerId":"rebuilt"}', stderr="")
+            runner.devcontainer = mock.Mock(side_effect=[frozen, reused, rebuilt])
+            up = mock.Mock(returncode=0, stdout='{"containerId":"first"}', stderr="")
+            subprocess_result = subprocess.CompletedProcess([], 0, stdout="1|1", stderr="")
+
+            with (
+                mock.patch.object(
+                    runner,
+                    "lifecycle_backend_arguments",
+                    wraps=runner.lifecycle_backend_arguments,
+                ) as backend_arguments,
+                mock.patch("run_lane.subprocess.run", return_value=subprocess_result),
+            ):
+                runner.validate_feature_lock(fixture, raw)
+                runner.validate_reuse_cleanup(fixture, raw, up)
+
+        backend_arguments.assert_has_calls([mock.call(), mock.call(), mock.call()])
+        self.assertEqual(backend_arguments.call_count, 3)
+        for invocation in runner.devcontainer.call_args_list:
+            self.assertNotIn("--docker-path", invocation.args[0])
 
     def test_remote_workspace_requires_an_absolute_path(self) -> None:
         runner = LaneRunner.__new__(LaneRunner)
@@ -654,6 +746,8 @@ class FixtureProbeTests(unittest.TestCase):
             runner.repository = root / "repository"
             runner.repository.mkdir()
             runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "docker"
+            runner.finalized_selection = None
             workspace_root = root / "workspace-root"
             workspace = workspace_root / "fixture"
             workspace.mkdir(parents=True)

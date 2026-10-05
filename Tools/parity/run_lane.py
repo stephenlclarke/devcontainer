@@ -261,6 +261,13 @@ class LaneRunner:
             return [self.package_executable("devcontainer")]
         return [self.node_package_runner, "--yes", f"@devcontainers/cli@{self.cli_version}"]
 
+    def lifecycle_backend_arguments(self) -> list[str]:
+        """Select the explicit Docker backend only when the CLI owns backend selection."""
+
+        if self.lane != "docker" and self.finalized_selection is not None:
+            return []
+        return ["--docker-path", self.devcontainer_docker]
+
     def configure_runtime_path(self) -> None:
         """Prefer explicitly selected provider binaries throughout the lane."""
 
@@ -936,8 +943,7 @@ class LaneRunner:
                     "up",
                     "--workspace-folder",
                     str(runtime_fixture.directory),
-                    "--docker-path",
-                    self.devcontainer_docker,
+                    *self.lifecycle_backend_arguments(),
                     "--remove-existing-container",
                     "--log-level",
                     "info",
@@ -1075,8 +1081,7 @@ class LaneRunner:
                         "up",
                         "--workspace-folder",
                         str(fixture.directory),
-                        "--docker-path",
-                        self.devcontainer_docker,
+                        *self.lifecycle_backend_arguments(),
                         "--remove-existing-container",
                         "--frozen-lockfile",
                         "--log-level",
@@ -1179,8 +1184,7 @@ class LaneRunner:
                 "up",
                 "--workspace-folder",
                 str(fixture.directory),
-                "--docker-path",
-                self.devcontainer_docker,
+                *self.lifecycle_backend_arguments(),
                 "--log-level",
                 "info",
                 "--log-format",
@@ -1216,8 +1220,7 @@ class LaneRunner:
                 "up",
                 "--workspace-folder",
                 str(fixture.directory),
-                "--docker-path",
-                self.devcontainer_docker,
+                *self.lifecycle_backend_arguments(),
                 "--remove-existing-container",
                 "--log-level",
                 "info",
