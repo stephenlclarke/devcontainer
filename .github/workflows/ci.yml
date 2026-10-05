@@ -85,7 +85,7 @@ jobs:
           cp Package.resolved /tmp/devcontainer-stock-Package.resolved
           swift package resolve
           cmp /tmp/devcontainer-stock-Package.resolved Package.resolved
-      - name: Test against unmodified Apple packages
+      - name: Test stock-facing SDK and Apple Containerization
         env:
           SWIFT_TEST_ATTEMPTS: "1"
           SWIFT_TEST_TIMEOUT_SECONDS: "300"

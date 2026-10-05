@@ -81,8 +81,8 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
 
         self._write_lock("Package.resolved", self.rows)
         stock = [
-            {"identity": "container", "revision": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
-             "location": "https://github.com/apple/container.git"},
+            {"identity": "container", "revision": "aad0c75555d8ccce45aea01d7e1558eb7dee408e",
+             "location": "https://github.com/stephenlclarke/container.git"},
             {"identity": "containerization", "revision": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
              "location": "https://github.com/apple/containerization.git"},
             {"identity": "container-engine-api", "revision": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
@@ -289,6 +289,23 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
 
 
 class CheckedInSwiftPMDependencyPinsTests(unittest.TestCase):
+    def test_stock_sdk_rejects_old_source_revision_location_and_version_tag(self) -> None:
+        original = json.loads((MODULE.ROOT / "Package.stock.resolved").read_text())
+        for mode in ("old_revision", "old_location", "version_tag"):
+            changed = json.loads(json.dumps(original))
+            pin = next(row for row in changed["pins"] if row["identity"] == "container")
+            if mode == "old_revision":
+                pin["state"]["revision"] = "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
+            elif mode == "old_location":
+                pin["location"] = "https://github.com/apple/container.git"
+            else:
+                pin["state"]["version"] = "1.4.1"
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                lock = Path(directory) / "Package.stock.resolved"
+                lock.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    MODULE.validate_lock(lock, "stock", MODULE.PATCHES)
+
     def test_preparation_admits_both_checked_in_profile_locks(self) -> None:
         for profile, lock_name in MODULE.PROFILE_LOCKS.items():
             with self.subTest(profile=profile):

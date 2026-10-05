@@ -458,7 +458,7 @@ jobs:
     def test_hosted_swift_tests_have_process_group_timeouts(self) -> None:
         required_steps = (
             ("ci.yml", "test", "Test and enforce coverage"),
-            ("ci.yml", "stock-test", "Test against unmodified Apple packages"),
+            ("ci.yml", "stock-test", "Test stock-facing SDK and Apple Containerization"),
             ("quality.yml", "sanitizer", "Run sanitizer"),
             ("sonar.yml", "analyze", "Generate and enforce Swift coverage"),
         )
@@ -527,7 +527,7 @@ jobs:
         self.assertEqual(makefile.count("--sanitize=address"), 3)
         self.assertEqual(makefile.count("--sanitize=thread"), 3)
 
-    def test_ci_builds_the_unmodified_stock_apple_graph(self) -> None:
+    def test_ci_builds_the_exact_stock_facing_sdk_graph(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         stock_job = workflow_job_block(ci, "stock-test")
 
@@ -536,7 +536,7 @@ jobs:
         resolve_step = workflow_step_block(stock_job, "Resolve stock dependencies")
         self.assertIn("swift package resolve", resolve_step)
         self.assertIn("cmp /tmp/devcontainer-stock-Package.resolved Package.resolved", resolve_step)
-        test_step = workflow_step_block(stock_job, "Test against unmodified Apple packages")
+        test_step = workflow_step_block(stock_job, "Test stock-facing SDK and Apple Containerization")
         self.assertIn('SWIFT_TEST_ATTEMPTS: "1"', test_step)
         self.assertIn('SWIFT_TEST_ACCEPT_SIGNAL_13: "0"', test_step)
         self.assertIn("run: make test", test_step)
@@ -560,9 +560,10 @@ jobs:
         pins = {pin["identity"]: pin for pin in resolved["pins"]}
         self.assertEqual(
             pins["container"]["location"],
-            "https://github.com/apple/container.git",
+            "https://github.com/stephenlclarke/container.git",
         )
-        self.assertEqual(pins["container"]["state"]["version"], "1.4.1")
+        self.assertEqual(pins["container"]["state"],
+                         {"revision": "aad0c75555d8ccce45aea01d7e1558eb7dee408e"})
         self.assertEqual(
             pins["containerization"]["location"],
             "https://github.com/apple/containerization.git",

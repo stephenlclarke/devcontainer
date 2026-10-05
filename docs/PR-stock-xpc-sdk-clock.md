@@ -17,3 +17,5 @@ The source derivative is explicitly identified separately from stock Apple runti
 Linked issue: [stock SDK crash](ISSUE-stock-xpc-sdk-clock.md).
 
 The replacement stock SDK is published as `layer-container-sdk-stock-81d3650a39845036f9c4` and has passed a clean-source optimized qualification at `/Volumes/SSD/cf/bazel/invocations/run.jmXZ1b`. Its archive was downloaded from GitHub, hash checked and admitted by the maintained consumer verifier. Devcontainer's full signed-package qualification remains separate.
+
+The hosted SwiftPM dependency preparation now validates the same exact SDK derivative revision and rejects the prior source, old Apple SDK location and version-tag substitutions. The CI stock job label identifies the derivative SDK and Apple Containerization accurately.

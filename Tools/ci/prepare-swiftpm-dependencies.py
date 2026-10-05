@@ -87,8 +87,8 @@ def validate_lock(lock: Path, profile: str, patch_rows: Sequence[Mapping[str, st
         expected = patch_rows
     else:
         expected = (
-            {"identity": "container", "revision": "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d",
-             "location": "https://github.com/apple/container.git"},
+            {"identity": "container", "revision": "aad0c75555d8ccce45aea01d7e1558eb7dee408e",
+             "location": "https://github.com/stephenlclarke/container.git"},
             {"identity": "containerization", "revision": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
              "location": "https://github.com/apple/containerization.git"},
             {"identity": "container-engine-api", "revision": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
@@ -102,6 +102,8 @@ def validate_lock(lock: Path, profile: str, patch_rows: Sequence[Mapping[str, st
                 or row.get("location") != pin["location"]
                 or state.get("revision") != pin["revision"]):
             raise ValueError("selected SwiftPM lock has an unexpected pin: " + pin["identity"])
+        if profile == "stock" and pin["identity"] == "container" and state != {"revision": pin["revision"]}:
+            raise ValueError("stock-facing SDK requires its exact derivative revision")
 
 
 def patch_paths(patch: Path) -> tuple[str, ...]:
