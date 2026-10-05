@@ -28,7 +28,7 @@
     "containerCompose": {
       "source": "stephenlclarke/container-compose",
       "stableVersion": "0.15.1",
-      "stableCommit": "96289f31c102105c77b414d631a439075d5540b7"
+      "stableCommit": "57ee265a5fbd17a1109240a0d0aa99da01acfc3a"
     },
     "vscode": {
       "version": "1.131.0",
