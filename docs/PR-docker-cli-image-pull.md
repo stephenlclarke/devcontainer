@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement the observed `devcontainer-docker pull IMAGE` command through the fixed Engine image-create path and a separately encoded `fromImage` query. The adapter keeps the full tag or digest reference intact, streams bounded progress to stdout, validates and discards rendered progress in quiet mode, and reports transport or in-band Engine failures as command failures. The protocol endpoint is not user-configurable. Unsupported flags and multiple image references remain explicit usage errors.
+Implement the observed `devcontainer-docker pull IMAGE` command through a private constant for the fixed Engine image-create path and a separately encoded `fromImage` query. The adapter keeps the full tag or digest reference intact, streams bounded progress to stdout, validates and discards rendered progress in quiet mode, and reports transport or in-band Engine failures as command failures. The protocol endpoint is not user-configurable. Unsupported flags and multiple image references remain explicit usage errors.
 
 ## Focused coverage
 

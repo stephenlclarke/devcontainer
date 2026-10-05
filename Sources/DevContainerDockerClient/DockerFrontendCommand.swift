@@ -165,6 +165,7 @@ public enum DockerFrontendCommand: Equatable, Sendable {
 public struct DockerPullCommand: Equatable, Sendable {
     public let reference: String
     public let quiet: Bool
+    private static let imageCreatePath = "/images/create"
 
     static func parse(_ options: inout DockerFrontendArguments) throws -> Self {
         var reference: String?
@@ -194,9 +195,8 @@ public struct DockerPullCommand: Equatable, Sendable {
     }
 
     func request() -> DockerHTTPRequest {
-        let path = "/images/create"
         let query = "fromImage=" + DockerFrontend.escaped(reference)
-        return .init(method: .post, target: path + "?" + query)
+        return .init(method: .post, target: Self.imageCreatePath + "?" + query)
     }
 }
 

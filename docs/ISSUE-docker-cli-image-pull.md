@@ -10,7 +10,7 @@ The signed `devcontainer-docker` adapter rejects `docker pull`, although the Doc
 
 ## Scope
 
-Implement this command through the fixed Engine image-create path with its `fromImage` query built separately. Keep the local Unix socket routing and existing Engine API lifecycle behavior unchanged; the endpoint is protocol-defined and not user-configurable. Add parser, request, progress, and error regressions.
+Implement this command through the fixed Engine image-create path, held as a private protocol constant, with its `fromImage` query built separately. Keep the local Unix socket routing and existing Engine API lifecycle behavior unchanged; the endpoint is protocol-defined and not user-configurable. Add parser, request, progress, and error regressions.
 
 ## Validation
 
