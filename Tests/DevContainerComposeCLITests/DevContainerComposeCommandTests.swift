@@ -25,13 +25,20 @@ import Testing
 
 @Suite(.serialized)
 struct DevContainerComposeCommandTests {
-    @Test(arguments: [Int32(0), Int32(7)])
-    func `version entrypoint preserves status without creating project state`(status: Int32) async throws {
-        let fixture = try ComposeCommandFixture(projectName: "version-entrypoint", exitStatus: status)
+    @Test(arguments: [Int32(0), Int32(7)], [BackendProvider.stock, .containerCompose])
+    func `version entrypoint preserves status for the native provider on either backend`(
+        status: Int32, backend: BackendProvider
+    ) async throws {
+        let fixture = try ComposeCommandFixture(
+            projectName: "version-entrypoint",
+            exitStatus: status,
+            provider: .containerCompose,
+            backend: backend
+        )
         #expect(try await DevContainerComposeCommand.run(
             arguments: ["version", "--short"], environment: fixture.environment
         ) == status)
-        #expect(try fixture.invocations() == ["version --short"])
+        #expect(try fixture.invocations() == ["version --format json"])
         #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
     }
 
@@ -49,7 +56,7 @@ struct DevContainerComposeCommandTests {
         #expect(String(data: result.standardOutput, encoding: .utf8) == "container-compose 0.15.1\n")
         #expect(String(data: result.standardError, encoding: .utf8) == "native diagnostic\n")
         #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
-        #expect(try fixture.invocations() == ["version \(flag)"])
+        #expect(try fixture.invocations() == ["version --format json"])
     }
 
     @Test
@@ -63,8 +70,10 @@ struct DevContainerComposeCommandTests {
             arguments: ["version", "--short"], environment: environment
         ))
         #expect(result.exitCode == 7)
-        #expect(String(data: result.standardOutput, encoding: .utf8) == "0.15.1\n")
+        let json = #"{"version":"0.15.1","source":"stephenlclarke/container-compose","commit":"test"}"#
+        #expect(String(data: result.standardOutput, encoding: .utf8) == json + "\n")
         #expect(String(data: result.standardError, encoding: .utf8) == "native diagnostic\n")
+        #expect(try fixture.invocations() == ["version --format json"])
     }
 
     @Test(arguments: ["", "one\ntwo"])
@@ -72,6 +81,20 @@ struct DevContainerComposeCommandTests {
         let fixture = try ComposeCommandFixture(projectName: "invalid-version")
         var environment = fixture.environment
         environment["VERSION_OUTPUT"] = version
+        await #expect(throws: DevContainerError.self) {
+            _ = try await DevContainerComposeCommand.nativeShortVersion(
+                provider: .containerCompose,
+                executable: URL(fileURLWithPath: #require(environment["DEVCONTAINER_COMPOSE_BIN"])),
+                arguments: ["version", "--short"], environment: environment
+            )
+        }
+    }
+
+    @Test
+    func `native short version rejects an unexpected provider source`() async throws {
+        let fixture = try ComposeCommandFixture(projectName: "invalid-provider-source")
+        var environment = fixture.environment
+        environment["VERSION_SOURCE"] = "unrecognized/provider"
         await #expect(throws: DevContainerError.self) {
             _ = try await DevContainerComposeCommand.nativeShortVersion(
                 provider: .containerCompose,
@@ -581,8 +604,9 @@ private final class ComposeCommandFixture {
           "${CONTAINER_COMPOSE_CONTAINER-}" "${CONTAINER_COMPOSE_RUNTIME_CAPABILITIES-}" \\
           "${CONTAINER_COMPOSE_RUNTIME_PROFILE-}" >> "$RUNTIME_ENVIRONMENT_LOG"
         case " $* " in
-          *" version --short "*|*" version -s "*)
-            printf '%s\n' "${VERSION_OUTPUT-0.15.1}"
+          *" version --format json "*)
+            printf '{"version":"%s","source":"%s","commit":"test"}\n' \\
+              "${VERSION_OUTPUT-0.15.1}" "${VERSION_SOURCE-stephenlclarke/container-compose}"
             printf '%s\n' 'native diagnostic' >&2
             exit \(exitStatus)
             ;;

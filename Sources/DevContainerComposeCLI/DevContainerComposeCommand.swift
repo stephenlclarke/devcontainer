@@ -401,19 +401,33 @@ enum DevContainerComposeCommand {
             return nil
         }
         var result = try await executeCaptured(
-            executable: executable, arguments: arguments, environment: environment
+            executable: executable,
+            arguments: ["version", "--format", "json"],
+            environment: environment
         )
         guard result.exitCode == 0 else { return result }
-        guard let value = String(data: result.standardOutput, encoding: .utf8),
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              value.split(whereSeparator: \.isNewline).count == 1
+        let probe: ComposeProviderVersion
+        do {
+            probe = try JSONDecoder().decode(
+                ComposeProviderVersion.self,
+                from: result.standardOutput
+            )
+        } catch {
+            throw DevContainerError(
+                .providerProtocolMismatch,
+                message: "invalid native Compose version JSON: \(error)"
+            )
+        }
+        guard probe.source == "stephenlclarke/container-compose",
+              !probe.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              probe.version.split(whereSeparator: \.isNewline).count == 1
         else {
-            throw DevContainerError(.providerProtocolMismatch, message: "invalid native Compose short version")
+            throw DevContainerError(.providerProtocolMismatch, message: "invalid native Compose version JSON")
         }
         // The upstream CLI compares bare numbers with Docker Compose versions.
         // Qualify the native version instead of claiming a Docker release: an
         // unknown vendor version keeps its modern project-name rules enabled.
-        result.standardOutput = Data("container-compose ".utf8) + result.standardOutput
+        result.standardOutput = Data("container-compose \(probe.version)\n".utf8)
         return result
     }
 
@@ -512,6 +526,11 @@ private struct ComposeProjectClaim {
 
 private struct ComposeConfiguration: Decodable {
     let name: String
+}
+
+private struct ComposeProviderVersion: Decodable {
+    let version: String
+    let source: String
 }
 
 private struct ComposeChildCommand {
