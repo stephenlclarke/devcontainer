@@ -1,0 +1,18 @@
+{
+  "artifactBuild": "0b135d42637b994c24ce79f9b83c5708bcca1d4f2f415bef2d2e0f200eb8a0c2",
+  "bazelConfiguration": "eaa82a266098e27996a8ba20b3cf53c2360bc45e47e0646a71a9035b2f0b4eec",
+  "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
+  "dependencyExtension": "4a8cfa7026cdaec28ab6fd97ba480024a747c2c797eff42b822e4efd71f3fea1",
+  "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
+  "launcher": "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923",
+  "moduleGraph": "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e",
+  "moduleRules": "594a401a02f4d1e25683d030ac6f50b3eefa9ed6e6756eaa13d057d161b057e5",
+  "producer": "4ed29109a7e12926f81ec611c0ebaf9c6acf71b5299ca21f4604edf99dc08ed9",
+  "rootBuild": "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c",
+  "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
+  "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
+  "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
+  "swiftPackageManifest": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
+  "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2",
+  "zstdPatch": "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927"
+}

@@ -1,5 +1,7 @@
 # Software design
 
+The stock runtime remains the unmodified Apple Container 1.4.1 release. Devcontainer compiles its stock-facing Container SDK from the minimal Stephen-owned derivative `aad0c75555d8ccce45aea01d7e1558eb7dee408e`, based on Apple `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d`. Its only production change uses a direct `ContinuousClock` deadline for the XPC timeout child to avoid the allocator crash observed in the signed package; nested dependency manifests remain unchanged. This SDK source is identified separately from the stock runtime. Foundation, Containerization and Engine API in both profiles, and the unchanged enhanced SDK, reuse their exact published archives through finite source, recipe and toolchain checks. The replacement stock SDK requires its own focused qualification, publication and downloaded admission. Full signed-package runtime qualification remains pending.
+
 ## Status and decision
 
 The next native qualification contract uses the already locked stock Apple `container` 1.4.1 and separately released `container-compose` 0.15.1 assets on the designated macOS 27/Xcode 27 host. Historical stable behavior described below remains tied to its original runtime versions. Updating the campaign pins does not certify the newer combination: all 28 scenarios in all three lanes must retain fresh identity-bound evidence, including Compose lifecycle and actual VS Code sessions.

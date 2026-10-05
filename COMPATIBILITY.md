@@ -1,5 +1,7 @@
 # Compatibility contract
 
+The stock runtime remains the unmodified Apple Container 1.4.1 release. Devcontainer compiles its stock-facing Container SDK from the minimal Stephen-owned derivative `aad0c75555d8ccce45aea01d7e1558eb7dee408e`, based on Apple `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d`. Its only production change uses a direct `ContinuousClock` deadline for the XPC timeout child to avoid the allocator crash observed in the signed package; nested dependency manifests remain unchanged. This SDK source is identified separately from the stock runtime. Foundation, Containerization and Engine API in both profiles, and the unchanged enhanced SDK, reuse their exact published archives through finite source, recipe and toolchain checks. The replacement stock SDK requires its own focused qualification, publication and downloaded admission. Full signed-package runtime qualification remains pending.
+
 ## Current status
 
 The next native release campaign targets the immutable Apple `container` 1.4.1 and external `container-compose` 0.15.1 assets in the release lock, with the designated macOS 27.0 build 26A428, Xcode 27.0 build 27A266a and Swift 6.4.0.34.1 host. The 28-fixture, three-lane contract requires 84 fresh cells, including actual Compose lifecycle and VS Code sessions. Updated pins and previously released SDK assets are inputs to qualification; they do not establish new supported behavior or permit historical evidence to be relabeled.
@@ -142,7 +144,7 @@ That post-release repin is not attributed to the 1.0.1 tag.
 
 | Profile component | Exact current source provenance | Status boundary |
 | --- | --- | --- |
-| Stock `apple/container` | 1.4.1 at `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d` | Unmodified Apple dependency selected by `Package.stock.resolved`; compile/test evidence only |
+| Stock-facing Container SDK derivative | Apple 1.4.1 plus XPC timeout correction at `aad0c75555d8ccce45aea01d7e1558eb7dee408e` | Stephen-owned SDK dependency selected by `Package.stock.resolved`; unmodified Apple runtime remains separate; qualification pending |
 | Stock `apple/containerization` | 0.45.0 at `9eacc197d7c3663eb29cbab6d51244ede6d1cd7d` | Inherited official Apple dependency in the stock graph |
 | Stock `apple/swift-nio-ssl` | 2.37.4 at `03827c1a9fdb2b6b00a4e93ede8861520263af8c` | Official dependency in the stock graph |
 | Enhanced `stephenlclarke/container` | `f86fea2236fab118c0e0c6f8be5eb7672df894e2` | Exact revision selected by `Package.resolved`; no stock-Apple claim |

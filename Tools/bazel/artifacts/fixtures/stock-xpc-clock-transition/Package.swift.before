@@ -100,13 +100,13 @@ let package = Package(
                 ? "6e8c932fc8755a4b922fd239426e9029be0554e0"
                 : "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77"
         ),
-        dependency(
+        runtimeDependency(
             name: "container",
             environmentVariable: "CONTAINER_PACKAGE_PATH",
-            url: "https://github.com/stephenlclarke/container.git",
-            revision: enhancedRuntime
-                ? "906014c854a09df4283316289bc755a925f81fe3"
-                : "aad0c75555d8ccce45aea01d7e1558eb7dee408e"
+            stockURL: "https://github.com/apple/container.git",
+            stockVersion: "1.4.1",
+            enhancedURL: "https://github.com/stephenlclarke/container.git",
+            enhancedRevision: "906014c854a09df4283316289bc755a925f81fe3"
         ),
         runtimeDependency(
             name: "containerization",

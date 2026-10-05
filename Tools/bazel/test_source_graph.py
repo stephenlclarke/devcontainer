@@ -45,22 +45,31 @@ class SourceGraphTests(unittest.TestCase):
         self.assertEqual(receipt["loadedContainerManifestSHA256"],
                          source_graph.digest(self.container / "Package.swift"))
 
-    def test_stock_graph_uses_exact_apple_versions_and_its_own_lock(self) -> None:
+    def test_stock_graph_uses_derivative_sdk_and_exact_apple_containerization(self) -> None:
         stock = source_graph.pins(self.root / "Package.stock.resolved")
         (self.container / "Package.resolved").write_text(json.dumps({"pins": [stock["containerization"]]}))
-        direct = {"dependencies": [
-            {"sourceControl": [{"identity": name,
-                "location": {"remote": [{"urlString": source_graph.STOCK_URLS[name]}]},
-                "requirement": {"exact": [stock[name]["state"]["version"]]}}]}
-            for name in ("container", "containerization")
-        ] + [dependency("container-engine-api", stock["container-engine-api"]["state"]["revision"])]}
-        transitive = {"dependencies": [direct["dependencies"][1]]}
+        direct = {"dependencies": [dependency(name, stock[name]["state"]["revision"])
+                                    for name in ("container", "container-engine-api")] + [
+            {"sourceControl": [{"identity": "containerization",
+                "location": {"remote": [{"urlString": source_graph.STOCK_URLS["containerization"]}]},
+                "requirement": {"exact": [stock["containerization"]["state"]["version"]]}}]}
+        ]}
+        transitive = {"dependencies": [direct["dependencies"][2]]}
         receipt = source_graph.verify_graph(self.root, self.container, direct, transitive, "stock")
-        self.assertEqual(receipt["profile"], "stock")
         self.assertEqual(receipt["source"]["container"], stock["container"]["state"]["revision"])
-        direct["dependencies"][1]["sourceControl"][0]["requirement"]["exact"] = ["0.44.0"]
-        with self.assertRaisesRegex(ValueError, "stock manifest"):
-            source_graph.verify_graph(self.root, self.container, direct, transitive, "stock")
+        for mode in ("wrong_revision", "old_apple_location", "tagged_requirement", "wrong_containerization"):
+            changed = json.loads(json.dumps(direct))
+            row = changed["dependencies"][0]["sourceControl"][0]
+            if mode == "wrong_revision":
+                row["requirement"] = {"revision": ["f" * 40]}
+            elif mode == "old_apple_location":
+                row["location"]["remote"][0]["urlString"] = "https://github.com/apple/container.git"
+            elif mode == "tagged_requirement":
+                row["requirement"] = {"exact": ["1.4.1"]}
+            else:
+                changed["dependencies"][2]["sourceControl"][0]["requirement"] = {"exact": ["0.44.0"]}
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                source_graph.verify_graph(self.root, self.container, changed, transitive, "stock")
 
     def test_nested_lock_mismatch_rejects(self) -> None:
         rows = json.loads((self.container / "Package.resolved").read_text())

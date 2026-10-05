@@ -117,7 +117,7 @@ for profile in ('stock', 'enhanced'):
         path = foundation.layer_lock_path(root, group, profile)
         lock = json.loads(path.read_text())
         admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
-        assert admitted == (expected_admission and group in {'foundation', 'containerization'}), (profile, group)
+        assert admitted == (expected_admission and (group in {'foundation', 'containerization', 'engine-api'} or (profile == 'enhanced' and group == 'container-sdk'))), (profile, group)
 """
         environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
         for executable in interpreters:
@@ -173,6 +173,17 @@ for profile in ('stock', 'enhanced'):
 
     def _restore_previous_reviewed_inputs(self, root: Path) -> None:
         """Reconstruct exact historical inputs without mutating archived fixtures."""
+        fixture = Path(__file__).resolve().parent / "fixtures/stock-xpc-clock-transition"
+        if digest((root / "Package.swift").read_bytes()) == "096e5d9aa6d7b6f7987de62965bec52e870045a7ffd5262be423c7d0967eacee":
+            # Restore only the exact reviewed before-transition source snapshot.
+            for name, expected in ENGINE_REFRESH_INPUTS.items():
+                before = fixture / (name + ".before")
+                self.assertEqual(digest(before.read_bytes()), expected, name)
+                shutil.copy2(before, root / name)
+        old_graph = fixture / "source_graph-before.py"
+        self.assertEqual(digest(old_graph.read_bytes()),
+                         "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e")
+        shutil.copy2(old_graph, root / "Tools/bazel/source_graph.py")
         previous = {
             "Package.swift": "f7ad97c42070afded8f7c3b8f98a6960b40b88d1f5e46d289f032d381a520eb0",
             "Package.resolved": "ca16e09dbbe9be201ca06279b3e9810df09435185c070cdb92c250451ef35a3c",
@@ -237,7 +248,15 @@ for profile in ('stock', 'enhanced'):
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_root / relative, destination)
+        if archived:
+            # Historical manifests must use their reviewed graph validator bytes.
+            old_graph = Path(__file__).resolve().parent / "fixtures/stock-xpc-clock-transition/source_graph-before.py"
+            self.assertEqual(digest(old_graph.read_bytes()),
+                             "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e")
+            shutil.copy2(old_graph, root / "Tools/bazel/source_graph.py")
         if not archived:
+            fixture_name = "Tools/bazel/artifacts/fixtures/stock-xpc-clock-transition"
+            shutil.copytree(source_root / fixture_name, root / fixture_name)
             for name in ("argument-parser.lock.json",
                          *(f"{group}-{profile}.lock.json"
                            for profile in ("stock", "enhanced") for group in foundation.GROUPS)):
@@ -429,7 +448,48 @@ for profile in ('stock', 'enhanced'):
                 with self.subTest(group=group):
                         self._verify_archived_consumer(root, "stock", group)
 
-    def test_engine_refresh_reuses_only_four_exact_lower_consumers(self) -> None:
+    def test_stock_sdk_clock_transition_exact_reuse_and_negative_controls(self) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._layer_fixture(directory, source_root, archived=False)
+            fixture_name = "Tools/bazel/artifacts/fixtures/stock-xpc-clock-transition"
+            pairs = [(profile, group) for profile in ("stock", "enhanced")
+                     for group in ("foundation", "containerization", "engine-api")]
+            pairs.append(("enhanced", "container-sdk"))
+            for profile, group in pairs:
+                lock = json.loads((root / "Tools/bazel/artifacts" / f"{group}-{profile}.lock.json").read_text())
+                with self.subTest(profile=profile, group=group):
+                    self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
+                    self._verify_archived_consumer(root, profile, group)
+                    altered = json.loads(json.dumps(lock))
+                    altered["archiveSHA256"] = "0" * 64
+                    self.assertFalse(foundation._legacy_recipe_compatible(root, altered, profile, group))
+            old_stock = json.loads((root / "Tools/bazel/artifacts/container-sdk-stock.lock.json").read_text())
+            self.assertFalse(foundation._legacy_recipe_compatible(root, old_stock, "stock", "container-sdk"))
+            old_stock["sourcePins"]["container"] = "9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d"
+            (root / "Tools/bazel/artifacts/container-sdk-stock.lock.json").write_text(json.dumps(old_stock))
+            with self.assertRaises(ValueError):
+                self._verify_archived_consumer(root, "stock", "container-sdk")
+            lock = json.loads((root / "Tools/bazel/artifacts/foundation-stock.lock.json").read_text())
+            # Each unsupported edit must fail with all other admitted inputs intact.
+            for name in ("Package.swift", "Package.resolved", "Package.stock.resolved",
+                         "Tools/bazel/source_graph.py", "BUILD.bazel", "MODULE.bazel",
+                         "Tools/bazel/artifacts/foundation_import.bzl"):
+                path = root / name
+                before = path.read_bytes()
+                path.write_bytes(before + b"\n ")
+                with self.subTest(changed=name):
+                    self.assertFalse(foundation._legacy_recipe_compatible(root, lock, "stock", "foundation"))
+                path.write_bytes(before)
+            graph_lock = json.loads((root / "Tools/bazel/artifacts/container-sdk-enhanced.lock.json").read_text())
+            foundation.verify_source_graph(root, "enhanced", graph_lock["sourceGraph"])
+            for field in ("loadedContainerManifestSHA256", "loadedContainerLockSHA256", "stockLockSHA256"):
+                graph = json.loads(json.dumps(graph_lock["sourceGraph"]))
+                graph["receipt"][field] = "0" * 64
+                with self.subTest(changed_graph=field), self.assertRaises(ValueError):
+                    foundation.verify_source_graph(root, "enhanced", graph)
+
+    def test_stock_sdk_transition_reuses_exact_lower_consumers_and_enhanced_sdk(self) -> None:
         source_root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             root = self._layer_fixture(directory, source_root, archived=False)
@@ -438,7 +498,8 @@ for profile in ('stock', 'enhanced'):
                     with self.subTest(profile=profile, group=group):
                         lock = json.loads((root / f"Tools/bazel/artifacts/{group}-{profile}.lock.json")
                                           .read_text())
-                        if group in {"foundation", "containerization"}:
+                        if (group in {"foundation", "containerization", "engine-api"}
+                                or profile == "enhanced" and group == "container-sdk"):
                             self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
                             self._verify_archived_consumer(root, profile, group)
                         else:
@@ -501,8 +562,8 @@ for profile in ('stock', 'enhanced'):
         for relative, mutate in mutations:
             with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
                 root = self._layer_fixture(directory, source_root, archived=False)
-                for name, expected in ENGINE_REFRESH_INPUTS.items():
-                    self.assertEqual(digest((root / name).read_bytes()), expected, name)
+                self.assertTrue(foundation._legacy_upper_pin_delta(root, "stock"))
+                self.assertTrue(foundation._legacy_upper_pin_delta(root, "enhanced"))
                 path = root / relative
                 before = path.read_bytes()
                 changed = mutate(before)

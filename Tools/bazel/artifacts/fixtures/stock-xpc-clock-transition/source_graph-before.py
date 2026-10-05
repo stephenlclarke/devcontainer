@@ -19,7 +19,7 @@ EXPECTED_URLS = {
     "containerization": "https://github.com/stephenlclarke/containerization.git",
     "container-engine-api": "https://github.com/stephenlclarke/container-engine-api.git",
 }
-STOCK_URLS = {**EXPECTED_URLS, "container": "https://github.com/stephenlclarke/container.git",
+STOCK_URLS = {**EXPECTED_URLS, "container": "https://github.com/apple/container.git",
               "containerization": "https://github.com/apple/containerization.git"}
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 SOURCE_OVERRIDES = ("CONTAINER_PACKAGE_PATH", "CONTAINERIZATION_PACKAGE_PATH",
@@ -93,11 +93,10 @@ def verify_graph(root: Path, container_source: Path,
         }:
             raise ValueError("loaded Container source requires a different transitive graph")
     else:
-        versions = {"containerization": selected["containerization"]["state"]["version"]}
-        if (selected["container"]["state"] != {"revision": "aad0c75555d8ccce45aea01d7e1558eb7dee408e"}
-                or direct_requirements(direct, set(versions), expected_urls, "exact") != versions
-                or direct_requirements(direct, {"container", "container-engine-api"}, expected_urls, "revision")
-                != {name: revisions[name] for name in ("container", "container-engine-api")}):
+        versions = {name: selected[name]["state"]["version"] for name in ("container", "containerization")}
+        if (direct_requirements(direct, set(versions), expected_urls, "exact") != versions
+                or direct_requirements(direct, {"container-engine-api"}, expected_urls, "revision")
+                != {"container-engine-api": revisions["container-engine-api"]}):
             raise ValueError("devcontainer stock manifest differs from selected lock")
         if direct_requirements(transitive, {"containerization"}, expected_urls, "exact") != {
             "containerization": versions["containerization"]

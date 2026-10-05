@@ -49,13 +49,15 @@ yet a replacement for the immutable 1.0.1 runtime-parity baseline. At that check
 `b31e80b2b9c09`; these historical checks do not qualify the current release candidate.
 
 Current source has distinct dependency profiles. The stock profile resolves
-unmodified Apple `container` 1.4.1 and `containerization` 0.45.0; the enhanced
+the minimal Container 1.4.1 SDK derivative and unmodified Apple `containerization` 0.45.0; the enhanced
 profile resolves the exact Stephen-owned revisions recorded in
 [COMPATIBILITY.md](COMPATIBILITY.md). Neither profile has replaced the 1.0.1
 runtime-parity baseline; the new Devcontainer release still requires its complete
 exact-source runtime qualification.
 
 The development candidate also carries Docker create-time `HostConfig.ConsoleSize` into TTY guest startup using a package-owned Linux launcher whose hash is embedded in the signed engine. This work is not yet covered by a fresh E15 first-instruction parity run or the complete 84-cell release campaign.
+
+The stock runtime remains the unmodified Apple Container 1.4.1 release. Devcontainer compiles its stock-facing Container SDK from the minimal Stephen-owned derivative `aad0c75555d8ccce45aea01d7e1558eb7dee408e`, based on Apple `9a8917ca2da5cd6ba059b9ba5ca5a74892e9bb7d`. Its only production change uses a direct `ContinuousClock` deadline for the XPC timeout child to avoid the allocator crash observed in the signed package; nested dependency manifests remain unchanged. This SDK source is identified separately from the stock runtime. Foundation, Containerization and Engine API in both profiles, and the unchanged enhanced SDK, reuse their exact published archives through finite source, recipe and toolchain checks. The replacement stock SDK requires its own focused qualification, publication and downloaded admission. Full signed-package runtime qualification remains pending.
 
 ## See it work
 

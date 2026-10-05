@@ -109,6 +109,19 @@ def _legacy_upper_pin_delta(root: Path, profile: str) -> bool:
     lock_path = root / "Package.resolved"
     stock_lock_path = root / "Package.stock.resolved"
     try:
+        # This finite SDK-only transition binds the complete new direct snapshots.
+        sdk_inputs = {
+            root / "Package.swift": "096e5d9aa6d7b6f7987de62965bec52e870045a7ffd5262be423c7d0967eacee",
+            root / "Package.resolved": "f0fd634dcfe88f316f53e9f9f42883adeb402e127ebf6e6be26fd13cc62b5ec9",
+            root / "Package.stock.resolved": "24d5a40e2b1535c8d509488b7f7b4f8812863de151c97056b6f7be493e5518fb",
+            root / "Tools/bazel/source_graph.py": "df1e509f43957d0e72319bca273eea277ba9c0c8c2e3292ac13767c63607f536",
+        }
+        if all(file_digest(path) == expected for path, expected in sdk_inputs.items()):
+            stock = source_records(root, "stock")
+            enhanced = source_pins(root, "enhanced")
+            return (stock["container"]["revision"] == "aad0c75555d8ccce45aea01d7e1558eb7dee408e"
+                    and stock["container"]["location"] == "https://github.com/stephenlclarke/container.git"
+                    and enhanced["container"] == "906014c854a09df4283316289bc755a925f81fe3")
         # Bind the tested Engine API sources and enhanced Container nested pin
         # to exact reviewed files; every other manifest and lock byte stays fixed.
         engine_refresh_inputs = {
@@ -290,6 +303,40 @@ if profile == "enhanced" and group == "engine-api":
 
 def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) -> bool:
     """Permit only exact archived layers across reviewed upper-build changes."""
+    # Old stock SDK is intentionally absent; only exact reviewed assets survive.
+    if (file_digest(root / "Package.swift") == "096e5d9aa6d7b6f7987de62965bec52e870045a7ffd5262be423c7d0967eacee"
+            and _legacy_upper_pin_delta(root, profile)):
+        try:
+            admitted = {('stock', 'foundation'): '986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495', ('stock', 'containerization'): '0918dab08b02c8b9aa5c13db8c2c165c245fee9ce579a7de4ac87b1e68c1600f', ('stock', 'engine-api'): '55e6fa9fc30c643fb315b8682f54ee71e335d4021b23aa43e0c1401bfb52a49a', ('enhanced', 'foundation'): '73dbf0ee81fa900bdff830610aae417befa67d3c221556837b0ebae342e8508b', ('enhanced', 'containerization'): '130525901ff3aa0d28a806128dee81c58bbd731ab64cfaab3364564be8b79289', ('enhanced', 'engine-api'): '3d8d17831d07be278a3ae2a6e9d42fdc62ddd60c69aa104c847d7fa59bda901f', ('enhanced', 'container-sdk'): 'a87c20734a05c410b8ba1c15fdc9ceadd8d1c0b3c0721d3d2b9b91a2318a9597'}
+            # Preserve the exact upper Go/shared snapshot as well as Swift recipes.
+            shared_inputs = {
+                root / 'Tools/bazel/BUILD.bazel': '8dfb392d17aaf4d396fa862006f9709616accd03c650ef654516f9485807fe8c',
+                root / 'Tools/bazel/rules-go-sdk-notices.patch': '3778368f7027873876084a62022705bbd8253341452e7b295cf5cb67742e4f7f',
+                root / 'Tools/bazel/rules-go-sanitizer-isolation.patch': '77507777768a248f2da6e7181c6168ffeb6b26145c5e092a0cc0bc19925f1c49',
+                root / 'Tools/terminal-launcher/go.mod': 'fff26f4375940d4ba8b2493bd5d491daf117b2e4d3e3a728fd2a1ae87246036c',
+            }
+            if any(file_digest(path) != expected for path, expected in shared_inputs.items()):
+                return False
+            key = (profile, group)
+            if key not in admitted or not _legacy_producer_ast_unchanged(root):
+                return False
+            fixture = layer_lock_path(root, group, profile)
+            if file_digest(fixture) != admitted[key] or json.loads(fixture.read_text()) != lock:
+                return False
+            recipes = {('stock', 'foundation'): 'c227e2feb830816649be00b6c60361c27dd82d105a26892652ebfc18410e7f3f', ('stock', 'containerization'): 'c227e2feb830816649be00b6c60361c27dd82d105a26892652ebfc18410e7f3f', ('stock', 'engine-api'): 'c227e2feb830816649be00b6c60361c27dd82d105a26892652ebfc18410e7f3f', ('enhanced', 'foundation'): '5fe29d66546e6438d7de661dba71e5397eec93b423c42a417483c3276ff354c7', ('enhanced', 'containerization'): '37fef3cd1fae6af30c0dc9548ea42f0ee7c819d676fbceb4002f8b52131758da', ('enhanced', 'engine-api'): '1886783afaf1ed2601e1fb1a64dc82ee772e6cfd78d338657c2af17294c8a782', ('enhanced', 'container-sdk'): '0628578e548dfe10c885a3d5fc44d6a2d603da50b25f21613d5530f6fa4e06bf'}
+            recipe_path = root / "Tools/bazel/artifacts/fixtures/stock-xpc-clock-transition" / f"current-recipe-{group}-{profile}.json"
+            if file_digest(recipe_path) != recipes[key]:
+                return False
+            before = json.loads(recipe_path.read_text())
+            normalized = recipe_identity(root, profile, group)
+            # All other current recipe fields must match the pre-transition snapshot.
+            for field in ("producer", "swiftPackageManifest", "sourceGraphValidator"):
+                normalized[field] = before[field]
+            return (normalized == before
+                    and lock.get("sourcePins") == group_pins(source_pins(root, profile), group)
+                    and lock.get("lower") == lower_records(root, profile, group))
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
     baseline_producer = "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014"
     baseline_manifest = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
     baseline_launcher = "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987"
@@ -419,6 +466,15 @@ def verify_source_graph(root: Path, profile: str, graph: object) -> None:
                 graph.get("receiptSHA256") == digest((json.dumps(receipt, sort_keys=True) + "\n").encode()))
     if ordinary:
         return
+    if (profile == "enhanced" and file_digest(root / "Package.swift") == "096e5d9aa6d7b6f7987de62965bec52e870045a7ffd5262be423c7d0967eacee"
+            and _legacy_upper_pin_delta(root, profile) and _legacy_producer_ast_unchanged(root)):
+        fixture = layer_lock_path(root, "container-sdk", "enhanced")
+        if (file_digest(fixture) == "a87c20734a05c410b8ba1c15fdc9ceadd8d1c0b3c0721d3d2b9b91a2318a9597"
+                and graph == json.loads(fixture.read_text())["sourceGraph"]
+                and digest((json.dumps(graph, sort_keys=True) + "\n").encode()) == "65050e680f529e5dc948dcad5399e5738efd4eae371997198cf84062e70209e0"
+                and receipt.get("source") == expected
+                and receipt.get("argumentParserSource") == selected["swift-argument-parser"]):
+            return
     # The existing stock SDK archive was produced from the 00a6549 Devcontainer
     # manifest and enhanced lock. Permit only that archived identity when the
     # reviewed enhanced dependency selections are the only normalized deltas; all loaded stock graph
