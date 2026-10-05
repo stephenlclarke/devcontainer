@@ -143,10 +143,54 @@ class ForegroundFixture(GuestFixture):
             if current is None and named is None:
                 return
             for actual in (current, named):
-                if actual is not None and (self.owned(actual) != self.identifier or
-                                           actual.get("State", {}).get("Status") not in {"exited", "removing"}):
+                if actual is None:
+                    continue
+                try:
+                    actual_identifier = self.owned(actual)
+                except ValueError:
+                    self._record_auto_removal_failure(current, named)
+                    raise
+                if (actual_identifier != self.identifier or
+                        actual.get("State", {}).get("Status") not in {"exited", "removing"}):
+                    self._record_auto_removal_failure(current, named)
                     raise ValueError("Auto-removal changed foreground identity or exit state")
             time.sleep(min(remaining(end), 0.025))
+
+    def _record_auto_removal_failure(self, current, named):
+        """Retain only bounded identity booleans and process state, never inspect payloads."""
+
+        def snapshot(lookup, value):
+            if value is None:
+                return {"lookup": lookup, "present": False}
+            try:
+                owned_identifier = self.owned(value)
+            except ValueError:
+                owned_identifier = None
+            state_value = value.get("State")
+            state = {}
+            if isinstance(state_value, dict):
+                status = state_value.get("Status")
+                if isinstance(status, str):
+                    state["status"] = status if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", status) else "invalid"
+                for key in ("Running", "Paused", "Restarting", "OOMKilled", "Dead"):
+                    field = state_value.get(key)
+                    if type(field) is bool:
+                        state[key[0].lower() + key[1:]] = field
+                exit_code = state_value.get("ExitCode")
+                if type(exit_code) is int and 0 <= exit_code <= 255:
+                    state["exitCode"] = exit_code
+            return {
+                "lookup": lookup,
+                "present": True,
+                "idMatchesExpected": value.get("Id") == self.identifier,
+                "nameMatchesExpected": value.get("Name") == "/" + self.name,
+                "ownedIdentityMatchesExpected": owned_identifier == self.identifier,
+                "state": state,
+            }
+
+        self.journal.put("foreground-auto-removal-failure.json", canonical({
+            "lookups": [snapshot("id", current), snapshot("name", named)]
+        }))
 
     def operation(self):
         created = self.create()

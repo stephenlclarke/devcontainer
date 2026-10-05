@@ -195,6 +195,25 @@ class ForegroundTests(unittest.TestCase):
         self.server.guest["State"]["Status"] = "running"
         with self.assertRaisesRegex(ValueError, "identity or exit state"):
             self.fixture.require_auto_removed()
+        diagnostic = json.loads(self.journal.records()["foreground-auto-removal-failure.json"])
+        self.assertEqual(diagnostic["lookups"][0]["state"]["status"], "running")
+        self.assertTrue(diagnostic["lookups"][0]["ownedIdentityMatchesExpected"])
+        self.assertNotIn("Id", diagnostic["lookups"][0])
+        self.assertNotIn("Name", diagnostic["lookups"][0])
+        self.assertEqual(self.fixture.cleanup()["status"], "passed")
+
+    def test_auto_removal_failure_records_only_bounded_identity_diagnostics(self):
+        self.fixture.create()
+        self.server.guest["Id"] = "c" * 64
+        with self.assertRaisesRegex(ValueError, "identity or exit state"):
+            self.fixture.require_auto_removed()
+        diagnostic = json.loads(self.journal.records()["foreground-auto-removal-failure.json"])
+        named = diagnostic["lookups"][1]
+        self.assertFalse(named["idMatchesExpected"])
+        self.assertFalse(named["ownedIdentityMatchesExpected"])
+        self.assertEqual(named["state"]["status"], "created")
+        self.assertNotIn("c" * 64, json.dumps(diagnostic))
+        self.server.guest["Id"] = "b" * 64
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_terminal_bytes_and_eof_are_not_normalized(self):
