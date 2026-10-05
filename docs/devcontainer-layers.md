@@ -58,3 +58,5 @@ An enhanced Container SDK source-pin update may reuse the existing enhanced Foun
 ## Qualification boundary
 
 Dependency release and binary-consumption checks do not qualify a stable devcontainer product release. Full coverage and code quality, sanitizers, package signing and notarization, installation, runtime restoration and the original cross-backend parity contract remain separate gates. Hosted CI keeps its source quality and test lane. Performance optimisation and new benchmark campaigns are outside this layering change.
+
+The replacement stock SDK is published as `layer-container-sdk-stock-81d3650a39845036f9c4` and has passed a clean-source optimized qualification at `/Volumes/SSD/cf/bazel/invocations/run.jmXZ1b`. Its archive was downloaded from GitHub, hash checked and admitted by the maintained consumer verifier. Devcontainer's full signed-package qualification remains separate.
