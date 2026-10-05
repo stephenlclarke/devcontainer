@@ -48,7 +48,8 @@ func inheritedTerminalForegroundProcessGroup(
     processGroup: pid_t
 ) throws -> pid_t? {
     guard terminalForegroundProcessGroup != -1 else {
-        if errorCode == ENOTTY {
+        // Darwin reports EOPNOTSUPP for Node's socket-backed subprocess input.
+        if errorCode == ENOTTY || errorCode == EOPNOTSUPP {
             return nil
         }
         throw POSIXError(POSIXErrorCode(rawValue: errorCode) ?? .EIO)

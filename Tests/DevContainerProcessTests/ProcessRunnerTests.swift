@@ -430,6 +430,9 @@ struct ProcessRunnerTests {
         #expect(try inheritedTerminalForegroundProcessGroup(
             terminalForegroundProcessGroup: -1, errorCode: ENOTTY, processGroup: 42
         ) == nil)
+        #expect(try inheritedTerminalForegroundProcessGroup(
+            terminalForegroundProcessGroup: -1, errorCode: EOPNOTSUPP, processGroup: 42
+        ) == nil)
         #expect(throws: POSIXError(.EBADF)) {
             try inheritedTerminalForegroundProcessGroup(
                 terminalForegroundProcessGroup: -1, errorCode: EBADF, processGroup: 42
@@ -451,6 +454,18 @@ struct ProcessRunnerTests {
         )
         #expect(result.exitCode == 0)
         #expect(result.standardOutput == Data("inherited-pty-ok\n".utf8))
+        #expect(result.standardError.isEmpty)
+    }
+
+    @Test
+    func `inherited runner preserves socket input output and exit status`() async throws {
+        let result = try await ProcessRunner.captured(
+            executable: processProbeURL(),
+            arguments: ["--socket-input"],
+            environment: [:]
+        )
+        #expect(result.exitCode == 0)
+        #expect(result.standardOutput == Data("inherited-socket-ok\n".utf8))
         #expect(result.standardError.isEmpty)
     }
 

@@ -4,6 +4,11 @@ import Darwin
 import DevContainerProcess
 import Foundation
 
+if CommandLine.arguments.dropFirst().first == "--socket-input" {
+    try await runSocketInputProbe()
+    exit(0)
+}
+
 if CommandLine.arguments.dropFirst().first == "--noncontrolling-pty" {
     try await runNoncontrollingPTYProbe()
     exit(0)
@@ -207,4 +212,44 @@ private func recordRelayMarker(_ value: String, at path: String) -> Bool {
         }
         return false
     }
+}
+
+private func runSocketInputProbe() async throws {
+    alarm(10)
+    var descriptors: [Int32] = [-1, -1]
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+        exit(93)
+    }
+    defer { _ = Darwin.close(descriptors[1]) }
+    errno = 0
+    let foregroundProcessGroup = tcgetpgrp(descriptors[0])
+    let terminalErrorCode = errno
+    guard foregroundProcessGroup == -1, terminalErrorCode == EOPNOTSUPP else {
+        exit(94)
+    }
+    guard dup2(descriptors[0], STDIN_FILENO) == STDIN_FILENO,
+          Darwin.close(descriptors[0]) == 0
+    else {
+        exit(95)
+    }
+    let input = Array("fixture\n".utf8)
+    let written = input.withUnsafeBytes { bytes in
+        Darwin.write(descriptors[1], bytes.baseAddress, bytes.count)
+    }
+    guard written == input.count else {
+        exit(96)
+    }
+    let status = try await ProcessRunner.inherited(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: [
+            "-c",
+            "IFS= read -r line || exit 91; test \"$line\" = fixture || exit 92; "
+                + "printf 'inherited-socket-ok\\n'; exit 3"
+        ],
+        environment: [:]
+    )
+    guard status == 3 else {
+        exit(97)
+    }
+    alarm(0)
 }
