@@ -34,6 +34,7 @@ GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
 LEASE_PATH = Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")
 LANES = ("docker", "apple-stock", "container-compose")
 COMPONENT_FIXTURE = "E13-compose-signals"
+COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E06-network-volume")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
@@ -416,7 +417,7 @@ def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup, *, co
     if not cli_cleanup():
         raise RuntimeError("CLI cleanup is incomplete; V01 cannot safely start")
     if component_fixture is not None:
-        if component_fixture != COMPONENT_FIXTURE:
+        if component_fixture not in COMPONENT_FIXTURES:
             raise ValueError("Unsupported parity component fixture")
         return cli_result, None, cli_result.returncode == 0
     vscode_result = vscode_runner()
@@ -430,14 +431,14 @@ def selected_fixture_environment(environment: dict[str, str], fixture: str | Non
     """Select one maintained CLI fixture only for the explicit component mode."""
     if fixture is None:
         return environment
-    if fixture != COMPONENT_FIXTURE:
+    if fixture not in COMPONENT_FIXTURES:
         raise ValueError("Unsupported parity component fixture")
     return {**environment, "DEVCONTAINER_PARITY_FIXTURES": fixture}
 
 
 def compare_component_results(evidence: Path, fixture: str) -> dict:
     """Run the maintained exact comparator against the single requested fixture."""
-    if fixture != COMPONENT_FIXTURE:
+    if fixture not in COMPONENT_FIXTURES:
         raise ValueError("Unsupported parity component fixture")
     parity_directory = REPOSITORY / "Tools/parity"
     path = parity_directory / "compare_results.py"
@@ -486,7 +487,7 @@ def component_result_payload(args: argparse.Namespace, cleanup: dict, comparison
         "finalizationProvenanceSHA256": args.provenance_sha256,
         "trustedStateSHA256": args.state_sha256,
         "archiveSHA256": args._component_package_proof["archiveSHA256"],
-        "fixture": COMPONENT_FIXTURE,
+        "fixture": args.component_fixture,
         "fixtureCounts": {"cliPerLane": 1, "vscodePerLane": 0,
                            "laneCount": 3, "totalLaneFixtureResults": 3},
         "vscodeStatus": "skipped",
@@ -511,8 +512,8 @@ def finalize_component_result(args: argparse.Namespace, cleanup: dict, compariso
     recorded_failures = list(failures)
     if not complete and "component provider or host restoration is incomplete" not in recorded_failures:
         recorded_failures.append("component provider or host restoration is incomplete")
-    if not component_comparison_is_passed(comparison, args.evidence):
-        recorded_failures.append("E13 comparator evidence is incomplete or failed")
+    if not component_comparison_is_passed(comparison, args.evidence, args.component_fixture):
+        recorded_failures.append(f"{args.component_fixture} comparator evidence is incomplete or failed")
     passed = not recorded_failures
     payload = component_result_payload(
         args, cleanup, comparison, host_payload, provider_hashes, provider_inputs,
@@ -521,11 +522,12 @@ def finalize_component_result(args: argparse.Namespace, cleanup: dict, compariso
     return payload
 
 
-def component_comparison_is_passed(comparison: dict, evidence: Path) -> bool:
+def component_comparison_is_passed(comparison: dict, evidence: Path, fixture: str) -> bool:
     """Require the maintained comparator's exact single-fixture CLI result and file."""
-    if (not isinstance(comparison, dict) or comparison.get("status") != "passed"
+    if (fixture not in COMPONENT_FIXTURES
+            or not isinstance(comparison, dict) or comparison.get("status") != "passed"
             or comparison.get("suite") != "cli"
-            or comparison.get("expectedFixtures") != [COMPONENT_FIXTURE]
+            or comparison.get("expectedFixtures") != [fixture]
             or comparison.get("evidenceStatus") != "passed"
             or comparison.get("functionalParityStatus") != "passed"
             or comparison.get("timingStatus") != "passed"
@@ -1195,8 +1197,8 @@ def validate_evidence_root(args: argparse.Namespace,
         if evidence.exists() or evidence.is_symlink():
             raise ValueError("evidence directory must be fresh")
         return
-    if getattr(args, "component_fixture", None) != COMPONENT_FIXTURE:
-        raise ValueError("existing evidence is permitted only for the E13 component recheck")
+    if getattr(args, "component_fixture", None) not in COMPONENT_FIXTURES:
+        raise ValueError("existing evidence is permitted only for a supported component recheck")
     try:
         info = evidence.lstat()
     except FileNotFoundError as error:
@@ -2063,7 +2065,7 @@ def cli_cleanup_is_complete(evidence: Path, lane: str,
         expected = {item["id"]: item.get("runner") for item in manifest["fixtures"]
                     if item.get("runner") != "vscode" and lane in item.get("backends", [])}
         if component_fixture is not None:
-            if component_fixture != COMPONENT_FIXTURE or component_fixture not in expected:
+            if component_fixture not in COMPONENT_FIXTURES or component_fixture not in expected:
                 return False
             expected = {component_fixture: expected[component_fixture]}
         if (len(fixtures) != len(expected) or {item.get("id") for item in fixtures} != set(expected)
@@ -2234,7 +2236,7 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="perform the live 84-observation campaign")
-    parser.add_argument("--component-fixture", choices=(COMPONENT_FIXTURE,),
+    parser.add_argument("--component-fixture", choices=COMPONENT_FIXTURES,
                         help="run only the named CLI fixture as a non-qualifying component check")
     parser.add_argument("--repository", type=Path, default=REPOSITORY)
     parser.add_argument("--ssd-root", type=Path, required=True,
@@ -2403,11 +2405,11 @@ def main() -> int:
                     component_comparison = compare_component_results(args.evidence, component_fixture)
                     comparison_status["component"] = {"status": component_comparison.get("status")}
                     if component_comparison.get("status") != "passed":
-                        errors.append("E13 component comparison did not pass")
+                        errors.append(f"{component_fixture} component comparison did not pass")
                 except (OSError, ValueError, RuntimeError, KeyError, TypeError, ImportError) as error:
                     component_comparison = {"status": "failed"}
                     comparison_status["component"] = {"status": "failed"}
-                    errors.append(f"E13 component comparison failed: {error}")
+                    errors.append(f"{component_fixture} component comparison failed: {error}")
             else:
                 for suite, root in (("cli", args.evidence), ("vscode", args.evidence / "vscode")):
                     comparison = run([sys.executable, str(REPOSITORY / "Tools/parity/compare_results.py"),
@@ -2514,7 +2516,7 @@ def main() -> int:
             return 1
         print(json.dumps({"status": "passed", "scope": "component-only",
                           "releaseAuthority": False, "componentResult": str(args.evidence / "component-result.json"),
-                          "sourceCommit": args.source_commit, "fixture": COMPONENT_FIXTURE,
+                          "sourceCommit": args.source_commit, "fixture": args.component_fixture,
                           "fixtureResults": 3}, sort_keys=True, indent=2))
         return 0
 

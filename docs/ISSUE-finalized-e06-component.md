@@ -1,0 +1,9 @@
+# Phased finalized-package feedback needs the E06 network/volume fixture
+
+The signed 095 campaign passed its first five stock fixtures, then crashed in E06 network/volume. After the bounded runtime deadline correction, the existing nonqualifying component mode should accept E06 in addition to E13 Compose signals so freshly signed E06 behavior can be checked before the full campaign.
+
+Use the maintained runner, comparator, evidence admission and owned cleanup. Select exactly one supported fixture; reject extra/wrong evidence and incomplete cleanup. Receipts must name the selected fixture, count three CLI lane results, skip V01 and deny release authority. Full 84-cell mode, sealing and the qualification verifier must remain unchanged.
+
+Focused offline tests cover selection, exact observations, cleanup survivors, dynamic receipt identity, initialized evidence admission and the nonsealing boundary; existing E13 tests remain applicable. Against the unchanged maintained source, the 30-case focused run produced the expected three failures and three errors in the six new E06 regressions; the existing cases passed. After applying the change, all 30 focused cases and all 64 qualifier-module cases pass. Fresh signed component execution remains required; component success alone cannot qualify a release.
+
+The existing `native-parity-component` Make target defaults to E13 only within its recursive recipe. Select E06 with `make native-parity-component NATIVE_PARITY_COMPONENT_FIXTURE=E06-network-volume` and the same explicit finalized-package inputs. No global fixture default is introduced; `native-parity-release` remains full mode without an explicit component selector. Offline dry-run assertions cover E06, the E13 target default and unchanged full mode without running the controller.

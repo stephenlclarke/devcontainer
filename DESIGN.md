@@ -560,3 +560,5 @@ A stable tag is prohibited until:
 | Self-hosted runner compromise | Release credentials or host exposed | Trusted exact commits only, ephemeral state, no fork PR code, least privilege |
 | Mutable upstream oracle | Parity results drift | Checked-in exact refs, versions, image digests, and fixture revisions |
 | Overbroad Docker claim | Users assume unsupported production behavior | Advertise only the tested API range and Dev Containers compatibility scope |
+
+The finalized-package component mode accepts E06 network/volume or E13 Compose signals for phased feedback using the existing three-lane runner, exact comparator and owned cleanup. It emits only a nonqualifying component result naming the selected fixture, with V01 skipped and no release authority. A complete 84-cell campaign remains required for release.

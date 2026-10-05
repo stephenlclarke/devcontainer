@@ -208,7 +208,8 @@ class SuiteLifecycleTests(unittest.TestCase):
             args = argparse.Namespace(evidence=evidence, source_commit="a" * 40,
                                       _source_tree="b" * 40, provenance_sha256="c" * 64,
                                       state_sha256="d" * 64,
-                                      _component_package_proof={"archiveSHA256": "e" * 64})
+                                      _component_package_proof={"archiveSHA256": "e" * 64},
+                                      component_fixture=qualify.COMPONENT_FIXTURE)
             cleanup = {lane: {"status": "restored", "cliCleanupComplete": True,
                               "vscodeCleanupComplete": False, "vscodeStatus": "skipped"}
                        for lane in qualify.LANES}
@@ -1477,6 +1478,146 @@ class ProviderPinTests(unittest.TestCase):
             json.dumps({"version": "1.2.3", "commit": "a" * 40}), pin))
         self.assertFalse(qualify.output_contains_pin(
             json.dumps({"version": "1.2.4", "commit": "a" * 40}), pin))
+
+
+class E06ComponentTests(unittest.TestCase):
+    FIXTURE = "E06-network-volume"
+
+    def test_filter_and_cli_only_execution_keep_e13_supported(self) -> None:
+        for fixture in (self.FIXTURE, qualify.COMPONENT_FIXTURE):
+            with self.subTest(fixture=fixture):
+                environment = {"DEVCONTAINER_PARITY_FIXTURES": "ambient", "PATH": "/usr/bin"}
+                selected = qualify.selected_fixture_environment(environment, fixture)
+                self.assertEqual(selected["DEVCONTAINER_PARITY_FIXTURES"], fixture)
+                self.assertEqual(environment["DEVCONTAINER_PARITY_FIXTURES"], "ambient")
+                cli = subprocess.CompletedProcess(["cli"], 0, "", "")
+                calls = []
+                actual, vscode, passed = qualify.run_suite_pair(
+                    lambda: cli, lambda: calls.append("vscode"),
+                    lambda: True, lambda: calls.append("vscode-cleanup"),
+                    component_fixture=fixture)
+                self.assertIs(actual, cli)
+                self.assertIsNone(vscode)
+                self.assertTrue(passed)
+                self.assertEqual(calls, [])
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            qualify.selected_fixture_environment({}, "E01-container-lifecycle")
+
+    def test_make_dry_run_selects_e06_or_target_default_without_changing_full_mode(self) -> None:
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in {"NATIVE_PARITY_COMPONENT_FIXTURE", "MAKEFLAGS", "MAKEFILES", "MFLAGS"}}
+        cases = (("native-parity-component", None, qualify.COMPONENT_FIXTURE),
+                 ("native-parity-component", self.FIXTURE, self.FIXTURE),
+                 ("native-parity-release", None, None))
+        for target, selected, expected in cases:
+            with self.subTest(target=target, selected=selected):
+                command = ["make", "-n", "--no-print-directory", target]
+                if selected is not None:
+                    command.append(f"NATIVE_PARITY_COMPONENT_FIXTURE={selected}")
+                result = subprocess.run(command, cwd=REPOSITORY, env=environment,
+                                        capture_output=True, text=True, check=True, timeout=10)
+                if expected is None:
+                    self.assertNotIn("--component-fixture", result.stdout)
+                else:
+                    self.assertIn(f'--component-fixture "{expected}"', result.stdout)
+                    other = self.FIXTURE if expected == qualify.COMPONENT_FIXTURE else qualify.COMPONENT_FIXTURE
+                    self.assertNotIn(f'--component-fixture "{other}"', result.stdout)
+
+    def test_e06_cleanup_rejects_wrong_extra_fixture_and_survivors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            lane = evidence / "docker"
+            lane.mkdir()
+            for fixtures, differences, expected in (
+                ([self.FIXTURE], [], True),
+                ([qualify.COMPONENT_FIXTURE], [], False),
+                ([self.FIXTURE, qualify.COMPONENT_FIXTURE], [], False),
+                ([self.FIXTURE], ["project remains"], False),
+            ):
+                with self.subTest(fixtures=fixtures, differences=differences):
+                    (lane / "results.json").write_text(json.dumps({
+                        "fixtures": [{"id": fixture} for fixture in fixtures],
+                        "cleanupDifferences": differences}))
+                    self.assertEqual(qualify.cli_cleanup_is_complete(
+                        evidence, "docker", self.FIXTURE), expected)
+        with self.assertRaisesRegex(RuntimeError, "CLI cleanup is incomplete"):
+            qualify.run_suite_pair(lambda: subprocess.CompletedProcess(["cli"], 0),
+                                   lambda: self.fail("V01 must not run"), lambda: False,
+                                   lambda: True, component_fixture=self.FIXTURE)
+
+    def test_e06_comparison_uses_exact_observations_and_rejects_extra_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            for lane in qualify.LANES:
+                root = evidence / lane
+                root.mkdir()
+                (root / "results.json").write_text(json.dumps({
+                    "backend": lane, "status": "passed", "durationSeconds": 1.0,
+                    "cleanupDifferences": [], "fixtures": [{
+                        "id": self.FIXTURE, "status": "passed", "durationSeconds": 1.0,
+                        "observations": {"network": "removed", "volume": "removed"}}]}))
+            comparison = qualify.compare_component_results(evidence, self.FIXTURE)
+            self.assertTrue(qualify.component_comparison_is_passed(
+                comparison, evidence, self.FIXTURE))
+            self.assertFalse(qualify.component_comparison_is_passed(
+                comparison, evidence, qualify.COMPONENT_FIXTURE))
+            result = evidence / "container-compose/results.json"
+            payload = json.loads(result.read_text())
+            payload["fixtures"][0]["observations"]["volume"] = "retained"
+            result.write_text(json.dumps(payload))
+            self.assertEqual(qualify.compare_component_results(
+                evidence, self.FIXTURE)["status"], "failed")
+            payload["fixtures"][0]["observations"]["volume"] = "removed"
+            payload["fixtures"].append({"id": qualify.COMPONENT_FIXTURE, "status": "passed"})
+            result.write_text(json.dumps(payload))
+            self.assertEqual(qualify.compare_component_results(
+                evidence, self.FIXTURE)["status"], "failed")
+
+    def test_e06_receipt_is_dynamic_and_cannot_seal_full_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            args = argparse.Namespace(evidence=evidence, component_fixture=self.FIXTURE,
+                                      source_commit="a" * 40, _source_tree="b" * 40,
+                                      provenance_sha256="c" * 64, state_sha256="d" * 64,
+                                      _component_package_proof={"archiveSHA256": "e" * 64})
+            cleanup = {lane: {"status": "restored", "cliCleanupComplete": True,
+                              "vscodeCleanupComplete": False, "vscodeStatus": "skipped"}
+                       for lane in qualify.LANES}
+            host = {"status": "restored", "hostGuardCleared": True,
+                    "initialColima": "stopped", "finalColima": "stopped",
+                    "initialServiceSetSHA256": "f" * 64, "finalServiceSetSHA256": "f" * 64,
+                    "initialServiceCount": 8, "finalServiceCount": 8}
+            comparison = {"status": "passed", "suite": "cli", "expectedFixtures": [self.FIXTURE],
+                          "evidenceStatus": "passed", "functionalParityStatus": "passed",
+                          "timingStatus": "passed", "requireZeroFunctionalDifferences": True}
+            qualify.write_json(evidence / "component-comparison.json", comparison)
+            with mock.patch.object(qualify, "seal_after_host_cleanup") as sealer:
+                result = qualify.finalize_component_result(args, cleanup, comparison, host, {}, {}, [])
+            sealer.assert_not_called()
+            self.assertEqual(result["fixture"], self.FIXTURE)
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["scope"], "component-only")
+            self.assertFalse(result["releaseAuthority"])
+            self.assertEqual(result["fixtureCounts"]["totalLaneFixtureResults"], 3)
+            self.assertEqual(result["vscodeStatus"], "skipped")
+            self.assertFalse((evidence / "qualification.json").exists())
+
+    def test_e06_recheck_binds_initialized_source_and_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve() / "component"
+            evidence.mkdir(mode=0o700)
+            os.chmod(evidence, 0o700)
+            inputs = {"sourceCommit": "a" * 40, "sourceTree": "b" * 40, "campaign": "e06"}
+            qualify.write_json(evidence / "operator-inputs.json", inputs)
+            os.chmod(evidence / "operator-inputs.json", 0o600)
+            identity = qualify.capture_component_evidence_identity(evidence, inputs)
+            args = argparse.Namespace(evidence=evidence, component_fixture=self.FIXTURE,
+                                      source_commit=inputs["sourceCommit"],
+                                      _source_tree=inputs["sourceTree"], campaign=inputs["campaign"])
+            qualify.validate_evidence_root(args, identity)
+            args.component_fixture = "E01-container-lifecycle"
+            with self.assertRaisesRegex(ValueError, "supported component"):
+                qualify.validate_evidence_root(args, identity)
 
 
 if __name__ == "__main__":

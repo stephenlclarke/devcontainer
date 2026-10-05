@@ -629,10 +629,10 @@ parity-vscode-container-compose:
 
 parity-release: parity parity-vscode
 
-# Check E13 alone with the same signed package and restoration boundaries.
+# Check the selected supported component (default E13) with signed-package restoration.
 .PHONY: native-parity-component
 native-parity-component:
-	$(MAKE) native-parity-release NATIVE_PARITY_COMPONENT_FIXTURE=E13-compose-signals
+	$(MAKE) native-parity-release NATIVE_PARITY_COMPONENT_FIXTURE=$(if $(NATIVE_PARITY_COMPONENT_FIXTURE),$(NATIVE_PARITY_COMPONENT_FIXTURE),E13-compose-signals)
 
 # Qualify the same finalized stock package in every lane without rebuilding it.
 native-parity-release:
