@@ -198,6 +198,8 @@ extension AppleContainerRuntime {
             guard let observed = date(value) else { return false }
             return sameContainerIncarnation(metadataCreatedAt: native, observedCreatedAt: observed)
         }
-        return ISO8601DateFormatter().string(from: native) == value
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return (try? encoder.encode(native)) == (try? encoder.encode(value))
     }
 }

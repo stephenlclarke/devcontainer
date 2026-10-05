@@ -348,6 +348,72 @@ struct AppleContainerInventoryIdentityTests {
         #expect(await store.containerMetadata(id: "fixture") == nil)
     }
 
+    @Test(arguments: ["creation", "start", "both"])
+    func `enhanced CLI date codec preserves precise boundary identity`(boundary: String) async throws {
+        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let edge = Date(timeIntervalSinceReferenceDate: 812_930_574.999891)
+        let creation = boundary == "start" ? createdAt : edge
+        let start = boundary == "creation" ? createdAt.addingTimeInterval(10) : edge.addingTimeInterval(10)
+        let native = ContainerResource.ContainerSnapshot(
+            configuration: observed(at: creation).configuration, status: .running,
+            networks: [], startedDate: start
+        )
+        var value = cliRecord(native)
+        var configuration = try #require(value["configuration"] as? [String: Any])
+        configuration["creationDate"] = try nativeCLIDate(creation)
+        value["configuration"] = configuration
+        value["status"] = try ["state": "running", "startedDate": nativeCLIDate(start)]
+        try fixture.setContainerInventory([value])
+        let inventory = FakeContainerInventory(snapshots: [native])
+        let store = TestMetadataStore()
+        var stored = metadata()
+        stored.createdAt = creation
+        await store.recordContainerMetadata(stored)
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, metadataStore: store)
+
+        let snapshot = try await runtime.inspectContainer(id: "fixture", context: .init())
+        #expect(snapshot.createdAt == creation)
+        #expect(snapshot.startedAt == start)
+        #expect(snapshot.state == .running)
+        #expect(await store.containerMetadata(id: "fixture") == stored)
+        await runtime.shutdown()
+    }
+
+    @Test(arguments: ["creation", "start"])
+    func `enhanced CLI boundary identity rejects an adjacent encoded second`(field: String) async throws {
+        let fixture = try FakeAppleCLI(distribution: "container-compose")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let edge = Date(timeIntervalSinceReferenceDate: 812_930_574.999891)
+        let native = ContainerResource.ContainerSnapshot(
+            configuration: observed(at: edge).configuration, status: .running,
+            networks: [], startedDate: edge.addingTimeInterval(10)
+        )
+        var value = cliRecord(native)
+        var configuration = try #require(value["configuration"] as? [String: Any])
+        configuration["creationDate"] = try nativeCLIDate(edge.addingTimeInterval(field == "creation" ? 1 : 0))
+        value["configuration"] = configuration
+        value["status"] = try [
+            "state": "running",
+            "startedDate": nativeCLIDate(edge.addingTimeInterval(field == "start" ? 11 : 10))
+        ]
+        try fixture.setContainerInventory([value])
+        let inventory = FakeContainerInventory(snapshots: [native])
+        let store = TestMetadataStore()
+        let runtime = try directRuntime(fixture: fixture, inventory: inventory, metadataStore: store)
+        await #expect(throws: DevContainerError.self) {
+            try await runtime.inspectContainer(id: "fixture", context: .init())
+        }
+        #expect(await store.containerMetadata(id: "fixture") == nil)
+        await runtime.shutdown()
+    }
+
+    private func nativeCLIDate(_ date: Date) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try JSONDecoder().decode(String.self, from: encoder.encode(date))
+    }
+
     @Test(arguments: [false, true])
     func `enhanced running inventory retains exact process generation across same second restarts`(
         fractional: Bool

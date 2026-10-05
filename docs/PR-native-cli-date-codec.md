@@ -1,0 +1,7 @@
+# Pull request handoff: fix(runtime): validate native CLI dates with its exact JSON codec
+
+Replace only the whole-second date equality formatter in precise CLI inventory validation with `JSONEncoder.dateEncodingStrategy = .iso8601` and exact equality of encoded native-date and encoded CLI-string bytes. The same helper covers creation and process-start dates. Fractional validation, all field checks, same-incarnation rules and precise native timestamp restoration remain unchanged. No tolerance or retry waiver is added.
+
+The signed 577 fork E06 failure has an exact Foundation codec reproducer recorded in the matching issue. Add parameterized regressions for near-boundary creation, start and both, assert exact returned native dates and durable creation identity, and reject adjacent encoded seconds before metadata adoption. Existing malformed/missing/field/replacement tests remain intact.
+
+Tests-only old-production invocation `9cab1ed8-fa3f-4b14-8443-ad76bdad1751` reproduces the three boundary failures with the initial empty-store fixture. The final fixture seeds existing metadata and checks the entire record is preserved. Optimized stock coverage invocation `1008ac20-873b-4251-9885-750c645d6b2b` passes all 322 XML cases with no failures, errors or skips, and all three changed production lines have 28 LCOV hits. Original failed results remain retained. Final-source checks and signed E06/full qualification remain required before release.
