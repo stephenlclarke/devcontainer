@@ -758,6 +758,10 @@ class VSCodeParityTests(unittest.TestCase):
             environment = vscode_environment(
                 {
                     "CONTAINER_COMPOSE_CONTAINER": "/stable/bin/container",
+                    "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+                    "DEVCONTAINER_CONTAINER_BIN": "/pinned/container",
+                    "DEVCONTAINER_DOCKER_BIN": "/pinned/docker",
+                    "DEVCONTAINER_DOCKER_COMPOSE_BIN": "/pinned/docker-compose",
                     "DEVCONTAINER_CONFIG": "/private/tmp/config.toml",
                     "DEVCONTAINER_SOCKET": "/private/tmp/devcontainer.sock",
                     "DEVCONTAINER_STATE": "/private/tmp/state.sqlite",
@@ -789,6 +793,13 @@ class VSCodeParityTests(unittest.TestCase):
                 environment["DEVCONTAINER_STATE"],
                 "/private/tmp/state.sqlite",
             )
+            for key, expected in {
+                "DEVCONTAINER_COMPOSE_PROVIDER": "docker",
+                "DEVCONTAINER_CONTAINER_BIN": "/pinned/container",
+                "DEVCONTAINER_DOCKER_BIN": "/pinned/docker",
+                "DEVCONTAINER_DOCKER_COMPOSE_BIN": "/pinned/docker-compose",
+            }.items():
+                self.assertEqual(environment[key], expected)
             self.assertEqual(environment["HOME"], f"{temporary}/home")
             self.assertEqual(environment["LOGNAME"], "devcontainer-runner")
             self.assertEqual(environment["SHELL"], "/bin/zsh")
