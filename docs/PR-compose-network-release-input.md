@@ -6,7 +6,7 @@ Repeated Compose lifecycle operations blocked Devcontainer runtime qualification
 
 ## Implementation
 
-Pin both signed stock gateway assets to `layer-compose-stock-79b3c92930a6-3178c36a1378`, including immutable GitHub identities, sizes and SHA-256 digests. Keep every other release input unchanged and update the operator documentation.
+Pin both signed stock gateway assets to `layer-compose-stock-79b3c92930a6-3178c36a1378`, including immutable GitHub identities, sizes and SHA-256 digests. Align the parity manifest provider commit with those same released bytes. Keep every other release input unchanged and update the operator documentation.
 
 ## Validation
 
