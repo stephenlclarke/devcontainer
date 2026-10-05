@@ -1,0 +1,7 @@
+# PR: consume the corrected signed Compose resource lifecycle gateway
+
+Pin both stock Compose gateway assets to `layer-compose-stock-5a60352febdb-6815bc6de477` and align `Tests/Parity/manifest.json` with producer commit `5a60352febdbd2db04216c65b9b60443b1bf5d39`. All seven other release asset rows and the compiled Swift dependency locks remain unchanged. Update current operator documentation while preserving the earlier failed-campaign records.
+
+The lower stock provider, unit, coverage/report and release-candidate gates passed against one clean source closure, consuming the five published SDK layer artifacts. Selected unit/CLI coverage is 90.9812%. Apple notarization `653a01fa-3d60-48d3-a5e7-c86fed964341` was Accepted. GitHub release `403914750` exposes archive asset `613081039` (SHA-256 `6815bc6de477c62b66aacce72430ac10ab533b77f24530e26fa2e6bd3356208f`) and provenance asset `613081042` (SHA-256 `2f11a4f8554bb9e5745eabbd6d85997590dbe60374634bc7405b7c617146a469`). Fresh downloads match local signed bytes, release sizes, published digests and exact tag/source identity. The maintained release preparer accepted this public input.
+
+This external prerelease remains a qualification input with distribution readiness false. Devcontainer must pass its exact-source native gates, finalize a newly signed and notarized package, and complete all 84 runtime observations with host restoration before stable publication. No functional comparator, identity check or timing waiver is changed.
