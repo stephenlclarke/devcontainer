@@ -15,3 +15,7 @@ This change delivers existing patches through the source-check path. It does not
 ## Validation and remaining gates
 
 Focused checkout regressions and preparation against the real resolved SwiftPM mirrors are required before integration. Hosted compilation, final source quality and complete package/runtime qualification remain separate gates. See [the implementation handoff](PR-swiftpm-dependency-patches.md) and [PR 83](https://github.com/stephenlclarke/devcontainer/pull/83).
+
+## Engine API pin refresh follow-up
+
+After the Engine API source refresh, CodeQL run `37301392159`, Documentation run `37301392198` and Homebrew run `37301392277` stopped before compilation because source preparation still expected enhanced Engine API `48e44d74d738ca3d24351ba02c4869be1a3e6998` and stock Engine API `40436017e1e93012b8dab7cfc3c79783538065c3`. The authoritative resolved locks now select enhanced `6e8c932fc8755a4b922fd239426e9029be0554e0` and stock `36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77`. Align only those two preparation expectations and the synthetic stock fixture. Add a regression that validates both actual checked-in profile locks with the maintained patch specifications, so future selection drift fails local unit preparation. Patch bytes, dependency sources, root locks and published compiled-layer recipes remain unchanged by this follow-up.

@@ -85,7 +85,7 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
              "location": "https://github.com/apple/container.git"},
             {"identity": "containerization", "revision": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
              "location": "https://github.com/apple/containerization.git"},
-            {"identity": "container-engine-api", "revision": "40436017e1e93012b8dab7cfc3c79783538065c3",
+            {"identity": "container-engine-api", "revision": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
              "location": "https://github.com/stephenlclarke/container-engine-api.git"},
         ]
         self._write_lock("Package.stock.resolved", stock)
@@ -286,6 +286,13 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
             code += f"Path({str(self.root / 'Package.resolved')!r}).write_text('mutated')\n"
         resolver.write_text(code, encoding="utf-8")
         return resolver
+
+
+class CheckedInSwiftPMDependencyPinsTests(unittest.TestCase):
+    def test_preparation_admits_both_checked_in_profile_locks(self) -> None:
+        for profile, lock_name in MODULE.PROFILE_LOCKS.items():
+            with self.subTest(profile=profile):
+                MODULE.validate_lock(MODULE.ROOT / lock_name, profile, MODULE.PATCHES)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ PATCHES = (
      "location": "https://github.com/stephenlclarke/containerization.git",
      "patch": "containerization-ext4-unaligned.patch",
      "sha256": "960284f67cca0ba416da98f624934454e092d204b4525daf9902e0a0bbe7038d"},
-    {"identity": "container-engine-api", "revision": "48e44d74d738ca3d24351ba02c4869be1a3e6998",
+    {"identity": "container-engine-api", "revision": "6e8c932fc8755a4b922fd239426e9029be0554e0",
      "location": "https://github.com/stephenlclarke/container-engine-api.git",
      "patch": "gateway-recovery-capability.patch",
      "sha256": "be69369a63c8c372b79ef83931125790881d057719846ca5499539c99df8bfb7"},
@@ -91,7 +91,7 @@ def validate_lock(lock: Path, profile: str, patch_rows: Sequence[Mapping[str, st
              "location": "https://github.com/apple/container.git"},
             {"identity": "containerization", "revision": "9eacc197d7c3663eb29cbab6d51244ede6d1cd7d",
              "location": "https://github.com/apple/containerization.git"},
-            {"identity": "container-engine-api", "revision": "40436017e1e93012b8dab7cfc3c79783538065c3",
+            {"identity": "container-engine-api", "revision": "36de2d66d4a1f7eb48c08d94cf1444f93d5f9c77",
              "location": "https://github.com/stephenlclarke/container-engine-api.git"},
         )
     actual = pins(lock)
