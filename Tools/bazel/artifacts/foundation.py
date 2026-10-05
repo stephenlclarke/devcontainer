@@ -276,7 +276,7 @@ if profile == "enhanced" and group == "engine-api":
 
 
 def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) -> bool:
-    """Permit only the eight archived packages across reviewed producer and dispatcher edits."""
+    """Permit only exact archived layers across reviewed upper-build changes."""
     baseline_producer = "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014"
     baseline_manifest = "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a"
     baseline_launcher = "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987"
@@ -291,6 +291,23 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         ("stock", "engine-api"): "a5cb5830748d5d2f858597b6c1ffce60eefbb45482eef69ad35369b705ab8d3c",
         ("stock", "container-sdk"): "4d0470004fd40bb8d440109e792e993563840c0889a3a622dc045b88f99ffaeb",
     }
+    current_enhanced_locks = {
+        "foundation": "73dbf0ee81fa900bdff830610aae417befa67d3c221556837b0ebae342e8508b",
+        "containerization": "130525901ff3aa0d28a806128dee81c58bbd731ab64cfaab3364564be8b79289",
+        "engine-api": "33f3c3f739b2a4d4906c0c2c566676e5a2b26d3c5223ea8eb31c0210c8f5d8fd",
+        "container-sdk": "fd8ce243165c3fe57e887b5befe948f258f0bd69ccba0fa1001adaef4ccdfc72",
+    }
+    terminal_addition_inputs = {
+        root / "BUILD.bazel": "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c",
+        root / "MODULE.bazel": "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e",
+        root / "Tools/bazel/BUILD.bazel": "8dfb392d17aaf4d396fa862006f9709616accd03c650ef654516f9485807fe8c",
+        root / "Tools/bazel/rules-go-sdk-notices.patch":
+            "3778368f7027873876084a62022705bbd8253341452e7b295cf5cb67742e4f7f",
+        root / "Tools/bazel/rules-go-sanitizer-isolation.patch":
+            "77507777768a248f2da6e7181c6168ffeb6b26145c5e092a0cc0bc19925f1c49",
+        root / "Tools/terminal-launcher/go.mod":
+            "fff26f4375940d4ba8b2493bd5d491daf117b2e4d3e3a728fd2a1ae87246036c",
+    }
     if (profile == "enhanced" and group not in {"foundation", "containerization", "engine-api", "container-sdk"}
             or profile == "stock" and group not in {"foundation", "containerization", "engine-api", "container-sdk"}
             or profile not in {"enhanced", "stock"}
@@ -299,14 +316,28 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
         return False
     try:
         canonical_lock = layer_lock_path(root, group, profile)
-        if (file_digest(canonical_lock) != archived_locks[(profile, group)]
+        lock_sha = file_digest(canonical_lock)
+        archived_match = profile == "stock" and lock_sha == archived_locks[(profile, group)]
+        current_enhanced_match = (profile == "enhanced"
+                                  and lock_sha == current_enhanced_locks[group])
+        if ((not archived_match and not current_enhanced_match)
                 or json.loads(canonical_lock.read_text()) != lock):
             return False
-        # recipe_identity includes run.sh. Normalize only the original launcher
-        # digest, and only when the complete current file is the reviewed guarded
-        # dispatcher. Archived lock bytes above pin each pre-edit package.
-        if (file_digest(root / "Tools/bazel/run.sh") != reviewed_launcher
-                or lock.get("recipeSHA256", {}).get("launcher") != baseline_launcher):
+        if profile == "stock":
+            # The archived stock recipe predates this exact guarded dispatcher.
+            if (file_digest(root / "Tools/bazel/run.sh") != reviewed_launcher
+                    or lock.get("recipeSHA256", {}).get("launcher") != baseline_launcher):
+                return False
+        # The terminal launcher adds a Go SDK and upper-only targets. Admit the
+        # old Swift layer bytes only for this exact reviewed shared-file and
+        # module-rule snapshot; lower package/source identities are checked
+        # independently below.
+        if any(file_digest(path) != expected for path, expected in terminal_addition_inputs.items()):
+            return False
+        current_recipe = recipe_identity(root, profile, group)
+        if (current_recipe.get("rootBuild") != "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c"
+                or current_recipe.get("moduleGraph") != "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e"
+                or current_recipe.get("moduleRules") != "594a401a02f4d1e25683d030ac6f50b3eefa9ed6e6756eaa13d057d161b057e5"):
             return False
         if profile == "stock":
             # The exact extension adds enhancement-only patch application. Keep
@@ -323,22 +354,28 @@ def _legacy_recipe_compatible(root: Path, lock: dict, profile: str, group: str) 
                 root / "Tools/bazel/gateway-recovery-capability.patch":
                     "be69369a63c8c372b79ef83931125790881d057719846ca5499539c99df8bfb7",
                 root / "Tools/bazel/BUILD.bazel":
-                    "77e562e70c4cb2fe632fa7317d5a500c99e8334f541a44ef8aa703c04539d216",
+                    "8dfb392d17aaf4d396fa862006f9709616accd03c650ef654516f9485807fe8c",
             }
             if any(file_digest(path) != expected for path, expected in reviewed_inputs.items()):
                 return False
-        if (profile == "enhanced" and group == "container-sdk"
-                and source_pins(root, profile).get("container") != "4bf4750989138800d65abbbe7f9ff8d7b286bd16"):
-            return False
         if (lock.get("sourcePins") != group_pins(source_pins(root, profile), group)
                 or lock.get("lower") != lower_records(root, profile, group)):
             return False
         expected = recipe_identity(root, profile, group)
-        expected["producer"] = baseline_producer
-        expected["launcher"] = baseline_launcher
-        expected["swiftPackageManifest"] = baseline_manifest
         if profile == "stock":
+            expected["producer"] = baseline_producer
+            expected["launcher"] = baseline_launcher
+            expected["swiftPackageManifest"] = baseline_manifest
+            for name in ("rootBuild", "moduleGraph", "moduleRules"):
+                expected[name] = lock["recipeSHA256"][name]
             expected["dependencyExtension"] = "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99"
+        else:
+            # Current enhanced layers differ only in the exact shared terminal
+            # build snapshot above; every other current recipe field stays bound.
+            # The pinned production AST excludes only reviewed verifier bodies.
+            expected["producer"] = "29872c70f5aa696a2be65998de9bd484a7629a4176808877d9fe9e6f0fcec114"
+            for name in ("rootBuild", "moduleGraph", "moduleRules"):
+                expected[name] = lock["recipeSHA256"][name]
         return lock.get("recipeSHA256") == expected
     except (OSError, ValueError, KeyError, TypeError):
         return False

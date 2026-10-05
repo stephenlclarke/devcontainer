@@ -105,7 +105,7 @@ for profile in ('stock', 'enhanced'):
         path = foundation.layer_lock_path(root, group, profile)
         lock = json.loads(path.read_text())
         admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
-        assert admitted == (profile == 'stock' and expected_admission), (profile, group)
+        assert admitted == expected_admission, (profile, group)
 """
         environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
         for executable in interpreters:
@@ -159,7 +159,8 @@ for profile in ('stock', 'enhanced'):
                 1))
             self.assertFalse(foundation._legacy_producer_ast_unchanged(root))
 
-    def _layer_fixture(self, directory: str, source_root: Path | None = None) -> Path:
+    def _layer_fixture(self, directory: str, source_root: Path | None = None,
+                       archived: bool = True) -> Path:
         """Copy package inputs and immutable archived locks used by the verifier."""
         source_root = source_root or Path(__file__).resolve().parents[3]
         source_root = Path(source_root)
@@ -173,6 +174,9 @@ for profile in ('stock', 'enhanced'):
             "Tools/bazel/containerization-ext4-unaligned.patch",
             "Tools/bazel/gateway-recovery-capability.patch",
             "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
+            "Tools/bazel/rules-go-sdk-notices.patch",
+            "Tools/bazel/rules-go-sanitizer-isolation.patch",
+            "Tools/terminal-launcher/go.mod",
             "Tools/bazel/rules-license-empty-provider.patch",
             "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
             "Tools/bazel/artifacts/compiled_outputs.bzl", "Tools/bazel/artifacts/BUILD.bazel",
@@ -181,6 +185,14 @@ for profile in ('stock', 'enhanced'):
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_root / relative, destination)
+        if not archived:
+            for name in ("argument-parser.lock.json",
+                         *(f"{group}-{profile}.lock.json"
+                           for profile in ("stock", "enhanced") for group in foundation.GROUPS)):
+                destination = root / "Tools/bazel/artifacts" / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
+            return root
         for name, expected_sha in LEGACY_LOCK_FIXTURES.items():
             source = lock_fixture_root / name
             self.assertEqual(digest(source.read_bytes()), expected_sha, name)
@@ -364,6 +376,46 @@ for profile in ('stock', 'enhanced'):
                 with self.subTest(group=group):
                         self._verify_archived_consumer(root, "stock", group)
 
+    def test_current_stock_and_enhanced_layers_reuse_all_eight_exact_consumers(self) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._layer_fixture(directory, source_root, archived=False)
+            for profile in ("stock", "enhanced"):
+                for group in foundation.GROUPS:
+                    with self.subTest(profile=profile, group=group):
+                        lock = json.loads((root / f"Tools/bazel/artifacts/{group}-{profile}.lock.json")
+                                          .read_text())
+                        self.assertTrue(foundation._legacy_recipe_compatible(root, lock, profile, group))
+                        self._verify_archived_consumer(root, profile, group)
+
+    def test_terminal_addition_compatibility_rejects_any_shared_snapshot_drift(self) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        mutations = (
+            ("Tools/bazel/rules-go-sdk-notices.patch", lambda data: data + b"\n# drift\n"),
+            ("Tools/bazel/rules-go-sanitizer-isolation.patch", lambda data: data + b"\n# drift\n"),
+            ("Tools/terminal-launcher/go.mod", lambda data: data.replace(
+                b"go 1.26.3", b"go 1.26.4", 1)),
+            ("MODULE.bazel", lambda data: data.replace(b'"0.60.0"', b'"0.61.0"', 1)),
+            ("BUILD.bazel", lambda data: data + b"\n# target drift\n"),
+            ("Tools/bazel/BUILD.bazel", lambda data: data + b"\n# target drift\n"),
+            ("MODULE.bazel.lock", lambda data: data.replace(
+                b'"lockFileVersion": 28', b'"lockFileVersion": 29', 1)),
+        )
+        for relative, mutate in mutations:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = self._layer_fixture(directory, source_root, archived=False)
+                path = root / relative
+                before = path.read_bytes()
+                changed = mutate(before)
+                self.assertNotEqual(before, changed)
+                path.write_bytes(changed)
+                for profile in ("stock", "enhanced"):
+                    for group in foundation.GROUPS:
+                        with self.subTest(profile=profile, group=group):
+                            lock = json.loads((root / f"Tools/bazel/artifacts/{group}-{profile}.lock.json")
+                                              .read_text())
+                            self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
+
     def test_new_q_pin_and_replaced_sdk_lock_reconstruct_original_archive_locks(self) -> None:
         """A live Q/SDK lock advance must not rewrite the archived lock fixture."""
         source_root = Path(__file__).resolve().parents[3]
@@ -377,6 +429,9 @@ for profile in ('stock', 'enhanced'):
                 "Tools/bazel/containerization-ext4-unaligned.patch",
                 "Tools/bazel/gateway-recovery-capability.patch",
                 "Tools/bazel/dependencies.bzl", "Tools/bazel/rules-swift-sandbox-output.patch",
+                "Tools/bazel/rules-go-sdk-notices.patch",
+                "Tools/bazel/rules-go-sanitizer-isolation.patch",
+                "Tools/terminal-launcher/go.mod",
                 "Tools/bazel/rules-license-empty-provider.patch",
                 "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
                 "Tools/bazel/artifacts/compiled_outputs.bzl", "Tools/bazel/artifacts/BUILD.bazel",
