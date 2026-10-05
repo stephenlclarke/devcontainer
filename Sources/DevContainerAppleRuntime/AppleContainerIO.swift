@@ -95,6 +95,13 @@ final class AppleContainerIO: @unchecked Sendable {
         lock.withLock { processExited }
     }
 
+    var hasPendingOwnedStart: Bool {
+        lock.withLock {
+            startAttempted && startedAt == nil && process != nil && !controlsClosed
+                && !nativeExitObserved && !processExited
+        }
+    }
+
     var boundProcess: (any ClientProcess)? {
         lock.withLock { process }
     }

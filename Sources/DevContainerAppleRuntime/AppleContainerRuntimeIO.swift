@@ -179,7 +179,7 @@ extension AppleContainerRuntime {
         guard snapshot.spec.terminal == terminal else {
             throw DevContainerError(.invalidRequest, message: "Attachment terminal mode does not match the container")
         }
-        return try await prepareContainerIO(snapshot: snapshot, context: context).attach()
+        return try await prepareContainerIO(snapshot: snapshot, context: context, joinOwnedStart: true).attach()
     }
 
     public func resizeContainer(
@@ -216,7 +216,7 @@ extension AppleContainerRuntime {
                 throw DevContainerError(.conflict, message: "Container changed during exit registration")
             }
             try await requireCompletedCreation(id: snapshot.runtimeID.rawValue)
-            let channel = try await prepareContainerIO(snapshot: snapshot, context: context)
+            let channel = try await prepareContainerIO(snapshot: snapshot, context: context, joinOwnedStart: true)
             if let waiter = channel.prepareExitWait(snapshot: snapshot) {
                 return waiter
             }
@@ -231,7 +231,7 @@ extension AppleContainerRuntime {
     }
 
     func prepareContainerIO(
-        snapshot: ContainerSnapshot, context: RuntimeRequestContext
+        snapshot: ContainerSnapshot, context: RuntimeRequestContext, joinOwnedStart: Bool = false
     ) async throws -> AppleContainerIO {
         let id = snapshot.runtimeID.rawValue
         if containerIOClosures[id] != nil {
@@ -243,11 +243,18 @@ extension AppleContainerRuntime {
                 throw DevContainerError(.conflict, message: "Resolved container changed during I/O cleanup")
             }
             try await requireCompletedCreation(id: id)
-            return try await prepareContainerIO(snapshot: refreshed, context: context)
+            return try await prepareContainerIO(
+                snapshot: refreshed, context: context, joinOwnedStart: joinOwnedStart
+            )
         }
         if snapshot.state == .running,
            containerIO[id]?.ownsProcess(startedAt: snapshot.startedAt) != true
         {
+            if let channel = try await joinPendingOwnedStart(
+                snapshot: snapshot, context: context, allowed: joinOwnedStart
+            ) {
+                return channel
+            }
             throw DevContainerError(
                 .unsupportedCapability, message: "Live attachment requires a verified process owned by this engine"
             )
@@ -262,11 +269,17 @@ extension AppleContainerRuntime {
             }
             containerIO.removeValue(forKey: id)
             scheduleContainerIOClosure(id: id, channel: channel)
-            return try await prepareContainerIO(snapshot: snapshot, context: context)
+            return try await prepareContainerIO(
+                snapshot: snapshot, context: context, joinOwnedStart: joinOwnedStart
+            )
         }
         guard snapshot.state != .running else {
             throw DevContainerError(.conflict, message: "Container init descriptors belong to another generation")
         }
+        return try await makeContainerIO(snapshot: snapshot)
+    }
+
+    private func makeContainerIO(snapshot: ContainerSnapshot) async throws -> AppleContainerIO {
         let capture: (@Sendable () async throws -> any RuntimeContainerOutputJournal)? = if let store =
             metadataStore as? any RuntimeContainerOutputStore
         {
@@ -279,9 +292,34 @@ extension AppleContainerRuntime {
             openStandardInput: snapshot.spec.openStandardInput, outputCapture: capture
         )
         // Reentrant attach/start calls join this exact preparation.
-        containerIO[id] = channel
+        containerIO[snapshot.runtimeID.rawValue] = channel
         try await channel.prepareOutputCapture()
         return channel
+    }
+
+    private func joinPendingOwnedStart(
+        snapshot: ContainerSnapshot, context: RuntimeRequestContext, allowed: Bool
+    ) async throws -> AppleContainerIO? {
+        let id = snapshot.runtimeID.rawValue
+        guard allowed, let channel = containerIO[id], channel.createdAt == snapshot.createdAt,
+              channel.terminal == snapshot.spec.terminal, channel.hasPendingOwnedStart,
+              let operation = containerStartOperations[id]
+        else { return nil }
+        // Only public readers opt in; internal start cannot join itself.
+        try await operation.task.value
+        try context.checkActive()
+        let refreshed = try await inspectContainer(id: id, context: context)
+        guard refreshed.runtimeID == snapshot.runtimeID, refreshed.createdAt == snapshot.createdAt,
+              refreshed.dockerID == snapshot.dockerID, refreshed.spec.terminal == snapshot.spec.terminal,
+              containerIO[id] === channel,
+              containerStartOperations[id]?.registration == nil
+              || containerStartOperations[id]?.registration == operation.registration,
+              refreshed.state != .running || channel.ownsProcess(startedAt: refreshed.startedAt)
+        else {
+            throw DevContainerError(.conflict, message: "Resolved container changed during process start")
+        }
+        try await requireCompletedCreation(id: id)
+        return try await prepareContainerIO(snapshot: refreshed, context: context, joinOwnedStart: allowed)
     }
 
     func scheduleContainerIOClosure(id: String, channel: AppleContainerIO) {

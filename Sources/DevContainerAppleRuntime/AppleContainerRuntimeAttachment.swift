@@ -17,7 +17,7 @@ public extension AppleContainerRuntime {
             guard useDirectProcessAPI else {
                 throw DevContainerError(.unsupportedCapability, message: "Live attachment requires direct process APIs")
             }
-            return try await prepareContainerIO(snapshot: snapshot, context: context)
+            return try await prepareContainerIO(snapshot: snapshot, context: context, joinOwnedStart: true)
                 .prepareAttachment(history: history, live: true, context: context)
         }
         guard history else { return RuntimeContainerAttachment(history: nil, session: nil) }

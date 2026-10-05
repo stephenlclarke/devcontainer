@@ -250,6 +250,76 @@ struct AppleContainerAttachmentTests {
         await runtime.shutdown()
     }
 
+    @Test(arguments: ["attach", "prepare-attachment", "exit-wait"])
+    func `live reader joins an owned start before confirmation`(reader: String) async throws {
+        let fixture = try FakeAppleCLI()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let creator = AppleContainerCreateTests.Creator()
+        let gate = HeldStartConfirmation()
+        let bootstrap = AttachmentBootstrap(creator: creator, startGate: gate)
+        let runtime = try fixture.runtime(useDirectProcessAPI: true, creator: creator, bootstrap: bootstrap)
+        _ = try await runtime.createContainer(spec: specification(), context: .init())
+        let starting = Task { try await runtime.startContainer(id: "fixture", context: .init()) }
+        await gate.waitUntilEntered()
+        let channel = try #require(await runtime.containerIO["fixture"])
+        let snapshot = try await runtime.inspectContainer(id: "fixture", context: .init())
+        #expect(snapshot.state == .running)
+        #expect(!channel.ownsProcess(startedAt: snapshot.startedAt))
+        let observation = AttachmentCompletionObservation()
+        let attaching = Task<@Sendable () async throws -> Int32, any Error> {
+            do {
+                let wait = try await readerWait(reader: reader, runtime: runtime)
+                await observation.recordCompletion()
+                return wait
+            } catch {
+                await observation.recordCompletion()
+                throw error
+            }
+        }
+        // Keep native start running but unconfirmed while the public reader
+        // executes. The old guard completes with unsupportedCapability here.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .milliseconds(100))
+        while clock.now < deadline, await !observation.completed {
+            await Task.yield()
+        }
+        #expect(await !observation.completed)
+        await gate.release()
+        do {
+            let wait = try await attaching.value
+            try await starting.value
+            try await #require(await bootstrap.processes.first).finish(19)
+            #expect(try await wait() == 19)
+        } catch {
+            _ = try? await starting.value
+            if let process = await bootstrap.processes.first {
+                try? await process.finish(19)
+            }
+            await runtime.shutdown()
+            throw error
+        }
+        await runtime.shutdown()
+    }
+
+    private func readerWait(
+        reader: String, runtime: AppleContainerRuntime
+    ) async throws -> (@Sendable () async throws -> Int32) {
+        switch reader {
+        case "attach":
+            let session = try await runtime.attachContainer(id: "fixture", terminal: false, context: .init())
+            return { try await session.wait() }
+        case "prepare-attachment":
+            let attachment = try await runtime.prepareContainerAttachment(
+                id: "fixture", terminal: false, history: false, live: true, context: .init()
+            )
+            let session = try #require(attachment.session)
+            return { try await session.wait() }
+        default:
+            let waiter = try await runtime.prepareContainerExitWait(id: "fixture", context: .init())
+            return { try await waiter.wait() }
+        }
+    }
+
     private func specification() -> ContainerSpec {
         ContainerSpec(
             name: "fixture",
@@ -340,12 +410,17 @@ private final class LateExitRegistration: @unchecked Sendable {
 private actor AttachmentBootstrap: AppleContainerBootstrapClient {
     let creator: AppleContainerCreateTests.Creator
     let failBootstrap: Bool
+    let startGate: HeldStartConfirmation?
     var calls = 0
     var processes: [AttachedInitProcess] = []
 
-    init(creator: AppleContainerCreateTests.Creator, failBootstrap: Bool = false) {
+    init(
+        creator: AppleContainerCreateTests.Creator, failBootstrap: Bool = false,
+        startGate: HeldStartConfirmation? = nil
+    ) {
         self.creator = creator
         self.failBootstrap = failBootstrap
+        self.startGate = startGate
     }
 
     func bootstrap(id _: String, stdio: [FileHandle?]) throws -> any ClientProcess {
@@ -359,7 +434,7 @@ private actor AttachmentBootstrap: AppleContainerBootstrapClient {
             guard descriptor >= 0 else { throw POSIXError(.EMFILE) }
             return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         }
-        let process = AttachedInitProcess(creator: creator, handles: handles)
+        let process = AttachedInitProcess(creator: creator, handles: handles, startGate: startGate)
         processes.append(process)
         return process
     }
@@ -369,18 +444,21 @@ private actor AttachedInitProcess: ClientProcess {
     nonisolated let id = "fixture"
     let creator: AppleContainerCreateTests.Creator
     let handles: [FileHandle?]
+    let startGate: HeldStartConfirmation?
     var exit: Int32?
     var waiter: CheckedContinuation<Int32, Never>?
     var kills = 0
     var sizes: [String] = []
 
-    init(creator: AppleContainerCreateTests.Creator, handles: [FileHandle?]) {
+    init(creator: AppleContainerCreateTests.Creator, handles: [FileHandle?], startGate: HeldStartConfirmation? = nil) {
         self.creator = creator
         self.handles = handles
+        self.startGate = startGate
     }
 
     func start() async throws {
         try await creator.start()
+        await startGate?.hold()
         try handles[1]?.write(contentsOf: Data("first output".utf8))
         try handles[2]?.write(contentsOf: Data("first error".utf8))
     }
@@ -428,4 +506,36 @@ private actor AttachedInitProcess: ClientProcess {
     #if DEVCONTAINER_ENHANCED_RUNTIME
         nonisolated func disconnect() { /* No transport connection in this fixture. */ }
     #endif
+}
+
+private actor AttachmentCompletionObservation {
+    var completed = false
+    func recordCompletion() {
+        completed = true
+    }
+}
+
+private actor HeldStartConfirmation {
+    private var entered = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        entered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilEntered() async {
+        if entered {
+            return
+        }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }
