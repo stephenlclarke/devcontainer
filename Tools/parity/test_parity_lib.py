@@ -18,10 +18,11 @@ from parity_lib import ParityError, parse_observations
 
 class ParityLibraryTests(unittest.TestCase):
     def test_e13_compares_closed_signal_stream_measurement_across_all_lanes(self) -> None:
-        raw = b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n"
+        raw = b"compose-stdout\nsignal:USR1\nsignal:TERM\n"
         stream = {"stdoutSHA256": hashlib.sha256(raw).hexdigest(),
-                  "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
-                  "counts": {"SIGUSR1": 2, "SIGTERM": 1}}
+                  "signals": ["SIGUSR1", "SIGTERM"],
+                  "counts": {"SIGUSR1": 1, "SIGTERM": 1}}
+        contract = {"modeVersion": 2, "tty": True, "openStdin": False}
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for lane in ("docker", "apple-stock", "container-compose"):
@@ -31,6 +32,7 @@ class ParityLibraryTests(unittest.TestCase):
                     "backend": lane, "status": "passed", "fixtures": [{
                         "id": "E13-compose-signals", "status": "passed", "durationSeconds": 1,
                         "observations": {"usr1_forwarded": "true"}, "signalStream": stream,
+                        "signalContract": contract,
                     }],
                 }), encoding="utf-8")
             result, _ = compare(root, {"E13-compose-signals"})
@@ -38,7 +40,7 @@ class ParityLibraryTests(unittest.TestCase):
 
             for mutation, message in (
                 (lambda row: row.pop("signalStream"), "missing or invalid"),
-                (lambda row: row["signalStream"].update(counts={"SIGUSR1": 1, "SIGTERM": 1}), "missing or invalid"),
+                (lambda row: row["signalStream"].update(counts={"SIGUSR1": 2, "SIGTERM": 1}), "missing or invalid"),
                 (lambda row: row["signalStream"].update(extra=True), "missing or invalid"),
                 (lambda row: row["signalStream"].update(counts={"SIGUSR1": True, "SIGTERM": 1}), "missing or invalid"),
                 (lambda row: row["signalStream"].update(counts={"SIGUSR1": 10**100, "SIGTERM": 1}), "missing or invalid"),
@@ -57,14 +59,30 @@ class ParityLibraryTests(unittest.TestCase):
             payload = json.loads(candidate.read_text(encoding="utf-8"))
             payload["fixtures"][0]["signalStream"] = {
                 "stdoutSHA256": hashlib.sha256(
-                    b"compose-stdout\nsignal:USR1\nsignal:TERM\n").hexdigest(),
-                "signals": ["SIGUSR1", "SIGTERM"],
-                "counts": {"SIGUSR1": 1, "SIGTERM": 1},
+                    b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n").hexdigest(),
+                "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
+                "counts": {"SIGUSR1": 2, "SIGTERM": 1},
             }
             candidate.write_text(json.dumps(payload), encoding="utf-8")
             result, _ = compare(root, {"E13-compose-signals"})
             self.assertEqual(result["status"], "failed")
-            self.assertIn("signal stream differs", result["fixtures"][0]["functionalDifferences"][-1])
+            self.assertTrue(any("signal-stream evidence is missing or invalid" in item
+                                for item in result["fixtures"][0]["functionalDifferences"]))
+
+            for bad in (None, {"modeVersion": 1, "tty": True, "openStdin": False},
+                        {"modeVersion": 2, "tty": 1, "openStdin": False},
+                        {"modeVersion": 2, "tty": False, "openStdin": False},
+                        {"modeVersion": 2, "tty": True, "openStdin": True}):
+                payload["fixtures"][0]["signalStream"] = stream
+                if bad is None:
+                    payload["fixtures"][0].pop("signalContract")
+                else:
+                    payload["fixtures"][0]["signalContract"] = bad
+                candidate.write_text(json.dumps(payload), encoding="utf-8")
+                result, _ = compare(root, {"E13-compose-signals"})
+                self.assertEqual(result["status"], "failed")
+                self.assertTrue(any("TTY signal contract is missing or invalid" in item
+                                    for item in result["fixtures"][0]["functionalDifferences"]))
 
     def test_finalized_comparison_requires_same_stock_package_and_fingerprints(self) -> None:
         identity = {"scope": "finalized-native-package-runtime-input",

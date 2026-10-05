@@ -648,6 +648,7 @@ class OwnedGuestFixtureRunner:
         diagnostic = ""
         status = "failed"
         signal_stream: dict[str, Any] | None = None
+        signal_contract: dict[str, Any] | None = None
         root = journal = runtime = owner = None
         guest = None
         events: list[dict] = []
@@ -689,12 +690,22 @@ class OwnedGuestFixtureRunner:
                             try:
                                 from compose_foreground_probe import signal_stream_summary
 
-                                signal_stream = signal_stream_summary(
-                                    journal.records().get("guest-compose-foreground.log")
-                                )
+                                records = journal.records()
+                                inspection = json.loads(records["compose-foreground-inspection.json"])
+                                if not isinstance(inspection, dict):
+                                    raise ValueError("E13 inspection evidence is not an object")
+                                config = inspection.get("config")
+                                if (not isinstance(config, dict) or set(config) != {"Tty", "OpenStdin"}
+                                        or config["Tty"] is not True or config["OpenStdin"] is not False):
+                                    raise ValueError("E13 inspected guest did not use the TTY signal contract")
+                                signal_contract = {"modeVersion": 2, "tty": True, "openStdin": False}
+                                signal_stream = signal_stream_summary(records.get("guest-compose-foreground.log"))
                             except (TypeError, ValueError) as error:
                                 status = "failed"
                                 diagnostic = f"{diagnostic}; E13 stream evidence: {error}".strip("; ")
+                            except KeyError as error:
+                                status = "failed"
+                                diagnostic = f"{diagnostic}; E13 inspection evidence: {error}".strip("; ")
                     journal.put("probe-events.json", json.dumps(events, sort_keys=True,
                                                                   separators=(",", ":")).encode())
                     journal_receipt = journal.receipt()
@@ -734,6 +745,8 @@ class OwnedGuestFixtureRunner:
         }
         if signal_stream is not None:
             result["signalStream"] = signal_stream
+        if signal_contract is not None:
+            result["signalContract"] = signal_contract
         return result
 
     def cleanup(self) -> None:

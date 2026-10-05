@@ -1,4 +1,5 @@
 {
+  "signalContract": {"modeVersion": 2, "tty": true, "openStdin": false},
   "expected": {
     "usr1_forwarded": true,
     "guest_continues": true,

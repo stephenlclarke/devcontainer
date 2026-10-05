@@ -49,6 +49,7 @@ class ComposeForegroundFixture(GuestFixture):
     """
 
     expected_tty = False
+    expected_stdin = True
     ready_output = STDOUT
 
     def __init__(self, *args, root: Path, executable: str, runtime, provider_install=None,
@@ -73,7 +74,7 @@ class ComposeForegroundFixture(GuestFixture):
         identifier = super().owned(value)
         config, host = value["Config"], value.get("HostConfig", {})
         labels = config["Labels"]
-        if (config.get("Tty") is not self.expected_tty or config.get("OpenStdin") is not True or
+        if (config.get("Tty") is not self.expected_tty or config.get("OpenStdin") is not self.expected_stdin or
                 host.get("AutoRemove") is not True or host.get("NetworkMode") != "none" or
                 labels.get("com.docker.compose.project") != self.project or
                 labels.get("com.docker.compose.service") != "app"):
@@ -109,7 +110,7 @@ class ComposeForegroundFixture(GuestFixture):
         configuration = {"services": {"app": {"image": self.image, "network_mode": "none",
                          "command": [part.replace("$", "$$") for part in self.intent["command"]],
                          "labels": self.intent["labels"]}}}
-        if self.redirected:
+        if self.redirected or (self.expected_tty and not self.expected_stdin):
             # `run` selects the terminal independently of the service default.
             configuration["services"]["app"]["tty"] = True
         self._prepare_wrapper_environment()
@@ -121,6 +122,8 @@ class ComposeForegroundFixture(GuestFixture):
                      "run", "--rm", "--no-deps", "--pull", "never", "--name", self.name, "app"]
         if not self.redirected and not self.expected_tty:
             arguments.insert(-1, "-T")
+        if self.expected_tty and not self.expected_stdin:
+            arguments[-1:-1] = ["--no-tty=false", "--interactive=false"]
         if self.quiet:
             arguments.insert(-1, "--quiet")
         self._record_compose_intent(arguments, path, configuration)
@@ -454,15 +457,18 @@ class ComposeForegroundFixture(GuestFixture):
 class ComposeSignalFixture(ComposeForegroundFixture):
     """Host signals target only the admitted CLI; the guest must observe both."""
 
-    command = ("sh", "-c", "trap 'printf \"signal:USR1\\n\"' USR1; "
+    expected_tty = True
+    expected_stdin = False
+    command = ("sh", "-c", "stty -onlcr -echo <&1 || exit 24; "
+               "trap 'printf \"signal:USR1\\n\"' USR1; "
                "trap 'printf \"signal:TERM\\n\"; exit 23' TERM; "
-               "printf 'compose-stdout\\n'; printf 'compose-stderr\\n' >&2; "
-               "while :; do IFS= read -r ignored; done")
+               "printf 'compose-stdout\\n'; while :; do sleep 1; done")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.intent["command"] = list(self.command)
         self.intent["composeSignals"] = ["SIGUSR1", "SIGTERM"]
+        self.intent["composeSignalContract"] = {"modeVersion": 2, "tty": True, "openStdin": False}
 
     def send_signal(self, name, number):
         expected = json.loads(self.journal.records()[PROCESS + "-process.json"])
@@ -525,7 +531,7 @@ class ComposeSignalFixture(ComposeForegroundFixture):
             signal_stream_summary(actual_output)
         except ValueError:
             raise ValueError("Compose signal output differs from exact guest streams") from None
-        if (actual_errors.count(STDERR) != 1 or STDOUT in actual_errors or b"signal:" in actual_errors):
+        if (STDERR in actual_errors or STDOUT in actual_errors or b"signal:" in actual_errors):
             raise ValueError("Compose signal output differs from exact guest streams")
         ForegroundFixture.require_auto_removed(self)
         self.runtime.verify()
@@ -556,15 +562,13 @@ def signal_stream_summary(stdout: bytes) -> dict:
     if not tail.endswith(TERM_OUTPUT):
         raise ValueError("Compose signal stream must end with one TERM trap")
     usr1_bytes = tail[:-len(TERM_OUTPUT)]
-    if (not usr1_bytes or len(usr1_bytes) % len(USR1_OUTPUT) != 0 or
-            usr1_bytes != USR1_OUTPUT * (len(usr1_bytes) // len(USR1_OUTPUT))):
-        raise ValueError("Compose signal stream must contain only ordered USR1 traps before TERM")
-    usr1_count = len(usr1_bytes) // len(USR1_OUTPUT)
-    signals = ["SIGUSR1"] * usr1_count + ["SIGTERM"]
+    if usr1_bytes != USR1_OUTPUT:
+        raise ValueError("Compose signal stream must contain one USR1 trap before TERM")
+    signals = ["SIGUSR1", "SIGTERM"]
     return {
         "stdoutSHA256": hashlib.sha256(stdout).hexdigest(),
         "signals": signals,
-        "counts": {"SIGUSR1": usr1_count, "SIGTERM": 1},
+        "counts": {"SIGUSR1": 1, "SIGTERM": 1},
     }
 
 

@@ -263,7 +263,8 @@ class SuiteLifecycleTests(unittest.TestCase):
                     "cleanupDifferences": [],
                     "fixtures": [{"id": qualify.COMPONENT_FIXTURE, "status": "passed",
                                   "durationSeconds": 1.0, "observations": {"exit": "23"},
-                                  "signalStream": stream(1)}]}))
+                                  "signalStream": stream(1),
+                                  "signalContract": {"modeVersion": 2, "tty": True, "openStdin": False}}]}))
             passing = qualify.compare_component_results(evidence, qualify.COMPONENT_FIXTURE)
             self.assertEqual(passing["status"], "passed")
             compose_result = evidence / "container-compose/results.json"

@@ -46,6 +46,16 @@ class OwnedGuestFailureTests(unittest.TestCase):
             runner.cleanup()
 
     def test_guest_operation_and_cleanup_use_same_instance_and_receipt_precedes_root_removal(self) -> None:
+        self._run_e13_guest_bridge({"config": {"Tty": True, "OpenStdin": False}}, True)
+
+    def test_e13_missing_or_invalid_inspection_fails_without_mode_claim(self) -> None:
+        for inspection in (None, [], {"config": {}},
+                           {"config": {"Tty": 1, "OpenStdin": False}},
+                           {"config": {"Tty": True, "OpenStdin": 0}}):
+            with self.subTest(inspection=inspection):
+                self._run_e13_guest_bridge(inspection, False)
+
+    def _run_e13_guest_bridge(self, inspection, expected_pass) -> None:
         import shutil
         import guest_runtime
         import owned_guest_fixture
@@ -103,8 +113,11 @@ class OwnedGuestFailureTests(unittest.TestCase):
                     if self.fixture == "E13-compose-signals":
                         self.runtime.journal.put(
                             "guest-compose-foreground.log",
-                            b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n",
+                            b"compose-stdout\nsignal:USR1\nsignal:TERM\n",
                         )
+                        if inspection is not None:
+                            self.runtime.journal.put("compose-foreground-inspection.json",
+                                                     json.dumps(inspection).encode())
                     return {"status": "passed", "remainingOwnedResources": []}
 
             fixture = SimpleNamespace(identifier="E13-compose-signals", expected={})
@@ -138,10 +151,15 @@ class OwnedGuestFailureTests(unittest.TestCase):
                   mock.patch.object(owned_guest_fixture.shutil, "rmtree", side_effect=check_receipt_then_remove)):
                 result = bridge.run(fixture, raw)
 
-            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["status"], "passed" if expected_pass else "failed")
             self.assertEqual(len(instances), 1)
             self.assertTrue(instances[0].operated and instances[0].cleaned)
-            self.assertEqual(result["signalStream"]["counts"], {"SIGUSR1": 2, "SIGTERM": 1})
+            if expected_pass:
+                self.assertEqual(result["signalStream"]["counts"], {"SIGUSR1": 1, "SIGTERM": 1})
+                self.assertEqual(result["signalContract"], {"modeVersion": 2, "tty": True, "openStdin": False})
+            else:
+                self.assertNotIn("signalContract", result)
+                self.assertIn("E13", result["diagnostic"])
             self.assertTrue(receipt_path.is_file())
             self.assertFalse(root.exists())
 

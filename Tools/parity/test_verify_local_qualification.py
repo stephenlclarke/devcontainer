@@ -879,14 +879,15 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                         "providerBinarySHA256": provider_map,
                     }
                     if suite == "cli" and "E13-compose-signals" in ids:
-                        raw_signal_stdout = b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n"
+                        raw_signal_stdout = b"compose-stdout\nsignal:USR1\nsignal:TERM\n"
                         row = next(item for item in result["fixtures"]
                                    if item["id"] == "E13-compose-signals")
                         row["signalStream"] = {
                             "stdoutSHA256": hashlib.sha256(raw_signal_stdout).hexdigest(),
-                            "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
-                            "counts": {"SIGUSR1": 2, "SIGTERM": 1},
+                            "signals": ["SIGUSR1", "SIGTERM"],
+                            "counts": {"SIGUSR1": 1, "SIGTERM": 1},
                         }
+                        row["signalContract"] = {"modeVersion": 2, "tty": True, "openStdin": False}
                     if suite == "cli":
                         result["cleanupDifferences"] = []
                     fingerprint = {
@@ -1185,9 +1186,9 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                     authenticate_active_runtime_preflights(sealed_receipt, missing, REPOSITORY)
             for index, stream in enumerate((None, {
                     "stdoutSHA256": hashlib.sha256(
-                        b"compose-stdout\nsignal:USR1\nsignal:TERM\n").hexdigest(),
-                    "signals": ["SIGUSR1", "SIGTERM"],
-                    "counts": {"SIGUSR1": 1, "SIGTERM": 1},
+                        b"compose-stdout\nsignal:USR1\nsignal:USR1\nsignal:TERM\n").hexdigest(),
+                    "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
+                    "counts": {"SIGUSR1": 2, "SIGTERM": 1},
             })):
                 replay = dict(authenticated_inventory)
                 lane_path = sealed_receipt["laneResults"]["container-compose"]["cli"]["results"]["path"]
@@ -1203,6 +1204,25 @@ class VerifyLocalQualificationTests(unittest.TestCase):
                     compare_and_publish(
                         REPOSITORY, receipt_bytes, sealed_receipt, replay,
                         root / f"negative-replay-{index}", expected_cli, expected_vscode,
+                    )
+            for index, contract in enumerate((None,
+                                              {"modeVersion": 1, "tty": True, "openStdin": False},
+                                              {"modeVersion": 2, "tty": False, "openStdin": False},
+                                              {"modeVersion": 2, "tty": 1, "openStdin": False})):
+                replay = dict(authenticated_inventory)
+                lane_path = sealed_receipt["laneResults"]["container-compose"]["cli"]["results"]["path"]
+                lane = json.loads(replay[lane_path])
+                row = next(item for item in lane["fixtures"] if item["id"] == "E13-compose-signals")
+                if contract is None:
+                    row.pop("signalContract")
+                else:
+                    row["signalContract"] = contract
+                replay[lane_path] = (json.dumps(lane, sort_keys=True, indent=2) + "\n").encode()
+                with self.subTest(importer_contract=index), self.assertRaisesRegex(
+                        QualificationError, "replayed cli parity comparison did not pass"):
+                    compare_and_publish(
+                        REPOSITORY, receipt_bytes, sealed_receipt, replay,
+                        root / f"negative-contract-{index}", expected_cli, expected_vscode,
                     )
 
 

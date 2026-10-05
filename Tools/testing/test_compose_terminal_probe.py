@@ -69,6 +69,8 @@ class ComposeTerminalSizeTests(unittest.TestCase):
         self.assertEqual(observed, contract_observations(contract["expected"]))
         self.assertNotIn("-T", self.cli_arguments)
         self.assertNotIn("--no-tty", self.cli_arguments)
+        self.assertNotIn("--no-tty=false", self.cli_arguments)
+        self.assertNotIn("--interactive=false", self.cli_arguments)
         self.assertEqual(self.fixture.cleanup()["remainingOwnedResources"], [])
         self.assertIsNone(self.fixture.master)
         records = self.journal.records()

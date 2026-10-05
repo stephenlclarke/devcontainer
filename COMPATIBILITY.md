@@ -4,9 +4,9 @@
 
 The next native release campaign targets the immutable Apple `container` 1.4.1 and external `container-compose` 0.15.1 assets in the release lock, with the designated macOS 27.0 build 26A428, Xcode 27.0 build 27A266a and Swift 6.4.0.34.1 host. The 28-fixture, three-lane contract requires 84 fresh cells, including actual Compose lifecycle and VS Code sessions. Updated pins and previously released SDK assets are inputs to qualification; they do not establish new supported behavior or permit historical evidence to be relabeled.
 
-E13's complete-release comparison requires measured guest signal output, including its exact hash, signal counts and order, to match the campaign's Docker oracle in both candidate lanes. It does not assume exactly one guest trap per host signal. Missing or unequal stream evidence fails parity; standalone boolean-only cases cannot establish this output contract. Canonical socket paths and CIDR-preserving native network inventory have focused regression coverage, but no complete passing campaign or new release follows from these component fixes.
+E13's complete-release comparison covers inspected TTY signal forwarding with noninteractive stdin, identified by `signalContract` mode 2. It requires exactly one guest USR1 trap, one TERM trap, exact LF stdout hash and order, exit 23 and auto-removal in all three lanes. Missing, malformed, duplicate or unequal evidence fails parity; old non-TTY receipts cannot be replayed as mode 2. E09 separately covers non-TTY foreground streams. E13 does not claim non-TTY signal-output equivalence, and the prior non-TTY failure remains failed. A complete 84-cell campaign is required for release.
 
-The E13-only component mode retains exact stream comparison and the full host restoration boundary, but never supplies release authority. Corrected wrapper signal forwarding and explicit native-provider selection require fresh live proof. A measured signal-count difference remains a release blocker; the complete 84-cell campaign is still required.
+The E13-only component mode retains exact stream comparison and the full host restoration boundary, but never supplies release authority. Corrected wrapper signal forwarding and explicit native-provider selection require fresh live proof. A measured TTY signal-count difference remains a release blocker; the complete 84-cell campaign is still required.
 
 The unreleased stock-Apple candidate now passes the original C02 dependency fixture, including app-startup DNS, later dependency DNS, health and selected helper service, with verified zero-residue cleanup. [Exact candidate and sealed evidence](docs/bazel-test-harness.md#c02-dependency-health-and-service-selection) do not qualify the enhanced lane, quiet benchmarks or a new stable release. Historical C02 failures below describe superseded candidates.
 
@@ -257,7 +257,7 @@ non-conformant forms.
 | Compose service | Selected service, generated overrides, workspace projection | `supported` |
 | Compose dependencies | `runServices`, health gates, service DNS | `supported` |
 | Compose resources | Named volumes, networks, aliases, environment files | `supported` |
-| Compose lifecycle | Recreation, shutdown, signals, restart, discovery labels | `supported` |
+| Compose lifecycle | Recreation, shutdown, E13 TTY signals with noninteractive stdin, restart, discovery labels | `supported` |
 | Fault recovery | Missing backend, bounded empty events, signal exit, concurrent start/remove convergence | `supported` |
 | VS Code | Open, attach, server install, terminal, ports, rebuild, reopen, cleanup | `supported` |
 

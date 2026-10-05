@@ -47,19 +47,21 @@ def valid_signal_stream(value: Any) -> bool:
     signals = value["signals"]
     counts = value["counts"]
     if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-            or not isinstance(signals, list) or len(signals) < 2
+            or signals != ["SIGUSR1", "SIGTERM"]
             or not isinstance(counts, dict) or set(counts) != {"SIGUSR1", "SIGTERM"}
-            or type(counts["SIGUSR1"]) is not int or counts["SIGUSR1"] < 1
+            or type(counts["SIGUSR1"]) is not int or counts["SIGUSR1"] != 1
             or type(counts["SIGTERM"]) is not int or counts["SIGTERM"] != 1):
         return False
-    usr1_count = counts["SIGUSR1"]
-    if usr1_count != len(signals) - 1:
-        return False
-    expected_signals = ["SIGUSR1"] * usr1_count + ["SIGTERM"]
-    if signals != expected_signals:
-        return False
-    expected_stdout = SIGNAL_STREAM_PREFIX + SIGNAL_STREAM_USR1 * usr1_count + SIGNAL_STREAM_TERM
+    expected_stdout = SIGNAL_STREAM_PREFIX + SIGNAL_STREAM_USR1 + SIGNAL_STREAM_TERM
     return hashlib.sha256(expected_stdout).hexdigest() == digest
+
+
+def valid_signal_contract(value: Any) -> bool:
+    """Admit only the measured TTY fixture, never older non-TTY E13 results."""
+    return (isinstance(value, dict) and set(value) == {"modeVersion", "tty", "openStdin"}
+            and type(value["modeVersion"]) is int and value["modeVersion"] == 2
+            and type(value["tty"]) is bool and value["tty"] is True
+            and type(value["openStdin"]) is bool and value["openStdin"] is False)
 
 
 def compare_finalized_inputs(root: Path, lanes: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -215,7 +217,7 @@ def compare(
                 )
                 continue
             by_id[identifier] = result
-            if identifier != "E13-compose-signals" and "signalStream" in result:
+            if identifier != "E13-compose-signals" and ("signalStream" in result or "signalContract" in result):
                 evidence_errors.append(f"{lane} {identifier} has unexpected signal-stream evidence")
         actual = set(by_id)
         missing = sorted(expected_fixture_ids - actual)
@@ -282,6 +284,9 @@ def compare(
         signal_streams: dict[str, Any] = {}
         if fixture_id == "E13-compose-signals":
             for lane, result in by_lane.items():
+                contract = result.get("signalContract") if result is not None else None
+                if not valid_signal_contract(contract):
+                    functional_differences.append(f"{lane} E13 TTY signal contract is missing or invalid")
                 stream = result.get("signalStream") if result is not None else None
                 if not valid_signal_stream(stream):
                     functional_differences.append(f"{lane} E13 signal-stream evidence is missing or invalid")

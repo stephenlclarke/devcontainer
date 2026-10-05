@@ -2,6 +2,9 @@
 
 import json
 import hashlib
+import os
+import pty
+import select
 from pathlib import Path
 import signal
 import sqlite3
@@ -593,6 +596,8 @@ class ComposeSignalTests(unittest.TestCase):
     def guest(self):
         value = ComposeForegroundTests.guest(self)
         value["Config"]["Cmd"] = list(self.fixture.command)
+        value["Config"]["Tty"] = True
+        value["Config"]["OpenStdin"] = False
         return value
 
     def test_q_inspect_split_is_owned_only_for_exact_signal_argv(self):
@@ -610,7 +615,9 @@ class ComposeSignalTests(unittest.TestCase):
 
         def start(arguments, root, output, **kwargs):
             self.server.guest = self.guest()
-            original(["/bin/sh", "-c", self.fixture.command[2] if script is None else script], root, output, **kwargs)
+            command = self.fixture.command[2] if script is None else script
+            command = command.replace("stty -onlcr -echo <&1 || exit 24; ", "", 1)
+            original(["/bin/sh", "-c", command], root, output, **kwargs)
 
         def auto_remove(fixture):
             self.assertEqual(fixture.child.process.returncode, 23)
@@ -638,19 +645,17 @@ class ComposeSignalTests(unittest.TestCase):
             "counts": {"SIGUSR1": 1, "SIGTERM": 1},
         })
 
-    def test_duplicate_usr1_bytes_are_preserved_as_a_measurement(self):
+    def test_duplicate_usr1_bytes_fail_exact_tty_contract(self):
         script = self.fixture.command[2].replace(
             "trap 'printf \"signal:USR1\\n\"' USR1",
             "trap 'printf \"signal:USR1\\n\"; printf \"signal:USR1\\n\"' USR1",
         )
-        self.run_cli(script)
+        with self.assertRaisesRegex(ValueError, "exact guest streams"):
+            self.run_cli(script)
         output = self.fixture.snapshot(self.fixture.output)
         self.assertEqual(output, STDOUT + USR1_OUTPUT * 2 + TERM_OUTPUT)
-        self.assertEqual(signal_stream_summary(output), {
-            "stdoutSHA256": hashlib.sha256(output).hexdigest(),
-            "signals": ["SIGUSR1", "SIGUSR1", "SIGTERM"],
-            "counts": {"SIGUSR1": 2, "SIGTERM": 1},
-        })
+        with self.assertRaises(ValueError):
+            signal_stream_summary(output)
         self.assertEqual(self.fixture.cleanup()["status"], "passed")
 
     def test_signal_stream_rejects_missing_extra_or_reordered_bytes(self):
@@ -658,6 +663,7 @@ class ComposeSignalTests(unittest.TestCase):
             STDOUT + TERM_OUTPUT,
             STDOUT + USR1_OUTPUT,
             STDOUT + TERM_OUTPUT + USR1_OUTPUT,
+            STDOUT + USR1_OUTPUT * 2 + TERM_OUTPUT,
             STDOUT + USR1_OUTPUT + TERM_OUTPUT + TERM_OUTPUT,
             STDOUT + USR1_OUTPUT + b"noise\n" + TERM_OUTPUT,
         ):
@@ -665,9 +671,47 @@ class ComposeSignalTests(unittest.TestCase):
                 signal_stream_summary(output)
 
     def test_configuration_contains_exact_traps_not_original_stdin_fixture(self):
-        self.fixture.prepare()
+        arguments = self.fixture.prepare()
         configuration = json.loads((self.root / "compose-foreground.json").read_text())
         self.assertEqual(configuration["services"]["app"]["command"], list(self.fixture.command))
+        self.assertTrue(configuration["services"]["app"]["tty"])
+        self.assertEqual(arguments[-3:-1], ["--no-tty=false", "--interactive=false"])
+        self.assertNotIn("-T", arguments)
+        self.assertEqual(self.guest()["Config"]["OpenStdin"], False)
+
+    def test_real_pty_has_exact_lf_and_single_signal_traps(self):
+        master, slave = pty.openpty()
+        process = None
+        output = bytearray()
+
+        def until(expected):
+            end = time.monotonic() + 5
+            while expected not in output:
+                timeout = end - time.monotonic()
+                if timeout <= 0:
+                    self.fail("owned PTY guest did not emit its signal marker")
+                if select.select([master], [], [], timeout)[0]:
+                    output.extend(os.read(master, 4096))
+
+        try:
+            process = subprocess.Popen(list(self.fixture.command), stdin=subprocess.DEVNULL, stdout=slave,
+                                       stderr=slave, start_new_session=True)
+            os.close(slave)
+            slave = -1
+            until(STDOUT)
+            os.kill(process.pid, signal.SIGUSR1)
+            until(USR1_OUTPUT)
+            os.kill(process.pid, signal.SIGTERM)
+            until(TERM_OUTPUT)
+            self.assertEqual(process.wait(timeout=5), 23)
+            self.assertEqual(bytes(output), STDOUT + USR1_OUTPUT + TERM_OUTPUT)
+        finally:
+            if process is not None and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+            if slave >= 0:
+                os.close(slave)
+            os.close(master)
 
     def test_wrong_trap_exit_is_not_success(self):
         changed_command = self.fixture.command[2].replace("exit 23", "exit 0")
