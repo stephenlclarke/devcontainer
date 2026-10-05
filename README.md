@@ -457,3 +457,5 @@ This is an independent open-source project. It is not affiliated with or endorse
 Licensed under [Apache License 2.0](LICENSE), matching `apple/container` and
 `apple/containerization`. The package builder includes third-party notices,
 deterministic build metadata, checksums, and an SPDX 2.3 SBOM.
+
+Event inventory reads compare the complete CLI observation with precise native identity. A lifecycle change between these reads invalidates the entire event snapshot. Event subscription startup and polling retry only that explicit identity conflict, with at most three full reads; every accepted snapshot retains the existing identity and timestamp checks. Persistent conflicts, unrelated provider errors, cancellation and expired contexts still fail. After a coherent snapshot completes, the poller rechecks subscriber expiry using the same timestamp it uses for publication, so a held retry cannot publish a late event. Offline regressions pass; fresh full runtime qualification remains required. See [the C02 event inventory issue](docs/ISSUE-event-inventory-conflict.md) and [the correction](docs/PR-event-inventory-conflict.md).
