@@ -206,11 +206,17 @@ class ArchiveTests(unittest.TestCase):
 
     def test_compose_bridge_uses_only_explicit_native_provider(self):
         provider = self.home / "compose-provider"
-        provider.write_text('#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = "version" ] && [ "$2" = "--short" ] || exit 98\nprintf "package-provider-fixture\\n"\n')
+        provider.write_text(
+            '#!/bin/sh\n'
+            '[ "$#" -eq 3 ] && [ "$1" = "version" ] && [ "$2" = "--format" '
+            '] && [ "$3" = "json" ] || exit 98\n'
+            'printf \'{"version":"0.15.1","source":"stephenlclarke/container-compose",'
+            '"commit":"fixture"}\\n\'\n'
+        )
         provider.chmod(0o700)
         self.environment["DEVCONTAINER_COMPOSE_BIN"] = str(provider)
         output, _ = self.invoke("bin/devcontainer-compose", "version", "--short")
-        self.assertEqual(output, "container-compose package-provider-fixture\n")
+        self.assertEqual(output, "container-compose 0.15.1\n")
 
     def test_cli_invalid_format_fails_without_runtime(self):
         _, error = self.invoke("bin/devcontainer", "version", "--format", "invalid", expected_status=64)

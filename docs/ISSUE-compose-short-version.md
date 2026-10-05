@@ -2,7 +2,7 @@
 
 ## Problem
 
-The maintained `devcontainer-compose` facade handles the upstream CLI's `version --short` probe by forwarding the same Docker-facing arguments to the selected native provider. In the stock-backend C01 fixture, the upstream CLI fails during Compose-version discovery before it can create the project. The provider's admitted machine-readable version interface is `version --format json`, which reports its version and source.
+The maintained `devcontainer-compose` facade handles the upstream CLI's `version --short` probe by forwarding the same Docker-facing arguments to the selected native provider. In the stock-backend C01 fixture, the upstream CLI fails during Compose-version discovery before it can create the project. The provider's admitted machine-readable version interface is `version --format json`, which reports its version and source. The package archive smoke fixture also needs to model that JSON interface rather than the old short-version provider call.
 
 ## Expected behavior
 
@@ -10,4 +10,4 @@ When the facade selects `container-compose`, it should obtain the provider's ver
 
 ## Scope
 
-Update only the maintained Compose facade and its tests. Do not change the separately installed provider, runtime backend defaults, or provider selection.
+Update only the maintained Compose facade, tests, and the archive smoke fixture. Do not change the separately installed provider, runtime backend defaults, or provider selection.
