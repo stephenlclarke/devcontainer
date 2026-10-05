@@ -796,6 +796,41 @@ struct AppleContainerRuntimeTests {
     }
 }
 
+extension AppleContainerRuntimeTests {
+    @Test
+    func `archive transfer polls delayed native states and restores stopped container`() async throws {
+        let fixture = try FakeAppleCLI()
+        try fixture.setState("created")
+        try fixture.setMode("archive-state-poll")
+        let runtime = try fixture.runtime()
+        let context = RuntimeRequestContext()
+        let before = try await runtime.inspectContainer(id: "fixture", context: context)
+        #expect(before.state == .stopped)
+
+        let archive = try await runtime.copyArchiveFromContainer(
+            id: "fixture", path: "/workspace/file.txt", context: context
+        )
+        #expect(archive.stat.name == "file.txt")
+        #expect(archive.stat.size == 6)
+        #expect(archive.data.range(of: Data("copied".utf8)) != nil)
+        let restored = try await runtime.inspectContainer(id: "fixture", context: context)
+        #expect(restored.state == before.state)
+        #expect(restored.runtimeID == before.runtimeID)
+        #expect(restored.createdAt == before.createdAt)
+
+        let log = try fixture.log()
+        let start = try #require(log.range(of: "start fixture"))
+        let startPoll = try #require(log.range(of: "archive-state-poll-created"))
+        let copy = try #require(log.range(of: "cp fixture:/workspace/file.txt"))
+        let stop = try #require(log.range(of: "stop --time 10 fixture"))
+        let stopPoll = try #require(log.range(of: "archive-state-poll-running"))
+        #expect(start.lowerBound < startPoll.lowerBound && startPoll.lowerBound < copy.lowerBound)
+        #expect(copy.lowerBound < stop.lowerBound && stop.lowerBound < stopPoll.lowerBound)
+        #expect(log.components(separatedBy: "archive-state-poll-").count == 3)
+        await runtime.shutdown()
+    }
+}
+
 @Suite(.serialized)
 struct AppleContainerRuntimeNetworkAddressTests {
     @Test
@@ -915,6 +950,7 @@ struct FakeAppleCLI {
         let mode = shellQuote(modeURL.path)
         let images = shellQuote(root.appendingPathComponent("images.json").path)
         let containers = shellQuote(root.appendingPathComponent("containers.json").path)
+        let archiveNextState = shellQuote(root.appendingPathComponent("archive-next-state").path)
         let createHelp = enhancedCreateOptions
             ? "--hostname\\n--publish\\n--privileged\\n--security-opt\\n--dns"
             : "--cap-add\\n--cap-drop\\n--publish"
@@ -924,6 +960,7 @@ struct FakeAppleCLI {
         LOG=\(log)
         STATE=\(state)
         MODE=\(mode)
+        ARCHIVE_NEXT_STATE=\(archiveNextState)
         printf '%s\\n' "$*" >> "$LOG"
         mode=$(cat "$MODE")
         if [ "$mode" = failure ]; then
@@ -954,6 +991,11 @@ struct FakeAppleCLI {
             fi
             if [ "$mode" = slow-list ]; then
               sleep 0.3
+            fi
+            if [ "$mode" = archive-state-poll ] && [ -f "$ARCHIVE_NEXT_STATE" ]; then
+              printf '%s\\n' "archive-state-poll-$state" >> "$LOG"
+              cat "$ARCHIVE_NEXT_STATE" > "$STATE"
+              rm "$ARCHIVE_NEXT_STATE"
             fi
             if [ "$state" = missing ]; then
               printf '%s\\n' '[]'
@@ -1160,14 +1202,20 @@ struct FakeAppleCLI {
             fi
             ;;
           "start fixture")
-            if [ "$state" = created ]; then
+            if [ "$mode" = archive-state-poll ]; then
+              printf '%s' running > "$ARCHIVE_NEXT_STATE"
+            elif [ "$state" = created ]; then
               sleep 0.1
               printf '%s' running > "$STATE"
             fi
             ;;
           "stop --time")
             if [ "$4" = fixture ]; then
-              printf '%s' stopped > "$STATE"
+              if [ "$mode" = archive-state-poll ]; then
+                printf '%s' stopped > "$ARCHIVE_NEXT_STATE"
+              else
+                printf '%s' stopped > "$STATE"
+              fi
             fi
             ;;
           "cp "*)
