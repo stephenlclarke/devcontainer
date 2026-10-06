@@ -302,8 +302,7 @@ jobs:
           ref: ${{ github.sha }}
           path: release-tools
           sparse-checkout: |
-            Tools/release
-            Tools/testing
+            Tools
       - name: Require isolated ARM64 release identity
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -320,6 +319,8 @@ jobs:
           test -z "$(git -C devcontainer status --short)"
           test "$(git -C release-tools rev-parse HEAD)" = "${{ github.sha }}"
           test -z "$(git -C release-tools status --short)"
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${PWD}/release-tools/Tools/release" \
+            python3 -c 'from homebrew_installation import LaunchdServices; LaunchdServices()'
       - name: Check out Homebrew tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
