@@ -10,6 +10,8 @@ Admit the exact locked native builder in the active private provider HOME, start
 
 Focused regression tests and a fresh signed E04 component run are required before another full release campaign. The readiness phase remains outside the measured fixture duration and is reported separately. Stable publication remains conditional on zero semantic differences, unchanged timing limits and verified host restoration.
 
+The first component attempt exposed a Docker singleton import failure before any readiness image or fixture was created: it had not registered the maintained testing modules. Readiness now uses the existing canonical module-path setup, and an isolated Python subprocess verifies that it does not depend on an inherited `PYTHONPATH`.
+
 ## Compatibility and risks
 
 Readiness uses a separate nonce and cannot satisfy the measured RUN from cache. No timing waiver, retry, lower dependency rebuild or fixture assertion change is introduced. The release must qualify the exact signed package with both native providers and the Docker oracle.

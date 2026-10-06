@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +18,23 @@ from run_engine_fixture import Probe
 
 
 class E04ReadinessTests(unittest.TestCase):
+    def test_docker_readiness_imports_engine_probe_without_inherited_pythonpath(self):
+        repository = Path(__file__).resolve().parents[2]
+        parity = repository / "Tools/parity"
+        script = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(parity)!r}); "
+            "from e04_build_readiness import engine_request; "
+            f"request = engine_request(Path({str(repository)!r})); "
+            "assert request.__module__ == 'engine_probe'"
+        )
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        result = subprocess.run([sys.executable, "-I", "-c", script], cwd=repository,
+                                env=environment, capture_output=True, text=True,
+                                timeout=20, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_readiness_context_uses_unique_nonce_in_the_executed_run(self):
         first = readiness_fixture()
         second = readiness_fixture()
@@ -36,6 +55,7 @@ class E04ReadinessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "receipt.json"
+            repository = Path(__file__).resolve().parents[2]
             image_id = "sha256:" + "a" * 64
             response = {"Id": image_id, "RepoTags": []}
             with patch("engine_probe.request", side_effect=[
@@ -58,7 +78,7 @@ class E04ReadinessTests(unittest.TestCase):
                     (200, json.dumps({"Id": image_id, "RepoTags": ["unique:latest"]}).encode()),
                     (404, b""),
                 ]
-                receipt = docker_readiness("/docker", Path("/repo"), {}, Path("/socket"), Path(output))
+                receipt = docker_readiness("/docker", repository, {}, Path("/socket"), Path(output))
             self.assertEqual(receipt["status"], "passed")
             self.assertEqual(receipt["imageID"], image_id)
             self.assertEqual(request.call_count, 4)
@@ -102,10 +122,11 @@ class E04ReadinessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             receipt = Path(temporary) / "receipt.json"
+            repository = Path(__file__).resolve().parents[2]
             with patch("engine_probe.request", return_value=(500, b"unavailable")), \
                     patch("e04_build_readiness.subprocess.run") as command:
                 with self.assertRaisesRegex(RuntimeError, "already exists"):
-                    docker_readiness("/docker", Path("/repo"), {}, Path("/socket"), receipt)
+                    docker_readiness("/docker", repository, {}, Path("/socket"), receipt)
             command.assert_not_called()
             retained = json.loads(receipt.read_bytes())
             self.assertEqual(retained["status"], "failed")

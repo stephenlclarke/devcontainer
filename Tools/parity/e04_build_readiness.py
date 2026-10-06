@@ -39,11 +39,21 @@ def command_arguments(tag: str, token: str, context: Path, *, load: bool = False
     return [*result, str(context)]
 
 
+def engine_request(repository: Path):
+    """Load the maintained HTTP helper through the normal parity import boundary."""
+    from owned_guest_fixture import _testing_path
+
+    _testing_path(repository)
+    from engine_probe import request
+
+    return request
+
+
 def docker_readiness(docker: str, repository: Path, environment: dict[str, str],
                      socket: Path, output: Path) -> dict:
     """Build and remove one nonce-tagged image before the Docker E04 timer."""
     directory, context, tag, token = readiness_fixture()
-    from engine_probe import request
+    request = engine_request(repository)
     image_path = f"/v1.53/images/{quote(tag, safe='')}/json"
     payload = {
         "schemaVersion": 1, "status": "intent", "tag": tag,

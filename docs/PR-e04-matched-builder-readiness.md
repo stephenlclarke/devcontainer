@@ -6,7 +6,7 @@ Finalized native qualification previously started BuildKit inside the measured l
 
 ## Validation
 
-Builder startup and readiness durations are retained separately from the measured fixture. The temporary image and builder are removed through exact ownership checks before host restoration. The focused 148-test suite covers singleton setup, measured cache isolation, inspection errors and uncertain cleanup. A fresh signed E04 component run and the complete source/package/runtime release gates remain required; no failed campaign data is discarded.
+Builder startup and readiness durations are retained separately from the measured fixture. The temporary image and builder are removed through exact ownership checks before host restoration. Focused regressions cover singleton setup, measured cache isolation, inspection errors and uncertain cleanup, including isolated module loading without inherited Python paths. A fresh signed E04 component run and the complete source/package/runtime release gates remain required; no failed campaign data is discarded.
 
 ## Compatibility and risks
 
