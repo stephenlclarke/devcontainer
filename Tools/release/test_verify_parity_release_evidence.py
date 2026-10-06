@@ -6,6 +6,7 @@ import hashlib
 import json
 import shutil
 import stat
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -23,6 +24,42 @@ HARNESS_SHA = "d" * 64
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+class ParityHarnessIdentityTests(unittest.TestCase):
+    def test_matches_actual_runner_and_binds_expanded_closure(self) -> None:
+        sys.path.insert(0, str(REPOSITORY / "Tools/parity"))
+        import run_lane
+
+        self.assertEqual(evidence.parity_harness_sha256(REPOSITORY),
+                         run_lane.parity_harness_sha256(REPOSITORY))
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            for relative in run_lane.PARITY_HARNESS:
+                destination = repository / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            original = evidence.parity_harness_sha256(repository)
+            readiness = repository / "Tools/parity/e04_build_readiness.py"
+            readiness.write_bytes(readiness.read_bytes() + b"\n# changed expanded harness member\n")
+            self.assertNotEqual(evidence.parity_harness_sha256(repository), original)
+            readiness.unlink()
+            with self.assertRaisesRegex(evidence.EvidenceError, "source is missing"):
+                evidence.parity_harness_sha256(repository)
+            readiness.symlink_to(REPOSITORY / "Tools/parity/e04_build_readiness.py")
+            with self.assertRaisesRegex(evidence.EvidenceError, "source is missing"):
+                evidence.parity_harness_sha256(repository)
+
+    def test_rejects_nonliteral_duplicate_and_unsafe_closures(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            runner = repository / "Tools/parity/run_lane.py"
+            runner.parent.mkdir(parents=True)
+            for declaration in ("tuple(['file'])", "('file', 'file')", "('../file',)", "()", "('file',)\nPARITY_HARNESS = ('file',)"):
+                with self.subTest(declaration=declaration):
+                    runner.write_text(f"PARITY_HARNESS = {declaration}\n")
+                    with self.assertRaises(evidence.EvidenceError):
+                        evidence.parity_harness_sha256(repository)
 
 
 class ParityReleaseEvidenceTests(unittest.TestCase):

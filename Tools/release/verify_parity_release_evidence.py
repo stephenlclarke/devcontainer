@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import json
@@ -69,14 +70,25 @@ def _require(condition: bool, message: str) -> None:
 
 def parity_harness_sha256(repository: Path) -> str:
     """Use the same explicit harness closure recorded by every native lane."""
+    runner = repository / "Tools/parity/run_lane.py"
+    _require(runner.is_file() and not runner.is_symlink(), "parity runner source is missing")
+    try:
+        declarations = [node.value for node in ast.parse(runner.read_bytes()).body
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "PARITY_HARNESS"
+                                for target in node.targets)]
+        _require(len(declarations) == 1, "parity runner must declare one harness closure")
+        files = ast.literal_eval(declarations[0])
+    except (SyntaxError, ValueError, TypeError) as error:
+        raise EvidenceError("parity runner harness closure is not a literal tuple") from error
+    _require(isinstance(files, tuple) and bool(files)
+             and all(isinstance(relative, str) for relative in files)
+             and len(files) == len(set(files)), "parity runner harness closure is invalid")
     digest_value = hashlib.sha256()
-    files = (
-        "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
-        "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
-        "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
-        "Tools/release/prepare_finalized_package.py",
-    )
     for relative in files:
+        _require(not PurePosixPath(relative).is_absolute()
+                 and all(part not in {"", ".", ".."} for part in relative.split("/"))
+                 and "\\" not in relative, "parity harness source path is invalid")
         path = repository / relative
         _require(path.is_file() and not path.is_symlink(), f"parity harness source is missing: {relative}")
         digest_value.update(relative.encode("utf-8") + b"\0")

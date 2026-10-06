@@ -295,6 +295,13 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.resolve.outputs.sha }}
           path: devcontainer
+      - name: Check out pinned publication verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: release-tools
+          sparse-checkout: Tools/release
       - name: Require isolated ARM64 release identity
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -309,6 +316,8 @@ jobs:
           test -n "${NOTARY_PROFILE}"
           test "$(git -C devcontainer rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           test -z "$(git -C devcontainer status --short)"
+          test "$(git -C release-tools rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git -C release-tools status --short)"
       - name: Check out Homebrew tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -404,7 +413,7 @@ jobs:
             >"${parity_run_json}"
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${{ needs.resolve.outputs.parity_run_id }}/artifacts" \
             >"${parity_artifacts_json}"
-          python3 Tools/release/verify_parity_release_evidence.py \
+          python3 "${GITHUB_WORKSPACE}/release-tools/Tools/release/verify_parity_release_evidence.py" \
             --repository "${PWD}" \
             --run-json "${parity_run_json}" \
             --artifact-json "${parity_artifacts_json}" \
@@ -429,6 +438,16 @@ jobs:
             >"${assets}/devcontainer.spdx.json"
           tar -xOf "${archive}" "${root}/notarization.json" \
             >"${assets}/notarization.json"
+          jq -n \
+            --arg sourceCommit "${PUBLISH_SHA}" \
+            --arg verifierCommit "${{ github.sha }}" \
+            --arg verifierSHA256 "$(
+              shasum -a 256 "${GITHUB_WORKSPACE}/release-tools/Tools/release/verify_parity_release_evidence.py" \
+                | awk '{ print $1 }'
+            )" \
+            '{schemaVersion: 1, scope: "publication-verifier-identity", sourceCommit: $sourceCommit,
+              verifierCommit: $verifierCommit, verifierSHA256: $verifierSHA256}' \
+            >"${assets}/publication-verifier.json"
           find "${assets}" -maxdepth 1 -type f -print | sort \
             >"${RUNNER_TEMP}/release-assets.txt"
 
