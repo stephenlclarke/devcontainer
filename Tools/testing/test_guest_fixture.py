@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
             return 201, {"Id": server.guest["Id"]}
         parts = path.split("/")
         if self.command == "GET" and len(parts) == 4 and parts[1] == "containers" and parts[3] == "json":
-            override = getattr(server, "inspect_override", None)
+            override = getattr(server, "container_inspect_override", None)
             if override is not None:
                 return override
         if len(parts) < 3 or not server.guest or parts[2] not in {server.guest["Id"], server.guest["Name"][1:]}:
@@ -90,7 +90,7 @@ class GuestFixtureTests(unittest.TestCase):
         self.server.image = "sha256:" + "c" * 64
         self.server.guest, self.server.routes = None, []
         self.server.prepared, self.server.fail_start, self.server.ignore_delete = True, False, False
-        self.server.inspect_override = None
+        self.server.container_inspect_override = None
         self.owner = "a" * 64
         self.journal = ServiceJournal(self.root / "guest.sqlite", {"case": self.owner}, create=True)
         self.fixture = self.reopen()
@@ -136,7 +136,7 @@ class GuestFixtureTests(unittest.TestCase):
         body = {"message": "private identity conflict diagnostic"}
         fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
                                observe=events.append)
-        self.server.inspect_override = (409, body)
+        self.server.container_inspect_override = (409, body)
         with self.assertRaisesRegex(ValueError, "Cannot inspect guest resource identity") as raised:
             fixture.inspect("b" * 64)
         self.assertNotIn(body["message"], str(raised.exception))
@@ -149,7 +149,7 @@ class GuestFixtureTests(unittest.TestCase):
         self.assertNotIn(body["message"], json.dumps(event))
         self.assertFalse(any(key in event for key in ("body", "response", "message")))
 
-        self.server.inspect_override = None
+        self.server.container_inspect_override = None
         self.assertIsNone(fixture.inspect("missing"))
         self.assertEqual(events[-1]["status"], 404)
         self.assertFalse(any(key.startswith("privateBody") for key in events[-1]))
@@ -160,7 +160,7 @@ class GuestFixtureTests(unittest.TestCase):
         fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
                                observe=events.append)
         for payload in (b"not-json", canonical({"message": "x" * (64 * 1024)})):
-            self.server.inspect_override = (409, payload)
+            self.server.container_inspect_override = (409, payload)
             with self.assertRaises(ValueError):
                 fixture.inspect("b" * 64)
             self.assertFalse(any(key.startswith("privateBody") for key in events[-1]))

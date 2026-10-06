@@ -310,20 +310,26 @@ class ExecTransportTests(unittest.TestCase):
     def test_delayed_positive_progress_is_retained_without_extending_deadline(self):
         left, right = self.pair()
         right.settimeout(1)
-        progress, failures = {}, []
+        progress, failures, peer_observations = {}, [], {}
         started = time.monotonic()
         deadline = started + 0.2
 
         def peer():
             try:
-                self.assertEqual(right.recv(100), b"private-input")
-                self.assertEqual(right.recv(1), b"")
+                peer_observations["input"] = right.recv(100)
+                if peer_observations["input"] != b"private-input":
+                    return
+                peer_observations["inputEOF"] = right.recv(1)
+                if peer_observations["inputEOF"] != b"":
+                    return
                 right.sendall(b"first-output")
                 # Separate real reads deterministically before the controlled quiet interval.
                 limit = time.monotonic() + 1
                 while progress.get("readOperations", 0) == 0 and time.monotonic() < limit:
                     time.sleep(0.001)
-                self.assertEqual(progress.get("readOperations"), 1)
+                peer_observations["readOperations"] = progress.get("readOperations")
+                if peer_observations["readOperations"] != 1:
+                    return
                 time.sleep(0.05)
                 right.sendall(b"second-output")
             except BaseException as error:
@@ -338,6 +344,9 @@ class ExecTransportTests(unittest.TestCase):
             thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
         self.assertEqual(failures, [])
+        self.assertEqual(peer_observations.get("input"), b"private-input")
+        self.assertEqual(peer_observations.get("inputEOF"), b"")
+        self.assertEqual(peer_observations.get("readOperations"), 1)
         self.assertLess(time.monotonic() - started, 1)
         self.assertEqual(progress["inputAcceptedBytes"], 13)
         self.assertEqual(progress["outputWireBytes"], 25)
