@@ -34,7 +34,7 @@ GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
 LEASE_PATH = Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")
 LANES = ("docker", "apple-stock", "container-compose")
 COMPONENT_FIXTURE = "E13-compose-signals"
-COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E06-network-volume")
+COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E06-network-volume", "E07-init-attachment")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",

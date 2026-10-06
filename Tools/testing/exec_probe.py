@@ -95,7 +95,10 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress:
     # input. Counts survive timeouts without retaining user payloads in reports.
     if progress is None:
         progress = {}
-    progress.update(inputAcceptedBytes=0, outputWireBytes=len(initial), inputHalfClosed=False, outputEOF=False)
+    started = time.monotonic_ns()
+    progress.update(inputAcceptedBytes=0, outputWireBytes=len(initial), inputHalfClosed=False, outputEOF=False,
+                    firstReadElapsedNS=None, lastReadElapsedNS=None, readOperations=0,
+                    firstWriteElapsedNS=None, lastWriteElapsedNS=None, writeOperations=0)
     output = bytearray(initial)
     pending = memoryview(incoming)
     connection.setblocking(False)
@@ -114,6 +117,11 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress:
                         if pending:
                             raise ValueError("Exec stream closed before input was delivered")
                         return bytes(output)
+                    elapsed = time.monotonic_ns() - started
+                    if progress["firstReadElapsedNS"] is None:
+                        progress["firstReadElapsedNS"] = elapsed
+                    progress["lastReadElapsedNS"] = elapsed
+                    progress["readOperations"] += 1
                     output.extend(chunk)
                     progress["outputWireBytes"] += len(chunk)
                     if len(output) > MAX_OUTPUT:
@@ -122,6 +130,11 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress:
                     sent = connection.send(pending[:65536])
                     if not sent:
                         raise ValueError("Exec stream stopped accepting input")
+                    elapsed = time.monotonic_ns() - started
+                    if progress["firstWriteElapsedNS"] is None:
+                        progress["firstWriteElapsedNS"] = elapsed
+                    progress["lastWriteElapsedNS"] = elapsed
+                    progress["writeOperations"] += 1
                     pending = pending[sent:]
                     progress["inputAcceptedBytes"] += sent
                     if not pending:

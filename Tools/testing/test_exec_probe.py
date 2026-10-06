@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import socket
 import sys
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -283,8 +284,14 @@ class ExecTransportTests(unittest.TestCase):
         deadline = time.monotonic() + 0.03
         with self.assertRaises(TimeoutError):
             duplex(left, b"initial", b"private-input", deadline, progress=progress)
-        self.assertEqual(progress, {"inputAcceptedBytes": 13, "outputWireBytes": 21,
-                                    "inputHalfClosed": True, "outputEOF": False})
+        self.assertEqual({key: progress[key] for key in (
+            "inputAcceptedBytes", "outputWireBytes", "inputHalfClosed", "outputEOF")},
+            {"inputAcceptedBytes": 13, "outputWireBytes": 21, "inputHalfClosed": True, "outputEOF": False})
+        for direction in ("Read", "Write"):
+            self.assertEqual(progress[direction.lower() + "Operations"], 1)
+            self.assertGreaterEqual(progress["first" + direction + "ElapsedNS"], 0)
+            self.assertEqual(progress["first" + direction + "ElapsedNS"], progress["last" + direction + "ElapsedNS"])
+        self.assertNotIn("private", str(progress))
         self.assertEqual(right.recv(100), b"private-input")
         self.assertEqual(right.recv(1), b"")
 
@@ -296,7 +303,53 @@ class ExecTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "before input"):
             duplex(left, b"", BINARY_INPUT, deadline, progress=progress)
         self.assertEqual(progress, {"inputAcceptedBytes": 0, "outputWireBytes": 0,
-                                    "inputHalfClosed": False, "outputEOF": True})
+                                    "inputHalfClosed": False, "outputEOF": True,
+                                    "firstReadElapsedNS": None, "lastReadElapsedNS": None, "readOperations": 0,
+                                    "firstWriteElapsedNS": None, "lastWriteElapsedNS": None, "writeOperations": 0})
+
+    def test_delayed_positive_progress_is_retained_without_extending_deadline(self):
+        left, right = self.pair()
+        right.settimeout(1)
+        progress, failures = {}, []
+        started = time.monotonic()
+        deadline = started + 0.2
+
+        def peer():
+            try:
+                self.assertEqual(right.recv(100), b"private-input")
+                self.assertEqual(right.recv(1), b"")
+                right.sendall(b"first-output")
+                # Separate real reads deterministically before the controlled quiet interval.
+                limit = time.monotonic() + 1
+                while progress.get("readOperations", 0) == 0 and time.monotonic() < limit:
+                    time.sleep(0.001)
+                self.assertEqual(progress.get("readOperations"), 1)
+                time.sleep(0.05)
+                right.sendall(b"second-output")
+            except BaseException as error:
+                failures.append(error)
+
+        thread = threading.Thread(target=peer, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(TimeoutError, "whole-connection deadline"):
+                duplex(left, b"", b"private-input", deadline, progress=progress)
+        finally:
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(progress["inputAcceptedBytes"], 13)
+        self.assertEqual(progress["outputWireBytes"], 25)
+        self.assertTrue(progress["inputHalfClosed"])
+        self.assertFalse(progress["outputEOF"])
+        self.assertEqual(progress["readOperations"], 2)
+        self.assertEqual(progress["writeOperations"], 1)
+        self.assertGreater(progress["lastReadElapsedNS"] - progress["firstReadElapsedNS"], 40_000_000)
+        self.assertEqual(progress["firstWriteElapsedNS"], progress["lastWriteElapsedNS"])
+        self.assertNotIn("private", str(progress))
+        self.assertNotIn("output", str({key: value for key, value in progress.items() if key != "outputWireBytes" and
+                                      key != "outputEOF"}))
 
     def test_excess_output_and_early_eof_do_not_pass(self):
         left, right = self.pair()

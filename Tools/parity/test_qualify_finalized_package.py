@@ -1482,6 +1482,9 @@ class ProviderPinTests(unittest.TestCase):
 
 class E06ComponentTests(unittest.TestCase):
     FIXTURE = "E06-network-volume"
+    OBSERVATIONS = {"network": "removed", "volume": "removed"}
+    CHANGED_OBSERVATION = "volume"
+    WRONG_VALUE = "retained"
 
     def test_filter_and_cli_only_execution_keep_e13_supported(self) -> None:
         for fixture in (self.FIXTURE, qualify.COMPONENT_FIXTURE):
@@ -1503,7 +1506,7 @@ class E06ComponentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             qualify.selected_fixture_environment({}, "E01-container-lifecycle")
 
-    def test_make_dry_run_selects_e06_or_target_default_without_changing_full_mode(self) -> None:
+    def test_make_dry_run_selects_fixture_or_target_default_without_changing_full_mode(self) -> None:
         environment = {key: value for key, value in os.environ.items()
                        if key not in {"NATIVE_PARITY_COMPONENT_FIXTURE", "MAKEFLAGS", "MAKEFILES", "MFLAGS"}}
         cases = (("native-parity-component", None, qualify.COMPONENT_FIXTURE),
@@ -1523,7 +1526,7 @@ class E06ComponentTests(unittest.TestCase):
                     other = self.FIXTURE if expected == qualify.COMPONENT_FIXTURE else qualify.COMPONENT_FIXTURE
                     self.assertNotIn(f'--component-fixture "{other}"', result.stdout)
 
-    def test_e06_cleanup_rejects_wrong_extra_fixture_and_survivors(self) -> None:
+    def test_selected_component_cleanup_rejects_wrong_extra_fixture_and_survivors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
             lane = evidence / "docker"
@@ -1545,7 +1548,7 @@ class E06ComponentTests(unittest.TestCase):
                                    lambda: self.fail("V01 must not run"), lambda: False,
                                    lambda: True, component_fixture=self.FIXTURE)
 
-    def test_e06_comparison_uses_exact_observations_and_rejects_extra_fixture(self) -> None:
+    def test_selected_component_comparison_uses_exact_observations_and_rejects_extra_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
             for lane in qualify.LANES:
@@ -1555,7 +1558,7 @@ class E06ComponentTests(unittest.TestCase):
                     "backend": lane, "status": "passed", "durationSeconds": 1.0,
                     "cleanupDifferences": [], "fixtures": [{
                         "id": self.FIXTURE, "status": "passed", "durationSeconds": 1.0,
-                        "observations": {"network": "removed", "volume": "removed"}}]}))
+                        "observations": dict(self.OBSERVATIONS)}]}))
             comparison = qualify.compare_component_results(evidence, self.FIXTURE)
             self.assertTrue(qualify.component_comparison_is_passed(
                 comparison, evidence, self.FIXTURE))
@@ -1563,17 +1566,17 @@ class E06ComponentTests(unittest.TestCase):
                 comparison, evidence, qualify.COMPONENT_FIXTURE))
             result = evidence / "container-compose/results.json"
             payload = json.loads(result.read_text())
-            payload["fixtures"][0]["observations"]["volume"] = "retained"
+            payload["fixtures"][0]["observations"][self.CHANGED_OBSERVATION] = self.WRONG_VALUE
             result.write_text(json.dumps(payload))
             self.assertEqual(qualify.compare_component_results(
                 evidence, self.FIXTURE)["status"], "failed")
-            payload["fixtures"][0]["observations"]["volume"] = "removed"
+            payload["fixtures"][0]["observations"][self.CHANGED_OBSERVATION] = self.OBSERVATIONS[self.CHANGED_OBSERVATION]
             payload["fixtures"].append({"id": qualify.COMPONENT_FIXTURE, "status": "passed"})
             result.write_text(json.dumps(payload))
             self.assertEqual(qualify.compare_component_results(
                 evidence, self.FIXTURE)["status"], "failed")
 
-    def test_e06_receipt_is_dynamic_and_cannot_seal_full_qualification(self) -> None:
+    def test_selected_component_receipt_is_dynamic_and_cannot_seal_full_qualification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
             args = argparse.Namespace(evidence=evidence, component_fixture=self.FIXTURE,
@@ -1602,12 +1605,12 @@ class E06ComponentTests(unittest.TestCase):
             self.assertEqual(result["vscodeStatus"], "skipped")
             self.assertFalse((evidence / "qualification.json").exists())
 
-    def test_e06_recheck_binds_initialized_source_and_campaign(self) -> None:
+    def test_selected_component_recheck_binds_initialized_source_and_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve() / "component"
             evidence.mkdir(mode=0o700)
             os.chmod(evidence, 0o700)
-            inputs = {"sourceCommit": "a" * 40, "sourceTree": "b" * 40, "campaign": "e06"}
+            inputs = {"sourceCommit": "a" * 40, "sourceTree": "b" * 40, "campaign": self.FIXTURE}
             qualify.write_json(evidence / "operator-inputs.json", inputs)
             os.chmod(evidence / "operator-inputs.json", 0o600)
             identity = qualify.capture_component_evidence_identity(evidence, inputs)
@@ -1618,6 +1621,15 @@ class E06ComponentTests(unittest.TestCase):
             args.component_fixture = "E01-container-lifecycle"
             with self.assertRaisesRegex(ValueError, "supported component"):
                 qualify.validate_evidence_root(args, identity)
+
+
+class E07ComponentTests(E06ComponentTests):
+    FIXTURE = "E07-init-attachment"
+    OBSERVATIONS = {key: "true" for key in (
+        "prestart_attach", "binary_duplex", "source_separation", "stdin_eof", "exact_exit",
+        "history", "restart_history", "combined_history_live")}
+    CHANGED_OBSERVATION = "stdin_eof"
+    WRONG_VALUE = "false"
 
 
 if __name__ == "__main__":
