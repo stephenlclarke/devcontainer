@@ -301,7 +301,9 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
           path: release-tools
-          sparse-checkout: Tools/release
+          sparse-checkout: |
+            Tools/release
+            Tools/testing
       - name: Require isolated ARM64 release identity
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -445,8 +447,13 @@ jobs:
               shasum -a 256 "${GITHUB_WORKSPACE}/release-tools/Tools/release/verify_parity_release_evidence.py" \
                 | awk '{ print $1 }'
             )" \
+            --arg installationToolSHA256 "$(
+              shasum -a 256 "${GITHUB_WORKSPACE}/release-tools/Tools/release/homebrew_installation.py" \
+                | awk '{ print $1 }'
+            )" \
             '{schemaVersion: 1, scope: "publication-verifier-identity", sourceCommit: $sourceCommit,
-              verifierCommit: $verifierCommit, verifierSHA256: $verifierSHA256}' \
+              verifierCommit: $verifierCommit, verifierSHA256: $verifierSHA256,
+              installationToolSHA256: $installationToolSHA256}' \
             >"${assets}/publication-verifier.json"
           find "${assets}" -maxdepth 1 -type f -print | sort \
             >"${RUNNER_TEMP}/release-assets.txt"
@@ -622,7 +629,7 @@ jobs:
           fi
           formula_path="${PWD}/homebrew-tap/Formula/${formula}.rb"
           test_tap="stephenlclarke/devcontainer-release-ci-${GITHUB_RUN_ID}"
-          python3 devcontainer/Tools/release/homebrew_installation.py \
+          python3 release-tools/Tools/release/homebrew_installation.py \
             --formula-path "${formula_path}" \
             --test-tap "${test_tap}" \
             --lane "${LANE}" \

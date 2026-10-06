@@ -87,7 +87,7 @@ def validate_context(context_path: Path, formula_path: Path, lane: str,
             raise InstallationError("stable package context is inconsistent")
         formula_class = "Devcontainer"
         url = f"https://github.com/stephenlclarke/devcontainer/releases/download/{version}/{context['asset']}"
-        declarations = ("", "")
+        declarations = ("", "\n")
     else:
         match = re.fullmatch(r"current\.([1-9][0-9]*)\.([0-9a-f]{12})", context["formulaVersion"])
         if (match is None or match.group(2) != commit[:12] or context["releaseTag"] != "current"

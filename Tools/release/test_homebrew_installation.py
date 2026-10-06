@@ -10,6 +10,8 @@ import pwd
 from pathlib import Path
 import plistlib
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -267,7 +269,7 @@ class HomebrewInstallationTests(unittest.TestCase):
             context = {"asset": "devcontainer-release-arm64.tar.gz", "commit": SOURCE,
                        "formulaVersion": VERSION, "lane": "stable", "productVersion": VERSION,
                        "releaseTag": VERSION}
-            declarations = ("", "")
+            declarations = ("", "\n")
             url = f"https://github.com/stephenlclarke/devcontainer/releases/download/{VERSION}/{context['asset']}"
             class_name = "Devcontainer"
         else:
@@ -443,6 +445,22 @@ class HomebrewInstallationTests(unittest.TestCase):
             self.context_path, self.formula_path, "current", SOURCE, VERSION,
             Path(__file__).with_name("devcontainer.rb.in"))
         self.assertEqual(context["formulaVersion"], f"current.25.{SOURCE[:12]}")
+
+    def test_actual_stable_renderer_output_is_accepted(self):
+        archive = self.root / "archive.tar.gz"
+        archive.write_bytes(b"archive fixture")
+        subprocess.run([
+            sys.executable, str(Path(__file__).with_name("render-homebrew-formula.py")),
+            "--product-version", VERSION,
+            "--url", f"https://github.com/stephenlclarke/devcontainer/releases/download/{VERSION}/devcontainer-release-arm64.tar.gz",
+            "--archive", str(archive),
+            "--template", str(Path(__file__).with_name("devcontainer.rb.in")),
+            "--output", str(self.formula_path),
+        ], check=True, capture_output=True)
+        context = installation.validate_context(
+            self.context_path, self.formula_path, "stable", SOURCE, VERSION,
+            Path(__file__).with_name("devcontainer.rb.in"))
+        self.assertEqual(context["formulaVersion"], VERSION)
 
     def test_modified_formula_code_is_rejected_even_when_digest_line_is_valid(self):
         self.formula_path.write_text(self.formula_path.read_text() + "\n  system \"touch", encoding="utf-8")
