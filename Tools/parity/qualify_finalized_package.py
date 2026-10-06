@@ -34,12 +34,13 @@ GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
 LEASE_PATH = Path(f"/private/tmp/container-compose-runtime-{os.getuid()}.lock")
 LANES = ("docker", "apple-stock", "container-compose")
 COMPONENT_FIXTURE = "E13-compose-signals"
-COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E06-network-volume", "E07-init-attachment",
+COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E04-image-build", "E06-network-volume", "E07-init-attachment",
                       "E14-compose-terminal-size")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
+    "Tools/parity/e04_build_readiness.py",
     "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
     "Tools/parity/vscode-driver-extension/extension.js",
     "Tools/parity/vscode-driver-extension/package.json",
@@ -1347,7 +1348,10 @@ def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
 
     guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
     args._guest_input_admissions = {
-        lane: preflight_guest_inputs(REPOSITORY, lane, guest_retained)
+        lane: preflight_guest_inputs(
+            REPOSITORY, lane, guest_retained,
+            builder=(lane != "docker" and (getattr(args, "component_fixture", None) is None
+                                           or args.component_fixture == "E04-image-build")))
         for lane in ("docker", "apple-stock", "container-compose")
     }
     admit = load_run_lane(REPOSITORY).load_finalized_admitter(REPOSITORY)

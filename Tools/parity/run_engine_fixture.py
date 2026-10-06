@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -212,13 +213,16 @@ class Probe:
 
     def image_build(self) -> None:
         tag = self.name + ":latest"
+        cache_nonce = uuid.uuid4().hex
         self.images.append(tag)
         with tempfile.TemporaryDirectory(prefix="devcontainer-e04-") as directory:
             root = Path(directory)
             (root / "Dockerfile").write_text(
                 "FROM alpine:latest\n"
                 "ARG PARITY_VALUE\n"
-                'RUN test "$PARITY_VALUE" = expected\n'
+                "ARG PARITY_CACHE_NONCE\n"
+                'RUN test "$PARITY_VALUE" = expected && test "$PARITY_CACHE_NONCE" = '
+                + cache_nonce + "\n"
                 'LABEL devcontainer.parity="true"\n'
                 'CMD ["true"]\n',
                 encoding="utf-8",
@@ -229,6 +233,8 @@ class Probe:
                 "plain",
                 "--build-arg",
                 "PARITY_VALUE=expected",
+                "--build-arg",
+                f"PARITY_CACHE_NONCE={cache_nonce}",
                 "--tag",
                 tag,
                 "--load",
@@ -247,12 +253,17 @@ class Probe:
                 .strip()
             )
             (root / "Dockerfile").write_text(
-                "FROM alpine:latest\nRUN false\n", encoding="utf-8"
+                "FROM alpine:latest\n"
+                "ARG PARITY_CACHE_NONCE\n"
+                'RUN test "$PARITY_CACHE_NONCE" = ' + cache_nonce + " && false\n",
+                encoding="utf-8",
             )
             failed = self.command(
                 "build",
                 "--progress",
                 "plain",
+                "--build-arg",
+                f"PARITY_CACHE_NONCE={cache_nonce}",
                 "--tag",
                 tag + "-failed",
                 str(root),

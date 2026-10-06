@@ -108,6 +108,8 @@ The candidate native-create path also distinguishes failed local preparation fro
 
 The candidate image-build path preserves completed builder progress and emits an in-band Docker build error only after recording failed reconciliation. Preflight, cancellation and abandonment remain failures. Stock/enhanced component checks do not replace live E04 builder/failure-phase qualification or change the historical release matrix below.
 
+Parity E04 setup now requires a separately measured readiness build on both Docker and finalized native lanes. It uses a unique temporary image tag, records the setup receipt outside the fixture timer and removes only that exact image; the legacy E04 build command, observations, cache-sensitive RUN work and timing threshold remain part of the compatibility check.
+
 These pins define the immutable 1.0.1 compatibility matrix and match the
 `Tests/Parity/manifest.json` stored at the 1.0.1 tag. Release-bound evidence
 also records the signing identity where applicable, platform triple, and each

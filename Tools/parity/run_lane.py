@@ -88,6 +88,7 @@ PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
+    "Tools/parity/e04_build_readiness.py",
     "Tools/parity/run_engine_fixture.py", "Tools/parity/docker_api.py",
     "Tools/parity/vscode-driver-extension/extension.js",
     "Tools/parity/vscode-driver-extension/package.json",
@@ -334,22 +335,31 @@ class LaneRunner:
                           if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"
                           or (self.lane != "docker" and selected == {"E06-network-volume"}
                               and fixture.identifier == "E06-network-volume")]
-        if owned_fixtures:
+        native_e04_builder = (self.lane != "docker" and self.finalized_identity is not None
+                              and self.finalized_identity.get("runtimeProfile") == "stock"
+                              and any(fixture.identifier == "E04-image-build" for fixture in fixtures))
+        if owned_fixtures or native_e04_builder:
             from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
 
             retained = _retained_root(self)
-            self._owned_guest_inputs = admit_guest_inputs(self.repository, self.lane, retained)
+            self._owned_guest_inputs = admit_guest_inputs(
+                self.repository, self.lane, retained, builder=native_e04_builder)
             self._owned_guest_runner = OwnedGuestFixtureRunner(
-                self, owned_fixtures, admitted_inputs=self._owned_guest_inputs)
+                self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
+                fixture_selection=tuple(fixture.identifier for fixture in fixtures),
+                builder_required=native_e04_builder)
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
         native_preparation_failed = False
+        e04_readiness_failed = False
         if self.lane == "docker":
             self.configure_docker_oracle()
-        elif owned_fixtures:
+        elif owned_fixtures or native_e04_builder:
             try:
                 self._owned_guest_runner.prepare_native_provider()
+                if native_e04_builder:
+                    self._owned_guest_runner.prepare_native_builder()
             except (OSError, ValueError, RuntimeError, ParityError,
                     subprocess.SubprocessError, TimeoutError) as error:
                 native_preparation_failed = True
@@ -359,16 +369,20 @@ class LaneRunner:
         if self.lane != "docker" and not native_preparation_failed:
             self.start_engine()
 
-        if owned_fixtures and not native_preparation_failed:
+        if (owned_fixtures or native_e04_builder) and not native_preparation_failed:
             try:
                 self._owned_guest_runner.attach_endpoint()
                 if self.lane == "docker":
                     self._owned_guest_runner.prepare()
+                elif native_e04_builder:
+                    self._owned_guest_runner.prepare_native_builder_readiness()
             except (OSError, ValueError, RuntimeError, ParityError,
                     subprocess.SubprocessError, TimeoutError) as error:
                 self.cleanup_differences.append(f"owned guest input preparation failed: {error}")
                 self._preserve_engine_on_uncertain_guest_cleanup = True
                 self._owned_guest_runner.preparation_error = str(error)
+                if native_e04_builder:
+                    native_preparation_failed = True
 
         results: list[dict[str, Any]] = []
         component_terminal_only = (
@@ -391,9 +405,28 @@ class LaneRunner:
                 )
                 if self.lane != "apple-stock" and not native_stock_package and not component_terminal_only:
                     self.prepare_builder()
+                if self.lane == "docker" and any(fixture.identifier == "E04-image-build" for fixture in fixtures):
+                    from e04_build_readiness import docker_readiness
+                    socket_value = self.environment.get("DOCKER_HOST", "")
+                    if not socket_value.startswith("unix://"):
+                        raise ParityError("Docker E04 readiness requires the selected Unix Engine endpoint")
+                    try:
+                        docker_readiness(self.docker, self.repository, self.environment,
+                                         Path(socket_value.removeprefix("unix://")),
+                                         self.output / "e04-build-readiness.json")
+                    except (OSError, ValueError, RuntimeError, ParityError,
+                            subprocess.SubprocessError, TimeoutError) as error:
+                        e04_readiness_failed = True
+                        self.cleanup_differences.append(f"Docker E04 builder readiness failed: {error}")
                 atomic_json(self.output / "fingerprint.json", self.fingerprint())
-                for fixture in fixtures:
-                    results.append(self.run_fixture(fixture))
+                if e04_readiness_failed:
+                    results = [{"id": fixture.identifier, "status": "failed", "durationSeconds": 0.0,
+                                "observations": {}, "differences": [],
+                                "diagnostic": "Docker builder readiness failed before fixture timing"}
+                               for fixture in fixtures]
+                else:
+                    for fixture in fixtures:
+                        results.append(self.run_fixture(fixture))
         finally:
             try:
                 if getattr(self, "_owned_guest_runner", None) is not None:

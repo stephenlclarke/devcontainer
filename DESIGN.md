@@ -516,6 +516,8 @@ Native runtime Compose fixtures invoke the signed `devcontainer-compose` wrapper
 
 Structured logs use correlation, project, resource, endpoint, provider, and elapsed-time fields. Values are privacy-redacted before emission. Metrics are local by default and include request latency, stream termination reason, reconciliation outcome, resource leak count, and parity fixture timing. Parity evidence compares each candidate fixture with the matching Docker wall time. Comparable or better performance (`<=1.00x` Docker) is the objective, and any completed result above `2.50x` requires further investigation. Non-completion and missing or invalid timing evidence fail the gate; a completed timing ratio alone does not alter functional parity. The full target and current implementation gaps are defined in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md). There is no outbound telemetry in the initial product.
 
+The E04 parity timer begins only after each lane has separately proved its selected builder with one uniquely tagged disposable build and verified removal. The setup receipt is retained outside the fixture duration; the existing E04 semantic assertions and timing limits remain unchanged.
+
 `container devcontainer diagnostics` creates a reviewable archive containing versions, capability probes, redacted logs, runtime resource summaries, config hashes, and recent event state. The command prints the archive manifest before writing it.
 
 ## Packaging

@@ -152,6 +152,22 @@ class SuiteLifecycleTests(unittest.TestCase):
         self.assertEqual(qualify.selected_fixture_environment({"PATH": "/usr/bin"}, fixture),
                          {"PATH": "/usr/bin", "DEVCONTAINER_PARITY_FIXTURES": fixture})
 
+    def test_e04_component_runs_cli_only_and_selects_exact_legacy_fixture(self) -> None:
+        fixture = "E04-image-build"
+        self.assertIn(fixture, qualify.COMPONENT_FIXTURES)
+        calls = []
+        cli = subprocess.CompletedProcess(["cli"], 0, "", "")
+        actual_cli, actual_vscode, passed = qualify.run_suite_pair(
+            lambda: (calls.append("cli"), cli)[1],
+            lambda: calls.append("vscode"), lambda: True, lambda: True,
+            component_fixture=fixture)
+        self.assertEqual(calls, ["cli"])
+        self.assertIs(actual_cli, cli)
+        self.assertIsNone(actual_vscode)
+        self.assertTrue(passed)
+        self.assertEqual(qualify.selected_fixture_environment({"PATH": "/usr/bin"}, fixture),
+                         {"PATH": "/usr/bin", "DEVCONTAINER_PARITY_FIXTURES": fixture})
+
     def test_component_cleanup_requires_only_exact_cli_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
@@ -1281,7 +1297,7 @@ class AdmissionBoundaryTests(unittest.TestCase):
             lane_loader.load_finalized_admitter.return_value = (
                 lambda **kwargs: {**admission, "providerLane": kwargs["provider_lane"]})
             with (mock.patch("owned_guest_fixture.preflight_guest_inputs",
-                             side_effect=lambda _repo, lane, retained: (
+                             side_effect=lambda _repo, lane, retained, **_kwargs: (
                                  calls.append((lane, retained)), {"workload": "admitted"})[1]),
                   mock.patch.object(qualify, "load_run_lane", return_value=lane_loader),
                   mock.patch.object(qualify, "sha256", return_value=digest),

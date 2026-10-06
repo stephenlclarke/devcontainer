@@ -51,7 +51,7 @@ def _testing_path(repository: Path) -> Path:
     return path
 
 
-def admit_guest_inputs(repository: Path, lane: str, retained: Path) -> dict[str, Any]:
+def admit_guest_inputs(repository: Path, lane: str, retained: Path, *, builder: bool = False) -> dict[str, Any]:
     """Read and authenticate every pinned input needed by an owned guest route."""
 
     if lane not in {"docker", "apple-stock", "container-compose"}:
@@ -79,8 +79,10 @@ def admit_guest_inputs(repository: Path, lane: str, retained: Path) -> dict[str,
             kernel_lock = json.loads((repository / "Tools/bazel/guest-kernel.lock.json").read_text())
             release_lock = json.loads((repository / "Tools/bazel/releases.lock.json").read_text())
             provider_images = provider_image_references(release_lock, lane, retained)
+            builder_lock = (json.loads((repository / "Tools/bazel/builder-images.lock.json").read_text())
+                            if builder else None)
             inputs = admit_guest(kernel_lock, images_lock, lane, retained,
-                                 fixture="E07-init-attachment",
+                                 builder_lock=builder_lock, fixture="E07-init-attachment",
                                  provider_image_references=provider_images)
         return inputs
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -104,10 +106,10 @@ def guest_input_identity(inputs: dict[str, Any]) -> dict[str, Any]:
     return safe_inputs
 
 
-def preflight_guest_inputs(repository: Path, lane: str, retained: Path) -> dict[str, Any]:
+def preflight_guest_inputs(repository: Path, lane: str, retained: Path, *, builder: bool = False) -> dict[str, Any]:
     """Return immutable input identities after full read-only admission."""
 
-    return guest_input_identity(admit_guest_inputs(repository, lane, retained))
+    return guest_input_identity(admit_guest_inputs(repository, lane, retained, builder=builder))
 
 
 def _retained_root(runner) -> Path:
@@ -172,7 +174,7 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
     scope = guard_identity.get("scope") if isinstance(guard_identity, dict) else None
     component_selection = fixture_selection in (
         ("E06-network-volume",), ("E07-init-attachment",),
-        ("E13-compose-signals",), ("E14-compose-terminal-size",),
+        ("E13-compose-signals",), ("E14-compose-terminal-size",), ("E04-image-build",),
     )
     scope_matches = (scope == "finalized-native-parity" or
                      (scope == "finalized-native-parity-component" and component_selection))
@@ -270,14 +272,19 @@ def _verify_native_api(runner, fixture_selection: tuple[str, ...]) -> tuple[Path
 class OwnedGuestFixtureRunner:
     """Own guest image preparation and execute routed fixtures on one active lane."""
 
-    def __init__(self, runner, fixtures: list[Any], *, admitted_inputs: dict[str, Any] | None = None) -> None:
+    def __init__(self, runner, fixtures: list[Any], *, admitted_inputs: dict[str, Any] | None = None,
+                 fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False) -> None:
         self.runner = runner
         self.repository = runner.repository
         self.lane = runner.lane
         self.fixtures = fixtures
+        self.fixture_selection = (fixture_selection if fixture_selection is not None
+                                  else tuple(fixture.identifier for fixture in fixtures))
+        self.builder_required = builder_required
         self.retained = _retained_root(runner)
         self.inputs = (admitted_inputs if admitted_inputs is not None
-                       else admit_guest_inputs(self.repository, self.lane, self.retained))
+                       else admit_guest_inputs(self.repository, self.lane, self.retained,
+                                               builder=builder_required))
         self.socket: Path | None = None
         self.container = "" if self.lane == "docker" else runner.provider_executable(
             "DEVCONTAINER_CONTAINER_BIN", shutil.which("container") or "")
@@ -293,6 +300,7 @@ class OwnedGuestFixtureRunner:
         self._provision_event_sequence = 0
         self.image_preexisting = False
         self.loaded_image_id: str | None = None
+        self.builder_preparation_guest = None
 
     def attach_endpoint(self) -> None:
         """Attach after Engine startup and replace API-only provisioning checks."""
@@ -301,7 +309,7 @@ class OwnedGuestFixtureRunner:
         if self.lane != "docker" and self.preparation is not None and self.preparation_error is None:
             root, journal, _runtime, owner = self.preparation
             runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose,
-                                      tuple(item.identifier for item in self.fixtures))
+                                      self.fixture_selection)
             runtime.verify()
             self.preparation = (root, journal, runtime, owner)
 
@@ -533,27 +541,106 @@ class OwnedGuestFixtureRunner:
         first = next((fixture for fixture in self.fixtures
                       if fixture.identifier in OWNED_GUEST_FIXTURES
                       or fixture.identifier == "E06-network-volume"), None)
-        if first is None:
+        if first is None and not self.builder_required:
             return
         root, journal, owner = self._case_paths_for_preparation()
-        fixture_selection = tuple(fixture.identifier for fixture in self.fixtures)
-        runtime = ApiRuntimeView(self.runner, root, owner, journal, fixture_selection)
+        runtime = ApiRuntimeView(self.runner, root, owner, journal, self.fixture_selection)
         self.preparation = (root, journal, runtime, owner)
         runtime.verify()
-        before = admit_guest_inputs(self.repository, self.lane, self.retained)
+        before = admit_guest_inputs(self.repository, self.lane, self.retained,
+                                    builder=self.builder_required)
         if guest_input_identity(before) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed before native provisioning")
-        from guest_runtime import ReleasedGuest
+        if first is not None or self.builder_required:
+            from guest_runtime import ReleasedGuest
 
-        guest = ReleasedGuest(self.inputs, first.identifier, root, owner, runtime, self.container,
-                              None, observe=lambda event: self._record_provision_event(journal, event))
-        guest.provision()
+            preparation_fixture = first.identifier if first is not None else "E07-init-attachment"
+            guest = ReleasedGuest(self.inputs, preparation_fixture, root, owner, runtime, self.container,
+                                  None, observe=lambda event: self._record_provision_event(journal, event))
+            guest.provision()
         runtime.verify()
-        after = admit_guest_inputs(self.repository, self.lane, self.retained)
+        after = admit_guest_inputs(self.repository, self.lane, self.retained,
+                                   builder=self.builder_required)
         if guest_input_identity(after) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed during native provisioning")
         self.inputs = after
         self.preparation = (root, journal, runtime, owner)
+
+    def prepare_native_builder(self) -> None:
+        """Provision the exact selected native builder outside E04's timer."""
+        if not self.builder_required or self.lane == "docker" or self.preparation is None:
+            raise ParityError("native E04 builder preparation is not admitted")
+        if self.preparation_error is not None or "builder" not in self.inputs:
+            raise ParityError("native E04 has no complete admitted builder input")
+        root, journal, runtime, owner = self.preparation
+        runtime.verify()
+        from guest_runtime import ReleasedGuest
+        from build_runtime import ReleasedBuilder
+        from host_runtime import deadline
+        from case_evidence import canonical
+
+        builder_guest = ReleasedGuest(self.inputs, "E04-image-build", root, owner, runtime,
+                                      self.container, None)
+        builder_guest.builder = ReleasedBuilder(
+            self.inputs["builder"], root, journal, builder_guest.command)
+        journal.put("e04-builder-readiness-intent.json", canonical({
+            "fixture": "E04-image-build", "root": str(root),
+            "inputsSHA256": hashlib.sha256(canonical(self.inputs)).hexdigest(),
+        }))
+        with deadline(300):
+            builder_guest.builder.provision()
+        runtime.verify()
+        self.builder_preparation_guest = builder_guest
+
+    def prepare_native_builder_readiness(self) -> None:
+        """Prove BuildKit accepts work, then remove only the nonce-tagged image."""
+        if self.builder_preparation_guest is None or self.socket is None:
+            raise ParityError("native E04 readiness has no owned builder and Engine endpoint")
+        from e04_build_readiness import readiness_fixture, command_arguments
+        from engine_probe import request
+        from urllib.parse import quote
+        from case_evidence import canonical
+
+        directory, context, tag, token = readiness_fixture()
+        guest = self.builder_preparation_guest
+        runtime = self.preparation[2]
+        journal = self.preparation[1]
+        path = f"/v1.53/images/{quote(tag, safe='')}/json"
+        started = time.monotonic_ns()
+        try:
+            runtime.verify()
+            status, _payload = request(self.socket, "GET", path)
+            if status != 404:
+                raise ParityError("native E04 readiness image tag already exists")
+            journal.put("e04-readiness-build-intent.json", canonical({
+                "tag": tag, "nonceSHA256": hashlib.sha256(token.encode()).hexdigest(),
+                "dockerfileSHA256": hashlib.sha256((context / "Dockerfile").read_bytes()).hexdigest(),
+            }))
+            guest.command("guest-e04-readiness-build", command_arguments(tag, token, context), timeout=300)
+            status, payload = request(self.socket, "GET", path)
+            value = json.loads(payload) if payload else None
+            if (status != 200 or not isinstance(value, dict) or not isinstance(value.get("Id"), str)
+                    or tag not in value.get("RepoTags", [])):
+                raise ParityError("native E04 readiness build did not create its exact image")
+            identity = {"tag": tag, "imageID": value["Id"]}
+            journal.put("e04-readiness-image-created.json", canonical(identity))
+            status, payload = request(self.socket, "GET", path)
+            current = json.loads(payload) if payload else None
+            if status != 200 or not isinstance(current, dict) or current.get("Id") != identity["imageID"]:
+                raise ParityError("native E04 readiness image identity changed before cleanup")
+            journal.put("e04-readiness-image-remove-intent.json", canonical(identity))
+            guest.command("guest-e04-readiness-remove", ["image", "rm", tag], timeout=120)
+            status, _payload = request(self.socket, "GET", path)
+            if status != 404:
+                raise ParityError("native E04 readiness image remains after exact cleanup")
+            journal.put("e04-readiness-image-removed.json", canonical(identity))
+            journal.put("e04-readiness-build-duration.json", canonical({
+                "durationNS": time.monotonic_ns() - started,
+                "imageID": identity["imageID"], "tag": tag,
+            }))
+            runtime.verify()
+        finally:
+            directory.cleanup()
 
     def _record_provision_event(self, journal: Any, event: dict[str, Any]) -> None:
         name = f"provision-event-{self._provision_event_sequence:04d}.json"
@@ -581,7 +668,7 @@ class OwnedGuestFixtureRunner:
             (root / "owner.json").write_bytes(owner_bytes)
             (root / "owner.json").chmod(0o600)
         else:
-            selection = tuple(fixture.identifier for fixture in self.fixtures)
+            selection = self.fixture_selection
             root, owner = _active_provider_home(self.runner, fixture_selection=selection)
         owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
         journal_parent = self._journal_parent()
@@ -757,6 +844,21 @@ class OwnedGuestFixtureRunner:
     def cleanup(self) -> None:
         if self.preparation_error is not None:
             raise ParityError("owned guest preparation is incomplete; preserve the selected runtime for recovery")
+        if self.builder_preparation_guest is not None:
+            if self.preparation is None:
+                raise ParityError("native builder owner disappeared before cleanup")
+            runtime = self.preparation[2]
+            runtime.verify()
+            from host_runtime import deadline
+
+            with deadline(130):
+                self.builder_preparation_guest.builder.cleanup()
+            runtime.verify()
+            _root, journal, _runtime, _owner = self.preparation
+            receipt = journal.receipt()
+            (self.runner.output / "native-e04-builder-journal-receipt.json").write_text(
+                json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            self.builder_preparation_guest = None
         if self.lane != "docker" or self.loaded_image_id is None or self.image_preexisting:
             return
         from engine_probe import request

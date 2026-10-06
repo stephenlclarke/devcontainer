@@ -465,7 +465,8 @@ class ActiveProviderHomeTests(unittest.TestCase):
             )
 
             for selection in (("E06-network-volume",), ("E07-init-attachment",),
-                              ("E13-compose-signals",), ("E14-compose-terminal-size",)):
+                              ("E13-compose-signals",), ("E14-compose-terminal-size",),
+                              ("E04-image-build",)):
                 with self.subTest(selection=selection):
                     self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
             for selection in (None, (), ("unknown-component",), ("E10-compose-redirected",),
@@ -473,6 +474,8 @@ class ActiveProviderHomeTests(unittest.TestCase):
                               ("E06-network-volume", "E06-network-volume"),
                               ("E07-init-attachment", "E07-init-attachment"),
                               ("E14-compose-terminal-size", "E14-compose-terminal-size"),
+                              ("E04-image-build", "E04-image-build"),
+                              ("E04-image-build", "E13-compose-signals"),
                               ("E07-init-attachment", "E14-compose-terminal-size"),
                               ("E13-compose-signals", "E14-compose-terminal-size"),
                               ("E06-network-volume", "E07-init-attachment",
@@ -526,6 +529,7 @@ class ActiveProviderHomeTests(unittest.TestCase):
             bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
             bridge.runner, bridge.lane, bridge.repository = runner, "apple-stock", REPOSITORY
             bridge.fixtures = [SimpleNamespace(identifier="E09-compose-foreground")]
+            bridge.fixture_selection = ("E09-compose-foreground",)
             bridge.retained = base / "retained"
             bridge.retained.mkdir(mode=0o700)
 
@@ -540,7 +544,7 @@ class ActiveProviderHomeTests(unittest.TestCase):
 
 class NativeProvisionBeforeEngineTests(unittest.TestCase):
     def test_native_provision_uses_api_view_without_a_placeholder_socket_once(self) -> None:
-        for identifier in ("E07-init-attachment", "E06-network-volume"):
+        for identifier in ("E07-init-attachment", "E06-network-volume", "E04-image-build"):
             with self.subTest(fixture=identifier):
                 import owned_guest_fixture
 
@@ -567,6 +571,7 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
 
                 class Guest:
                     def __init__(self, *args, **_kwargs):
+                        self.fixture = args[1]
                         self.socket = args[6]
                         guests.append(self)
                         events.append("guest-created")
@@ -578,6 +583,10 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
                 bridge.runner = SimpleNamespace(lane="apple-stock")
                 bridge.lane, bridge.repository = "apple-stock", REPOSITORY
                 bridge.fixtures, bridge.retained, bridge.inputs = [fixture], Path("/retained"), inputs
+                bridge.fixture_selection = (identifier,)
+                bridge.builder_required = identifier == "E04-image-build"
+                if bridge.builder_required:
+                    bridge.fixtures = []
                 bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
                 bridge.preparation, bridge.preparation_error = None, None
                 bridge._provision_event_sequence = 0
@@ -593,6 +602,7 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
 
                 self.assertIsNone(bridge.socket)
                 self.assertIsNone(guests[0].socket)
+                self.assertEqual(guests[0].fixture, "E07-init-attachment" if bridge.builder_required else identifier)
                 self.assertEqual(admit.call_count, 2)
                 self.assertEqual(events.count("provision"), 1)
                 self.assertLess(events.index("api-verify"), events.index("provision"))
@@ -715,6 +725,7 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
             bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
             bridge.runner, bridge.lane = runner, "apple-stock"
             bridge.repository, bridge.fixtures = REPOSITORY, [fixture]
+            bridge.fixture_selection, bridge.builder_required = (fixture.identifier,), False
             bridge.retained, bridge.inputs = retained, inputs
             bridge.container, bridge.socket, bridge.compose = str(provider_bin / "container"), None, None
             bridge.preparation, bridge.preparation_error = None, None
@@ -821,6 +832,64 @@ class RemainingActiveProviderHomeTests(unittest.TestCase):
             self.assertNotEqual(staging_root, Path(runner.environment["HOME"]))
             self.assertEqual(owner["identity"]["lane"], "docker")
             self.assertEqual(json.loads(journal.owner), owner)
+
+
+class NativeE04BuilderOwnershipTests(unittest.TestCase):
+    def test_readiness_removal_failure_preserves_exact_image_and_builder_evidence(self) -> None:
+        import engine_probe
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            journal, runtime, guest = mock.Mock(), mock.Mock(), mock.Mock()
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.socket = root / "docker.sock"
+            bridge.preparation = (root, journal, runtime, {})
+            bridge.builder_preparation_guest = guest
+            identity = "sha256:" + "a" * 64
+
+            def request(_socket, _method, path):
+                from urllib.parse import unquote
+
+                tag = unquote(path.removeprefix("/v1.53/images/").removesuffix("/json"))
+                statuses = (404, 200, 200, 500)
+                index = request.count
+                request.count += 1
+                return statuses[index], json.dumps({"Id": identity, "RepoTags": [tag]}).encode()
+
+            request.count = 0
+            with mock.patch.object(engine_probe, "request", side_effect=request):
+                with self.assertRaisesRegex(ParityError, "remains after exact cleanup"):
+                    bridge.prepare_native_builder_readiness()
+
+            names = [call.args[0] for call in journal.put.call_args_list]
+            self.assertIn("e04-readiness-build-intent.json", names)
+            self.assertIn("e04-readiness-image-created.json", names)
+            self.assertIn("e04-readiness-image-remove-intent.json", names)
+            self.assertNotIn("e04-readiness-image-removed.json", names)
+            self.assertIs(bridge.builder_preparation_guest, guest)
+            self.assertEqual(guest.command.call_count, 2)
+            self.assertNotIn("--load", guest.command.call_args_list[0].args[1])
+
+    def test_builder_cleanup_failure_keeps_owner_and_does_not_write_success_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.preparation_error = None
+            bridge.lane = "apple-stock"
+            bridge.loaded_image_id, bridge.image_preexisting = None, False
+            guest, journal, runtime = mock.Mock(), mock.Mock(), mock.Mock()
+            guest.builder.cleanup.side_effect = ValueError("uncertain builder deletion")
+            bridge.builder_preparation_guest = guest
+            bridge.preparation = (root, journal, runtime, {})
+            bridge.runner = SimpleNamespace(output=root)
+
+            with self.assertRaisesRegex(ValueError, "uncertain builder deletion"):
+                bridge.cleanup()
+
+            guest.builder.cleanup.assert_called_once_with()
+            self.assertIs(bridge.builder_preparation_guest, guest)
+            journal.receipt.assert_not_called()
+            self.assertFalse((root / "native-e04-builder-journal-receipt.json").exists())
 
 
 if __name__ == "__main__":

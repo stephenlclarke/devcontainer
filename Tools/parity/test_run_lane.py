@@ -183,6 +183,12 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                 def prepare_native_provider(self):
                     events.append("provision")
 
+                def prepare_native_builder(self):
+                    events.append("builder-start")
+
+                def prepare_native_builder_readiness(self):
+                    events.append("builder-ready")
+
                 def attach_endpoint(self):
                     events.append("attach")
 
@@ -196,12 +202,13 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             runner.lane, runner.repository, runner.manifest = lane, repository, manifest
             runner.docker, runner.node_package_runner = "/pinned/docker", "/pinned/npx"
             runner.output, runner.finalized_selection = base / "evidence" / lane, {}
+            runner.environment = {"DOCKER_HOST": "unix:///tmp/docker.sock"}
             runner.provider_hashes = {}
             runner.harness_sha256 = "f" * 64
             runner.finalized_identity = {"runtimeProfile": runtime_profile} if runtime_profile else None
             runner.cleanup_differences = []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
-            builder = mock.Mock()
+            builder = mock.Mock(side_effect=lambda: events.append("buildx-bootstrap"))
 
             def run_fixture(fixture):
                 events.append("fixture:" + fixture.identifier)
@@ -225,13 +232,15 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                 mock.patch.object(runner, "readmit_finalized"),
                 mock.patch.object(runner, "start_engine", side_effect=lambda: events.append("engine")),
                 mock.patch.object(runner, "stop_engine"),
+                mock.patch("e04_build_readiness.docker_readiness",
+                           side_effect=lambda *_args: events.append("docker-readiness")),
             )
             with mock.patch.dict("run_lane.os.environ",
                                  {"DEVCONTAINER_PARITY_FIXTURES": selected}, clear=True):
                 with common_patches[0], common_patches[1], common_patches[2], common_patches[3], \
                         common_patches[4], common_patches[5], common_patches[6], common_patches[7], \
                         common_patches[8], common_patches[9], common_patches[10], common_patches[11], \
-                        common_patches[12], common_patches[13], common_patches[14]:
+                        common_patches[12], common_patches[13], common_patches[14], common_patches[15]:
                     result = runner.run()
             return result, builder, events
 
@@ -291,6 +300,28 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
         self.assertLess(events.index("attach"), events.index("fixture:E14-compose-terminal-size"))
         self.assertLess(events.index("fixture:E14-compose-terminal-size"), events.index("guest-cleanup"))
         self.assertIn("guest-cleanup", events)
+
+    def test_finalized_e04_component_starts_and_proves_native_builder_before_legacy_fixture(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("E04-image-build",), "E04-image-build", "stock")
+                self.assertEqual(result, 0)
+                builder.assert_not_called()
+                self.assertLess(events.index("provision"), events.index("builder-start"))
+                self.assertLess(events.index("builder-start"), events.index("engine"))
+                self.assertLess(events.index("attach"), events.index("builder-ready"))
+                self.assertLess(events.index("builder-ready"), events.index("fixture:E04-image-build"))
+                self.assertIn("guest-cleanup", events)
+
+    def test_docker_e04_readiness_runs_after_buildx_before_legacy_fixture(self) -> None:
+        result, builder, events = self._run_selection(
+            "docker", ("E04-image-build",), "E04-image-build")
+        self.assertEqual(result, 0)
+        builder.assert_called_once_with()
+        self.assertLess(events.index("docker-oracle"), events.index("buildx-bootstrap"))
+        self.assertLess(events.index("buildx-bootstrap"), events.index("docker-readiness"))
+        self.assertLess(events.index("docker-readiness"), events.index("fixture:E04-image-build"))
 
     def test_unfiltered_build_matrix_still_prepares_builder(self) -> None:
         for lane in ("docker", "container-compose"):
