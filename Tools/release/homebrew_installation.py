@@ -441,6 +441,7 @@ class InstallationTransaction:
         self.backup: Path | None = None
         self.prefix: Path | None = None
         self.cellar: Path | None = None
+        self.repository: Path | None = None
         self.prior_kegs: dict[str, dict[str, dict[str, int | str]]] = {}
         self.formula_roots: dict[str, int] = {}
         self.keg_paths: dict[str, list[Path]] = {name: [] for name in FORMULAE}
@@ -475,6 +476,8 @@ class InstallationTransaction:
                 or not self.cellar.is_absolute() or self.cellar.resolve() != self.cellar
                 or not self.cellar.is_relative_to(self.prefix)):
             raise InstallationError("Homebrew prefix or cellar is not canonical")
+        self.repository = Path(self.runner("--repository", timeout=30))
+        canonical_directory(self.repository, self.prefix)
         if self.tap in self.runner("tap", timeout=30).splitlines():
             raise InstallationError("temporary tap already exists")
         for name in sorted(FORMULAE):
@@ -545,7 +548,8 @@ class InstallationTransaction:
         return any(row.split() and row.split()[0] == name for row in result.splitlines())
 
     def execute_test(self) -> None:
-        assert self.context is not None and self.prefix is not None and self.cellar is not None
+        assert (self.context is not None and self.prefix is not None
+                and self.cellar is not None and self.repository is not None)
         self.mutation_started = True
         self.service.stop()
         for name in sorted(FORMULAE):
@@ -555,7 +559,7 @@ class InstallationTransaction:
         self.tap_attempted = True
         self.call("tap-new", "--no-git", self.tap, timeout=120)
         tap_root = Path(self.call("--repository", self.tap, timeout=30))
-        taps_root = self.prefix / "Homebrew/Library/Taps/stephenlclarke"
+        taps_root = self.repository / "Library/Taps/stephenlclarke"
         canonical_directory(tap_root, taps_root)
         expected_tap_name = "homebrew-" + self.tap.split("/", 1)[1]
         if tap_root.name != expected_tap_name:

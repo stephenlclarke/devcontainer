@@ -139,6 +139,7 @@ class SurvivingProcesses:
 class FakeBrew:
     def __init__(self, prefix: Path, lane: str, candidate_version: str):
         self.prefix = prefix
+        self.repository = prefix
         self.cellar = prefix / "Cellar"
         self.lane = lane
         self.candidate_formula = "devcontainer-current" if lane == "current" else "devcontainer"
@@ -154,6 +155,8 @@ class FakeBrew:
             return str(self.prefix)
         if args == ("--cellar",):
             return str(self.cellar)
+        if args == ("--repository",):
+            return str(self.repository)
         if args[:1] == ("--prefix",) and len(args) == 2:
             return str(self.prefix / "opt" / self.candidate_formula)
         if args == ("tap",):
@@ -235,7 +238,7 @@ class FakeBrew:
 
     def tap_root(self, tap):
         slug = "homebrew-" + tap.split("/", 1)[1]
-        return self.prefix / "Homebrew/Library/Taps/stephenlclarke" / slug
+        return self.repository / "Library/Taps/stephenlclarke" / slug
 
 
 class HomebrewInstallationTests(unittest.TestCase):
@@ -329,6 +332,22 @@ class HomebrewInstallationTests(unittest.TestCase):
         self.assertIsNone(self.guard.owner)
         self.assertFalse(self.scratch.exists())
         self.assertTrue((self.retained / receipt["backupId"] / "manifest.json").is_file())
+
+    def test_nested_homebrew_repository_layout_is_restored(self):
+        self.brew.repository = self.prefix / "Homebrew"
+        self.brew.repository.mkdir()
+        result = self.transaction().run()
+        self.assertEqual(result["status"], "passed-restored")
+        self.assertEqual(tree_sha(self.cellar), self.before)
+        self.assertFalse(self.brew.taps)
+
+    def test_foreign_repository_is_rejected_before_replacement(self):
+        self.brew.repository = self.root / "foreign-repository"
+        self.brew.repository.mkdir()
+        with self.assertRaisesRegex(installation.InstallationError, "owned root"):
+            self.transaction().run()
+        self.assertFalse(any(call[0] == "uninstall" for call in self.brew.calls))
+        self.assertIsNone(self.guard.owner)
 
     def test_partial_install_failure_restores_original_keg(self):
         self.brew.failure = "install"
