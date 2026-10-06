@@ -580,7 +580,9 @@ class InstallationTransaction:
         if not installed.is_file() or installed.is_symlink():
             raise InstallationError("installed candidate executable is missing or aliased")
         version = json.loads(self.version_check(installed))
-        if (version.get("commit") != self.source or version.get("lane") != self.lane
+        # Native packages retain the qualified candidate build identity when
+        # promoted; the distribution lane is separately admitted by context.
+        if (version.get("commit") != self.source or version.get("lane") != "candidate"
                 or version.get("version") != self.version):
             raise InstallationError("installed candidate version identity differs")
 

@@ -317,7 +317,7 @@ class HomebrewInstallationTests(unittest.TestCase):
                    "service": self.services, "storage_check": lambda *_: None,
                    "guard": self.guard, "lease_factory": fake_lease,
                    "cancellation_factory": nullcontext,
-                   "version_check": lambda _path: json.dumps({"commit": SOURCE, "lane": "stable",
+                   "version_check": lambda _path: json.dumps({"commit": SOURCE, "lane": "candidate",
                                                                 "version": VERSION})}
         options.update(changes)
         return installation.InstallationTransaction(**options)
@@ -598,6 +598,13 @@ class HomebrewInstallationTests(unittest.TestCase):
         receipt = json.loads(self.receipt.read_text())
         self.assertEqual(receipt["status"], "failed-restored")
         self.assertEqual(tree_sha(self.cellar), self.before)
+
+    def test_distribution_lane_cannot_replace_the_compiled_candidate_identity(self):
+        transaction = self.transaction(version_check=lambda _path: json.dumps(
+            {"commit": SOURCE, "lane": "stable", "version": VERSION}))
+        with self.assertRaisesRegex(installation.InstallationError, "version identity differs"):
+            transaction.run()
+        self.assertEqual(json.loads(self.receipt.read_text())["status"], "failed-restored")
 
 
 if __name__ == "__main__":

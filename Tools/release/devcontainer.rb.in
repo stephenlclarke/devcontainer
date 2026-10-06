@@ -84,6 +84,7 @@ class @FORMULA_CLASS@ < Formula
     (configuration_directory/"devcontainer.json").write(JSON.generate(configuration))
     socket_path = testpath/"engine.sock"
     server = UNIXServer.new(socket_path.to_s)
+    File.chmod(0600, socket_path)
     requests = []
     server_thread = Thread.new do
       loop do

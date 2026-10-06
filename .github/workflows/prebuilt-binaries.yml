@@ -465,6 +465,7 @@ jobs:
               --tool-commit "${{ github.sha }}" \
               --verifier "${GITHUB_WORKSPACE}/release-tools/Tools/release/verify_parity_release_evidence.py" \
               --installation-tool "${GITHUB_WORKSPACE}/release-tools/Tools/release/homebrew_installation.py" \
+              --installation-template "${GITHUB_WORKSPACE}/release-tools/Tools/release/devcontainer.rb.in" \
               --output "${operation}"
             immutable_resume="$(jq -r '.immutableResume' "${operation}")"
           fi
@@ -607,7 +608,7 @@ jobs:
             --url "${url}" \
             "${conflict_args[@]}" \
             --archive "${{ steps.package.outputs.archive }}" \
-            --template devcontainer/Tools/release/devcontainer.rb.in \
+            --template release-tools/Tools/release/devcontainer.rb.in \
             --output "homebrew-tap/Formula/${formula}"
           python3 devcontainer/Tools/release/update-tap-readme.py \
             --readme homebrew-tap/README.md \

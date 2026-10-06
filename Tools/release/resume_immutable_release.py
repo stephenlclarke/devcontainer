@@ -86,6 +86,7 @@ def main() -> int:
     parser.add_argument("--tool-commit", required=True)
     parser.add_argument("--verifier", type=Path, required=True)
     parser.add_argument("--installation-tool", type=Path, required=True)
+    parser.add_argument("--installation-template", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     release = json.loads(api(f"repos/{args.repository}/releases/tags/{args.tag}"))
@@ -96,7 +97,8 @@ def main() -> int:
                    "releaseAuthority": False,
                    "sourceCommit": args.source_commit, "toolCommit": args.tool_commit,
                    "verifierSHA256": verifier_sha,
-                   "installationToolSHA256": sha(args.installation_tool.read_bytes())})
+                   "installationToolSHA256": sha(args.installation_tool.read_bytes()),
+                   "installationTemplateSHA256": sha(args.installation_template.read_bytes())})
     args.output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"immutableResume": result["immutableResume"]}))
     return 0
