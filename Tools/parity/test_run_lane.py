@@ -280,6 +280,18 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                 self.assertLess(events.index("fixture:E13-compose-signals"), events.index("guest-cleanup"))
                 self.assertIn("guest-cleanup", events)
 
+
+    def test_selected_e14_component_skips_builder_and_runs_exact_terminal_fixture(self) -> None:
+        result, builder, events = self._run_selection(
+            "container-compose", ("E14-compose-terminal-size", "E04-image-build"), "E14-compose-terminal-size")
+        self.assertEqual(result, 0)
+        builder.assert_not_called()
+        self.assertLess(events.index("provision"), events.index("engine"))
+        self.assertLess(events.index("engine"), events.index("attach"))
+        self.assertLess(events.index("attach"), events.index("fixture:E14-compose-terminal-size"))
+        self.assertLess(events.index("fixture:E14-compose-terminal-size"), events.index("guest-cleanup"))
+        self.assertIn("guest-cleanup", events)
+
     def test_unfiltered_build_matrix_still_prepares_builder(self) -> None:
         for lane in ("docker", "container-compose"):
             with self.subTest(lane=lane):

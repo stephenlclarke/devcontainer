@@ -170,7 +170,10 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
     guard = json.loads(guard_path.read_bytes())
     guard_identity = guard.get("identity") if isinstance(guard, dict) else None
     scope = guard_identity.get("scope") if isinstance(guard_identity, dict) else None
-    component_selection = fixture_selection in (("E06-network-volume",), ("E13-compose-signals",))
+    component_selection = fixture_selection in (
+        ("E06-network-volume",), ("E07-init-attachment",),
+        ("E13-compose-signals",), ("E14-compose-terminal-size",),
+    )
     scope_matches = (scope == "finalized-native-parity" or
                      (scope == "finalized-native-parity-component" and component_selection))
     if (not isinstance(guard, dict) or set(guard) != {"identity", "root"}

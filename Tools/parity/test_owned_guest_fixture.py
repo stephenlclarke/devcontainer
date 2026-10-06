@@ -464,13 +464,19 @@ class ActiveProviderHomeTests(unittest.TestCase):
                 finalized_identity={"sourceCommit": "a" * 40},
             )
 
-            for selection in (("E06-network-volume",), ("E13-compose-signals",)):
+            for selection in (("E06-network-volume",), ("E07-init-attachment",),
+                              ("E13-compose-signals",), ("E14-compose-terminal-size",)):
                 with self.subTest(selection=selection):
                     self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
             for selection in (None, (), ("unknown-component",), ("E10-compose-redirected",),
                               ("E06-network-volume", "E13-compose-signals"),
                               ("E06-network-volume", "E06-network-volume"),
-                              ("E13-compose-signals", "E14-compose-terminal-size")):
+                              ("E07-init-attachment", "E07-init-attachment"),
+                              ("E14-compose-terminal-size", "E14-compose-terminal-size"),
+                              ("E07-init-attachment", "E14-compose-terminal-size"),
+                              ("E13-compose-signals", "E14-compose-terminal-size"),
+                              ("E06-network-volume", "E07-init-attachment",
+                               "E13-compose-signals", "E14-compose-terminal-size")):
                 with self.subTest(selection=selection), self.assertRaisesRegex(
                         ParityError, "campaign guard differs"):
                     _active_provider_home(runner, fixture_selection=selection)

@@ -135,6 +135,23 @@ class SuiteLifecycleTests(unittest.TestCase):
             environment, qualify.COMPONENT_FIXTURE),
             {"PATH": "/usr/bin", "DEVCONTAINER_PARITY_FIXTURES": qualify.COMPONENT_FIXTURE})
 
+
+    def test_e14_component_runs_cli_only_and_selects_exact_fixture(self) -> None:
+        fixture = "E14-compose-terminal-size"
+        self.assertIn(fixture, qualify.COMPONENT_FIXTURES)
+        calls = []
+        cli = subprocess.CompletedProcess(["cli"], 0, "", "")
+        actual_cli, actual_vscode, passed = qualify.run_suite_pair(
+            lambda: (calls.append("cli"), cli)[1],
+            lambda: calls.append("vscode"), lambda: True, lambda: True,
+            component_fixture=fixture)
+        self.assertEqual(calls, ["cli"])
+        self.assertIs(actual_cli, cli)
+        self.assertIsNone(actual_vscode)
+        self.assertTrue(passed)
+        self.assertEqual(qualify.selected_fixture_environment({"PATH": "/usr/bin"}, fixture),
+                         {"PATH": "/usr/bin", "DEVCONTAINER_PARITY_FIXTURES": fixture})
+
     def test_component_cleanup_requires_only_exact_cli_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary).resolve()
@@ -1575,6 +1592,31 @@ class E06ComponentTests(unittest.TestCase):
             result.write_text(json.dumps(payload))
             self.assertEqual(qualify.compare_component_results(
                 evidence, self.FIXTURE)["status"], "failed")
+
+
+    def test_e14_component_comparison_preserves_all_seven_observations_and_false_values(self) -> None:
+        fixture = "E14-compose-terminal-size"
+        contract = json.loads((REPOSITORY / "Tests/Parity/fixtures" / fixture / "contract.json").read_text())
+        expected = {key: str(value).lower() if isinstance(value, bool) else str(value)
+                    for key, value in contract["expected"].items()}
+        self.assertEqual(set(expected), {"inherited_size", "host_resize", "tty_selected", "stdin_roundtrip",
+                                         "merged_streams", "exact_exit", "auto_remove"})
+        self.assertEqual(expected["inherited_size"], "true")
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve()
+            for lane in qualify.LANES:
+                root = evidence / lane
+                root.mkdir()
+                (root / "results.json").write_text(json.dumps({
+                    "backend": lane, "status": "passed", "durationSeconds": 1.0,
+                    "cleanupDifferences": [], "fixtures": [{"id": fixture, "status": "passed",
+                        "durationSeconds": 1.0, "observations": dict(expected)}]}))
+            self.assertEqual(qualify.compare_component_results(evidence, fixture)["status"], "passed")
+            result = evidence / "container-compose/results.json"
+            payload = json.loads(result.read_text())
+            payload["fixtures"][0]["observations"]["inherited_size"] = "false"
+            result.write_text(json.dumps(payload))
+            self.assertEqual(qualify.compare_component_results(evidence, fixture)["status"], "failed")
 
     def test_selected_component_receipt_is_dynamic_and_cannot_seal_full_qualification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

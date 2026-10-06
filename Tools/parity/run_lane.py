@@ -371,10 +371,11 @@ class LaneRunner:
                 self._owned_guest_runner.preparation_error = str(error)
 
         results: list[dict[str, Any]] = []
-        component_e13_only = (
-            selected == {"E13-compose-signals"}
+        component_terminal_only = (
+            len(selected) == 1
+            and next(iter(selected)) in {"E13-compose-signals", "E14-compose-terminal-size"}
             and len(fixtures) == 1
-            and fixtures[0].identifier == "E13-compose-signals"
+            and fixtures[0].identifier == next(iter(selected))
         )
         try:
             if native_preparation_failed:
@@ -388,7 +389,7 @@ class LaneRunner:
                     self.lane != "docker" and self.finalized_identity is not None
                     and self.finalized_identity.get("runtimeProfile") == "stock"
                 )
-                if self.lane != "apple-stock" and not native_stock_package and not component_e13_only:
+                if self.lane != "apple-stock" and not native_stock_package and not component_terminal_only:
                     self.prepare_builder()
                 atomic_json(self.output / "fingerprint.json", self.fingerprint())
                 for fixture in fixtures:

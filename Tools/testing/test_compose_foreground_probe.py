@@ -153,7 +153,8 @@ class ComposeForegroundTests(unittest.TestCase):
     def test_inspect_forwards_its_total_http_budget(self):
         with patch.object(self.fixture, "call", return_value=(200, canonical(self.guest()))) as call:
             self.fixture.inspect(self.fixture.name, total_timeout=0.25)
-        call.assert_called_once_with("GET", f"/containers/{self.fixture.name}/json", total_timeout=0.25)
+        call.assert_called_once_with("GET", f"/containers/{self.fixture.name}/json",
+                                     retain_private_inspect_error=True, total_timeout=0.25)
         self.assertNotIn("compose-foreground-inspection.json", self.journal.records())
 
     def test_final_inspection_journal_cannot_outlive_deadline_or_cli(self):

@@ -43,6 +43,10 @@ class GuestFixture:
             raise ValueError("Guest network/mount configuration is invalid")
         self.socket, self.journal = socket, journal
         self.observe = observe
+        existing = journal.records()
+        indices = [int(match.group(1)) for name in existing
+                   if (match := re.fullmatch(r"inspect-409-([0-9]{4})\.json", name))]
+        self._private_inspect_error_sequence = max(indices, default=-1) + 1
         self.owner, self.image, self.version = owner, image, api_version
         self.name = "cf-test-" + owner[:32]
         self.intent = {"name": self.name, "image": image, "labels": {OWNER_LABEL: owner},
@@ -52,7 +56,8 @@ class GuestFixture:
             self.intent["networkMounts"] = self.configuration
         self.identifier = None
 
-    def call(self, method: str, route: str, body=None, *, timeout=5, total_timeout=None, response_headers=None):
+    def call(self, method: str, route: str, body=None, *, timeout=5, total_timeout=None, response_headers=None,
+             retain_private_inspect_error=False):
         event = {"method": method, "route": f"/v{self.version}{route}"}
         started = time.monotonic_ns()
         try:
@@ -62,6 +67,19 @@ class GuestFixture:
             status, payload = request(self.socket, method, event["route"],
                                       canonical(body) if body is not None else None, timeout=timeout, **options)
             event["status"] = status
+            if retain_private_inspect_error and status == 409 and len(payload) <= 64 * 1024:
+                try:
+                    decoded = json.loads(payload)
+                except (TypeError, ValueError):
+                    decoded = None
+                if (isinstance(decoded, dict) and set(decoded) == {"message"}
+                        and isinstance(decoded["message"], str)):
+                    name = f"inspect-409-{self._private_inspect_error_sequence:04d}.json"
+                    self.journal.put(name, payload)
+                    event["privateBodyEntry"] = name
+                    event["privateBodySHA256"] = digest(payload)
+                    event["privateBodyByteCount"] = len(payload)
+                    self._private_inspect_error_sequence += 1
             return status, payload
         except (Exception, KeyboardInterrupt) as error:
             event["error"] = type(error).__name__
@@ -73,7 +91,8 @@ class GuestFixture:
 
     def inspect(self, resource: str, *, total_timeout=None):
         options = {"total_timeout": total_timeout} if total_timeout is not None else {}
-        status, payload = self.call("GET", f"/containers/{resource}/json", **options)
+        status, payload = self.call("GET", f"/containers/{resource}/json",
+                                    retain_private_inspect_error=True, **options)
         value = json.loads(payload)
         if status == 404 and isinstance(value, dict) and isinstance(value.get("message"), str):
             return None

@@ -37,6 +37,10 @@ class Handler(BaseHTTPRequestHandler):
                             "Image": server.image, "State": {"Status": "created"}}
             return 201, {"Id": server.guest["Id"]}
         parts = path.split("/")
+        if self.command == "GET" and len(parts) == 4 and parts[1] == "containers" and parts[3] == "json":
+            override = getattr(server, "inspect_override", None)
+            if override is not None:
+                return override
         if len(parts) < 3 or not server.guest or parts[2] not in {server.guest["Id"], server.guest["Name"][1:]}:
             return 404, {"message": "missing container"}
         if self.command == "DELETE":
@@ -86,6 +90,7 @@ class GuestFixtureTests(unittest.TestCase):
         self.server.image = "sha256:" + "c" * 64
         self.server.guest, self.server.routes = None, []
         self.server.prepared, self.server.fail_start, self.server.ignore_delete = True, False, False
+        self.server.inspect_override = None
         self.owner = "a" * 64
         self.journal = ServiceJournal(self.root / "guest.sqlite", {"case": self.owner}, create=True)
         self.fixture = self.reopen()
@@ -124,6 +129,42 @@ class GuestFixtureTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.server.server_close()
         self.assertFalse(self.thread.is_alive())
+
+
+    def test_inspect_409_retains_only_bounded_private_json_and_404_stays_ordinary(self):
+        events = []
+        body = {"message": "private identity conflict diagnostic"}
+        fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                               observe=events.append)
+        self.server.inspect_override = (409, body)
+        with self.assertRaisesRegex(ValueError, "Cannot inspect guest resource identity") as raised:
+            fixture.inspect("b" * 64)
+        self.assertNotIn(body["message"], str(raised.exception))
+        event = events[-1]
+        entry = event["privateBodyEntry"]
+        raw = self.journal.records()[entry]
+        self.assertEqual(raw, canonical(body))
+        self.assertEqual(event["privateBodySHA256"], digest(raw))
+        self.assertEqual(event["privateBodyByteCount"], len(raw))
+        self.assertNotIn(body["message"], json.dumps(event))
+        self.assertFalse(any(key in event for key in ("body", "response", "message")))
+
+        self.server.inspect_override = None
+        self.assertIsNone(fixture.inspect("missing"))
+        self.assertEqual(events[-1]["status"], 404)
+        self.assertFalse(any(key.startswith("privateBody") for key in events[-1]))
+        self.assertEqual([name for name in self.journal.records() if name.startswith("inspect-409-")], [entry])
+
+    def test_malformed_or_oversized_409_body_is_not_retained_as_valid_diagnostic(self):
+        events = []
+        fixture = GuestFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                               observe=events.append)
+        for payload in (b"not-json", canonical({"message": "x" * (64 * 1024)})):
+            self.server.inspect_override = (409, payload)
+            with self.assertRaises(ValueError):
+                fixture.inspect("b" * 64)
+            self.assertFalse(any(key.startswith("privateBody") for key in events[-1]))
+        self.assertFalse(any(name.startswith("inspect-409-") for name in self.journal.records()))
 
     def test_create_start_archive_remove_and_repeated_cleanup(self):
         self.fixture.setup()
@@ -465,8 +506,8 @@ class GuestFixtureTests(unittest.TestCase):
     def test_unknown_removal_outcome_resumes_by_id_without_repeating_delete(self):
         self.fixture.setup()
         original = self.fixture.call
-        def lose_response(method, route, body=None):
-            result = original(method, route, body)
+        def lose_response(method, route, body=None, **options):
+            result = original(method, route, body, **options)
             if method == "DELETE":
                 raise TimeoutError()
             return result
