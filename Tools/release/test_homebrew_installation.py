@@ -496,6 +496,54 @@ class HomebrewInstallationTests(unittest.TestCase):
         self.assertEqual(launchd.bootstraps, 0)
         self.assertFalse(launchd.loaded)
 
+    def test_bootout_waits_for_registration_disappearance_within_existing_deadline(self):
+        import runtime_services
+
+        job = {"label": "homebrew.mxcl.devcontainer", "path": "/owned/service.plist",
+               "program": "/owned/devcontainer-engine"}
+
+        class DelayedLaunchd(FakeLaunchd):
+            pending = 0
+
+            def bootout(self, label):
+                super().bootout(label)
+                self.pending = 2
+
+            def inspect(self, label):
+                if self.pending:
+                    self.pending -= 1
+                    return self.item
+                return super().inspect(label)
+
+        class StoppedProcesses(SurvivingProcesses):
+            ProcessSurvivors = runtime_services.ProcessSurvivors
+            wait_stopped = staticmethod(runtime_services.wait_stopped)
+
+            def require_captured_processes_stopped(self, _launchd, _services, _captured):
+                # The fixture models a stopped process with a pending registration.
+                return None
+
+        launchd = DelayedLaunchd(job)
+        process_runtime = StoppedProcesses({"pid": 42, "parent": 1, "group": 42,
+                                            "started": "Mon Sep 1 00:00:00 2026",
+                                            "program": job["program"]})
+        service = installation.LaunchdServices(launchd, process_runtime=process_runtime)
+        service.prior = [dict(job, pid=42)]
+        service.captured_processes = process_runtime.capture_owned_processes(launchd, service.prior)
+        service.stop()
+        self.assertEqual(launchd.bootouts, 1)
+        self.assertEqual(launchd.pending, 0)
+        self.assertFalse(launchd.loaded)
+
+    def test_changed_registration_is_rejected_during_bootout_wait(self):
+        job = {"label": "homebrew.mxcl.devcontainer", "path": "/owned/service.plist",
+               "program": "/owned/devcontainer-engine"}
+        launchd = FakeLaunchd(job)
+        service = installation.LaunchdServices(launchd, process_runtime=SurvivingProcesses({}))
+        service.prior = [dict(job, program="/different/devcontainer-engine")]
+        with self.assertRaisesRegex(ValueError, "registration changed"):
+            service._require_stopped()
+
     def test_surviving_engine_prevents_any_formula_uninstall(self):
         home = self.root / "home"
         agents = home / "Library/LaunchAgents"

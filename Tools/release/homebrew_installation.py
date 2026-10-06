@@ -349,14 +349,22 @@ class LaunchdServices:
             if self.launchd.process_id(item["label"]) != item["pid"]:
                 raise InstallationError("Homebrew launchd process identity changed before quiesce")
             self.launchd.bootout(item["label"])
-            if self.launchd.inspect(item["label"]) is not None:
-                raise InstallationError("Homebrew launchd job remained loaded")
         try:
             self.process_runtime.wait_stopped(
-                lambda: self.process_runtime.require_captured_processes_stopped(
-                    self.launchd, self.prior, self.captured_processes), seconds=15)
+                self._require_stopped, seconds=15)
         except (ValueError, TimeoutError) as error:
             raise InstallationError("captured Homebrew service process survived bootout") from error
+
+    def _require_stopped(self) -> None:
+        """Bootout acknowledgement precedes asynchronous registration removal."""
+        for item in self.prior:
+            current = self.launchd.inspect(item["label"])
+            if current is not None:
+                if current != {key: item[key] for key in ("label", "path", "program")}:
+                    raise ValueError("Homebrew launchd registration changed during quiesce")
+                raise self.process_runtime.ProcessSurvivors("captured Homebrew registration remains loaded")
+        self.process_runtime.require_captured_processes_stopped(
+            self.launchd, self.prior, self.captured_processes)
 
     def _reject_active_guest_processes(self) -> None:
         captured = {item["pid"] for item in self.captured_processes}
