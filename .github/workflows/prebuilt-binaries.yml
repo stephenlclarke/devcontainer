@@ -455,6 +455,18 @@ jobs:
               verifierCommit: $verifierCommit, verifierSHA256: $verifierSHA256,
               installationToolSHA256: $installationToolSHA256}' \
             >"${assets}/publication-verifier.json"
+          immutable_resume=false
+          operation="${RUNNER_TEMP}/publication-operation.json"
+          if [[ "${LANE}" == stable ]]; then
+            python3 "${GITHUB_WORKSPACE}/release-tools/Tools/release/resume_immutable_release.py" \
+              --repository "${GITHUB_REPOSITORY}" --tag "${release_tag}" \
+              --assets "${assets}" --source-commit "${PUBLISH_SHA}" \
+              --tool-commit "${{ github.sha }}" \
+              --verifier "${GITHUB_WORKSPACE}/release-tools/Tools/release/verify_parity_release_evidence.py" \
+              --installation-tool "${GITHUB_WORKSPACE}/release-tools/Tools/release/homebrew_installation.py" \
+              --output "${operation}"
+            immutable_resume="$(jq -r '.immutableResume' "${operation}")"
+          fi
           find "${assets}" -maxdepth 1 -type f -print | sort \
             >"${RUNNER_TEMP}/release-assets.txt"
 
@@ -518,6 +530,7 @@ jobs:
           } >"${notes}"
           {
             printf 'archive=%s\n' "${assets}/${asset}"
+            printf 'immutable_resume=%s\n' "${immutable_resume}"
             printf 'assets=%s\n' "${assets}"
             printf 'assets_manifest=%s\n' "${RUNNER_TEMP}/release-assets.txt"
             printf 'asset=%s\n' "${asset}"
@@ -535,6 +548,17 @@ jobs:
         with:
           name: devcontainer-${{ needs.resolve.outputs.lane }}-${{ needs.resolve.outputs.sha }}
           path: ${{ steps.package.outputs.assets }}
+      - name: Attest resumed publication context
+        if: needs.resolve.outputs.lane == 'stable'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/publication-operation.json
+      - name: Retain resumed publication context
+        if: needs.resolve.outputs.lane == 'stable'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: publication-operation-context
+          path: ${{ runner.temp }}/publication-operation.json
       - name: Stage GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -547,6 +571,10 @@ jobs:
         working-directory: devcontainer
         run: |
           set -euo pipefail
+          if [[ "${{ steps.package.outputs.immutable_resume }}" == true ]]; then
+            printf 'Authenticated immutable release assets retained without replacement.\n'
+            exit 0
+          fi
           mode=stable-stage
           if [[ "${{ needs.resolve.outputs.lane }}" == current ]]; then
             mode=current-stage
