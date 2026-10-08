@@ -24,9 +24,9 @@ jobs:
       FINALIZED_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_FINALIZED_DIRECTORY }}
       FINALIZATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_FINALIZATION_SHA256 }}
       ACCEPTED_STATE: ${{ vars.DEVCONTAINER_NATIVE_NOTARY_STATE }}
-      EXPECTED_SOURCE: ${{ github.sha }}
+      TOOL_COMMIT: ${{ github.sha }}
     steps:
-      - name: Check out exact trusted commit
+      - name: Check out exact workflow tooling commit
         env:
           TRUSTED_REPOSITORY: "https://github.com/${{ github.repository }}.git"
           TRUSTED_SHA: "${{ github.sha }}"
@@ -38,23 +38,100 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" checkout --detach --force "${TRUSTED_SHA}"
           git -C "${GITHUB_WORKSPACE}" clean -ffdx
           test "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" = "${TRUSTED_SHA}"
-      - name: Authenticate locally executed qualification and recompute comparisons
+          test -z "$(git -C "${GITHUB_WORKSPACE}" status --porcelain)"
+      - name: Authenticate qualification and admit unchanged native inputs
+        id: admit
+        env:
+          QUALIFICATION_DIRECTORY: ${{ vars.DEVCONTAINER_NATIVE_QUALIFICATION_DIRECTORY }}
+          QUALIFICATION_SHA256: ${{ vars.DEVCONTAINER_NATIVE_QUALIFICATION_SHA256 }}
+          TOOL_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           test -n "${QUALIFICATION_DIRECTORY}"
           test -n "${QUALIFICATION_SHA256}"
+          QUALIFIED_SOURCE="$(python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          receipt_path = Path(os.environ["QUALIFICATION_DIRECTORY"]) / "qualification.json"
+          trusted_sha = os.environ["QUALIFICATION_SHA256"]
+          if re.fullmatch(r"[0-9a-f]{64}", trusted_sha) is None:
+              raise SystemExit("qualification authority SHA-256 is invalid")
+          try:
+              receipt_bytes = receipt_path.read_bytes()
+          except OSError as error:
+              raise SystemExit("trusted qualification receipt is unavailable") from error
+          if hashlib.sha256(receipt_bytes).hexdigest() != trusted_sha:
+              raise SystemExit("qualification.json does not match trusted SHA-256")
+          try:
+              receipt = json.loads(receipt_bytes)
+          except (UnicodeDecodeError, json.JSONDecodeError) as error:
+              raise SystemExit("authenticated qualification.json is invalid JSON") from error
+          source = receipt.get("sourceCommit") if isinstance(receipt, dict) else None
+          if not isinstance(source, str) or re.fullmatch(r"[0-9a-f]{40}", source) is None:
+              raise SystemExit("authenticated qualification sourceCommit is invalid")
+          print(source)
+          PY
+          )"
+          printf 'qualified_source=%s\n' "${QUALIFIED_SOURCE}" >> "${GITHUB_OUTPUT}"
+          git -C "${GITHUB_WORKSPACE}" fetch --no-tags --depth=1 origin "${QUALIFIED_SOURCE}"
+
+          NATIVE_INPUT_PATHS=(
+            Sources Tests Plugins
+            Package.swift Package.resolved Makefile
+            .bazelrc .bazelversion .bazelignore
+            BUILD BUILD.bazel WORKSPACE WORKSPACE.bazel MODULE.bazel MODULE.bazel.lock
+            Tools/bazel Tools/parity Tools/testing Tools/version-generator Tools/ci
+            ':(exclude)Tools/ci/test_workflow_artifacts.py'
+          )
+          if git -C "${GITHUB_WORKSPACE}" diff --quiet \
+            "${QUALIFIED_SOURCE}" "${TOOL_COMMIT}" -- "${NATIVE_INPUT_PATHS[@]}"; then
+            printf 'Native product inputs match qualified source %s.\n' "${QUALIFIED_SOURCE}"
+          else
+            status=$?
+            if [[ "${status}" -eq 1 ]]; then
+              printf 'Native product inputs differ from qualified source %s; fresh qualification is required.\n' \
+                "${QUALIFIED_SOURCE}" >&2
+            else
+              printf 'Could not compare qualified native inputs (git diff exit %s).\n' "${status}" >&2
+            fi
+            exit "${status}"
+          fi
+      - name: Check out exact qualified product source
+        env:
+          TRUSTED_REPOSITORY: "https://github.com/${{ github.repository }}.git"
+          QUALIFIED_SOURCE: ${{ steps.admit.outputs.qualified_source }}
+        run: |
+          set -euo pipefail
+          PRODUCT_CHECKOUT="${GITHUB_WORKSPACE}/product-source"
+          mkdir -p "${PRODUCT_CHECKOUT}"
+          git -C "${PRODUCT_CHECKOUT}" init
+          git -C "${PRODUCT_CHECKOUT}" remote add origin "${TRUSTED_REPOSITORY}"
+          git -C "${PRODUCT_CHECKOUT}" fetch --no-tags --depth=1 origin "${QUALIFIED_SOURCE}"
+          git -C "${PRODUCT_CHECKOUT}" checkout --detach --force "${QUALIFIED_SOURCE}"
+          git -C "${PRODUCT_CHECKOUT}" clean -ffdx
+          test "$(git -C "${PRODUCT_CHECKOUT}" rev-parse HEAD)" = "${QUALIFIED_SOURCE}"
+          test -z "$(git -C "${PRODUCT_CHECKOUT}" status --porcelain)"
+      - name: Authenticate locally executed qualification and recompute comparisons
+        env:
+          QUALIFIED_SOURCE: ${{ steps.admit.outputs.qualified_source }}
+        run: |
+          set -euo pipefail
           test -n "${FINALIZED_DIRECTORY}"
           test -n "${FINALIZATION_SHA256}"
           test -n "${ACCEPTED_STATE}"
           python3 Tools/parity/verify_local_qualification.py \
-            --repository "$PWD" \
+            --repository "${GITHUB_WORKSPACE}/product-source" \
             --qualification-directory "${QUALIFICATION_DIRECTORY}" \
             --trusted-qualification-sha256 "${QUALIFICATION_SHA256}" \
-            --expected-source-commit "${EXPECTED_SOURCE}" \
+            --expected-source-commit "${QUALIFIED_SOURCE}" \
             --finalized-directory "${FINALIZED_DIRECTORY}" \
             --finalization-provenance-sha256 "${FINALIZATION_SHA256}" \
             --accepted-state "${ACCEPTED_STATE}" \
-            --output-directory .build/parity
+            --output-directory "${GITHUB_WORKSPACE}/.build/parity"
       - name: Upload authenticated local qualification and recomputed comparisons
         uses: ./Tools/ci/upload-artifact-action
         with:

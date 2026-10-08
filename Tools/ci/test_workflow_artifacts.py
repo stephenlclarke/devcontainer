@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -81,6 +82,20 @@ def workflow_step_block(job: str, step_name: str) -> str:
             end = matches[index + 1].start() if index + 1 < len(matches) else len(job)
             return job[match.start():end]
     raise ValueError(f"job has no {step_name!r} step")
+
+
+def workflow_run_script(step: str) -> str:
+    """Return a literal block-style shell script from one workflow step."""
+    marker = re.search(r"^        run: \|[ \t]*$", step, re.MULTILINE)
+    if marker is None:
+        raise ValueError("workflow step has no block-style run script")
+    lines = step[marker.end():].splitlines()
+    body: list[str] = []
+    for line in lines:
+        if line.strip() and len(line) - len(line.lstrip()) < 10:
+            break
+        body.append(line[10:] if line.startswith("          ") else line)
+    return textwrap.dedent("\n".join(body)).strip() + "\n"
 
 
 def workflow_runner_labels(
@@ -755,13 +770,34 @@ jobs:
     def test_parity_verifies_authenticated_local_inputs_without_repeating_guests(self) -> None:
         contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
         verify = workflow_job_block(contents, "verify")
+        tool_checkout = workflow_step_block(verify, "Check out exact workflow tooling commit")
+        admission = workflow_step_block(verify, "Authenticate qualification and admit unchanged native inputs")
+        product_checkout = workflow_step_block(verify, "Check out exact qualified product source")
         step = workflow_step_block(verify, "Authenticate locally executed qualification and recompute comparisons")
-        for required in ("QUALIFICATION_DIRECTORY", "QUALIFICATION_SHA256", "FINALIZED_DIRECTORY",
-                         "FINALIZATION_SHA256", "ACCEPTED_STATE"):
+        for required in ("FINALIZED_DIRECTORY", "FINALIZATION_SHA256", "ACCEPTED_STATE"):
             self.assertIn(f'test -n "${{{required}}}"', step)
+        for required in ("QUALIFICATION_DIRECTORY", "QUALIFICATION_SHA256"):
+            self.assertIn(f'test -n "${{{required}}}"', admission)
         self.assertIn("verify_local_qualification.py", step)
-        self.assertIn('--expected-source-commit "${EXPECTED_SOURCE}"', step)
-        self.assertIn("EXPECTED_SOURCE: ${{ github.sha }}", verify)
+        self.assertIn('--expected-source-commit "${QUALIFIED_SOURCE}"', step)
+        self.assertIn('--repository "${GITHUB_WORKSPACE}/product-source"', step)
+        self.assertIn("TOOL_COMMIT: ${{ github.sha }}", tool_checkout + admission)
+        self.assertIn('diff --quiet', admission)
+        self.assertIn('qualification.json does not match trusted SHA-256', admission)
+        self.assertIn('qualification.json', admission)
+        self.assertIn(':(exclude)Tools/ci/test_workflow_artifacts.py', admission)
+        for path in ("Sources", "Tests", "Plugins", "Package.resolved", "MODULE.bazel.lock",
+                     "Tools/bazel", "Tools/parity", "Tools/testing", "Tools/version-generator",
+                     "Tools/ci"):
+            self.assertIn(path, admission)
+        self.assertLess(verify.index("Authenticate qualification and admit unchanged native inputs"),
+                        verify.index("Check out exact qualified product source"))
+        self.assertLess(verify.index("Check out exact qualified product source"),
+                        verify.index("Authenticate locally executed qualification and recompute comparisons"))
+        self.assertIn('rev-parse HEAD', tool_checkout)
+        self.assertIn('rev-parse HEAD', product_checkout)
+        self.assertIn('status --porcelain', tool_checkout)
+        self.assertIn('status --porcelain', product_checkout)
         self.assertNotIn("runner-runtime.sh", contents)
         self.assertNotIn("make parity-", contents)
         upload = workflow_step_block(verify, "Upload authenticated local qualification and recomputed comparisons")
@@ -769,6 +805,113 @@ jobs:
         for path in ("comparison.json", "matrix.md", "vscode/comparison.json",
                      "vscode/matrix.md", "local-qualification.json"):
             self.assertIn(".build/parity/" + path, upload)
+
+    def test_parity_admission_authenticates_source_and_checks_native_git_closure(self) -> None:
+        contents = (WORKFLOWS / "parity.yml").read_text(encoding="utf-8")
+        job = workflow_job_block(contents, "verify")
+        step = workflow_step_block(job, "Authenticate qualification and admit unchanged native inputs")
+        script = workflow_run_script(step)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            remote = root / "remote.git"
+            repository = root / "work"
+            qualification = root / "qualification"
+            qualification.mkdir()
+            output = root / "github-output"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True,
+                           capture_output=True, text=True)
+            repository.mkdir()
+            subprocess.run(["git", "init", "-b", "main", str(repository)], check=True,
+                           capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(repository), "remote", "add", "origin", str(remote)],
+                           check=True, capture_output=True, text=True)
+            git_env = os.environ.copy()
+            git_env.update({
+                "GIT_AUTHOR_NAME": "Workflow Fixture",
+                "GIT_AUTHOR_EMAIL": "workflow-fixture@example.invalid",
+                "GIT_COMMITTER_NAME": "Workflow Fixture",
+                "GIT_COMMITTER_EMAIL": "workflow-fixture@example.invalid",
+            })
+
+            def git(*arguments: str) -> str:
+                result = subprocess.run(["git", "-C", str(repository), *arguments],
+                                        check=True, capture_output=True, text=True, env=git_env)
+                return result.stdout.strip()
+
+            def commit() -> str:
+                git("add", "--all")
+                git("commit", "-m", "fixture update")
+                return git("rev-parse", "HEAD")
+
+            native_files = (
+                "Sources/Runtime.swift", "Tests/RuntimeTests.swift", "Plugins/Plugin.swift",
+                "Package.swift", "Package.resolved", "Makefile", ".bazelrc", ".bazelversion",
+                ".bazelignore", "BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel",
+                "MODULE.bazel", "MODULE.bazel.lock", "Tools/bazel/runtime.sh",
+                "Tools/parity/runner.py", "Tools/testing/runtime.py",
+                "Tools/version-generator/generate.py", "Tools/ci/runtime-helper.sh",
+                "Tools/ci/test_workflow_artifacts.py", ".github/workflows/parity.yml",
+                "README.md", "docs/qualification.md",
+            )
+            for relative in native_files:
+                path = repository / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("qualified source\n", encoding="utf-8")
+            qualified_source = commit()
+            git("push", "origin", "HEAD:main")
+
+            for relative in (".github/workflows/parity.yml", "README.md", "docs/qualification.md",
+                             "Tools/ci/test_workflow_artifacts.py"):
+                (repository / relative).write_text("tooling-only change\n", encoding="utf-8")
+            tool_commit = commit()
+            git("push", "origin", "HEAD:main")
+            receipt_path = qualification / "qualification.json"
+            receipt_path.write_text(json.dumps({"sourceCommit": qualified_source}) + "\n",
+                                    encoding="utf-8")
+            trusted_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+
+            def admit(tool_sha: str, authority_sha: str = trusted_sha) -> subprocess.CompletedProcess[str]:
+                output.unlink(missing_ok=True)
+                return subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", script], cwd=repository,
+                    capture_output=True, text=True,
+                    env={**os.environ, "QUALIFICATION_DIRECTORY": str(qualification),
+                         "QUALIFICATION_SHA256": authority_sha, "TOOL_COMMIT": tool_sha,
+                         "GITHUB_WORKSPACE": str(repository), "GITHUB_OUTPUT": str(output)},
+                )
+
+            admitted = admit(tool_commit)
+            self.assertEqual(admitted.returncode, 0, admitted.stderr + admitted.stdout)
+            self.assertIn("Native product inputs match qualified source", admitted.stdout)
+            self.assertIn(f"qualified_source={qualified_source}", output.read_text(encoding="utf-8"))
+
+            git("reset", "--hard", tool_commit)
+            (repository / "Sources/Runtime.swift").write_text("native product drift\n", encoding="utf-8")
+            drift_commit = commit()
+            rejected_drift = admit(drift_commit)
+            self.assertNotEqual(rejected_drift.returncode, 0)
+            self.assertIn("Native product inputs differ from qualified source", rejected_drift.stderr)
+
+            git("reset", "--hard", tool_commit)
+            (repository / "Tests/RuntimeTests.swift").unlink()
+            deletion_commit = commit()
+            rejected_deletion = admit(deletion_commit)
+            self.assertNotEqual(rejected_deletion.returncode, 0)
+            self.assertIn("Native product inputs differ from qualified source", rejected_deletion.stderr)
+
+            git("reset", "--hard", tool_commit)
+            original = repository / "Tools/testing/runtime.py"
+            original.rename(repository / "Tools/testing/runtime-renamed.py")
+            rename_commit = commit()
+            rejected_rename = admit(rename_commit)
+            self.assertNotEqual(rejected_rename.returncode, 0)
+            self.assertIn("Native product inputs differ from qualified source", rejected_rename.stderr)
+
+            receipt_path.write_text(json.dumps({"sourceCommit": "f" * 40}) + "\n", encoding="utf-8")
+            rejected_authority = admit(tool_commit)
+            self.assertNotEqual(rejected_authority.returncode, 0)
+            self.assertIn("qualification.json does not match trusted SHA-256", rejected_authority.stderr)
 
     def test_release_publication_promotes_only_a_tested_tap_commit(self) -> None:
         contents = (WORKFLOWS / "prebuilt-binaries.yml").read_text(
