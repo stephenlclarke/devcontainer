@@ -344,8 +344,9 @@ class HomebrewInstallationTests(unittest.TestCase):
     def test_foreign_repository_is_rejected_before_replacement(self):
         self.brew.repository = self.root / "foreign-repository"
         self.brew.repository.mkdir()
+        transaction = self.transaction()
         with self.assertRaisesRegex(installation.InstallationError, "owned root"):
-            self.transaction().run()
+            transaction.run()
         self.assertFalse(any(call[0] == "uninstall" for call in self.brew.calls))
         self.assertIsNone(self.guard.owner)
 
