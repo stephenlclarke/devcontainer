@@ -487,6 +487,18 @@ def validate_init_io_trace_request(enabled: bool, diagnostic_fixtures: tuple[str
         raise ValueError("INIT I/O tracing requires only the E07 native diagnostic")
 
 
+def validate_attachment_generation_request(generations: int, candidate_mode: bool,
+                                           diagnostic_fixtures: tuple[str, ...] | None,
+                                           component_fixture: str | None) -> None:
+    """Keep extended attachment restarts inside one unsigned native E07 diagnostic."""
+    if type(generations) is not int or generations not in {2, 8}:
+        raise ValueError("Attachment generations must be 2 or 8")
+    if generations == 8 and (
+            not candidate_mode or component_fixture is not None
+            or diagnostic_fixtures != ("E07-init-attachment",)):
+        raise ValueError("eight attachment generations require only E07 in unsigned candidate diagnostic mode")
+
+
 def validate_package_mode(*, candidate_invocation: str | None,
                           diagnostic_fixtures: tuple[str, ...] | None,
                           finalized_values: tuple[object | None, ...]) -> bool:
@@ -694,6 +706,12 @@ def diagnostic_result_payload(args: argparse.Namespace, cleanup: dict, host_payl
                 and item.get("performanceComparisonEligible") is True
                 for item in lane_diagnostics.values()),
             "lanes": lane_diagnostics,
+        }
+    if getattr(args, "attachment_generations", 2) == 8:
+        payload["diagnosticExecution"] = {
+            "attachmentGenerations": 8,
+            "timingClassification": "diagnostic-only",
+            "guardIdentity": args._diagnostic_guard_identity,
         }
     return payload
 
@@ -1390,6 +1408,14 @@ def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[
         cli += ["--d05-cache-state", "warm"]
     if diagnostic_fixtures is not None and getattr(args, "trace_init_io", False):
         cli.append("--trace-init-io")
+    generations = getattr(args, "attachment_generations", 2)
+    if generations == 8:
+        validate_attachment_generation_request(
+            generations, getattr(args, "candidate_invocation", None) is not None,
+            diagnostic_fixtures, getattr(args, "component_fixture", None))
+        if lane not in {"apple-stock", "container-compose"}:
+            raise ValueError("eight attachment generations cannot be forwarded to Docker")
+        cli += ["--attachment-generations", "8"]
     vscode = [sys.executable, str(REPOSITORY / "Tools/parity/run_vscode.py"), lane,
               str(evidence / "vscode"), *finalized_args(args)]
     if lane == "docker":
@@ -2584,6 +2610,8 @@ def parse_args() -> argparse.Namespace:
                         help="prepare a D05 feature cache before timing its native diagnostic")
     parser.add_argument("--trace-init-io", action="store_true",
                         help="record bounded payload-free INIT stream counters for the E07 native diagnostic")
+    parser.add_argument("--attachment-generations", type=int, choices=(2, 8), default=2,
+                        help="run eight E07 init generations only for an unsigned native candidate diagnostic")
     parser.add_argument("--docker-reference", type=Path,
                         help="optional original Docker results file retained separately from diagnostic lane evidence")
     parser.add_argument("--docker-reference-sha256",
@@ -2644,6 +2672,9 @@ def main() -> int:
     candidate_mode = validate_package_mode(
         candidate_invocation=getattr(args, "candidate_invocation", None),
         diagnostic_fixtures=diagnostic_fixtures, finalized_values=finalized_values)
+    args.attachment_generations = getattr(args, "attachment_generations", 2)
+    validate_attachment_generation_request(
+        args.attachment_generations, candidate_mode, diagnostic_fixtures, component_fixture)
     diagnostic_reference = validate_diagnostic_reference(getattr(args, "docker_reference", None),
                                                          getattr(args, "docker_reference_sha256", None))
     if diagnostic_reference is not None and diagnostic_fixtures is None:
@@ -2673,6 +2704,8 @@ def main() -> int:
                      "packageKind": "unsigned-native-candidate" if candidate_mode else "signed-notarized-native-package",
                      "referenceSHA256": diagnostic_reference["sha256"] if diagnostic_reference else None,
                      "traceInitIO": args.trace_init_io,
+                     **({"attachmentGenerations": 8, "timingClassification": "diagnostic-only"}
+                        if args.attachment_generations == 8 else {}),
                      "providerSHA256": binaries,
                      "lanes": ["apple-stock", "container-compose"],
                      "evidence": str(args.evidence)} if diagnostic_fixtures else (
@@ -2764,8 +2797,10 @@ def main() -> int:
         operator_inputs["toolingIdentity"] = args._tooling_identity
         operator_inputs["d05CacheState"] = args.d05_cache_state
         operator_inputs["traceInitIO"] = args.trace_init_io
-        if args.trace_init_io:
+        if args.trace_init_io or args.attachment_generations == 8:
             operator_inputs["timingClassification"] = "diagnostic-only"
+    if args.attachment_generations == 8:
+        operator_inputs["attachmentGenerations"] = 8
     write_json(args.evidence / "operator-inputs.json", operator_inputs)
     if cli_only_mode:
         args._component_evidence_identity = capture_component_evidence_identity(
@@ -2789,6 +2824,9 @@ def main() -> int:
         })
     elif diagnostic_fixtures:
         guard_identity["diagnosticFixtures"] = sorted(diagnostic_fixtures)
+    if args.attachment_generations == 8:
+        guard_identity["attachmentGenerations"] = 8
+    args._diagnostic_guard_identity = dict(guard_identity)
     transaction_owner = {"identity": guard_identity, "root": str(args.evidence)}
     cleanup = {lane: {"status": "not-started"} for lane in LANES}
     guard_cleared = False

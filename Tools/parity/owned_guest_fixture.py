@@ -276,6 +276,11 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
                 "archiveSHA256": candidate["assetSHA256"],
                 "runtimeProfile": "stock", "diagnosticFixtures": diagnostic_fixtures,
             }
+            attachment_generations = getattr(runner, "attachment_generations", 2)
+            if attachment_generations == 8 and fixture_selection == ("E07-init-attachment",):
+                expected_guard_identity["attachmentGenerations"] = 8
+            elif attachment_generations != 2:
+                expected_guard_identity = None
     if (not isinstance(guard, dict) or set(guard) != {"identity", "root"}
             or not isinstance(guard_identity, dict) or expected_guard_identity is None
             or guard_identity != expected_guard_identity

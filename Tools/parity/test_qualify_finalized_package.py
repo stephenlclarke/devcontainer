@@ -140,6 +140,40 @@ class SuiteLifecycleTests(unittest.TestCase):
                     ValueError, "only the E07"):
                 qualify.validate_init_io_trace_request(True, fixtures, component)
 
+    def test_eight_attachment_generations_are_limited_to_unsigned_native_e07(self) -> None:
+        qualify.validate_attachment_generation_request(2, False, None, None)
+        qualify.validate_attachment_generation_request(2, False, ("E07-init-attachment",), None)
+        qualify.validate_attachment_generation_request(8, True, ("E07-init-attachment",), None)
+        for generations, candidate, fixtures, component in (
+                (8, False, ("E07-init-attachment",), None),
+                (8, True, None, None),
+                (8, True, ("C03-compose-resources", "E07-init-attachment"), None),
+                (8, True, ("E07-init-attachment",), "E13-compose-signals"),
+                (3, True, ("E07-init-attachment",), None),
+                (True, True, ("E07-init-attachment",), None)):
+            with self.subTest(generations=generations, candidate=candidate,
+                              fixtures=fixtures, component=component), self.assertRaisesRegex(
+                    ValueError, "Attachment generations|eight attachment generations"):
+                qualify.validate_attachment_generation_request(generations, candidate, fixtures, component)
+
+    def test_attachment_generation_cli_option_parses_eight(self) -> None:
+        argv = [
+            "qualify_finalized_package.py", "--attachment-generations", "8",
+            "--ssd-root", "/ssd", "--retained-root", "/retained",
+            "--qualification-directory", "/qualification", "--campaign", "campaign",
+            "--source-commit", "a" * 40,
+        ]
+        for option in ("docker-bin", "docker-compose-bin", "docker-buildx-bin", "stock-container-bin",
+                       "compose-container-bin", "compose-provider-bin",
+                       "colima-bin", "vscode-bin", "vscode-app", "vscode-vsix", "evidence"):
+            argv.extend((f"--{option}", f"/{option}"))
+        for option in ("stock-container-sha256", "stock-api-sha256", "compose-container-sha256",
+                       "compose-api-sha256", "compose-provider-sha256", "colima-sha256"):
+            argv.extend((f"--{option}", "b" * 64))
+        with mock.patch("qualify_finalized_package.sys.argv", argv):
+            arguments = qualify.parse_args()
+        self.assertEqual(arguments.attachment_generations, 8)
+
     def test_warm_d05_cache_is_limited_to_the_single_native_diagnostic(self) -> None:
         qualify.validate_d05_cache_request("cold", None, None)
         qualify.validate_d05_cache_request("warm", ("D05-features",), None)
@@ -173,6 +207,25 @@ class SuiteLifecycleTests(unittest.TestCase):
         )
         cli, _ = qualify.lane_commands(args, "apple-stock", Path("/evidence"))
         self.assertIn("--trace-init-io", cli)
+
+    def test_eight_generation_option_forwards_only_to_native_candidate_e07(self) -> None:
+        args = argparse.Namespace(
+            diagnostic_fixtures=("E07-init-attachment",), component_fixture=None,
+            attachment_generations=8, candidate_invocation="candidate", source_commit="a" * 40,
+            finalized_directory=None, provenance_sha256=None, state_sha256=None, accepted_state=None,
+        )
+        stock, _ = qualify.lane_commands(args, "apple-stock", Path("/evidence"))
+        compose, _ = qualify.lane_commands(args, "container-compose", Path("/evidence"))
+        self.assertEqual(stock[-2:], ["--attachment-generations", "8"])
+        self.assertEqual(compose[-2:], ["--attachment-generations", "8"])
+        with self.assertRaisesRegex(ValueError, "cannot be forwarded to Docker"):
+            qualify.lane_commands(args, "docker", Path("/evidence"))
+        args.candidate_invocation = None
+        args.finalized_directory = Path("/final")
+        args.provenance_sha256, args.state_sha256 = "b" * 64, "c" * 64
+        args.accepted_state = Path("/state")
+        with self.assertRaisesRegex(ValueError, "unsigned candidate diagnostic mode"):
+            qualify.lane_commands(args, "apple-stock", Path("/evidence"))
 
     def test_unsigned_candidate_mode_cannot_enter_full_or_finalized_qualification(self) -> None:
         fixtures = ("C03-compose-resources", "E07-init-attachment")
@@ -310,12 +363,24 @@ class SuiteLifecycleTests(unittest.TestCase):
         args._candidate_receipt = {"runtimeProfile": "stock", "commit": "a" * 40,
                                    "archiveSHA256": "f" * 64}
         args._candidate_admissions = {"apple-stock": {"scope": "local-candidate-integration-only"}}
+        args.diagnostic_fixtures = ("E07-init-attachment",)
+        args.attachment_generations = 8
+        args._diagnostic_guard_identity = {
+            "scope": "unsigned-native-candidate-diagnostic",
+            "candidateInvocation": "candidate",
+            "attachmentGenerations": 8,
+        }
         candidate_payload = qualify.diagnostic_result_payload(
             args, cleanup, {"status": "restored"}, {}, None, "passed", [])
         self.assertEqual(candidate_payload["package"]["kind"], "unsigned-native-candidate")
         self.assertFalse(candidate_payload["package"]["signatureVerified"])
         self.assertFalse(candidate_payload["releaseQualified"])
         self.assertNotIn("finalizationProvenanceSHA256", candidate_payload["package"])
+        self.assertEqual(candidate_payload["diagnosticExecution"], {
+            "attachmentGenerations": 8,
+            "timingClassification": "diagnostic-only",
+            "guardIdentity": args._diagnostic_guard_identity,
+        })
 
     def test_native_diagnostic_restoration_requires_both_native_lanes_and_no_docker(self) -> None:
         cleanup = {"docker": {"status": "not-started"}}

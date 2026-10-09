@@ -184,6 +184,22 @@ class OwnedGuestFailureTests(unittest.TestCase):
             self.assertEqual(case_identity["candidateInvocation"], candidate["candidateInvocation"])
             self.assertEqual(case_identity["candidateReceiptSHA256"], candidate["candidateReceiptSHA256"])
 
+            runner.attachment_generations = 8
+            guard_identity["diagnosticFixtures"] = ["E07-init-attachment"]
+            guard_identity["attachmentGenerations"] = 8
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            self.assertEqual(owned_guest_fixture._active_provider_home(
+                runner, fixture_selection=("E07-init-attachment",))[0], home)
+            guard_identity.pop("attachmentGenerations")
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                owned_guest_fixture._active_provider_home(
+                    runner, fixture_selection=("E07-init-attachment",))
+
     def test_failed_e07_retains_only_bounded_stage_and_stream_diagnostics(self) -> None:
         import guest_runtime
         import owned_guest_fixture
