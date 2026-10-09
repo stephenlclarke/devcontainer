@@ -56,13 +56,14 @@ class PatchState:
     disposition: str
 
 
-def run(command: Sequence[str], *, cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def run(command: Sequence[str], *, cwd: Path, timeout: int = 30,
+        umask: int = -1) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True,
-                          timeout=timeout, check=False)
+                          timeout=timeout, check=False, umask=umask)
 
 
-def checked(command: Sequence[str], *, cwd: Path, timeout: int = 30) -> str:
-    result = run(command, cwd=cwd, timeout=timeout)
+def checked(command: Sequence[str], *, cwd: Path, timeout: int = 30, umask: int = -1) -> str:
+    result = run(command, cwd=cwd, timeout=timeout, umask=umask)
     if result.returncode:
         raise ValueError("command failed: " + " ".join(command) + ": " + result.stderr.strip())
     return result.stdout.strip()
@@ -162,7 +163,7 @@ def expected_patch_output(spec: PatchSpec, paths: Sequence[str]) -> dict[str, tu
         checked(["git", "add", "--all"], cwd=tree)
         checked(["git", "commit", "-q", "-m", "pinned baseline"], cwd=tree)
         checked(["git", "apply", "--check", str(spec.patch)], cwd=tree)
-        checked(["git", "apply", str(spec.patch)], cwd=tree)
+        checked(["git", "apply", str(spec.patch)], cwd=tree, umask=0o022)
         checked(["git", "add", "--all"], cwd=tree)
         modes = {}
         for row in checked(["git", "ls-files", "--stage", "-z"], cwd=tree).split("\0"):
@@ -304,7 +305,8 @@ def prepare(root: Path, scratch_path: Path, profile: str | None = None,
             if status_paths(state.spec):
                 raise ValueError("SwiftPM checkout changed after preflight: " + state.spec.identity)
             verify_checkout_identity(state.spec)
-            checked(["git", "apply", str(state.spec.patch)], cwd=state.spec.checkout)
+            # Git recreates patched files; preserve reviewed modes without changing the caller's private umask.
+            checked(["git", "apply", str(state.spec.patch)], cwd=state.spec.checkout, umask=0o022)
             applied.append(state)
         for state in states:
             verify_applied(state)
@@ -312,7 +314,8 @@ def prepare(root: Path, scratch_path: Path, profile: str | None = None,
         for state in reversed(applied):
             try:
                 verify_applied(state)
-                checked(["git", "apply", "--reverse", str(state.spec.patch)], cwd=state.spec.checkout)
+                checked(["git", "apply", "--reverse", str(state.spec.patch)],
+                        cwd=state.spec.checkout, umask=0o022)
                 if status_paths(state.spec):
                     raise ValueError("rollback left checkout changes: " + state.spec.identity)
             except (OSError, ValueError, subprocess.SubprocessError) as rollback_error:

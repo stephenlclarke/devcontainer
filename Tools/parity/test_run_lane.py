@@ -165,16 +165,18 @@ class UnsignedCandidateDiagnosticTests(unittest.TestCase):
         self.assertEqual(selection, {
             "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
             "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+        finalized_arguments = argparse.Namespace(
+            candidate_invocation="candidate",
+            finalized_directory=Path("/final"),
+            finalization_provenance_sha256="b" * 64,
+            finalization_state=Path("/state"), expected_source_commit="a" * 40)
         with self.assertRaisesRegex(ParityError, "mutually exclusive"):
-            candidate_selection(argparse.Namespace(
-                candidate_invocation="candidate",
-                finalized_directory=Path("/final"),
-                finalization_provenance_sha256="b" * 64,
-                finalization_state=Path("/state"), expected_source_commit="a" * 40))
+            candidate_selection(finalized_arguments)
+        docker_arguments = argparse.Namespace(
+            candidate_invocation="candidate", expected_source_commit="a" * 40,
+            lane="docker")
         with self.assertRaisesRegex(ParityError, "native-only"):
-            candidate_selection(argparse.Namespace(
-                candidate_invocation="candidate", expected_source_commit="a" * 40,
-                lane="docker"))
+            candidate_selection(docker_arguments)
         validate_candidate_fixture_set({"C03-compose-resources", "E07-init-attachment"})
         with self.assertRaisesRegex(ParityError, "only selected C03"):
             validate_candidate_fixture_set({"E01-engine-negotiation"})

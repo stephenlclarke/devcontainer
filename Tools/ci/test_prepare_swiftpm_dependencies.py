@@ -78,6 +78,7 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
                               "sha256": hashlib.sha256(patch_bytes).hexdigest()})
             self.checkouts.append(checkout)
             git(checkout, "reset", "--hard", "-q")
+            (checkout / filename).chmod(0o644)
 
         self._write_lock("Package.resolved", self.rows)
         stock = [
@@ -127,6 +128,18 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
         self.assertEqual(result["status"], "unmodified")
         self.assertEqual(after, before)
         self.assertEqual((self.root / "Package.resolved").read_bytes(), stock_lock)
+
+    def test_private_umask_preserves_reviewed_modes_and_caller_permissions(self) -> None:
+        original_umask = os.umask(0o077)
+        try:
+            result = self._prepare()
+            self.assertEqual(result["status"], "prepared")
+            self.assertEqual(self._prepare(), result)
+            for checkout, filename in zip(self.checkouts, ("Package.swift", "Runtime.swift", "Responder.swift")):
+                self.assertEqual((checkout / filename).stat().st_mode & 0o777, 0o644)
+            self.assertEqual(os.umask(0o077), 0o077)
+        finally:
+            os.umask(original_umask)
 
     def test_stock_profile_rejects_enhanced_active_lock(self) -> None:
         with self.assertRaisesRegex(ValueError, "active Package.resolved differs"):

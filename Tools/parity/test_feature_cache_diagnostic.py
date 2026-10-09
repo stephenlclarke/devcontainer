@@ -120,7 +120,7 @@ class FeatureCacheDiagnosticTests(unittest.TestCase):
         self.assertFalse(called)
 
     def test_cache_proof_requires_both_named_stages_and_no_install(self) -> None:
-        self.assertEqual(_cache_proof(cached_progress().encode(), b"")[0], True)
+        self.assertTrue(_cache_proof(cached_progress().encode(), b"")[0])
         missing = cached_progress().replace("#42 CACHED", "#42 DONE")
         self.assertIn("not proven cached", _cache_proof(missing.encode(), b"")[1])
         absent = cached_progress().replace("git_1", "other-feature")
@@ -226,11 +226,12 @@ class FeatureCacheDiagnosticTests(unittest.TestCase):
             up_stdout="secret diagnostic raw", up_stderr="", evidence_dir=evidence)
         self.assertFalse(result["performanceComparisonEligible"])
         self.assertEqual(result["status"], "not_comparable")
+        functional_started_monotonic_ns = time.monotonic_ns()
         with self.assertRaises(FileExistsError):
             verify_d05_feature_cache(
                 lane="apple-stock", fixture_id="D05-features", workspace=self.workspace,
                 candidate_identity=IDENTITY, warmup_receipt=receipt,
-                functional_started_monotonic_ns=time.monotonic_ns(),
+                functional_started_monotonic_ns=functional_started_monotonic_ns,
                 up_stdout="again", up_stderr="", evidence_dir=evidence)
 
     def test_rejects_docker_lane_and_unadmitted_package(self) -> None:

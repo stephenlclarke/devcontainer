@@ -167,7 +167,7 @@ advanced mount options.
 
 ## Development
 
-The eight stock/enhanced compiled dependency layers were refreshed through their maintained producers and focused tests. Their published archives and evidence were downloaded and verified in Foundation, Containerization/Engine API, then Container SDK order. The product build consumes these exact released inputs; full package qualification remains a separate gate.
+The eight stock/enhanced compiled dependency layers were refreshed through their maintained producers and focused tests. Their published archives and evidence were downloaded and verified in Foundation, Containerization/Engine API, then Container SDK order. Both profiles passed executable consumption checks without recompiling imported dependencies, followed by unsigned development packaging and smoke checks. The [TLS layer handoff](docs/PR-tls-layer-consumption.md) records the release links and validation. Full runtime qualification and notarization remain separate gates.
 
 The next Engine API transport correction requires new Engine API and Container SDK archives in both profiles. Its finite source-transition check retains only the unchanged Foundation and Containerization archives, with exact canonical locks, lower inputs, recipes and toolchains; ArgumentParser keeps its independent admission. New assets require focused qualification and downloaded admission before becoming product inputs. See [the layer refresh handoff](docs/PR-engine-api-layer-refresh.md).
 
