@@ -359,6 +359,17 @@ final class AppleContainerIO: @unchecked Sendable {
 final class AppleContainerIODiagnostics: @unchecked Sendable {
     typealias TraceWriter = @Sendable (Data) -> Void
 
+    private struct TraceSnapshot {
+        let submittedBytes: Int
+        let completedBytes: Int
+        let failedBytes: Int
+        let stdoutBytes: Int
+        let stderrBytes: Int
+        let stdoutEOF: Bool
+        let stderrEOF: Bool
+        let exitCode: Int32?
+    }
+
     private let enabled: Bool
     private let traceWriter: TraceWriter
     private let generation = UUID().uuidString.lowercased()
@@ -480,46 +491,46 @@ final class AppleContainerIODiagnostics: @unchecked Sendable {
 
     func cancellationSummary(pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
-        let totals = lock.withLock { () -> (Int, Int, Int, Int, Int, Bool, Bool, Int32?)? in
+        let totals = lock.withLock { () -> TraceSnapshot? in
             guard !terminalDrainRecorded, !cancellationSummaryRecorded else { return nil }
             cancellationSummaryRecorded = true
-            return (
-                inputSubmittedBytes,
-                inputCompletedBytes,
-                inputFailedBytes,
-                outputBytes[.standardOutput] ?? 0,
-                outputBytes[.standardError] ?? 0,
-                outputEOFChannels.contains(.standardOutput),
-                outputEOFChannels.contains(.standardError),
-                nativeExitCode
+            return TraceSnapshot(
+                submittedBytes: inputSubmittedBytes,
+                completedBytes: inputCompletedBytes,
+                failedBytes: inputFailedBytes,
+                stdoutBytes: outputBytes[.standardOutput] ?? 0,
+                stderrBytes: outputBytes[.standardError] ?? 0,
+                stdoutEOF: outputEOFChannels.contains(.standardOutput),
+                stderrEOF: outputEOFChannels.contains(.standardError),
+                exitCode: nativeExitCode
             )
         }
         guard let totals else { return }
         let pending = pendingWrites()
-        let exitCode = totals.7.map { String($0) } ?? "unknown"
+        let exitCode = totals.exitCode.map { String($0) } ?? "unknown"
         recordFinal(
             "io-cancelled-summary",
-            "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) stdout=\(totals.3) stderr=\(totals.4) stdoutEOF=\(totals.5) stderrEOF=\(totals.6) exit=\(exitCode) pending=\(pending)"
+            "submitted=\(totals.submittedBytes) completed=\(totals.completedBytes) failed=\(totals.failedBytes) stdout=\(totals.stdoutBytes) stderr=\(totals.stderrBytes) stdoutEOF=\(totals.stdoutEOF) stderrEOF=\(totals.stderrEOF) exit=\(exitCode) pending=\(pending)"
         )
     }
 
     private func recordDrain(_ event: String) {
         guard enabled else { return }
-        let totals = lock.withLock {
+        let totals = lock.withLock { () -> TraceSnapshot in
             terminalDrainRecorded = true
-            return (
-                inputSubmittedBytes,
-                inputCompletedBytes,
-                inputFailedBytes,
-                outputBytes[.standardOutput] ?? 0,
-                outputBytes[.standardError] ?? 0,
-                outputEOFChannels.contains(.standardOutput),
-                outputEOFChannels.contains(.standardError),
-                nativeExitCode
+            return TraceSnapshot(
+                submittedBytes: inputSubmittedBytes,
+                completedBytes: inputCompletedBytes,
+                failedBytes: inputFailedBytes,
+                stdoutBytes: outputBytes[.standardOutput] ?? 0,
+                stderrBytes: outputBytes[.standardError] ?? 0,
+                stdoutEOF: outputEOFChannels.contains(.standardOutput),
+                stderrEOF: outputEOFChannels.contains(.standardError),
+                exitCode: nativeExitCode
             )
         }
-        let exitCode = totals.7.map { String($0) } ?? "unknown"
-        recordFinal(event, "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) stdout=\(totals.3) stderr=\(totals.4) stdoutEOF=\(totals.5) stderrEOF=\(totals.6) exit=\(exitCode)")
+        let exitCode = totals.exitCode.map { String($0) } ?? "unknown"
+        recordFinal(event, "submitted=\(totals.submittedBytes) completed=\(totals.completedBytes) failed=\(totals.failedBytes) stdout=\(totals.stdoutBytes) stderr=\(totals.stderrBytes) stdoutEOF=\(totals.stdoutEOF) stderrEOF=\(totals.stderrEOF) exit=\(exitCode)")
     }
 
     private func recordProgress(_ event: String, _ details: @autoclosure () -> String) {

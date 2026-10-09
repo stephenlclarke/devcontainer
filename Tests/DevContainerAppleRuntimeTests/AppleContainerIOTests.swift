@@ -14,7 +14,10 @@ private final class TraceCapture: @unchecked Sendable {
     private var storedLines: [String] = []
 
     func append(_ data: Data) {
-        lock.withLock { storedLines.append(String(decoding: data, as: UTF8.self)) }
+        guard let line = String(data: data, encoding: .utf8) else {
+            preconditionFailure("init I/O diagnostic emitted invalid UTF-8")
+        }
+        lock.withLock { storedLines.append(line) }
     }
 
     var lines: [String] {
