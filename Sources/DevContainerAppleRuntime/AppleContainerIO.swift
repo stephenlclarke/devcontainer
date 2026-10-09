@@ -11,6 +11,7 @@ import Foundation
 final class AppleContainerIO: @unchecked Sendable {
     let createdAt: Date
     let terminal: Bool
+    private let diagnostics: AppleContainerIODiagnostics
     private let input: AppleProcessInputChannel?
     private let output = Pipe()
     private let error: Pipe?
@@ -40,6 +41,8 @@ final class AppleContainerIO: @unchecked Sendable {
     ) throws {
         self.createdAt = createdAt
         self.terminal = terminal
+        let diagnostics = AppleContainerIODiagnostics()
+        self.diagnostics = diagnostics
         input = try openStandardInput ? .socketPair() : nil
         error = terminal ? nil : Pipe()
         inputWriter = input.map {
@@ -56,16 +59,28 @@ final class AppleContainerIO: @unchecked Sendable {
         outputMonitor = ProcessPipeMonitor(
             handle: output.fileHandleForReading, channel: .standardOutput,
             callbacks: .init(
-                onEOF: { state.endSource(.standardOutput) },
-                onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+                onEOF: {
+                    diagnostics.sourceEOF(.standardOutput)
+                    state.endSource(.standardOutput)
+                },
+                onFrame: {
+                    diagnostics.outputFrame($0)
+                    state.publish($0)
+                }, onError: { state.complete(.failure($0)) }
             )
         )
         errorMonitor = error.map {
             ProcessPipeMonitor(
                 handle: $0.fileHandleForReading, channel: .standardError,
                 callbacks: .init(
-                    onEOF: { state.endSource(.standardError) },
-                    onFrame: { state.publish($0) }, onError: { state.complete(.failure($0)) }
+                    onEOF: {
+                        diagnostics.sourceEOF(.standardError)
+                        state.endSource(.standardError)
+                    },
+                    onFrame: {
+                        diagnostics.outputFrame($0)
+                        state.publish($0)
+                    }, onError: { state.complete(.failure($0)) }
                 )
             )
         }
@@ -185,6 +200,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     func finish(exitCode: Int32, drainTimeout: Duration = .seconds(30)) async {
+        diagnostics.processExit(exitCode)
         lock.withLock { nativeExitObserved = true }
         exits.complete(.success(exitCode))
         let controls = sealControls()
@@ -206,10 +222,12 @@ final class AppleContainerIO: @unchecked Sendable {
         await inputWriter?.waitForCompletion()
         _ = try? await controls?.value
         if lock.withLock({ drainTimedOut }) {
+            diagnostics.drainTimedOut()
             attachments.complete(.failure(DevContainerError(
                 .runtimeUnavailable, message: "Container output did not reach EOF after process exit"
             )))
         } else {
+            diagnostics.drainCompleted()
             attachments.complete(.success(exitCode))
         }
         // Replacement also waits for durable completion publication. Otherwise
@@ -249,18 +267,27 @@ final class AppleContainerIO: @unchecked Sendable {
             throw DevContainerError(.conflict, message: "Container standard input is not open")
         }
         let state = attachments
-        try await subscription.perform {
-            try await inputWriter.write(data, cancelWriterOnCancellation: false) { !state.isActive(attachment) }
+        diagnostics.inputSubmitted(data.count, pendingWrites: inputWriter.pendingWriteCount)
+        do {
+            try await subscription.perform {
+                try await inputWriter.write(data, cancelWriterOnCancellation: false) { !state.isActive(attachment) }
+            }
+            diagnostics.inputCompleted(data.count, pendingWrites: inputWriter.pendingWriteCount)
+        } catch {
+            diagnostics.inputFailed(data.count, pendingWrites: inputWriter.pendingWriteCount)
+            throw error
         }
     }
 
     fileprivate func closeInput(attachment _: UUID) async throws {
+        diagnostics.inputEOFRequested(pendingWrites: inputWriter?.pendingWriteCount ?? 0)
         // A failed output subscriber still owes StdinOnce EOF. Its capability
         // names this retained generation, never a replacement using the same ID.
         // Global stdin EOF must also interrupt another attachment's blocked
         // write. A queue-only close could sit behind that write indefinitely.
         inputWriter?.cancel()
         await inputWriter?.waitForCompletion()
+        diagnostics.inputEOFCompleted(pendingWrites: inputWriter?.pendingWriteCount ?? 0)
     }
 
     fileprivate func resize(width: UInt16, height: UInt16, attachment: UUID) async throws {
@@ -323,6 +350,143 @@ final class AppleContainerIO: @unchecked Sendable {
             try? output.fileHandleForWriting.close()
             try? error?.fileHandleForWriting.close()
         }
+    }
+}
+
+/// Opt-in, payload-free counters for isolating native init attachment stalls.
+private final class AppleContainerIODiagnostics: @unchecked Sendable {
+    private let enabled = ProcessInfo.processInfo.environment["DEVCONTAINER_TRACE_INIT_IO"] == "1"
+    private let generation = UUID().uuidString.lowercased()
+    private let startedAt = DispatchTime.now().uptimeNanoseconds
+    private let lock = NSLock()
+    private let writeLock = NSLock()
+    private let maximumProgressEvents = 256
+    private var progressEvents = 0
+    private var inputSubmittedBytes = 0
+    private var inputCompletedBytes = 0
+    private var inputFailedBytes = 0
+    private var outputBytes: [RuntimeIOChannel: Int] = [:]
+    private var lastReportedOutputMiB: [RuntimeIOChannel: Int] = [:]
+    private var outputEOFChannels: Set<RuntimeIOChannel> = []
+    private var nativeExitCode: Int32?
+
+    func inputSubmitted(_ bytes: Int, pendingWrites: Int) {
+        guard enabled else { return }
+        let total = lock.withLock {
+            inputSubmittedBytes += bytes
+            return inputSubmittedBytes
+        }
+        recordProgress("input-write-submitted", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+    }
+
+    func inputCompleted(_ bytes: Int, pendingWrites: Int) {
+        guard enabled else { return }
+        let total = lock.withLock {
+            inputCompletedBytes += bytes
+            return inputCompletedBytes
+        }
+        recordProgress("input-write-completed", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+    }
+
+    func inputFailed(_ bytes: Int, pendingWrites: Int) {
+        guard enabled else { return }
+        let total = lock.withLock {
+            inputFailedBytes += bytes
+            return inputFailedBytes
+        }
+        recordProgress("input-write-failed", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+    }
+
+    func inputEOFRequested(pendingWrites: Int) {
+        guard enabled else { return }
+        recordProgress("input-eof-requested", "pending=\(pendingWrites)")
+    }
+
+    func inputEOFCompleted(pendingWrites: Int) {
+        guard enabled else { return }
+        let totals = lock.withLock { (inputSubmittedBytes, inputCompletedBytes, inputFailedBytes) }
+        recordFinal("input-eof-completed", "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) pending=\(pendingWrites)")
+    }
+
+    func outputFrame(_ frame: RuntimeIOFrame) {
+        guard enabled else { return }
+        let channel = frame.channel
+        let progress = lock.withLock { () -> (Int, Int)? in
+            let total = (outputBytes[channel] ?? 0) + frame.data.count
+            outputBytes[channel] = total
+            let mebibytes = total / (1024 * 1024)
+            guard mebibytes > (lastReportedOutputMiB[channel] ?? 0) else { return nil }
+            lastReportedOutputMiB[channel] = mebibytes
+            return (total, mebibytes)
+        }
+        if let (total, mebibytes) = progress {
+            recordProgress("output-progress", "channel=\(channel) bytes=\(total) mebibytes=\(mebibytes)")
+        }
+    }
+
+    func sourceEOF(_ channel: RuntimeIOChannel) {
+        guard enabled else { return }
+        let total = lock.withLock { () -> Int in
+            outputEOFChannels.insert(channel)
+            return outputBytes[channel] ?? 0
+        }
+        recordFinal("output-eof", "channel=\(channel) bytes=\(total)")
+    }
+
+    func processExit(_ exitCode: Int32) {
+        guard enabled else { return }
+        lock.withLock { nativeExitCode = exitCode }
+        recordFinal("process-exit", "code=\(exitCode)")
+    }
+
+    func drainTimedOut() {
+        recordDrain("output-drain-timeout")
+    }
+
+    func drainCompleted() {
+        recordDrain("output-drain-completed")
+    }
+
+    private func recordDrain(_ event: String) {
+        guard enabled else { return }
+        let totals = lock.withLock {
+            (
+                inputSubmittedBytes,
+                inputCompletedBytes,
+                inputFailedBytes,
+                outputBytes[.standardOutput] ?? 0,
+                outputBytes[.standardError] ?? 0,
+                outputEOFChannels.contains(.standardOutput),
+                outputEOFChannels.contains(.standardError),
+                nativeExitCode
+            )
+        }
+        let exitCode = totals.7.map { String($0) } ?? "unknown"
+        recordFinal(event, "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) stdout=\(totals.3) stderr=\(totals.4) stdoutEOF=\(totals.5) stderrEOF=\(totals.6) exit=\(exitCode)")
+    }
+
+    private func recordProgress(_ event: String, _ details: String) {
+        guard enabled else { return }
+        let permitted = lock.withLock { () -> Bool in
+            guard progressEvents < maximumProgressEvents else { return false }
+            progressEvents += 1
+            return true
+        }
+        if permitted {
+            writeLine(event, details)
+        }
+    }
+
+    private func recordFinal(_ event: String, _ details: String) {
+        guard enabled else { return }
+        writeLine(event, details)
+    }
+
+    private func writeLine(_ event: String, _ details: String) {
+        let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+        let suffix = details.isEmpty ? "" : " \(details)"
+        let line = Data("devcontainer-engine: init-io trace: generation=\(generation) elapsedNS=\(elapsed) event=\(event)\(suffix)\n".utf8)
+        writeLock.withLock { try? FileHandle.standardError.write(contentsOf: line) }
     }
 }
 

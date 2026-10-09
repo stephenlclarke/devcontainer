@@ -109,6 +109,24 @@ def validate_d05_cache_selection(state: str, lane: str, selected: set[str],
         raise ParityError("D05 warm-cache mode requires only D05-features on an admitted native package")
 
 
+def validate_init_io_trace_selection(enabled: bool, lane: str, selected: set[str],
+                                     package_admitted: bool) -> None:
+    """Restrict init-I/O tracing to one admitted native E07 diagnostic."""
+    if enabled and (
+            lane not in {"apple-stock", "container-compose"}
+            or not package_admitted or selected != {"E07-init-attachment"}):
+        raise ParityError("init-I/O tracing requires only E07 on an admitted native diagnostic")
+
+
+def init_io_trace_environment(source: Mapping[str, str], enabled: bool) -> dict[str, str]:
+    """Set trace only from the explicit E07 diagnostic option."""
+    result = dict(source)
+    result.pop("DEVCONTAINER_TRACE_INIT_IO", None)
+    if enabled:
+        result["DEVCONTAINER_TRACE_INIT_IO"] = "1"
+    return result
+
+
 def load_candidate_admitter(repository: Path):
     """Load the exact source checkout's retained candidate admission helper."""
     path = repository / "Tools/bazel/prepare_candidate.py"
@@ -222,7 +240,7 @@ class LaneRunner:
     def __init__(self, lane: str, repository: Path, evidence_root: Path,
                  selection: dict[str, Any] | None = None,
                  candidate: dict[str, Any] | None = None,
-                 d05_cache_state: str = "cold") -> None:
+                 d05_cache_state: str = "cold", trace_init_io: bool = False) -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -248,6 +266,7 @@ class LaneRunner:
         self.finalized_selection = selection
         self.candidate_selection = candidate
         self.d05_cache_state = d05_cache_state
+        self.trace_init_io = trace_init_io
         if selection is not None and candidate is not None:
             raise ParityError("candidate and finalized package selections are mutually exclusive")
         self.finalized: dict[str, Any] | None = None
@@ -484,6 +503,11 @@ class LaneRunner:
         validate_d05_cache_selection(
             getattr(self, "d05_cache_state", "cold"), self.lane, selected,
             self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None)
+        package_admitted = self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None
+        validate_init_io_trace_selection(
+            getattr(self, "trace_init_io", False), self.lane, selected, package_admitted)
+        self.environment = init_io_trace_environment(
+            getattr(self, "environment", dict(os.environ)), getattr(self, "trace_init_io", False))
 
         self.admit_finalized()
         self.admit_candidate()
@@ -634,6 +658,8 @@ class LaneRunner:
                 self, "d05_feature_cache_diagnostic",
                 {"status": "not_comparable", "performanceComparisonEligible": False,
                  "reason": "D05 functional fixture did not complete"})
+        if getattr(self, "trace_init_io", False):
+            payload["operatorInputs"] = {"traceInitIO": True, "timingClassification": "diagnostic-only"}
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -2065,6 +2091,7 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "DEVCONTAINER_PARITY_GUARD",
         "DEVCONTAINER_PARITY_FIXTURES",
         "DEVCONTAINER_TRACE_PROCESS",
+        "DEVCONTAINER_TRACE_INIT_IO",
         "DOCKER_CERT_PATH",
         "DOCKER_CONFIG",
         "DOCKER_CONTEXT",
@@ -2223,6 +2250,8 @@ def parse_args() -> argparse.Namespace:
                         help="product source checkout used for fixtures and source-bound inputs")
     parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
                         help="run only the D05 native diagnostic and optionally prepare a warm feature cache")
+    parser.add_argument("--trace-init-io", action="store_true",
+                        help="enable payload-free native init I/O counters for an admitted E07-only diagnostic")
     return parser.parse_args()
 
 
@@ -2233,7 +2262,7 @@ def main() -> int:
     try:
         install_cancellation_handlers()
         return LaneRunner(args.lane, repository, evidence, finalized_selection(args),
-                          candidate_selection(args), args.d05_cache_state).run()
+                          candidate_selection(args), args.d05_cache_state, args.trace_init_io).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

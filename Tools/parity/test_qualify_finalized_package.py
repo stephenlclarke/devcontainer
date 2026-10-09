@@ -119,6 +119,27 @@ class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
 
 
 class SuiteLifecycleTests(unittest.TestCase):
+    def test_failed_native_diagnostic_continues_only_after_preflight_and_cli_restoration(self) -> None:
+        restored = {"status": "restored", "cliCleanupComplete": True}
+        self.assertTrue(qualify.may_continue_native_diagnostic_lane(True, restored))
+        for preflight, prior in (
+                (False, restored),
+                (True, {"status": "uncertain", "cliCleanupComplete": True}),
+                (True, {"status": "restored", "cliCleanupComplete": False}),
+                (True, {"status": "restored"})):
+            with self.subTest(preflight=preflight, prior=prior):
+                self.assertFalse(qualify.may_continue_native_diagnostic_lane(preflight, prior))
+
+    def test_init_io_trace_is_limited_to_one_e07_native_diagnostic(self) -> None:
+        qualify.validate_init_io_trace_request(True, ("E07-init-attachment",), None)
+        for fixtures, component in (
+                (None, None),
+                (("C03-compose-resources", "E07-init-attachment"), None),
+                (("E07-init-attachment",), "E13-compose-signals")):
+            with self.subTest(fixtures=fixtures, component=component), self.assertRaisesRegex(
+                    ValueError, "only the E07"):
+                qualify.validate_init_io_trace_request(True, fixtures, component)
+
     def test_warm_d05_cache_is_limited_to_the_single_native_diagnostic(self) -> None:
         qualify.validate_d05_cache_request("cold", None, None)
         qualify.validate_d05_cache_request("warm", ("D05-features",), None)
@@ -143,6 +164,15 @@ class SuiteLifecycleTests(unittest.TestCase):
         self.assertIn("--d05-cache-state", cli)
         self.assertIn("warm", cli)
         self.assertNotIn("--d05-cache-state", vscode)
+
+    def test_trace_native_diagnostic_command_passes_explicit_e07_opt_in(self) -> None:
+        args = argparse.Namespace(
+            diagnostic_fixtures=("E07-init-attachment",), trace_init_io=True,
+            candidate_invocation="candidate", source_commit="a" * 40,
+            finalized_directory=None, provenance_sha256=None, state_sha256=None, accepted_state=None,
+        )
+        cli, _ = qualify.lane_commands(args, "apple-stock", Path("/evidence"))
+        self.assertIn("--trace-init-io", cli)
 
     def test_unsigned_candidate_mode_cannot_enter_full_or_finalized_qualification(self) -> None:
         fixtures = ("C03-compose-resources", "E07-init-attachment")

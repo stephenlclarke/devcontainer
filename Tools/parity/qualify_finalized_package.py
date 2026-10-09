@@ -479,6 +479,14 @@ def validate_d05_cache_request(state: str, diagnostic_fixtures: tuple[str, ...] 
         raise ValueError("warm D05 cache mode requires only the D05 native diagnostic")
 
 
+def validate_init_io_trace_request(enabled: bool, diagnostic_fixtures: tuple[str, ...] | None,
+                                   component_fixture: str | None) -> None:
+    """Keep payload-free INIT tracing inside a single native E07 diagnostic."""
+    if enabled and (component_fixture is not None
+                    or diagnostic_fixtures != ("E07-init-attachment",)):
+        raise ValueError("INIT I/O tracing requires only the E07 native diagnostic")
+
+
 def validate_package_mode(*, candidate_invocation: str | None,
                           diagnostic_fixtures: tuple[str, ...] | None,
                           finalized_values: tuple[object | None, ...]) -> bool:
@@ -781,6 +789,12 @@ def native_diagnostic_restoration_is_complete(cleanup: dict, host_payload: dict)
                 or row.get("vscodeStatus") != "skipped"):
             return False
     return True
+
+
+def may_continue_native_diagnostic_lane(preflight_passed: bool, cleanup: dict) -> bool:
+    """Continue diagnostics only after a complete, confirmed prior-lane restoration."""
+    return (preflight_passed and cleanup.get("status") == "restored"
+            and cleanup.get("cliCleanupComplete") is True)
 
 
 def host_can_clear_guard(cleanup: dict, initial_colima: str, final_colima: str,
@@ -1374,6 +1388,8 @@ def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[
     cli = [sys.executable, str(runner), lane, str(evidence), *selection_args]
     if diagnostic_fixtures is not None and getattr(args, "d05_cache_state", "cold") == "warm":
         cli += ["--d05-cache-state", "warm"]
+    if diagnostic_fixtures is not None and getattr(args, "trace_init_io", False):
+        cli.append("--trace-init-io")
     vscode = [sys.executable, str(REPOSITORY / "Tools/parity/run_vscode.py"), lane,
               str(evidence / "vscode"), *finalized_args(args)]
     if lane == "docker":
@@ -2566,6 +2582,8 @@ def parse_args() -> argparse.Namespace:
                         help="run a selected native-only CLI diagnostic fixture; repeat for multiple fixtures")
     parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
                         help="prepare a D05 feature cache before timing its native diagnostic")
+    parser.add_argument("--trace-init-io", action="store_true",
+                        help="record bounded payload-free INIT stream counters for the E07 native diagnostic")
     parser.add_argument("--docker-reference", type=Path,
                         help="optional original Docker results file retained separately from diagnostic lane evidence")
     parser.add_argument("--docker-reference-sha256",
@@ -2619,6 +2637,8 @@ def main() -> int:
     args.diagnostic_fixtures = diagnostic_fixtures
     args.d05_cache_state = getattr(args, "d05_cache_state", "cold")
     validate_d05_cache_request(args.d05_cache_state, diagnostic_fixtures, component_fixture)
+    args.trace_init_io = getattr(args, "trace_init_io", False)
+    validate_init_io_trace_request(args.trace_init_io, diagnostic_fixtures, component_fixture)
     finalized_values = (args.finalized_directory, args.provenance_sha256,
                         args.state_sha256, args.accepted_state)
     candidate_mode = validate_package_mode(
@@ -2652,6 +2672,7 @@ def main() -> int:
                      "controllerSHA256": args._tooling_identity["controllerSHA256"],
                      "packageKind": "unsigned-native-candidate" if candidate_mode else "signed-notarized-native-package",
                      "referenceSHA256": diagnostic_reference["sha256"] if diagnostic_reference else None,
+                     "traceInitIO": args.trace_init_io,
                      "providerSHA256": binaries,
                      "lanes": ["apple-stock", "container-compose"],
                      "evidence": str(args.evidence)} if diagnostic_fixtures else (
@@ -2742,6 +2763,9 @@ def main() -> int:
         operator_inputs["referenceInput"] = retained_reference
         operator_inputs["toolingIdentity"] = args._tooling_identity
         operator_inputs["d05CacheState"] = args.d05_cache_state
+        operator_inputs["traceInitIO"] = args.trace_init_io
+        if args.trace_init_io:
+            operator_inputs["timingClassification"] = "diagnostic-only"
     write_json(args.evidence / "operator-inputs.json", operator_inputs)
     if cli_only_mode:
         args._component_evidence_identity = capture_component_evidence_identity(
@@ -2769,6 +2793,7 @@ def main() -> int:
     cleanup = {lane: {"status": "not-started"} for lane in LANES}
     guard_cleared = False
     errors = []
+    native_preflight_passed = False
     with runtime_lease(LEASE_PATH, guard), cancellation():
         guard.begin(transaction_owner)
         try:
@@ -2778,22 +2803,26 @@ def main() -> int:
                     lambda: docker_lane(args, args.evidence, endpoint, base_env,
                                         initial_colima, cleanup),
                     diagnostic_fixtures)
+                native_preflight_passed = True
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 label = "native-only API preflight" if diagnostic_fixtures else "native API preflight / Docker lane"
                 errors.append(f"{label}: {error}")
             if diagnostic_fixtures:
-                for lane, api in (
+                for index, (lane, api) in enumerate((
                     ("apple-stock", args.stock_container_bin.parent / "container-apiserver"),
                     ("container-compose", args.compose_container_bin.parent / "container-apiserver"),
-                ):
-                    if errors or (lane == "container-compose"
-                                  and cleanup["apple-stock"].get("status") != "restored"):
+                )):
+                    if not native_preflight_passed:
+                        break
+                    if index and not may_continue_native_diagnostic_lane(
+                            native_preflight_passed, cleanup["apple-stock"]):
                         break
                     try:
                         apple_lane(args, lane, args.evidence, api.resolve(strict=True), base_env, cleanup)
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                         errors.append(f"{lane}: {error}")
-                        if cleanup[lane].get("status") != "restored":
+                        if not may_continue_native_diagnostic_lane(
+                                native_preflight_passed, cleanup[lane]):
                             break
             else:
                 if cleanup["docker"].get("status") == "restored":

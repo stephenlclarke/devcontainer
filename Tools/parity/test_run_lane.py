@@ -31,6 +31,8 @@ from run_lane import (
     WORKFLOW_RETAINED,
     validate_candidate_fixture_set,
     validate_d05_cache_selection,
+    validate_init_io_trace_selection,
+    init_io_trace_environment,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
@@ -89,6 +91,30 @@ class UnsignedCandidateDiagnosticTests(unittest.TestCase):
         self.assertEqual(arguments.d05_cache_state, "warm")
         self.assertIsNone(finalized_selection(arguments))
         self.assertIsNotNone(candidate_selection(arguments))
+
+    def test_init_io_trace_cli_flag_is_parsed_for_candidate_diagnostic(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--trace-init-io"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertTrue(arguments.trace_init_io)
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertIsNotNone(candidate_selection(arguments))
+
+    def test_init_io_trace_requires_one_admitted_native_e07_and_is_explicit(self) -> None:
+        validate_init_io_trace_selection(True, "apple-stock", {"E07-init-attachment"}, True)
+        for lane, selected, admitted in (
+                ("docker", {"E07-init-attachment"}, True),
+                ("container-compose", {"D05-features", "E07-init-attachment"}, True),
+                ("apple-stock", {"E07-init-attachment"}, False)):
+            with self.subTest(lane=lane, selected=selected, admitted=admitted), self.assertRaisesRegex(
+                    ParityError, "only E07"):
+                validate_init_io_trace_selection(True, lane, selected, admitted)
+        base = {"PATH": "/usr/bin", "DEVCONTAINER_TRACE_INIT_IO": "1"}
+        self.assertEqual(init_io_trace_environment(base, False), {"PATH": "/usr/bin"})
+        self.assertEqual(init_io_trace_environment(base, True), base)
 
     def test_warm_d05_selection_is_one_native_admitted_fixture_only(self) -> None:
         validate_d05_cache_selection("warm", "apple-stock", {"D05-features"}, True)
@@ -545,6 +571,7 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
                 "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
                 "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_TRACE_INIT_IO": "1",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DEVCONTAINER_BACKEND": "operator-choice",
                 "DEVCONTAINER_CONFIG": "/operator/config.toml",
@@ -570,6 +597,7 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
                 "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
                 "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_TRACE_INIT_IO": "1",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
