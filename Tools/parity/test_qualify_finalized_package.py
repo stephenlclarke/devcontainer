@@ -119,6 +119,180 @@ class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
 
 
 class SuiteLifecycleTests(unittest.TestCase):
+    def test_unsigned_candidate_mode_cannot_enter_full_or_finalized_qualification(self) -> None:
+        fixtures = ("C03-compose-resources", "E07-init-attachment")
+        self.assertTrue(qualify.validate_package_mode(
+            candidate_invocation="candidate", diagnostic_fixtures=fixtures,
+            finalized_values=(None, None, None, None)))
+        for candidate, selected, finalized in (
+                ("candidate", None, (None, None, None, None)),
+                ("candidate", fixtures, (Path("/final"), None, None, None)),
+                (None, None, (None, None, None, None))):
+            with self.subTest(candidate=candidate, selected=selected, finalized=finalized), self.assertRaises(
+                    ValueError):
+                qualify.validate_package_mode(candidate_invocation=candidate,
+                                              diagnostic_fixtures=selected,
+                                              finalized_values=finalized)
+        self.assertFalse(qualify.validate_package_mode(
+            candidate_invocation=None, diagnostic_fixtures=fixtures,
+            finalized_values=(Path("/final"), "a" * 64, "b" * 64, Path("/state"))))
+
+    def test_diagnostic_requires_the_same_exact_finalized_package_proof(self) -> None:
+        proof = {"sourceCommit": "a" * 40, "trustedStateSHA256": "b" * 64,
+                 "archiveSHA256": "c" * 64}
+        admissions = {"apple-stock": {"archiveSHA256": "c" * 64}}
+        qualify.validate_finalized_package_proof(proof, "a" * 40, "b" * 64, admissions)
+        for altered in ({}, {**proof, "sourceCommit": "d" * 40},
+                        {**proof, "trustedStateSHA256": "e" * 64},
+                        {**proof, "archiveSHA256": "f" * 64}):
+            with self.subTest(altered=altered), self.assertRaisesRegex(
+                    ValueError, "exact accepted archive and source"):
+                qualify.validate_finalized_package_proof(altered, "a" * 40, "b" * 64, admissions)
+
+    def test_tooling_identity_is_separate_and_requires_clean_committed_controller(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary).resolve()
+            controller = repository / "Tools/parity/qualify_finalized_package.py"
+            controller.parent.mkdir(parents=True)
+            controller.write_text("# committed diagnostic controller\n")
+            subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repository, check=True)
+            subprocess.run(["git", "add", "Tools/parity/qualify_finalized_package.py"],
+                           cwd=repository, check=True)
+            subprocess.run(["git", "commit", "-qm", "test: seed controller fixture"],
+                           cwd=repository, check=True)
+            identity = qualify.tooling_source_identity(controller)
+            self.assertEqual(identity["repository"], str(repository))
+            self.assertEqual(identity["controllerSHA256"], qualify.sha256(controller))
+            controller.write_text("# uncommitted change\n")
+            with self.assertRaisesRegex(ValueError, "tooling checkout must be clean"):
+                qualify.tooling_source_identity(controller)
+
+    def test_native_diagnostic_selection_is_finite_unique_and_separate(self) -> None:
+        selected = ("C03-compose-resources", "D05-features", "E07-init-attachment")
+        self.assertEqual(qualify.diagnostic_fixture_selection(list(selected), None), selected)
+        self.assertIsNone(qualify.diagnostic_fixture_selection(None, None))
+        for values, component in (([], None), ([selected[0], selected[0]], None),
+                                  (["E01-engine-negotiation"], None), ([selected[0]], "E13-compose-signals")):
+            with self.subTest(values=values, component=component), self.assertRaisesRegex(
+                    ValueError, "Native diagnostic fixtures"):
+                qualify.diagnostic_fixture_selection(values, component)
+
+    def test_native_diagnostic_runs_only_the_selected_cli_fixtures(self) -> None:
+        fixtures = ("C03-compose-resources", "D05-features")
+        environment = {"PATH": "/usr/bin", "DOCKER_HOST": "unused"}
+        self.assertEqual(qualify.reference_fixture_environment(environment, fixtures), {
+            **environment, "DEVCONTAINER_PARITY_FIXTURES": "C03-compose-resources,D05-features"})
+        calls = []
+        cli = subprocess.CompletedProcess(["cli"], 0, "", "")
+        actual_cli, actual_vscode, passed = qualify.run_suite_pair(
+            lambda: (calls.append("cli"), cli)[1], lambda: calls.append("vscode"),
+            lambda: True, lambda: True, diagnostic_fixtures=fixtures)
+        self.assertEqual(calls, ["cli"])
+        self.assertIs(actual_cli, cli)
+        self.assertIsNone(actual_vscode)
+        self.assertTrue(passed)
+        with self.assertRaisesRegex(ValueError, "Unsupported native diagnostic"):
+            qualify.reference_fixture_environment(environment, ("C03-compose-resources", "E01"))
+
+    def test_diagnostic_preflight_never_invokes_docker_and_full_mode_keeps_ordered_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary).resolve() / "evidence"
+            evidence.mkdir(mode=0o700)
+            cleanup = {lane: {"status": "not-started"} for lane in qualify.LANES}
+            docker = mock.Mock()
+            with mock.patch.object(qualify, "preflight_native_api_startup") as preflight:
+                qualify.preflight_selected_runtime_lanes(
+                    argparse.Namespace(), evidence, cleanup, docker,
+                    ("C03-compose-resources", "D05-features"))
+            self.assertEqual([call.args[1] for call in preflight.call_args_list],
+                             ["apple-stock", "container-compose"])
+            docker.assert_not_called()
+            with mock.patch.object(qualify, "preflight_native_providers_before_docker") as full:
+                qualify.preflight_selected_runtime_lanes(
+                    argparse.Namespace(), evidence, cleanup, docker, None)
+            full.assert_called_once_with(mock.ANY, evidence, cleanup, docker)
+
+    def test_diagnostic_reference_requires_exact_sha_and_is_retained_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            original = root / "docker-reference.json"
+            original.write_bytes(b'{"status":"passed","source":"original"}\n')
+            digest = qualify.sha256(original)
+            reference = qualify.validate_diagnostic_reference(original, digest)
+            evidence = root / "evidence"
+            evidence.mkdir(mode=0o700)
+            retained = qualify.retain_diagnostic_reference(evidence, reference)
+            self.assertEqual(retained["scope"], "separate-reference-input")
+            self.assertEqual(qualify.sha256(Path(retained["retainedPath"])), digest)
+            self.assertFalse((evidence / "docker" / "results.json").exists())
+            with self.assertRaisesRegex(ValueError, "both its exact file path"):
+                qualify.validate_diagnostic_reference(original, None)
+            with self.assertRaisesRegex(ValueError, "differs from its independently supplied SHA"):
+                qualify.validate_diagnostic_reference(original, "0" * 64)
+
+    def test_diagnostic_receipt_cannot_claim_release_or_comparison_authority(self) -> None:
+        args = argparse.Namespace(source_commit="a" * 40, _source_tree="b" * 40,
+                                  _parity_harness_sha256="c" * 64,
+                                  _tooling_identity={"commit": "1" * 40, "tree": "2" * 40,
+                                                     "controllerSHA256": "3" * 64},
+                                  provenance_sha256="d" * 64, state_sha256="e" * 64,
+                                  _component_package_proof={"archiveSHA256": "f" * 64},
+                                  diagnostic_fixtures=("C03-compose-resources",))
+        cleanup = {"docker": {"status": "not-started"}}
+        cleanup.update({lane: {"status": "restored"} for lane in ("apple-stock", "container-compose")})
+        payload = qualify.diagnostic_result_payload(
+            args, cleanup, {"status": "restored"}, {}, None, "passed", [])
+        self.assertEqual(payload["scope"], "native-only-fixture-diagnostic")
+        self.assertFalse(payload["releaseQualified"])
+        self.assertFalse(payload["releaseAuthority"])
+        self.assertEqual(payload["dockerOracle"], "not-run")
+        self.assertEqual(payload["comparison"], "not-run")
+        self.assertNotIn("docker", payload["laneCleanup"])
+        args.candidate_invocation = "candidate"
+        args._candidate_receipt = {"runtimeProfile": "stock", "commit": "a" * 40,
+                                   "archiveSHA256": "f" * 64}
+        args._candidate_admissions = {"apple-stock": {"scope": "local-candidate-integration-only"}}
+        candidate_payload = qualify.diagnostic_result_payload(
+            args, cleanup, {"status": "restored"}, {}, None, "passed", [])
+        self.assertEqual(candidate_payload["package"]["kind"], "unsigned-native-candidate")
+        self.assertFalse(candidate_payload["package"]["signatureVerified"])
+        self.assertFalse(candidate_payload["releaseQualified"])
+        self.assertNotIn("finalizationProvenanceSHA256", candidate_payload["package"])
+
+    def test_native_diagnostic_restoration_requires_both_native_lanes_and_no_docker(self) -> None:
+        cleanup = {"docker": {"status": "not-started"}}
+        cleanup.update({lane: {"status": "restored", "cliCleanupComplete": True,
+                              "vscodeCleanupComplete": False, "vscodeStatus": "skipped"}
+                       for lane in ("apple-stock", "container-compose")})
+        host = {"status": "restored", "hostGuardCleared": True,
+                "initialColima": "stopped", "finalColima": "stopped",
+                "initialServiceSetSHA256": "same", "finalServiceSetSHA256": "same",
+                "initialServiceCount": 8, "finalServiceCount": 8}
+        self.assertTrue(qualify.native_diagnostic_restoration_is_complete(cleanup, host))
+        cleanup["docker"]["status"] = "restored"
+        self.assertFalse(qualify.native_diagnostic_restoration_is_complete(cleanup, host))
+        cleanup["docker"]["status"] = "not-started"
+        cleanup["container-compose"]["status"] = "uncertain"
+        self.assertFalse(qualify.native_diagnostic_restoration_is_complete(cleanup, host))
+
+    def test_candidate_lane_evidence_must_match_exact_unsigned_admission(self) -> None:
+        identity = {"scope": "local-candidate-integration-only",
+                    "candidateInvocation": "candidate", "candidateReceiptSHA256": "a" * 64,
+                    "sourceCommit": "b" * 40, "runtimeProfile": "stock",
+                    "assetSHA256": "c" * 64, "preparationSHA256": "d" * 64,
+                    "inventorySHA256": "e" * 64, "dependencyLockSHA256": "f" * 64,
+                    "executables": {"devcontainer": "/candidate/devcontainer"},
+                    "referenceRuntime": {"lockSHA256": "1" * 64}}
+        with tempfile.TemporaryDirectory() as temporary:
+            result = Path(temporary) / "results.json"
+            result.write_text(json.dumps({"unsignedCandidate": identity}))
+            qualify.validate_candidate_lane_identity(result, "apple-stock", identity)
+            result.write_text(json.dumps({"unsignedCandidate": {**identity, "sourceCommit": "2" * 40}}))
+            with self.assertRaisesRegex(RuntimeError, "does not bind"):
+                qualify.validate_candidate_lane_identity(result, "apple-stock", identity)
     def test_explicit_component_runs_cli_only_and_selects_exact_fixture(self) -> None:
         calls = []
         cli = subprocess.CompletedProcess(["cli"], 0, "", "")

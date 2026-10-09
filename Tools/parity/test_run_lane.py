@@ -27,6 +27,9 @@ from run_lane import (
     LaneRunner,
     PARITY_HARNESS,
     finalized_selection,
+    candidate_selection,
+    WORKFLOW_RETAINED,
+    validate_candidate_fixture_set,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
@@ -60,6 +63,136 @@ class FinalizedSelectionTests(unittest.TestCase):
                 runner.lane = lane
                 runner.finalized_selection = selection
                 self.assertEqual(runner.lifecycle_backend_arguments(), expected)
+
+
+class UnsignedCandidateDiagnosticTests(unittest.TestCase):
+    def test_candidate_selection_is_explicit_and_excludes_finalized_inputs(self) -> None:
+        selection = candidate_selection(argparse.Namespace(
+            candidate_invocation="47387ce0-3819-4eca-b06e-11356ce4568d",
+            expected_source_commit="5f22bd379c408383daa252b5fc666077fe42e5d3"))
+        self.assertEqual(selection, {
+            "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+            "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+        with self.assertRaisesRegex(ParityError, "mutually exclusive"):
+            candidate_selection(argparse.Namespace(
+                candidate_invocation="candidate",
+                finalized_directory=Path("/final"),
+                finalization_provenance_sha256="b" * 64,
+                finalization_state=Path("/state"), expected_source_commit="a" * 40))
+        with self.assertRaisesRegex(ParityError, "native-only"):
+            candidate_selection(argparse.Namespace(
+                candidate_invocation="candidate", expected_source_commit="a" * 40,
+                lane="docker"))
+        validate_candidate_fixture_set({"C03-compose-resources", "E07-init-attachment"})
+        with self.assertRaisesRegex(ParityError, "only selected C03"):
+            validate_candidate_fixture_set({"E01-engine-negotiation"})
+
+    def test_candidate_execution_uses_only_admitted_candidate_paths(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/product")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.finalized_selection = None
+        runner.candidate = {"executables": {"devcontainer": "/candidate/devcontainer",
+                                            "devcontainer-engine": "/candidate/engine",
+                                            "devcontainer-compose": "/candidate/compose"}}
+        runner.finalized = None
+        runner.devcontainer_docker = "/ignored/docker"
+        runner.provider_paths = {"DEVCONTAINER_COMPOSE_BIN": "/provider/compose"}
+        self.assertEqual(runner.package_executable("devcontainer"), "/candidate/devcontainer")
+        self.assertEqual(runner.devcontainers_command(), ["/candidate/devcontainer"])
+        self.assertEqual(runner.lifecycle_backend_arguments(), [])
+
+    def test_candidate_readmission_rejects_wrong_source_profile_and_inventory(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.harness_repository = Path("/tooling")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        bad_receipts = (
+            {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "b" * 40},
+            {"schemaVersion": 2, "runtimeProfile": "enhanced", "commit": "a" * 40},
+            {"schemaVersion": 1, "runtimeProfile": "stock", "commit": "a" * 40},
+        )
+        def git_output(command, **_kwargs):
+            return "a" * 40 if command[-1] == "HEAD" else ""
+
+        with (mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+              mock.patch("run_lane.subprocess.check_output", side_effect=git_output)):
+            for receipt in bad_receipts:
+                candidate_module = SimpleNamespace(
+                    Path=Path, retained_candidate=mock.Mock(return_value=(receipt, {})),
+                    admit_candidate=mock.Mock(),
+                    canonical=lambda value: json.dumps(value, sort_keys=True))
+                with (self.subTest(receipt=receipt),
+                      mock.patch("run_lane.load_candidate_admitter", return_value=candidate_module),
+                      self.assertRaisesRegex(ParityError, "schema-2 stock package")):
+                    runner.readmit_candidate(first=True)
+                candidate_module.admit_candidate.assert_not_called()
+
+            candidate_module = SimpleNamespace(
+                Path=Path, retained_candidate=mock.Mock(return_value=(
+                    {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "a" * 40}, {})),
+                admit_candidate=mock.Mock(side_effect=ValueError("candidate inventory is incomplete")),
+                canonical=lambda value: json.dumps(value, sort_keys=True))
+            with (mock.patch("run_lane.load_candidate_admitter", return_value=candidate_module),
+                  self.assertRaisesRegex(ParityError, "inventory is incomplete")):
+                runner.readmit_candidate(first=True)
+
+    def test_candidate_readmission_uses_account_retained_authority_not_lane_home(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.harness_repository = Path("/tooling")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        receipt = {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "a" * 40,
+                   "referenceRuntime": {"lockSHA256": "1" * 64}}
+        admission = {"scope": "local-candidate-integration-only",
+                     "candidateInvocation": "candidate", "sourceCommit": "a" * 40,
+                     "runtimeProfile": "stock", "assetSHA256": "b" * 64,
+                     "preparationSHA256": "c" * 64, "inventorySHA256": "d" * 64,
+                     "dependencyLockSHA256": "e" * 64, "executables": {"devcontainer": "/candidate/devcontainer"},
+                     "terminalLaunchers": {"arm64": "1" * 64, "amd64": "2" * 64},
+                     "goSDKLicenseSHA256": "3" * 64}
+        module = SimpleNamespace(
+            Path=Path, retained_candidate=mock.Mock(return_value=(receipt, {})),
+            admit_candidate=mock.Mock(return_value=admission),
+            canonical=lambda value: json.dumps(value, sort_keys=True))
+        def git_output(command, **_kwargs):
+            return "a" * 40 if command[-1] == "HEAD" else ""
+
+        with (mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+              mock.patch("run_lane.subprocess.check_output", side_effect=git_output),
+              mock.patch("run_lane.load_candidate_admitter", return_value=module),
+              mock.patch.object(Path, "home", return_value=Path("/wrong-transaction-home"))):
+            runner.readmit_candidate(first=True)
+        module.retained_candidate.assert_called_once_with(
+            WORKFLOW_RETAINED / "bazel-evidence.sqlite", "candidate", "devcontainer")
+        module.admit_candidate.assert_called_once_with(
+            WORKFLOW_RETAINED, "candidate", "stock", "devcontainer")
+
+    def test_candidate_readmission_rejects_changed_product_checkout_before_authority_read(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        git_output = mock.Mock(side_effect=["a" * 40, " M Tests/Parity/manifest.json"])
+        with mock.patch("run_lane.subprocess.check_output", git_output):
+            with self.assertRaisesRegex(ParityError, "not clean"):
+                runner.admit_candidate()
+        git_output.assert_called()
 
     def test_devcontainer_preserves_literal_backend_flag_after_separator(self) -> None:
         runner = LaneRunner.__new__(LaneRunner)

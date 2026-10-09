@@ -8,6 +8,8 @@ Executing native qualification sets a private `0077` umask before signed-package
 
 The released Engine Bazel launcher now has an inert runfiles smoke test that exercises its real `--help` path and catches missing Python inputs before runtime qualification. See the [runfiles correction](docs/PR-released-engine-runfiles.md).
 
+The parity controller also supports a native-only fixture diagnostic for C03 resources, D05 features and E07 attachment. Repeat `--diagnostic-fixture` to select multiple cases; it preserves native runtime leases and restoration, skips the Docker oracle lane and VS Code, and records a non-qualifying receipt. Signed finalized packages keep their original admission. The separate `--candidate-invocation` option admits only an exact schema-2 stock candidate and records `signatureVerified: false`; it cannot enter full qualification or replace finalized-package admission. An optional Docker result is retained as a separately SHA-authenticated reference input, never merged into lane evidence. When tooling and product checkouts differ, both source identities are recorded and the product checkout must match the selected package source. See the [diagnostic handoff](docs/PR-native-only-fixture-diagnostic.md).
+
 <!-- markdownlint-disable MD013 MD033 -->
 <p>
   <img align="left" hspace="20" src="docs/images/devcontainer-icon.png" width="147" alt="devcontainer icon: a blue glass cube overlapping the standard three-row container service panel" />
