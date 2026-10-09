@@ -22,7 +22,7 @@ PATCHES = (
     {"identity": "zstd", "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
      "location": "https://github.com/facebook/zstd.git", "patch": "zstd-public-module.patch",
      "sha256": "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927"},
-    {"identity": "containerization", "revision": "6db16197bbad8196a78132f86529daa89125aafb",
+    {"identity": "containerization", "revision": "c0607ac9aa5b759141506fbd8fc01f423d433f1e",
      "location": "https://github.com/stephenlclarke/containerization.git",
      "patch": "containerization-ext4-unaligned.patch",
      "sha256": "960284f67cca0ba416da98f624934454e092d204b4525daf9902e0a0bbe7038d"},

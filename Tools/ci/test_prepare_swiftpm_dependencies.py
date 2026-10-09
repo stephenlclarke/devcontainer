@@ -289,6 +289,16 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
 
 
 class CheckedInSwiftPMDependencyPinsTests(unittest.TestCase):
+    def test_enhanced_patch_recipient_rejects_previous_tls_graph(self) -> None:
+        changed = json.loads((MODULE.ROOT / "Package.resolved").read_text())
+        pin = next(row for row in changed["pins"] if row["identity"] == "containerization")
+        pin["state"]["revision"] = "6db16197bbad8196a78132f86529daa89125aafb"
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "Package.resolved"
+            lock.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "unexpected pin: containerization"):
+                MODULE.validate_lock(lock, "enhanced", MODULE.PATCHES)
+
     def test_stock_sdk_rejects_old_source_revision_location_and_version_tag(self) -> None:
         original = json.loads((MODULE.ROOT / "Package.stock.resolved").read_text())
         for mode in ("old_revision", "old_location", "version_tag"):

@@ -71,18 +71,6 @@ private func runtimeDependency(
     return .package(url: stockURL, exact: stockVersion)
 }
 
-private func runtimeTLSDependency(
-    stockURL: String,
-    stockVersion: Version,
-    enhancedURL: String,
-    enhancedRevision: String
-) -> Package.Dependency {
-    if enhancedRuntime {
-        return .package(url: enhancedURL, revision: enhancedRevision)
-    }
-    return .package(url: stockURL, exact: stockVersion)
-}
-
 let package = Package(
     name: "devcontainer",
     platforms: [
@@ -117,7 +105,7 @@ let package = Package(
             environmentVariable: "CONTAINER_PACKAGE_PATH",
             url: "https://github.com/stephenlclarke/container.git",
             revision: enhancedRuntime
-                ? "38a53cb6ba8f48413534c3c4112f72489ecbecc6"
+                ? "906014c854a09df4283316289bc755a925f81fe3"
                 : "aad0c75555d8ccce45aea01d7e1558eb7dee408e"
         ),
         runtimeDependency(
@@ -126,13 +114,7 @@ let package = Package(
             stockURL: "https://github.com/apple/containerization.git",
             stockVersion: "0.45.0",
             enhancedURL: "https://github.com/stephenlclarke/containerization.git",
-            enhancedRevision: "c0607ac9aa5b759141506fbd8fc01f423d433f1e"
-        ),
-        runtimeTLSDependency(
-            stockURL: "https://github.com/apple/swift-nio-ssl.git",
-            stockVersion: "2.37.4",
-            enhancedURL: "https://github.com/stephenlclarke/swift-nio-ssl.git",
-            enhancedRevision: "aee34db2144717ddce7bd145e45cf4fb9dab73fb"
+            enhancedRevision: "6db16197bbad8196a78132f86529daa89125aafb"
         ),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),

@@ -58,12 +58,7 @@ workflow did not produce the expected lane result files, so this source is not
 yet a replacement for the immutable 1.0.1 runtime-parity baseline. At that checkpoint, the published Current package pointed to July source
 `b31e80b2b9c09`; these historical checks do not qualify the current release candidate.
 
-Current source has distinct dependency profiles. The stock profile resolves
-the minimal Container 1.4.1 SDK derivative and unmodified Apple `containerization` 0.45.0; the enhanced
-profile resolves the exact Stephen-owned revisions recorded in
-[COMPATIBILITY.md](COMPATIBILITY.md). Neither profile has replaced the 1.0.1
-runtime-parity baseline; the new Devcontainer release still requires its complete
-exact-source runtime qualification.
+Current source has distinct dependency profiles. The stock profile resolves the minimal Container 1.4.1 SDK derivative and unmodified Apple `containerization` 0.45.0; the enhanced profile resolves the exact Stephen-owned Container, Containerization and `swift-nio-ssl` revisions recorded in [COMPATIBILITY.md](COMPATIBILITY.md). The profile-specific source transition and layer-refresh requirements are described in the [TLS dependency handoff](docs/ISSUE-tls-layer-consumption.md). Hosted SwiftPM preparation authenticates the matching Containerization patch recipient. Neither profile has replaced the 1.0.1 runtime-parity baseline; the new Devcontainer release still requires its complete exact-source runtime qualification.
 
 The development candidate also carries Docker create-time `HostConfig.ConsoleSize` into TTY guest startup using a package-owned Linux launcher whose hash is embedded in the signed engine. This work is not yet covered by a fresh E15 first-instruction parity run or the complete 84-cell release campaign.
 
