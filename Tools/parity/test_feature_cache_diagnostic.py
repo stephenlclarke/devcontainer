@@ -129,11 +129,43 @@ class FeatureCacheDiagnosticTests(unittest.TestCase):
         self.assertIn("apt package installation", _cache_proof(install.encode(), b"")[1])
 
     def test_json_events_are_supported_but_unknown_shapes_fail_closed(self) -> None:
-        events = "\n".join(json.dumps({"type": "raw", "text": line})
-                           for line in cached_progress().splitlines())
+        events = "\n".join(json.dumps({
+            "type": "raw", "level": 1, "timestamp": index, "text": line,
+        }) for index, line in enumerate(cached_progress().splitlines()))
         self.assertTrue(_cache_proof(events.encode(), b"")[0])
         unknown = b'{"type":"progress","message":"looks cached"}\n'
         self.assertIn("unrecognized JSON", _cache_proof(unknown, b"")[1])
+
+    def test_known_cli_result_and_lifecycle_metadata_are_validated_not_cache_proof(self) -> None:
+        stdout = json.dumps({
+            "outcome": "success", "containerId": "fixture-id",
+            "remoteUser": "user", "remoteWorkspaceFolder": "/workspace",
+        }).encode()
+        events = [
+            {"type": "start", "level": 1, "timestamp": 100,
+             "text": "#99 CACHED"},
+            {"type": "text", "level": 1, "timestamp": 101,
+             "text": "#41 [dev_containers_target_stage 5/7] RUN common-utils_0 apt-get install"},
+            {"type": "raw", "level": 1, "timestamp": 102,
+             "text": "#41 CACHED"},
+            {"type": "text", "level": 1, "timestamp": 103,
+             "text": "#42 [dev_containers_target_stage 6/7] RUN git_1 apt-get install"},
+            {"type": "raw", "level": 1, "timestamp": 104,
+             "text": "#42 CACHED"},
+            {"type": "stop", "level": 1, "timestamp": 105, "startTimestamp": 100,
+             "text": "#100 CACHED"},
+        ]
+        stderr = "\n".join(json.dumps(event) for event in events).encode()
+        self.assertTrue(_cache_proof(stdout, stderr)[0])
+
+        malformed = dict(events[0], timestamp="not-a-timestamp")
+        invalid_stderr = json.dumps(malformed).encode()
+        self.assertIn("malformed official CLI start metadata",
+                      _cache_proof(stdout, invalid_stderr)[1])
+
+        metadata_only = json.dumps(events[0]).encode()
+        self.assertIn("missing or ambiguous",
+                      _cache_proof(stdout, metadata_only)[1])
 
     def test_verification_binds_same_candidate_and_retains_up_evidence(self) -> None:
         warmup = {

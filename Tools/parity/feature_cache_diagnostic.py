@@ -180,8 +180,8 @@ def _as_bytes(value: Any) -> bytes:
     return repr(value).encode("utf-8", "replace")
 
 
-def _progress_text(data: bytes) -> tuple[str | None, str | None]:
-    """Decode recognized BuildKit plain/JSON progress events; reject ambiguity."""
+def _progress_text(data: bytes, *, source: str = "progress") -> tuple[str | None, str | None]:
+    """Extract only recognized CLI/BuildKit progress; validate but ignore metadata."""
     decoded = data.decode("utf-8", "replace")
     lines: list[str] = []
     for raw_line in decoded.splitlines():
@@ -197,16 +197,39 @@ def _progress_text(data: bytes) -> tuple[str | None, str | None]:
                 return None, "unknown JSON progress event"
             event_type = event.get("type")
             text = event.get("text")
-            if event_type == "raw" and isinstance(text, str):
+            if event_type == "text":
+                if (set(event) != {"type", "level", "timestamp", "text"}
+                        or not isinstance(event.get("level"), int)
+                        or not isinstance(event.get("timestamp"), int)
+                        or not isinstance(text, str)):
+                    return None, "malformed official CLI text event"
                 lines.extend(text.splitlines())
-            elif event_type == "raw" and isinstance(event.get("data"), dict):
-                nested = event["data"]
-                nested_text = nested.get("text", nested.get("stream"))
-                if not isinstance(nested_text, str):
-                    return None, "unknown nested raw progress event"
-                lines.extend(nested_text.splitlines())
-            elif "stream" in event and isinstance(event["stream"], str):
-                lines.extend(event["stream"].splitlines())
+            elif event_type == "raw":
+                if (set(event) != {"type", "level", "timestamp", "text"}
+                        or not isinstance(event.get("level"), int)
+                        or not isinstance(event.get("timestamp"), int)
+                        or not isinstance(text, str)):
+                    return None, "malformed BuildKit raw event"
+                lines.extend(text.splitlines())
+            elif event_type in {"start", "stop"}:
+                expected = {"type", "level", "timestamp", "text"}
+                if event_type == "stop":
+                    expected.add("startTimestamp")
+                if (set(event) != expected
+                        or not isinstance(event.get("level"), int)
+                        or not isinstance(event.get("timestamp"), int)
+                        or not isinstance(text, str)
+                        or (event_type == "stop"
+                            and not isinstance(event.get("startTimestamp"), int))):
+                    return None, f"malformed official CLI {event_type} metadata"
+                # Lifecycle metadata is validated and intentionally ignored.
+            elif source == "stdout" and "type" not in event:
+                expected = {"outcome", "containerId", "remoteUser", "remoteWorkspaceFolder"}
+                if (set(event) != expected
+                        or any(not isinstance(event.get(key), str) or not event[key]
+                               for key in expected)):
+                    return None, "malformed official CLI result object"
+                # Successful CLI result metadata is not BuildKit cache evidence.
             else:
                 return None, "unrecognized JSON progress event"
         else:
@@ -216,8 +239,8 @@ def _progress_text(data: bytes) -> tuple[str | None, str | None]:
 
 def _cache_proof(stdout: bytes, stderr: bytes) -> tuple[bool, str]:
     merged = []
-    for stream in (stdout, stderr):
-        text, error = _progress_text(stream)
+    for source, stream in (("stdout", stdout), ("stderr", stderr)):
+        text, error = _progress_text(stream, source=source)
         if error:
             return False, error
         merged.append(text or "")

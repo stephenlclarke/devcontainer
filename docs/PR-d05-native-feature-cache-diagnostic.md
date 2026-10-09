@@ -6,6 +6,8 @@ The current stock-native D05 diagnostic needs a way to test whether the measured
 
 The helper retains warmup and functional output in fresh private evidence directories and records only digests, durations, lane/fixture and admitted package identity in its receipts. It requires unambiguous cached completions for both common-utils_0 and git_1. Failed warmups, changed inputs, package-install activity, missing stages and unknown progress formats produce not-comparable receipts while preserving raw output.
 
+The parser recognizes the official CLI's successful result object and typed text, raw, start and stop event schemas. It extracts BuildKit evidence only from text and raw events; validated lifecycle metadata never counts as a cache hit.
+
 This is a separately labeled cache-state diagnostic, not a performance qualification. It leaves functional pass/fail and measured durations untouched, uses no regenerated historical reference, does not repair the previously observed cold-run failure, and does not claim the five-cold/ten-warm optimization protocol.
 
 ## Validation
