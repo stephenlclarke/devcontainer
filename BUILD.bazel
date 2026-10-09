@@ -404,10 +404,7 @@ swift_test(
     module_name = "DevContainerAppleRuntimeTests",
     copts = RUNTIME_COPTS,
     deps = [
-        ":DevContainerAppleRuntime",
-        ":DevContainerModel",
-        ":DevContainerRuntimeSPI",
-        ":DevContainerState",
+        ":DevContainerAppleRuntime", ":DevContainerModel", ":DevContainerRuntimeSPI", ":DevContainerState",
         "@swiftpkg_container_engine_api//:ContainerEngineRuntimeSPI",
         "@swiftpkg_container//:ContainerAPIClient", "@swiftpkg_container//:ContainerResource",
         "@swiftpkg_container//:ContainerXPC",
