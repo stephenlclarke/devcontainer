@@ -2307,6 +2307,10 @@ def main() -> int:
         print(json.dumps(preflight, sort_keys=True, indent=2))
         return 0
 
+    # Package extraction inventories include directory modes; keep them stable
+    # when admission creates a fresh SSD tree against retained receipts.
+    os.umask(0o077)
+
     if component_fixture and (args.evidence.exists() or args.evidence.is_symlink()):
         raise ValueError("Component evidence root must be fresh")
 
@@ -2327,7 +2331,6 @@ def main() -> int:
     args._parity_harness_sha256 = load_run_lane(REPOSITORY).parity_harness_sha256(REPOSITORY)
     args._package_admissions = package_admissions
 
-    os.umask(0o077)
     args.evidence.mkdir(parents=True, mode=0o700)
     JOURNAL_PARENT.mkdir(parents=True, mode=0o700, exist_ok=True)
     if stat_mode(JOURNAL_PARENT) != 0o700 or stat_mode(GUARD_PATH.parent) != 0o700:
