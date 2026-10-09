@@ -518,6 +518,98 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
 
 
 class ActiveProviderHomeTests(unittest.TestCase):
+    def test_candidate_diagnostic_guard_binds_candidate_package_and_exact_fixture_selection(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("C03-compose-resources", "D05-features", "E07-init-attachment")
+            candidate = {
+                "scope": "local-candidate-integration-only",
+                "candidateInvocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "sourceCommit": "a" * 40, "runtimeProfile": "stock",
+                "assetSHA256": "b" * 64, "candidateReceiptSHA256": "c" * 64,
+            }
+            guard_identity = {
+                "campaign": "candidate-campaign", "sourceCommit": candidate["sourceCommit"],
+                "scope": "unsigned-native-candidate-diagnostic",
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"], "runtimeProfile": "stock",
+                "diagnosticFixtures": sorted(selection),
+            }
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "candidate-campaign", "lane": "apple-stock",
+                                  "sourceCommit": candidate["sourceCommit"]}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            runner = SimpleNamespace(
+                environment={"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                             "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                             "DEVCONTAINER_PARITY_GUARD": str(guard_path)},
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity=None, candidate_identity=candidate,
+            )
+
+            with mock.patch("owned_guest_fixture.ACCOUNT_HOME", base):
+                self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
+                for key, changed in (("candidateInvocation", "different-invocation"),
+                                     ("candidateReceiptSHA256", "d" * 64),
+                                     ("assetSHA256", "e" * 64), ("sourceCommit", "f" * 40),
+                                     ("runtimeProfile", "enhanced")):
+                    original = candidate[key]
+                    candidate[key] = changed
+                    with self.subTest(key=key), self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                        _active_provider_home(runner, fixture_selection=selection)
+                    candidate[key] = original
+                with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                    _active_provider_home(runner, fixture_selection=("C03-compose-resources", "unknown"))
+
+    def test_finalized_native_diagnostic_guard_binds_its_finite_fixture_selection(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("E07-init-attachment",)
+            guard = {"identity": {"campaign": "finalized-campaign", "sourceCommit": "a" * 40,
+                                  "scope": "finalized-native-parity-diagnostic",
+                                  "diagnosticFixtures": list(selection)},
+                     "root": str(campaign)}
+            guard_path.write_text(json.dumps(guard, sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "finalized-campaign", "lane": "apple-stock",
+                                  "sourceCommit": "a" * 40}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            runner = SimpleNamespace(
+                environment={"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                             "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                             "DEVCONTAINER_PARITY_GUARD": str(guard_path)},
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity={"sourceCommit": "a" * 40}, candidate_identity=None,
+            )
+
+            with mock.patch("owned_guest_fixture.ACCOUNT_HOME", base):
+                self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
+                with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                    _active_provider_home(runner, fixture_selection=("C03-compose-resources",))
+
     def test_component_guard_is_bound_only_to_each_exact_supported_fixture_selection(self) -> None:
         with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             base = Path(temporary).resolve()

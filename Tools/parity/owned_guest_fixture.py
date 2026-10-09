@@ -37,6 +37,9 @@ _ATTACHMENT_DIAGNOSTIC_STREAM_FIELDS = frozenset({
     "inputAcceptedBytes", "inputHalfClosed", "observerInputHalfClosed", "primaryWireBytes",
     "observerWireBytes", "primaryEOF", "observerEOF", "outputWireBytes", "outputEOF",
 })
+_NATIVE_DIAGNOSTIC_FIXTURES = frozenset({
+    "C03-compose-resources", "D05-features", "E07-init-attachment",
+})
 
 
 def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -219,14 +222,46 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
         ("E06-network-volume",), ("E07-init-attachment",),
         ("E13-compose-signals",), ("E14-compose-terminal-size",), ("E04-image-build",),
     )
-    scope_matches = (scope == "finalized-native-parity" or
-                     (scope == "finalized-native-parity-component" and component_selection))
+    diagnostic_selection = (isinstance(fixture_selection, tuple) and bool(fixture_selection)
+                            and len(set(fixture_selection)) == len(fixture_selection)
+                            and set(fixture_selection) <= _NATIVE_DIAGNOSTIC_FIXTURES)
+    diagnostic_fixtures = sorted(fixture_selection) if diagnostic_selection else None
+    candidate = getattr(runner, "candidate_identity", None)
+    finalized = getattr(runner, "finalized_identity", None)
+    expected_guard_identity = None
+    if scope == "finalized-native-parity":
+        expected_guard_identity = {"campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                                  "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope}
+    elif scope == "finalized-native-parity-component" and component_selection:
+        expected_guard_identity = {"campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                                  "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope}
+    elif scope == "finalized-native-parity-diagnostic" and diagnostic_selection:
+        expected_guard_identity = {
+            "campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+            "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope,
+            "diagnosticFixtures": diagnostic_fixtures,
+        }
+    elif scope == "unsigned-native-candidate-diagnostic" and diagnostic_selection:
+        if (isinstance(candidate, dict)
+                and candidate.get("scope") == "local-candidate-integration-only"
+                and candidate.get("runtimeProfile") == "stock"
+                and re.fullmatch(r"[0-9a-f]{40}", str(candidate.get("sourceCommit", "")))
+                and re.fullmatch(r"[0-9a-f]{64}", str(candidate.get("assetSHA256", "")))
+                and re.fullmatch(r"[0-9a-f]{64}", str(candidate.get("candidateReceiptSHA256", "")))
+                and isinstance(candidate.get("candidateInvocation"), str)
+                and candidate.get("candidateInvocation")):
+            expected_guard_identity = {
+                "campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                "sourceCommit": candidate["sourceCommit"], "scope": scope,
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"],
+                "runtimeProfile": "stock", "diagnosticFixtures": diagnostic_fixtures,
+            }
     if (not isinstance(guard, dict) or set(guard) != {"identity", "root"}
-            or not isinstance(guard_identity, dict) or set(guard_identity) !=
-            {"campaign", "sourceCommit", "scope"} or
-            not scope_matches or
-            guard_identity.get("sourceCommit") != (runner.finalized_identity or {}).get("sourceCommit") or
-            guard.get("root") != str(runner.output.parent)):
+            or not isinstance(guard_identity, dict) or expected_guard_identity is None
+            or guard_identity != expected_guard_identity
+            or guard.get("root") != str(runner.output.parent)):
         raise ParityError("active provider campaign guard differs from this evidence root")
     expected = {"campaign": guard_identity["campaign"], "lane": runner.lane,
                 "sourceCommit": guard_identity["sourceCommit"]}

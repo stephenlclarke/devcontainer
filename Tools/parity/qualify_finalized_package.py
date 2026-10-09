@@ -2749,11 +2749,23 @@ def main() -> int:
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
     from host_runtime import HostGuard, cancellation, runtime_lease
     guard = HostGuard(GUARD_PATH)
-    transaction_owner = {"identity": {"campaign": args.campaign, "sourceCommit": args.source_commit,
-                                      "scope": ("unsigned-native-candidate-diagnostic" if candidate_mode
-                                                else "finalized-native-parity-diagnostic" if diagnostic_fixtures
-                                                else "finalized-native-parity-component" if component_fixture
-                                                else "finalized-native-parity")}, "root": str(args.evidence)}
+    guard_identity = {"campaign": args.campaign, "sourceCommit": args.source_commit,
+                      "scope": ("unsigned-native-candidate-diagnostic" if candidate_mode
+                                else "finalized-native-parity-diagnostic" if diagnostic_fixtures
+                                else "finalized-native-parity-component" if component_fixture
+                                else "finalized-native-parity")}
+    if candidate_mode:
+        stock_admission = args._candidate_admissions["apple-stock"]
+        guard_identity.update({
+            "candidateInvocation": args.candidate_invocation,
+            "candidateReceiptSHA256": stock_admission["candidateReceiptSHA256"],
+            "archiveSHA256": stock_admission["assetSHA256"],
+            "runtimeProfile": stock_admission["runtimeProfile"],
+            "diagnosticFixtures": sorted(diagnostic_fixtures),
+        })
+    elif diagnostic_fixtures:
+        guard_identity["diagnosticFixtures"] = sorted(diagnostic_fixtures)
+    transaction_owner = {"identity": guard_identity, "root": str(args.evidence)}
     cleanup = {lane: {"status": "not-started"} for lane in LANES}
     guard_cleared = False
     errors = []
