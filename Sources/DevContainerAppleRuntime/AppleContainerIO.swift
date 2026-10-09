@@ -87,6 +87,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     deinit {
+        diagnostics.cancellationSummary(pendingWrites: inputWriter?.pendingWriteCount ?? 0)
         capturePreparation?.cancel()
         exits.complete(.failure(CancellationError()))
         inputWriter?.cancel()
@@ -236,6 +237,7 @@ final class AppleContainerIO: @unchecked Sendable {
     }
 
     func cancel() {
+        diagnostics.cancellationSummary(pendingWrites: inputWriter?.pendingWriteCount ?? 0)
         exits.complete(.failure(CancellationError()))
         _ = sealControls()
         closeTransferredEnds()
@@ -354,58 +356,87 @@ final class AppleContainerIO: @unchecked Sendable {
 }
 
 /// Opt-in, payload-free counters for isolating native init attachment stalls.
-private final class AppleContainerIODiagnostics: @unchecked Sendable {
-    private let enabled = ProcessInfo.processInfo.environment["DEVCONTAINER_TRACE_INIT_IO"] == "1"
+final class AppleContainerIODiagnostics: @unchecked Sendable {
+    typealias TraceWriter = @Sendable (Data) -> Void
+
+    private let enabled: Bool
+    private let traceWriter: TraceWriter
     private let generation = UUID().uuidString.lowercased()
     private let startedAt = DispatchTime.now().uptimeNanoseconds
     private let lock = NSLock()
     private let writeLock = NSLock()
     private let maximumProgressEvents = 256
+    private let bytesPerMebibyte = 1024 * 1024
     private var progressEvents = 0
     private var inputSubmittedBytes = 0
     private var inputCompletedBytes = 0
     private var inputFailedBytes = 0
+    private var lastReportedInputSubmittedMiB = 0
+    private var lastReportedInputCompletedMiB = 0
     private var outputBytes: [RuntimeIOChannel: Int] = [:]
     private var lastReportedOutputMiB: [RuntimeIOChannel: Int] = [:]
     private var outputEOFChannels: Set<RuntimeIOChannel> = []
     private var nativeExitCode: Int32?
+    private var terminalDrainRecorded = false
+    private var cancellationSummaryRecorded = false
 
-    func inputSubmitted(_ bytes: Int, pendingWrites: Int) {
+    init(
+        enabled: Bool = ProcessInfo.processInfo.environment["DEVCONTAINER_TRACE_INIT_IO"] == "1",
+        traceWriter: TraceWriter? = nil
+    ) {
+        self.enabled = enabled
+        self.traceWriter = traceWriter ?? { data in
+            try? FileHandle.standardError.write(contentsOf: data)
+        }
+    }
+
+    func inputSubmitted(_ bytes: Int, pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
-        let total = lock.withLock {
+        let total = lock.withLock { () -> Int? in
             inputSubmittedBytes += bytes
+            let mebibytes = inputSubmittedBytes / bytesPerMebibyte
+            guard mebibytes > lastReportedInputSubmittedMiB else { return nil }
+            lastReportedInputSubmittedMiB = mebibytes
             return inputSubmittedBytes
         }
-        recordProgress("input-write-submitted", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+        if let total {
+            recordProgress("input-write-submitted", "totalBytes=\(total) pending=\(pendingWrites())")
+        }
     }
 
-    func inputCompleted(_ bytes: Int, pendingWrites: Int) {
+    func inputCompleted(_ bytes: Int, pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
-        let total = lock.withLock {
+        let total = lock.withLock { () -> Int? in
             inputCompletedBytes += bytes
+            let mebibytes = inputCompletedBytes / bytesPerMebibyte
+            guard mebibytes > lastReportedInputCompletedMiB else { return nil }
+            lastReportedInputCompletedMiB = mebibytes
             return inputCompletedBytes
         }
-        recordProgress("input-write-completed", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+        if let total {
+            recordProgress("input-write-completed", "totalBytes=\(total) pending=\(pendingWrites())")
+        }
     }
 
-    func inputFailed(_ bytes: Int, pendingWrites: Int) {
+    func inputFailed(_ bytes: Int, pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
         let total = lock.withLock {
             inputFailedBytes += bytes
             return inputFailedBytes
         }
-        recordProgress("input-write-failed", "bytes=\(bytes) total=\(total) pending=\(pendingWrites)")
+        recordProgress("input-write-failed", "bytes=\(bytes) total=\(total) pending=\(pendingWrites())")
     }
 
-    func inputEOFRequested(pendingWrites: Int) {
+    func inputEOFRequested(pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
-        recordProgress("input-eof-requested", "pending=\(pendingWrites)")
+        recordProgress("input-eof-requested", "pending=\(pendingWrites())")
     }
 
-    func inputEOFCompleted(pendingWrites: Int) {
+    func inputEOFCompleted(pendingWrites: @autoclosure () -> Int) {
         guard enabled else { return }
         let totals = lock.withLock { (inputSubmittedBytes, inputCompletedBytes, inputFailedBytes) }
-        recordFinal("input-eof-completed", "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) pending=\(pendingWrites)")
+        let pending = pendingWrites()
+        recordFinal("input-eof-completed", "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) pending=\(pending)")
     }
 
     func outputFrame(_ frame: RuntimeIOFrame) {
@@ -447,9 +478,35 @@ private final class AppleContainerIODiagnostics: @unchecked Sendable {
         recordDrain("output-drain-completed")
     }
 
+    func cancellationSummary(pendingWrites: @autoclosure () -> Int) {
+        guard enabled else { return }
+        let totals = lock.withLock { () -> (Int, Int, Int, Int, Int, Bool, Bool, Int32?)? in
+            guard !terminalDrainRecorded, !cancellationSummaryRecorded else { return nil }
+            cancellationSummaryRecorded = true
+            return (
+                inputSubmittedBytes,
+                inputCompletedBytes,
+                inputFailedBytes,
+                outputBytes[.standardOutput] ?? 0,
+                outputBytes[.standardError] ?? 0,
+                outputEOFChannels.contains(.standardOutput),
+                outputEOFChannels.contains(.standardError),
+                nativeExitCode
+            )
+        }
+        guard let totals else { return }
+        let pending = pendingWrites()
+        let exitCode = totals.7.map { String($0) } ?? "unknown"
+        recordFinal(
+            "io-cancelled-summary",
+            "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) stdout=\(totals.3) stderr=\(totals.4) stdoutEOF=\(totals.5) stderrEOF=\(totals.6) exit=\(exitCode) pending=\(pending)"
+        )
+    }
+
     private func recordDrain(_ event: String) {
         guard enabled else { return }
         let totals = lock.withLock {
+            terminalDrainRecorded = true
             (
                 inputSubmittedBytes,
                 inputCompletedBytes,
@@ -465,7 +522,7 @@ private final class AppleContainerIODiagnostics: @unchecked Sendable {
         recordFinal(event, "submitted=\(totals.0) completed=\(totals.1) failed=\(totals.2) stdout=\(totals.3) stderr=\(totals.4) stdoutEOF=\(totals.5) stderrEOF=\(totals.6) exit=\(exitCode)")
     }
 
-    private func recordProgress(_ event: String, _ details: String) {
+    private func recordProgress(_ event: String, _ details: @autoclosure () -> String) {
         guard enabled else { return }
         let permitted = lock.withLock { () -> Bool in
             guard progressEvents < maximumProgressEvents else { return false }
@@ -473,7 +530,7 @@ private final class AppleContainerIODiagnostics: @unchecked Sendable {
             return true
         }
         if permitted {
-            writeLine(event, details)
+            writeLine(event, details())
         }
     }
 
@@ -486,7 +543,7 @@ private final class AppleContainerIODiagnostics: @unchecked Sendable {
         let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
         let suffix = details.isEmpty ? "" : " \(details)"
         let line = Data("devcontainer-engine: init-io trace: generation=\(generation) elapsedNS=\(elapsed) event=\(event)\(suffix)\n".utf8)
-        writeLock.withLock { try? FileHandle.standardError.write(contentsOf: line) }
+        writeLock.withLock { traceWriter(line) }
     }
 }
 

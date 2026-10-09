@@ -9,7 +9,65 @@ import DevContainerRuntimeSPI
 import Foundation
 import Testing
 
+private final class TraceCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedLines: [String] = []
+
+    func append(_ data: Data) {
+        lock.withLock { storedLines.append(String(decoding: data, as: UTF8.self)) }
+    }
+
+    var lines: [String] {
+        lock.withLock { storedLines }
+    }
+}
+
 struct AppleContainerIOTests {
+    @Test func `init IO trace uses MiB watermarks and retains final cancellation totals`() {
+        let capture = TraceCapture()
+        let diagnostics = AppleContainerIODiagnostics(enabled: true, traceWriter: capture.append)
+        for _ in 0 ..< 8 {
+            diagnostics.inputSubmitted(512 * 1024, pendingWrites: 0)
+            diagnostics.inputCompleted(512 * 1024, pendingWrites: 0)
+        }
+        diagnostics.outputFrame(RuntimeIOFrame(
+            channel: .standardOutput,
+            data: Data(repeating: 0, count: 1024 * 1024)
+        ))
+        diagnostics.cancellationSummary(pendingWrites: 2)
+        diagnostics.cancellationSummary(pendingWrites: 3)
+
+        let lines = capture.lines
+        #expect(lines.filter { $0.contains("event=input-write-submitted") }.count == 4)
+        #expect(lines.filter { $0.contains("event=input-write-completed") }.count == 4)
+        #expect(lines.contains { $0.contains("event=output-progress") && $0.contains("bytes=1048576") })
+        #expect(lines.filter { $0.contains("event=io-cancelled-summary") }.count == 1)
+        #expect(lines.contains {
+            $0.contains("submitted=4194304 completed=4194304 failed=0 stdout=1048576 stderr=0")
+                && $0.contains("stdoutEOF=false stderrEOF=false exit=unknown pending=2")
+        })
+    }
+
+    @Test func `disabled init IO trace avoids pending writer reads`() {
+        let capture = TraceCapture()
+        let diagnostics = AppleContainerIODiagnostics(enabled: false, traceWriter: capture.append)
+        var pendingRead = false
+        func pendingWrites() -> Int {
+            pendingRead = true
+            return 1
+        }
+
+        diagnostics.inputSubmitted(1024, pendingWrites: pendingWrites())
+        diagnostics.inputCompleted(1024, pendingWrites: pendingWrites())
+        diagnostics.inputFailed(1024, pendingWrites: pendingWrites())
+        diagnostics.inputEOFRequested(pendingWrites: pendingWrites())
+        diagnostics.inputEOFCompleted(pendingWrites: pendingWrites())
+        diagnostics.cancellationSummary(pendingWrites: pendingWrites())
+
+        #expect(!pendingRead)
+        #expect(capture.lines.isEmpty)
+    }
+
     @Test func `prestart attachments receive separate complete streams and real exit`() async throws {
         let channel = try AppleContainerIO(createdAt: Date(), terminal: false, openStandardInput: false)
         let first = channel.attach()
