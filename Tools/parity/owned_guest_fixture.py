@@ -29,6 +29,49 @@ COMPOSE_FIXTURES = frozenset({
     "E09-compose-foreground", "E10-compose-quiet", "E11-compose-redirected",
     "E12-compose-tty-input", "E13-compose-signals", "E14-compose-terminal-size",
 })
+_ATTACHMENT_DIAGNOSTIC_STAGES = frozenset({
+    "connect", "upgrade", "start", "primary-startup", "combined-observer", "duplex",
+    "observer-startup-history", "combined-duplex", "validate-output", "complete",
+})
+_ATTACHMENT_DIAGNOSTIC_STREAM_FIELDS = frozenset({
+    "inputAcceptedBytes", "inputHalfClosed", "observerInputHalfClosed", "primaryWireBytes",
+    "observerWireBytes", "primaryEOF", "observerEOF", "outputWireBytes", "outputEOF",
+})
+
+
+def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only bounded, payload-free E07 stage evidence in the fixture result."""
+    trace: list[dict[str, Any]] = []
+    for event in events:
+        if (not isinstance(event, dict) or type(event.get("stage")) is not str
+                or event["stage"] not in _ATTACHMENT_DIAGNOSTIC_STAGES):
+            continue
+        duration = event.get("durationNS")
+        if type(duration) is not int or not 0 <= duration <= 600_000_000_000:
+            continue
+        item: dict[str, Any] = {"stage": event["stage"], "durationNS": duration}
+        status = event.get("status")
+        if type(status) is int and 100 <= status <= 599:
+            item["status"] = status
+        error = event.get("error")
+        if type(error) is str and error in {
+                "TimeoutError", "OSError", "ValueError", "RuntimeError", "ConnectionError"}:
+            item["errorType"] = error
+        stream = event.get("stream")
+        if isinstance(stream, dict):
+            safe_stream: dict[str, int | bool] = {}
+            for key in _ATTACHMENT_DIAGNOSTIC_STREAM_FIELDS:
+                value = stream.get(key)
+                if type(value) is bool:
+                    safe_stream[key] = value
+                elif type(value) is int and 0 <= value <= 40 * 1024**2:
+                    safe_stream[key] = value
+            if safe_stream:
+                item["stream"] = safe_stream
+        trace.append(item)
+        if len(trace) >= 8:
+            break
+    return trace
 
 
 def sha256(path: Path) -> str:
@@ -835,6 +878,10 @@ class OwnedGuestFixtureRunner:
             "differences": differences,
             "diagnostic": diagnostic,
         }
+        if fixture.identifier == "E07-init-attachment" and status == "failed":
+            trace = _safe_attachment_diagnostic_trace(events)
+            if trace:
+                result["diagnosticTrace"] = trace
         if signal_stream is not None:
             result["signalStream"] = signal_stream
         if signal_contract is not None:

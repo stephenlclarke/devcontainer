@@ -29,6 +29,89 @@ ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 class OwnedGuestFailureTests(unittest.TestCase):
+    def test_failed_e07_retains_only_bounded_stage_and_stream_diagnostics(self) -> None:
+        import guest_runtime
+        import owned_guest_fixture
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            root, raw = base / "case", base / "raw"
+            root.mkdir(mode=0o700)
+            raw.mkdir(mode=0o700)
+            owner = {"identity": {"campaign": "campaign", "lane": "apple-stock",
+                                  "fixture": "E07-init-attachment", "sourceCommit": "a" * 40,
+                                  "archiveSHA256": "b" * 64, "endpointSHA256": "c" * 64},
+                     "root": str(root)}
+            (root / "owner.json").write_bytes(
+                json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+
+            class Journal:
+                def __init__(self):
+                    self.entries = {}
+
+                def put(self, name, payload):
+                    self.entries[name] = payload
+
+                def records(self):
+                    return dict(self.entries)
+
+                def receipt(self):
+                    return {"status": "restored"}
+
+            class Runtime:
+                def __init__(self, *args, **_kwargs):
+                    self.journal = args[1]
+
+                def verify(self):
+                    pass
+
+            journal = Journal()
+
+            class Guest:
+                def __init__(self, *_args, **kwargs):
+                    self.observe = kwargs["observe"]
+
+                def operation(self):
+                    self.observe({
+                        "method": "POST", "route": "/v1.54/containers/secret-id/attach",
+                        "stage": "observer-startup-history", "durationNS": 30_000_000_000,
+                        "error": "TimeoutError", "status": 101,
+                        "stream": {"outputWireBytes": 0, "outputEOF": False,
+                                   "privatePayload": "must not escape"},
+                        "responseBody": "must not escape",
+                    })
+                    raise TimeoutError("whole-connection deadline")
+
+                def cleanup(self):
+                    return {"status": "passed", "remainingOwnedResources": []}
+
+            fixture = SimpleNamespace(identifier="E07-init-attachment", expected={})
+            runner = SimpleNamespace(lane="apple-stock", cleanup_differences=[],
+                                     _preserve_engine_on_uncertain_guest_cleanup=False,
+                                     finalized_identity={"sourceCommit": "a" * 40})
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.runner, bridge.repository, bridge.lane = runner, REPOSITORY, runner.lane
+            bridge.fixtures, bridge.retained, bridge.inputs = [fixture], base, {"workload": {"image": {}}}
+            bridge.socket, bridge.compose, bridge.container = base / "docker.sock", None, "/provider/container"
+            bridge.preparation_error, bridge.preparation = None, (root, journal, Runtime(None, journal), owner)
+            bridge._case_paths = mock.Mock(return_value=(root, journal, owner))
+            bridge._provision_event_sequence = 0
+
+            with (mock.patch.object(owned_guest_fixture, "LaneRuntimeView", Runtime),
+                  mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+                result = bridge.run(fixture, raw)
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["diagnosticTrace"], [{
+                "stage": "observer-startup-history", "durationNS": 30_000_000_000,
+                "status": 101, "errorType": "TimeoutError",
+                "stream": {"outputWireBytes": 0, "outputEOF": False},
+            }])
+            encoded = json.dumps(result["diagnosticTrace"])
+            self.assertNotIn("secret-id", encoded)
+            self.assertNotIn("privatePayload", encoded)
+            self.assertNotIn("responseBody", encoded)
+
     def test_incomplete_lane_preparation_reports_each_fixture_failed(self) -> None:
         runner = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
         runner.preparation_error = "fixture preflight failed"

@@ -1,5 +1,7 @@
 # devcontainer
 
+Failed E07 attachment probes retain a bounded, payload-free stage summary so connection deadlines can be diagnosed without retaining identifiers or guest output. See the [diagnostic evidence handoff](docs/PR-e07-stage-diagnostics.md).
+
 Inventory cleanup captures durable identities before awaiting the native list, preserving containers created while that request is in flight. See the [creation race correction](docs/PR-inventory-creation-race.md).
 
 Executing native qualification sets a private `0077` umask before signed-package admission, so fresh SSD directory inventories match retained receipts even when the caller uses `0022`. Inert preflight remains read-only. See the [admission correction](docs/PR-umask-finalized-admission.md).
