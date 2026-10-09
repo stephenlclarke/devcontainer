@@ -66,6 +66,18 @@ class FinalizedSelectionTests(unittest.TestCase):
 
 
 class UnsignedCandidateDiagnosticTests(unittest.TestCase):
+    def test_actual_candidate_cli_arguments_do_not_look_like_partial_finalized_selection(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertEqual(candidate_selection(arguments), {
+            "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+            "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+
     def test_candidate_selection_is_explicit_and_excludes_finalized_inputs(self) -> None:
         selection = candidate_selection(argparse.Namespace(
             candidate_invocation="47387ce0-3819-4eca-b06e-11356ce4568d",

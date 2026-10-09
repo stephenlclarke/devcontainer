@@ -58,7 +58,13 @@ NATIVE_CANDIDATE_FIXTURES = frozenset({"C03-compose-resources", "D05-features", 
 def finalized_selection(args: argparse.Namespace) -> dict[str, Any] | None:
     """Require one complete, explicit signed-package selection."""
 
-    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state", "expected_source_commit")
+    candidate_invocation = getattr(args, "candidate_invocation", None)
+    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state")
+    if candidate_invocation is not None:
+        if any(getattr(args, field, None) is not None for field in fields):
+            raise ParityError("candidate and finalized package selections are mutually exclusive")
+        return None
+    fields = (*fields, "expected_source_commit")
     values = {field: getattr(args, field, None) for field in fields}
     if any(value is not None for value in values.values()) and not all(value is not None for value in values.values()):
         raise ParityError("all four finalized package inputs are required together")
