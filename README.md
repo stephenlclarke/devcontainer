@@ -198,7 +198,7 @@ Coverage builds now use atomic counters and sandboxed Swift compilation to preve
 
 Coverage cleanup removes stale profiles and reports only from the selected SwiftPM build’s `codecov` output directory. It leaves dependency checkouts and their tracked configuration files untouched.
 
-The inherited-process signal regression test uses bounded exit polling and nonblocking pipe drains. It records parent and probe phase markers, revalidates native process identities before cleanup signals, and retains its fixture directory after a failed assertion, so a timeout preserves diagnostic evidence without changing production signal handling.
+The inherited-process signal regression test uses bounded exit polling and nonblocking pipe drains. It atomically publishes the child PID marker and waits for a complete positive PID before binding its native process identity. It records parent and probe phase markers, revalidates native process identities before cleanup signals, and retains its fixture directory after a failed assertion, so a timeout preserves diagnostic evidence without changing production signal handling. See the [process marker race handoff](docs/PR-process-signal-probe-timeout.md).
 
 The unreleased Bazel candidate preserves published ports when a delivered signal does not stop the container and joins restored-container observers during shutdown. [Signal implementation and evidence](docs/bazel-test-harness.md#foreground-init-attachment-development) distinguish passing component tests from the unresolved Docker duplicate-signal oracle, native qualification and release gates.
 
