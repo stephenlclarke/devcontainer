@@ -837,6 +837,61 @@ class ActiveProviderHomeTests(unittest.TestCase):
 
 
 class NativeProvisionBeforeEngineTests(unittest.TestCase):
+    def test_d05_warm_provider_preparation_uses_only_kernel_and_init_prerequisites(self) -> None:
+        import owned_guest_fixture
+
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        import guest_runtime
+
+        inputs = {"kernel": {"sha256": "a" * 64},
+                  "initialization": {"archiveSHA256": "b" * 64},
+                  "workload": {"archiveSHA256": "c" * 64}}
+        events = []
+        owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
+        root, journal = Path("/private/provider-home"), mock.Mock()
+
+        class Runtime:
+            def __init__(self, *_args):
+                events.append("api-view")
+
+            def verify(self):
+                events.append("api-verify")
+
+        guests = []
+
+        class Guest:
+            def __init__(self, *args, **_kwargs):
+                self.fixture = args[1]
+                self.socket = args[6]
+                guests.append(self)
+
+            def provision(self):
+                events.append("kernel-and-init-provision")
+
+        bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+        bridge.runner = SimpleNamespace(lane="apple-stock")
+        bridge.lane, bridge.repository = "apple-stock", REPOSITORY
+        bridge.fixtures, bridge.retained, bridge.inputs = [], Path("/retained"), inputs
+        bridge.fixture_selection = ("D05-features",)
+        bridge.builder_required, bridge.provider_required = False, True
+        bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
+        bridge.preparation, bridge.preparation_error = None, None
+        bridge._provision_event_sequence = 0
+        bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+
+        with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
+              mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
+              mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
+              mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+            bridge.prepare_native_provider()
+
+        self.assertEqual(guests[0].fixture, "E07-init-attachment")
+        self.assertIsNone(guests[0].socket)
+        self.assertNotIn("builder", inputs)
+        self.assertEqual(admit.call_args_list, [mock.call(REPOSITORY, "apple-stock", Path("/retained"), builder=False)] * 2)
+        self.assertEqual(events.count("kernel-and-init-provision"), 1)
+        self.assertLess(events.index("api-verify"), events.index("kernel-and-init-provision"))
+
     def test_native_provision_uses_api_view_without_a_placeholder_socket_once(self) -> None:
         for identifier in ("E07-init-attachment", "E06-network-volume", "E04-image-build"):
             with self.subTest(fixture=identifier):

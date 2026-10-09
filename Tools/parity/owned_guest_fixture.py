@@ -366,7 +366,8 @@ class OwnedGuestFixtureRunner:
     """Own guest image preparation and execute routed fixtures on one active lane."""
 
     def __init__(self, runner, fixtures: list[Any], *, admitted_inputs: dict[str, Any] | None = None,
-                 fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False) -> None:
+                 fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False,
+                 provider_required: bool = False) -> None:
         self.runner = runner
         self.repository = runner.repository
         self.lane = runner.lane
@@ -374,6 +375,7 @@ class OwnedGuestFixtureRunner:
         self.fixture_selection = (fixture_selection if fixture_selection is not None
                                   else tuple(fixture.identifier for fixture in fixtures))
         self.builder_required = builder_required
+        self.provider_required = provider_required
         self.retained = _retained_root(runner)
         self.inputs = (admitted_inputs if admitted_inputs is not None
                        else admit_guest_inputs(self.repository, self.lane, self.retained,
@@ -633,7 +635,7 @@ class OwnedGuestFixtureRunner:
         first = next((fixture for fixture in self.fixtures
                       if fixture.identifier in OWNED_GUEST_FIXTURES
                       or fixture.identifier == "E06-network-volume"), None)
-        if first is None and not self.builder_required:
+        if first is None and not self.builder_required and not getattr(self, "provider_required", False):
             return
         root, journal, owner = self._case_paths_for_preparation()
         runtime = ApiRuntimeView(self.runner, root, owner, journal, self.fixture_selection)
@@ -643,7 +645,7 @@ class OwnedGuestFixtureRunner:
                                     builder=self.builder_required)
         if guest_input_identity(before) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed before native provisioning")
-        if first is not None or self.builder_required:
+        if first is not None or self.builder_required or getattr(self, "provider_required", False):
             from guest_runtime import ReleasedGuest
 
             preparation_fixture = first.identifier if first is not None else "E07-init-attachment"

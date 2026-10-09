@@ -494,7 +494,11 @@ class LaneRunner:
         native_e04_builder = (self.lane != "docker" and self.finalized_identity is not None
                               and self.finalized_identity.get("runtimeProfile") == "stock"
                               and any(fixture.identifier == "E04-image-build" for fixture in fixtures))
-        if owned_fixtures or native_e04_builder:
+        native_d05_cache_preparation = (
+            self.lane != "docker" and getattr(self, "d05_cache_state", "cold") == "warm"
+            and selected == {"D05-features"})
+        native_guest_preparation = owned_fixtures or native_e04_builder or native_d05_cache_preparation
+        if native_guest_preparation:
             from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
 
             retained = _retained_root(self)
@@ -503,7 +507,8 @@ class LaneRunner:
             self._owned_guest_runner = OwnedGuestFixtureRunner(
                 self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
                 fixture_selection=tuple(fixture.identifier for fixture in fixtures),
-                builder_required=native_e04_builder)
+                builder_required=native_e04_builder,
+                provider_required=native_d05_cache_preparation)
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -511,7 +516,7 @@ class LaneRunner:
         e04_readiness_failed = False
         if self.lane == "docker":
             self.configure_docker_oracle()
-        elif owned_fixtures or native_e04_builder:
+        elif native_guest_preparation:
             try:
                 self._owned_guest_runner.prepare_native_provider()
                 if native_e04_builder:
@@ -525,7 +530,7 @@ class LaneRunner:
         if self.lane != "docker" and not native_preparation_failed:
             self.start_engine()
 
-        if (owned_fixtures or native_e04_builder) and not native_preparation_failed:
+        if native_guest_preparation and not native_preparation_failed:
             try:
                 self._owned_guest_runner.attach_endpoint()
                 if self.lane == "docker":

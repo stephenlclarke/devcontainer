@@ -327,7 +327,8 @@ class UnsignedCandidateDiagnosticTests(unittest.TestCase):
 
 
 class ComponentBuilderSelectionTests(unittest.TestCase):
-    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str, runtime_profile=None):
+    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str,
+                       runtime_profile=None, cache_state="cold"):
         import sys
 
         repository = Path(__file__).resolve().parents[2]
@@ -345,10 +346,15 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             events = []
 
             class Bridge:
-                def __init__(self, *_args, **_kwargs):
+                def __init__(self, _runner, owned, **kwargs):
                     self.preparation_error = None
+                    self.fixtures = owned
+                    self.provider_required = kwargs.get("provider_required", False)
+                    self.builder_required = kwargs.get("builder_required", False)
 
                 def prepare_native_provider(self):
+                    if self.provider_required:
+                        events.append("provider-required")
                     events.append("provision")
 
                 def prepare_native_builder(self):
@@ -374,6 +380,7 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             runner.provider_hashes = {}
             runner.harness_sha256 = "f" * 64
             runner.finalized_identity = {"runtimeProfile": runtime_profile} if runtime_profile else None
+            runner.d05_cache_state = cache_state
             runner.cleanup_differences = []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
             builder = mock.Mock(side_effect=lambda: events.append("buildx-bootstrap"))
@@ -467,6 +474,17 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
         self.assertLess(events.index("engine"), events.index("attach"))
         self.assertLess(events.index("attach"), events.index("fixture:E14-compose-terminal-size"))
         self.assertLess(events.index("fixture:E14-compose-terminal-size"), events.index("guest-cleanup"))
+        self.assertIn("guest-cleanup", events)
+
+    def test_warm_d05_only_admits_kernel_and_init_preparation_before_engine(self) -> None:
+        result, builder, events = self._run_selection(
+            "apple-stock", ("D05-features",), "D05-features", "stock", cache_state="warm")
+        self.assertEqual(result, 0)
+        builder.assert_not_called()
+        self.assertLess(events.index("provider-required"), events.index("provision"))
+        self.assertLess(events.index("provision"), events.index("engine"))
+        self.assertLess(events.index("engine"), events.index("attach"))
+        self.assertLess(events.index("attach"), events.index("fixture:D05-features"))
         self.assertIn("guest-cleanup", events)
 
     def test_finalized_e04_component_starts_and_proves_native_builder_before_legacy_fixture(self) -> None:
