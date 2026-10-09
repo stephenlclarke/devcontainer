@@ -6,6 +6,8 @@ Inventory cleanup captures durable identities before awaiting the native list, p
 
 Executing native qualification sets a private `0077` umask before signed-package admission, so fresh SSD directory inventories match retained receipts even when the caller uses `0022`. Inert preflight remains read-only. See the [admission correction](docs/PR-umask-finalized-admission.md).
 
+The released Engine Bazel launcher now has an inert runfiles smoke test that exercises its real `--help` path and catches missing Python inputs before runtime qualification. See the [runfiles correction](docs/PR-released-engine-runfiles.md).
+
 <!-- markdownlint-disable MD013 MD033 -->
 <p>
   <img align="left" hspace="20" src="docs/images/devcontainer-icon.png" width="147" alt="devcontainer icon: a blue glass cube overlapping the standard three-row container service panel" />

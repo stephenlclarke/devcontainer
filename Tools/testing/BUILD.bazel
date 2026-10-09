@@ -194,6 +194,7 @@ filegroup(
         "//Tools/bazel:builder-images.lock.json",
         "//:Tests/Parity/fixtures/E04-image-build/contract.json",
         "//Tools/bazel:prepare_candidate.py",
+        "//Tools/bazel:candidate_archive.py",
         "//Tools/bazel:retain_evidence.py",
         "released_engine.py",
         "released_docker.py",
@@ -299,6 +300,14 @@ filegroup(
         "//:Tests/Parity/fixtures/E15-initial-terminal-size/contract.json",
         "//:Tests/Parity/fixtures/F01-fault-recovery/contract.json",
     ],
+)
+
+sh_test(
+    name = "released_engine_runfiles_smoke",
+    srcs = ["released_engine_runfiles_smoke.sh"],
+    data = [":released_engine_inputs"],
+    size = "small",
+    visibility = ["//visibility:public"],
 )
 
 sh_test(
