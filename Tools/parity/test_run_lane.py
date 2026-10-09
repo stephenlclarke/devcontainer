@@ -513,6 +513,28 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
         self.assertLess(events.index("attach"), events.index("fixture:D05-features"))
         self.assertIn("guest-cleanup", events)
 
+    def test_c03_only_native_diagnostic_provisions_default_kernel_without_other_fixture_work(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("C03-compose-resources",), "C03-compose-resources", "stock")
+                self.assertEqual(result, 0)
+                self.assertNotIn("builder-start", events)
+                self.assertLess(events.index("provider-required"), events.index("provision"))
+                self.assertLess(events.index("provision"), events.index("engine"))
+                self.assertLess(events.index("engine"), events.index("attach"))
+                self.assertLess(events.index("attach"), events.index("fixture:C03-compose-resources"))
+                self.assertEqual([event for event in events if event.startswith("fixture:")],
+                                 ["fixture:C03-compose-resources"])
+                self.assertIn("guest-cleanup", events)
+
+        result, builder, events = self._run_selection(
+            "docker", ("C03-compose-resources",), "C03-compose-resources")
+        self.assertEqual(result, 0)
+        self.assertNotIn("provider-required", events)
+        self.assertNotIn("provision", events)
+        self.assertNotIn("attach", events)
+
     def test_finalized_e04_component_starts_and_proves_native_builder_before_legacy_fixture(self) -> None:
         for lane in ("apple-stock", "container-compose"):
             with self.subTest(lane=lane):

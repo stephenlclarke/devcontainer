@@ -11,6 +11,7 @@ The finalized-package controller's supported component mode runs one fixture acr
 - Do not invoke the Docker lane or VS Code suite, and do not compare or graft external Docker results into the current run's lane evidence.
 - Emit a diagnostic receipt with `releaseQualified: false`; candidate receipts must say `signatureVerified: false`. Optionally retain an original Docker reference only after checking its independently supplied SHA-256.
 - For a single D05 diagnostic, permit an explicit warm-cache mode that performs an untimed build on the same copied fixture and requires strict cache proof for both feature stages; keep default and full qualification paths cold.
+- For a C03-only native diagnostic, provision the authenticated provider's default kernel and initialization images before starting the selected Engine, even though C03 is not an owned-guest fixture route. Run only C03 afterward; do not execute E07 or the E04 builder-preparation path.
 - Preserve the existing component and complete 84-observation qualification paths.
 
 ## Scope and remaining risk

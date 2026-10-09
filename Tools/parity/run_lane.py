@@ -521,7 +521,10 @@ class LaneRunner:
         native_d05_cache_preparation = (
             self.lane != "docker" and getattr(self, "d05_cache_state", "cold") == "warm"
             and selected == {"D05-features"})
-        native_guest_preparation = owned_fixtures or native_e04_builder or native_d05_cache_preparation
+        native_c03_provider_preparation = (
+            self.lane != "docker" and selected == {"C03-compose-resources"})
+        native_guest_preparation = (owned_fixtures or native_e04_builder
+                                    or native_d05_cache_preparation or native_c03_provider_preparation)
         if native_guest_preparation:
             from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
 
@@ -532,7 +535,7 @@ class LaneRunner:
                 self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
                 fixture_selection=tuple(fixture.identifier for fixture in fixtures),
                 builder_required=native_e04_builder,
-                provider_required=native_d05_cache_preparation)
+                provider_required=(native_d05_cache_preparation or native_c03_provider_preparation))
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
