@@ -5,7 +5,6 @@ import ContainerizationError
 import ContainerizationOCI
 import ContainerResource
 @testable import DevContainerAppleRuntime
-import DevContainerCore
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
@@ -78,7 +77,7 @@ struct AppleContainerCreationRecoveryTests {
             metadataStore: store, creator: AppleContainerCreateTests.Creator()
         )
         var spec = ContainerSpec(name: "fixture", image: digest)
-        spec.labels[RuntimeLabels.operation] = context.operationID.rawValue
+        spec.labels[RuntimeOperationLabel.key] = context.operationID.rawValue
         try await store.beginContainerCreation(
             RuntimeContainerCreation(
                 runtimeID: "fixture", nativeCreatedAt: Date(), imageID: digest,

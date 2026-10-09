@@ -405,7 +405,6 @@ swift_test(
     copts = RUNTIME_COPTS,
     deps = [
         ":DevContainerAppleRuntime",
-        ":DevContainerCore",
         ":DevContainerModel",
         ":DevContainerRuntimeSPI",
         ":DevContainerState",

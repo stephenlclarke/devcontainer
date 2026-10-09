@@ -351,7 +351,6 @@ let package = Package(
             dependencies: [
                 "DevContainerTestStorage",
                 "DevContainerAppleRuntime",
-                "DevContainerCore",
                 "DevContainerModel",
                 "DevContainerRuntimeSPI",
                 "DevContainerState",
