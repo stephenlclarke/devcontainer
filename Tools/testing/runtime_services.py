@@ -47,6 +47,7 @@ PROVIDER_HELPER_QUIESCENCE = {
     "guestCount": 0,
     "clientCount": 0,
 }
+OWNERSHIP_CAPTURE_ATTEMPTS = 3
 UNSCOPED_PROVIDER_GATEWAY = "io.github.stephenlclarke.container.engine"
 PROVIDER_GATEWAY_SOCKET_ROOT = Path("/private/tmp")
 
@@ -230,10 +231,39 @@ def atomic_replace_private_file(path: Path, expected: bytes, replacement: bytes,
 
 
 def capture_owned_processes(launchd, prior: list[dict]) -> list[dict]:
-    roots = {item["label"]: pid for item in prior if (pid := launchd.process_id(item["label"])) is not None}
-    processes = process_inventory()
-    if not set(roots.values()) <= processes.keys():
-        raise ValueError("Service processes changed during ownership capture")
+    """Capture one stable launchd-root/process-table view without guessing owners."""
+    expected = {
+        item["label"]: {key: item[key] for key in ("label", "path", "program")}
+        for item in prior
+    }
+
+    def require_same_definitions():
+        for label, identity in expected.items():
+            if launchd.inspect(label) != identity:
+                raise ValueError("Service definitions changed during ownership capture")
+
+    for attempt in range(OWNERSHIP_CAPTURE_ATTEMPTS):
+        require_same_definitions()
+        before = {label: launchd.process_id(label) for label in expected}
+        processes = process_inventory()
+        after = {label: launchd.process_id(label) for label in expected}
+        require_same_definitions()
+
+        # A changed launchd PID proves that the process roots moved while this
+        # sample was collected. Retry only that observed transition; a stable
+        # PID missing from ps remains a hard identity failure.
+        if before != after:
+            if attempt + 1 < OWNERSHIP_CAPTURE_ATTEMPTS:
+                continue
+            raise ValueError("Service process identities did not stabilize during ownership capture")
+        roots = {label: pid for label, pid in after.items() if pid is not None}
+        missing = {label for label, pid in roots.items() if pid not in processes}
+        if missing:
+            raise ValueError("Stable service process identity is absent from ownership inventory")
+        break
+    else:
+        raise ValueError("Service process ownership capture did not complete")
+
     owners = {}
     for label, root in roots.items():
         owned = {root}
