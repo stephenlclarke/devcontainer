@@ -84,6 +84,34 @@ class ReleasedEngineTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "differs"):
                     released_engine.fixture_guest_inputs({}, "D01-image-config", product, repository, legacy=changed)
 
+    def test_devcontainer_fixture_accepts_only_complete_candidate_launcher_inventory(self):
+        repository = Path(__file__).parents[2]
+        legacy_names = {"devcontainer", "devcontainer-docker", "devcontainer-compose",
+                        "devcontainer-engine", "reference-node"}
+        launcher_names = {"terminal-launcher-arm64", "terminal-launcher-amd64"}
+        candidate = {"scope": released_engine.CANDIDATE_SCOPE, "runtimeProfile": "stock",
+                     "executables": {name: "/candidate/" + name for name in legacy_names | launcher_names},
+                     "terminalLaunchers": {"arm64": "a" * 64, "amd64": "b" * 64},
+                     "goSDKLicenseSHA256": "c" * 64}
+        selected = released_engine.fixture_guest_inputs({}, "D05-features", candidate, repository)
+        self.assertEqual(selected["devcontainerCandidate"], candidate)
+        old = {"scope": candidate["scope"], "runtimeProfile": "stock",
+               "executables": {name: candidate["executables"][name] for name in legacy_names}}
+        self.assertEqual(released_engine.fixture_guest_inputs({}, "D05-features", old, repository)
+                         ["devcontainerCandidate"], old)
+        for changed in (
+            {**candidate, "executables": {name: path for name, path in candidate["executables"].items()
+                                         if name != "terminal-launcher-amd64"}},
+            {**candidate, "executables": {**candidate["executables"], "unexpected": "/candidate/unexpected"}},
+            {**candidate, "terminalLaunchers": {"arm64": "a" * 64}},
+            {**candidate, "terminalLaunchers": {"arm64": "a" * 64, "amd64": "invalid"}},
+            {key: value for key, value in candidate.items() if key != "goSDKLicenseSHA256"},
+            {**old, "terminalLaunchers": candidate["terminalLaunchers"]},
+        ):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(ValueError, "candidate archive"):
+                    released_engine.fixture_guest_inputs({}, "D05-features", changed, repository)
+
     def test_published_frontend_entrypoint_rechecks_tools_and_fails_before_runtime(self):
         _lock, product = self.legacy_product()
         releases = [product, {"executables": {"container": "/released/container", "container-apiserver": "/released/api"}}]

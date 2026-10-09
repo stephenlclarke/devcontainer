@@ -251,7 +251,21 @@ def fixture_guest_inputs(inputs: dict, fixture: str, candidate: dict, repository
             raise ValueError("Devcontainer fixture requires a complete admitted finalized native package")
         return {**inputs, "devcontainerCandidate": candidate,
                 "signedReferenceRuntime": reference, "devcontainerFixture": fixture_inputs(repository)}
-    if candidate.get("scope") != CANDIDATE_SCOPE or set(candidate.get("executables", {})) != required:
+    executables = candidate.get("executables")
+    names = set(executables) if isinstance(executables, dict) else set()
+    launchers = {"terminal-launcher-arm64", "terminal-launcher-amd64"}
+    if names == required:
+        complete = "terminalLaunchers" not in candidate and "goSDKLicenseSHA256" not in candidate
+    elif names == required | launchers:
+        hashes = candidate.get("terminalLaunchers")
+        complete = (isinstance(hashes, dict) and set(hashes) == {"arm64", "amd64"}
+                    and all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
+                            for value in hashes.values())
+                    and isinstance(candidate.get("goSDKLicenseSHA256"), str)
+                    and re.fullmatch(r"[a-f0-9]{64}", candidate["goSDKLicenseSHA256"]) is not None)
+    else:
+        complete = False
+    if candidate.get("scope") != CANDIDATE_SCOPE or not complete:
         raise ValueError("Devcontainer fixture requires an admitted private-runtime candidate archive")
     return {**inputs, "devcontainerCandidate": candidate, "devcontainerFixture": fixture_inputs(repository)}
 
