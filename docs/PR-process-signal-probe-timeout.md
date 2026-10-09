@@ -13,3 +13,5 @@ The hosted run `37915763331` at `30a51ba5f0f75456e173bec047bf4efaf86f0996` faile
 The test's production signal sequence and expectations are unchanged. The timeout remains a failing hosted result until a new exact-head coverage run passes. If the retained phase marker identifies a production wait, that wait requires separate evidence and review before any production change.
 
 Related to [the matching issue handoff](ISSUE-process-signal-probe-timeout.md).
+
+The initial `efaebc1f` focused invocation used the enhanced profile despite the caller setting a Makefile-only environment variable. Exact stock selection was subsequently validated with `Tools/bazel/run.sh test --config=stock //:DevContainerProcessTests` at clean source `3a482213`, invocation `fa893574-2368-494b-91d9-9c3cfa0ece70` (passed in 3.6 seconds). Both profiles now have focused passing evidence; neither runtime identity assertions nor the test deadlines changed.
