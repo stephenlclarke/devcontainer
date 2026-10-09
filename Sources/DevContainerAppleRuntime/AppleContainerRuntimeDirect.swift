@@ -191,6 +191,9 @@ extension AppleContainerRuntime {
         context: RuntimeRequestContext
     ) async throws -> [DevContainerModel.ContainerSnapshot] {
         try context.checkActive()
+        // Only identities captured before the native observation are eligible
+        // for orphan cleanup. Creation may complete while list() is suspended.
+        let metadata = try await containerMetadataByRuntimeID()
         let values: [ContainerResource.ContainerSnapshot]
         do {
             values = try await inventoryClient.list()
@@ -198,7 +201,6 @@ extension AppleContainerRuntime {
             throw directAPIError(error, operation: "container list")
         }
 
-        let metadata = try await containerMetadataByRuntimeID()
         var observedValues: [DevContainerModel.ContainerSnapshot] = []
         observedValues.reserveCapacity(values.count)
         for value in values {

@@ -377,6 +377,9 @@ public extension AppleContainerRuntime {
         all: Bool,
         context: RuntimeRequestContext
     ) async throws -> [ContainerSnapshot] {
+        // Bound orphan cleanup to identities that existed before this native
+        // observation, not creations completed during the awaited CLI request.
+        let metadata = try await containerMetadataByRuntimeID()
         var arguments = ["list"]
         if all {
             arguments.append("--all")
@@ -398,7 +401,6 @@ public extension AppleContainerRuntime {
         var snapshots: [ContainerSnapshot] = []
         snapshots.reserveCapacity(observed.count)
         var observedRuntimeIDs = Set<String>()
-        let metadata = try await containerMetadataByRuntimeID()
         let currentMetadata = Self.matchingContainerMetadata(metadata, observed: observed)
         let requiresImageResolution = observed.contains {
             $0.imageID == nil
