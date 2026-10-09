@@ -32,6 +32,7 @@ from run_lane import (
     validate_candidate_fixture_set,
     validate_d05_cache_selection,
     validate_init_io_trace_selection,
+    validate_attachment_generation_selection,
     init_io_trace_environment,
     create_socket_root,
     install_cancellation_handlers,
@@ -69,6 +70,36 @@ class FinalizedSelectionTests(unittest.TestCase):
 
 
 class UnsignedCandidateDiagnosticTests(unittest.TestCase):
+    def test_attachment_generation_cli_defaults_to_canonical_two(self) -> None:
+        with mock.patch("run_lane.sys.argv", ["run_lane.py", "apple-stock", "/tmp/evidence"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.attachment_generations, 2)
+
+    def test_eight_generations_require_one_native_candidate_e07(self) -> None:
+        validate_attachment_generation_selection(2, "docker", {"E01-engine-negotiation"}, False)
+        validate_attachment_generation_selection(8, "apple-stock", {"E07-init-attachment"}, True)
+        validate_attachment_generation_selection(8, "container-compose", {"E07-init-attachment"}, True)
+        for generations, lane, selected, candidate in (
+                (8, "docker", {"E07-init-attachment"}, True),
+                (8, "apple-stock", {"E07-init-attachment"}, False),
+                (8, "container-compose", {"D05-features", "E07-init-attachment"}, True),
+                (3, "apple-stock", {"E07-init-attachment"}, True),
+                (True, "apple-stock", {"E07-init-attachment"}, True)):
+            with self.subTest(generations=generations, lane=lane, selected=selected), self.assertRaises(
+                    ParityError):
+                validate_attachment_generation_selection(generations, lane, selected, candidate)
+
+    def test_eight_generation_cli_option_is_explicit(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--attachment-generations", "8"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.attachment_generations, 8)
+        self.assertEqual(candidate_selection(arguments)["expected_source_commit"],
+                         "5f22bd379c408383daa252b5fc666077fe42e5d3")
+
     def test_actual_candidate_cli_arguments_do_not_look_like_partial_finalized_selection(self) -> None:
         with mock.patch("run_lane.sys.argv", [
                 "run_lane.py", "apple-stock", "/tmp/evidence",

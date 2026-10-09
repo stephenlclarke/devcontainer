@@ -20,7 +20,8 @@ import unittest
 from unittest import mock
 
 from owned_guest_fixture import (ApiRuntimeView, OwnedGuestFixtureRunner,
-                                 _active_provider_home, admit_guest_inputs)
+                                 _active_provider_home, _safe_attachment_diagnostic_trace,
+                                 admit_guest_inputs)
 from parity_lib import ParityError
 
 
@@ -29,6 +30,41 @@ ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 class OwnedGuestFailureTests(unittest.TestCase):
+    def test_eight_attachment_generations_reject_non_candidate_and_multi_fixture_scope(self) -> None:
+        runner = SimpleNamespace(lane="apple-stock", repository=REPOSITORY,
+                                 candidate_selection=None)
+        with self.assertRaisesRegex(ParityError, "native candidate diagnostic"):
+            OwnedGuestFixtureRunner(runner, [], fixture_selection=("E07-init-attachment",),
+                                    attachment_generations=8)
+        runner.candidate_selection = {"candidate_invocation": "candidate"}
+        with self.assertRaisesRegex(ParityError, "native candidate diagnostic"):
+            OwnedGuestFixtureRunner(runner, [], fixture_selection=("D05-features", "E07-init-attachment"),
+                                    attachment_generations=8)
+
+    def test_released_guest_rejects_eight_generations_without_native_candidate_identity(self) -> None:
+        guest_runtime = importlib.import_module("guest_runtime")
+        owner = {"identity": {"fixture": "E07-init-attachment"}}
+        with self.assertRaisesRegex(ValueError, "owned native candidate E07"):
+            guest_runtime.ReleasedGuest({}, "E07-init-attachment", Path("/tmp/case"), owner,
+                                        object(), "/provider/container", Path("/tmp/engine.sock"),
+                                        attachment_generations=8)
+        candidate_owner = {"identity": {
+            "candidateInvocation": "candidate", "candidateReceiptSHA256": "a" * 64,
+            "archiveSHA256": "b" * 64,
+        }}
+        with self.assertRaisesRegex(ValueError, "owned native candidate E07"):
+            guest_runtime.ReleasedGuest({}, "E07-init-attachment", Path("/tmp/case"), candidate_owner,
+                                        object(), "", Path("/tmp/engine.sock"), attachment_generations=8)
+
+    def test_failed_e07_projection_retains_generation_numbers_and_bounded_stage_rows(self) -> None:
+        events = [{"stage": "duplex", "durationNS": generation, "generation": generation,
+                   "stream": {"inputAcceptedBytes": generation, "payload": "omit"}}
+                  for generation in range(1, 9)]
+        trace = _safe_attachment_diagnostic_trace(events)
+        self.assertEqual([item["generation"] for item in trace], list(range(1, 9)))
+        self.assertTrue(all(item["stream"] == {"inputAcceptedBytes": index}
+                            for index, item in enumerate(trace, 1)))
+
     def test_multi_fixture_candidate_guard_is_reused_for_later_e07_case_and_cleanup(self) -> None:
         import guest_runtime
         import owned_guest_fixture

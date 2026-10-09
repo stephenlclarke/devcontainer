@@ -132,12 +132,27 @@ class ReleasedGuest:
 
     def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path | None,
                  *, observe=None, image_id: str | None = None,
-                 compose_selection: dict[str, str] | None = None):
+                 compose_selection: dict[str, str] | None = None,
+                 attachment_generations: int = 2):
         if fixture not in FIXTURES:
             raise ValueError("Unsupported released guest fixture")
+        if type(attachment_generations) is not int or attachment_generations not in {2, 8}:
+            raise ValueError("Attachment generation count must be 2 or 8")
+        identity = owner.get("identity") if isinstance(owner, dict) else None
+        if attachment_generations == 8 and (
+                fixture != ATTACHMENT_FIXTURE or not container
+                or not isinstance(identity, dict)
+                or not re.fullmatch(r"[0-9a-f]{40}", str(identity.get("sourceCommit", "")))
+                or not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    str(identity.get("candidateInvocation", "")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(identity.get("candidateReceiptSHA256", "")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(identity.get("archiveSHA256", "")))):
+            raise ValueError("Eight attachment generations require an owned native candidate E07 guest")
         self.inputs, self.fixture, self.root = inputs, fixture, root
         self.owner, self.runtime, self.container, self.socket = owner, runtime, container, socket
         self.compose_selection = compose_selection
+        self.attachment_generations = attachment_generations
         self.observe, self.guest, self.commands = observe, None, []
         self.builder = None
         self.pending_logs = {}
@@ -265,8 +280,9 @@ class ReleasedGuest:
         if self.fixture == ATTACHMENT_FIXTURE:
             self.guest = AttachmentFixture(self.socket, digest(canonical(self.owner["identity"])),
                                             self.image_id, GUEST_API_VERSION, self.runtime.journal,
+                                            generation_count=self.attachment_generations,
                                             observe=self.observe)
-            with deadline(150):
+            with deadline(600 if self.attachment_generations == 8 else 150):
                 return self.guest.operation()
         if self.fixture in {FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE}:
             factory = InitialTerminalSizeFixture if self.fixture == INITIAL_TERMINAL_FIXTURE else ForegroundFixture

@@ -53,6 +53,9 @@ def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict
         if type(duration) is not int or not 0 <= duration <= 600_000_000_000:
             continue
         item: dict[str, Any] = {"stage": event["stage"], "durationNS": duration}
+        generation = event.get("generation")
+        if type(generation) is int and 1 <= generation <= 8:
+            item["generation"] = generation
         status = event.get("status")
         if type(status) is int and 100 <= status <= 599:
             item["status"] = status
@@ -72,7 +75,7 @@ def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict
             if safe_stream:
                 item["stream"] = safe_stream
         trace.append(item)
-        if len(trace) >= 8:
+        if len(trace) >= 32:
             break
     return trace
 
@@ -367,7 +370,7 @@ class OwnedGuestFixtureRunner:
 
     def __init__(self, runner, fixtures: list[Any], *, admitted_inputs: dict[str, Any] | None = None,
                  fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False,
-                 provider_required: bool = False) -> None:
+                 provider_required: bool = False, attachment_generations: int = 2) -> None:
         self.runner = runner
         self.repository = runner.repository
         self.lane = runner.lane
@@ -376,6 +379,14 @@ class OwnedGuestFixtureRunner:
                                   else tuple(fixture.identifier for fixture in fixtures))
         self.builder_required = builder_required
         self.provider_required = provider_required
+        self.attachment_generations = attachment_generations
+        if type(attachment_generations) is not int or attachment_generations not in {2, 8}:
+            raise ParityError("attachment generations must be 2 or 8")
+        if attachment_generations == 8 and (
+                runner.lane not in {"apple-stock", "container-compose"}
+                or getattr(runner, "candidate_selection", None) is None
+                or self.fixture_selection != ("E07-init-attachment",)):
+            raise ParityError("eight attachment generations require only E07 on a native candidate diagnostic")
         self.retained = _retained_root(runner)
         self.inputs = (admitted_inputs if admitted_inputs is not None
                        else admit_guest_inputs(self.repository, self.lane, self.retained,
@@ -853,6 +864,8 @@ class OwnedGuestFixtureRunner:
             image_id = self.inputs["workload"]["image"].get("manifest") if self.lane == "docker" else None
             guest = ReleasedGuest(inputs, fixture.identifier, root, owner, runtime, self.container,
                                   self.socket, image_id=image_id, observe=events.append,
+                                  attachment_generations=(getattr(self, "attachment_generations", 2)
+                                                          if fixture.identifier == "E07-init-attachment" else 2),
                                   compose_selection=(self._compose_wrapper_selection()
                                                      if fixture.identifier in COMPOSE_FIXTURES else None))
             observations = guest.operation()

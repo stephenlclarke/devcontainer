@@ -23,6 +23,13 @@ SETTINGS = {"OpenStdin": True, "StdinOnce": True, "Tty": False,
             "AttachStdin": True, "AttachStdout": True, "AttachStderr": True}
 
 
+def _history_output_limit(history: tuple[bytes, bytes], generation_count: int) -> int:
+    """Keep the canonical cap and bound diagnostic history by expected bytes."""
+    if generation_count not in {2, 8}:
+        raise ValueError("Init attachment supports only 2 or 8 generations")
+    return MAX_OUTPUT if generation_count == 2 else MAX_OUTPUT + sum(map(len, history))
+
+
 def started_output(connection, initial: bytes, end: float, *, progress: dict | None = None) -> bytes:
     """Observe both complete log records before subscribing to history plus live."""
     if progress is None:
@@ -109,9 +116,12 @@ def observed_duplex(primary, initial: bytes, observer, history: bytes, incoming:
 
 
 class AttachmentFixture(GuestFixture):
-    """One owned container, two init generations, no exec or generated output."""
+    """One owned container with the canonical or bounded diagnostic init generations."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, generation_count: int = 2, **kwargs):
+        if type(generation_count) is not int or generation_count not in {2, 8}:
+            raise ValueError("Init attachment supports only 2 or 8 generations")
+        self.generation_count = generation_count
         super().__init__(*args, command=COMMAND, **kwargs)
         self.intent["attachment"] = dict(SETTINGS)
 
@@ -124,8 +134,12 @@ class AttachmentFixture(GuestFixture):
             raise ValueError("Init attachment configuration changed")
         return identifier
 
-    def transfer(self, *, history: bool, live: bool, incoming: bytes = b"", observer=False):
+    def transfer(self, *, history: bool, live: bool, incoming: bytes = b"", observer=False,
+                 generation: int | None = None, output_limit: int | None = None):
         """Acknowledge attach before start; retain exact bytes and route timing."""
+        if output_limit is not None and output_limit != MAX_OUTPUT and (
+                live or self.generation_count != 8 or generation is None):
+            raise ValueError("Expanded output bounds are limited to eight-generation history replay")
         actual = self.inspect(self.identifier)
         if actual is None or self.owned(actual) != self.identifier:
             raise ValueError("Init attachment target changed")
@@ -134,6 +148,8 @@ class AttachmentFixture(GuestFixture):
         route = (f"/v{self.version}/containers/{self.identifier}/attach?logs={int(history)}"
                  f"&stream={int(live)}&stdin={int(live)}&stdout=1&stderr=1")
         event = {"method": "POST", "route": route, "stage": "connect", "stream": {}}
+        if generation is not None:
+            event["generation"] = generation
         started = time.monotonic_ns()
         end = time.monotonic() + 30
         try:
@@ -155,10 +171,12 @@ class AttachmentFixture(GuestFixture):
                     event["stage"] = "primary-startup"
                     initial = started_output(connection, initial, end, progress=event["stream"])
                     event["stage"] = "combined-observer"
-                    result = self.observe_running(connection, initial, incoming, end)
+                    result = self.observe_running(connection, initial, incoming, end,
+                                                  generation=generation)
                 else:
                     event["stage"] = "duplex"
-                    result = streams(duplex(connection, initial, incoming, end, progress=event["stream"]))
+                    result = streams(duplex(connection, initial, incoming, end, progress=event["stream"],
+                                            output_limit=output_limit))
                 event["stage"] = "complete"
                 return result
         except (Exception, KeyboardInterrupt) as error:
@@ -169,13 +187,16 @@ class AttachmentFixture(GuestFixture):
             if self.observe is not None:
                 self.observe(event)
 
-    def observe_running(self, primary, initial: bytes, incoming: bytes, end: float):
+    def observe_running(self, primary, initial: bytes, incoming: bytes, end: float,
+                        *, generation: int | None = None):
         """Saved startup records and subsequent raw output must each appear once."""
         actual = self.inspect(self.identifier)
         if actual is None or self.owned(actual) != self.identifier or actual.get("State", {}).get("Status") != "running":
             raise ValueError("Combined attachment target is not the owned running init")
         route = f"/v{self.version}/containers/{self.identifier}/attach?logs=1&stream=1&stdin=0&stdout=1&stderr=1"
         event = {"method": "POST", "route": route, "stage": "connect", "stream": {}}
+        if generation is not None:
+            event["generation"] = generation
         started = time.monotonic_ns()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as observer:
@@ -232,13 +253,28 @@ class AttachmentFixture(GuestFixture):
             raise ValueError("Init history requires the pinned json-file driver without options")
         self.journal.put("init-log-driver.json", canonical(driver))
         history = (b"", b"")
-        for generation, incoming in enumerate((BINARY_INPUT, BINARY_INPUT[::-1]), 1):
+        incoming_values = tuple(
+            BINARY_INPUT if generation % 2 == 1 else BINARY_INPUT[::-1]
+            for generation in range(1, self.generation_count + 1)
+        )
+        if self.generation_count == 8:
+            self.journal.put("init-generations.json", canonical({
+                "count": self.generation_count,
+                "diagnosticOnly": True,
+                "perTransferDeadlineSeconds": 30,
+            }))
+        for generation, incoming in enumerate(incoming_values, 1):
+            generation_started = time.monotonic_ns()
+            diagnostic_generation = generation if self.generation_count == 8 else None
             expected = (OUTPUT_PREFIX + incoming + OUTPUT_SUFFIX, ERROR_OUTPUT)
-            if self.transfer(history=False, live=True, incoming=incoming, observer=generation == 1) != expected:
+            if self.transfer(history=False, live=True, incoming=incoming, observer=generation == 1,
+                             generation=diagnostic_generation) != expected:
                 raise ValueError("Init binary output or stdout/stderr separation differs")
             self.require_exit()
             history = tuple(before + history_bytes(after) for before, after in zip(history, expected))
-            observed = self.transfer(history=True, live=False)
+            history_output_limit = _history_output_limit(history, self.generation_count)
+            observed = self.transfer(history=True, live=False, generation=diagnostic_generation,
+                                     output_limit=history_output_limit)
             self.journal.put(f"init-history-{generation}.json", canonical({
                 name: {"expectedBytes": len(wanted), "actualBytes": len(actual),
                        "expectedSHA256": digest(wanted), "actualSHA256": digest(actual),
@@ -248,5 +284,18 @@ class AttachmentFixture(GuestFixture):
                 for name, wanted, actual in zip(("stdout", "stderr"), history, observed)}))
             if observed != history:
                 raise ValueError("Init history lost, duplicated or relabelled output")
+            if self.generation_count == 8:
+                self.journal.put(f"init-generation-{generation}.json", canonical({
+                    "generation": generation,
+                    "durationNS": time.monotonic_ns() - generation_started,
+                    "inputBytes": len(incoming),
+                    "inputSHA256": digest(incoming),
+                    "stdoutBytes": len(expected[0]),
+                    "stdoutSHA256": digest(expected[0]),
+                    "stderrBytes": len(expected[1]),
+                    "stderrSHA256": digest(expected[1]),
+                    "historyStdoutBytes": len(observed[0]),
+                    "historyStderrBytes": len(observed[1]),
+                }))
         return {key: "true" for key in ("prestart_attach", "binary_duplex", "source_separation",
                                         "stdin_eof", "exact_exit", "history", "restart_history", "combined_history_live")}

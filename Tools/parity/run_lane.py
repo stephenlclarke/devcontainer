@@ -118,6 +118,17 @@ def validate_init_io_trace_selection(enabled: bool, lane: str, selected: set[str
         raise ParityError("init-I/O tracing requires only E07 on an admitted native diagnostic")
 
 
+def validate_attachment_generation_selection(generations: int, lane: str, selected: set[str],
+                                            candidate_admitted: bool) -> None:
+    """Allow extended E07 restarts only in the native unsigned-candidate diagnostic."""
+    if type(generations) is not int or generations not in {2, 8}:
+        raise ParityError("attachment generations must be 2 or 8")
+    if generations == 8 and (
+            lane not in {"apple-stock", "container-compose"}
+            or not candidate_admitted or selected != {"E07-init-attachment"}):
+        raise ParityError("eight attachment generations require only E07 on a native candidate diagnostic")
+
+
 def init_io_trace_environment(source: Mapping[str, str], enabled: bool) -> dict[str, str]:
     """Set trace only from the explicit E07 diagnostic option."""
     result = dict(source)
@@ -240,7 +251,8 @@ class LaneRunner:
     def __init__(self, lane: str, repository: Path, evidence_root: Path,
                  selection: dict[str, Any] | None = None,
                  candidate: dict[str, Any] | None = None,
-                 d05_cache_state: str = "cold", trace_init_io: bool = False) -> None:
+                 d05_cache_state: str = "cold", trace_init_io: bool = False,
+                 attachment_generations: int = 2) -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -267,6 +279,7 @@ class LaneRunner:
         self.candidate_selection = candidate
         self.d05_cache_state = d05_cache_state
         self.trace_init_io = trace_init_io
+        self.attachment_generations = attachment_generations
         if selection is not None and candidate is not None:
             raise ParityError("candidate and finalized package selections are mutually exclusive")
         self.finalized: dict[str, Any] | None = None
@@ -506,6 +519,9 @@ class LaneRunner:
         package_admitted = self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None
         validate_init_io_trace_selection(
             getattr(self, "trace_init_io", False), self.lane, selected, package_admitted)
+        validate_attachment_generation_selection(
+            getattr(self, "attachment_generations", 2), self.lane, selected,
+            getattr(self, "candidate_selection", None) is not None)
         self.environment = init_io_trace_environment(
             getattr(self, "environment", dict(os.environ)), getattr(self, "trace_init_io", False))
 
@@ -535,7 +551,8 @@ class LaneRunner:
                 self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
                 fixture_selection=tuple(fixture.identifier for fixture in fixtures),
                 builder_required=native_e04_builder,
-                provider_required=(native_d05_cache_preparation or native_c03_provider_preparation))
+                provider_required=(native_d05_cache_preparation or native_c03_provider_preparation),
+                attachment_generations=getattr(self, "attachment_generations", 2))
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -663,6 +680,12 @@ class LaneRunner:
                  "reason": "D05 functional fixture did not complete"})
         if getattr(self, "trace_init_io", False):
             payload["operatorInputs"] = {"traceInitIO": True, "timingClassification": "diagnostic-only"}
+        if getattr(self, "attachment_generations", 2) == 8:
+            payload["operatorInputs"] = {
+                **payload.get("operatorInputs", {}),
+                "attachmentGenerations": 8,
+                "timingClassification": "diagnostic-only",
+            }
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -2255,6 +2278,8 @@ def parse_args() -> argparse.Namespace:
                         help="run only the D05 native diagnostic and optionally prepare a warm feature cache")
     parser.add_argument("--trace-init-io", action="store_true",
                         help="enable payload-free native init I/O counters for an admitted E07-only diagnostic")
+    parser.add_argument("--attachment-generations", type=int, choices=(2, 8), default=2,
+                        help="run 8 E07 init generations only in a native candidate diagnostic (default: 2)")
     return parser.parse_args()
 
 
@@ -2265,7 +2290,8 @@ def main() -> int:
     try:
         install_cancellation_handlers()
         return LaneRunner(args.lane, repository, evidence, finalized_selection(args),
-                          candidate_selection(args), args.d05_cache_state, args.trace_init_io).run()
+                          candidate_selection(args), args.d05_cache_state, args.trace_init_io,
+                          args.attachment_generations).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
