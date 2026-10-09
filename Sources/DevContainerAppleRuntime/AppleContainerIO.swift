@@ -507,7 +507,7 @@ final class AppleContainerIODiagnostics: @unchecked Sendable {
         guard enabled else { return }
         let totals = lock.withLock {
             terminalDrainRecorded = true
-            (
+            return (
                 inputSubmittedBytes,
                 inputCompletedBytes,
                 inputFailedBytes,
