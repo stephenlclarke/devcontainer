@@ -1191,9 +1191,12 @@ struct FakeAppleCLI {
             printf '%s\\n' 'load-progress'
             ;;
           "build --file")
-            if grep -q '^ADD context.tar /tmp/build-features/$' "$3"; then
-              test -f "$(dirname "$3")/context.tar"
-              printf '%s\n' prepared-feature-context >> "$LOG"
+            if grep -q '^[[:space:]]*COPY . /tmp/build-features/$' "$3"; then
+              for context in "$@"; do :; done
+              test "$context" = "$(dirname "$3")"
+              test -f "$(dirname "$3")/common-utils_0/devcontainer-features-install.sh"
+              test ! -e "$(dirname "$3")/context.tar"
+              printf '%s\n' direct-feature-copy-context >> "$LOG"
             fi
             printf '%s\\n' 'build-progress'
             if [ "$mode" = build-failure ]; then

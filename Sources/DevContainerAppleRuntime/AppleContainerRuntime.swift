@@ -61,12 +61,6 @@ public actor AppleContainerRuntime: DevContainerRuntime {
         let dns: Bool
     }
 
-    private struct NativeBuildInput {
-        let contextRoot: URL
-        let dockerfile: URL
-        let temporary: TemporaryDirectory?
-    }
-
     struct StorageRoots {
         let volumes: URL?
         let transfers: URL?
@@ -1387,29 +1381,25 @@ public extension AppleContainerRuntime {
             request.context
         )
         let temporary = try TemporaryDirectory()
+        // Stock FSSync must receive the physical context path even when TMPDIR
+        // has a symlink ancestor such as /tmp or /var.
+        let contextRoot = temporary.url.resolvingSymlinksInPath().standardizedFileURL
         let extractResult = try await AppleCommandRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-xf", "-", "-C", temporary.url.path],
+            arguments: ["-xf", "-", "-C", contextRoot.path],
             environment: environment,
             input: extractionInput
         )
         try requireSuccess(extractResult, operation: "build context extraction")
         let dockerfile = try buildDockerfile(
             request.dockerfile,
-            contextRoot: temporary.url
+            contextRoot: contextRoot
         )
-        let buildInput = try await nativeBuildInput(
-            dockerfile: dockerfile,
-            contextRoot: temporary.url
-        )
-        defer {
-            buildInput.temporary?.remove()
-            temporary.remove()
-        }
+        defer { temporary.remove() }
         var arguments = [
             "build",
             "--file",
-            buildInput.dockerfile.path,
+            dockerfile.path,
             "--progress",
             "plain"
         ]
@@ -1426,7 +1416,7 @@ public extension AppleContainerRuntime {
         for (key, value) in request.labels.sorted(by: { $0.key < $1.key }) {
             arguments += ["--label", "\(key)=\(value)"]
         }
-        arguments.append(buildInput.contextRoot.path)
+        arguments.append(contextRoot.path)
         let result = try await command(arguments)
         return imageBuildResultStream(result)
     }
@@ -1492,55 +1482,6 @@ public extension AppleContainerRuntime {
         }
         var ipv6 = in6_addr()
         return address.withCString { inet_pton(AF_INET6, $0, &ipv6) } == 1
-    }
-
-    private func nativeBuildInput(
-        dockerfile: URL,
-        contextRoot: URL
-    ) async throws -> NativeBuildInput {
-        guard try isFeatureContentStagingDockerfile(dockerfile) else {
-            return NativeBuildInput(
-                contextRoot: contextRoot,
-                dockerfile: dockerfile,
-                temporary: nil
-            )
-        }
-        let prepared = try TemporaryDirectory()
-        let archive = prepared.url.appendingPathComponent("context.tar")
-        let archiveResult = try await AppleCommandRunner.run(
-            executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-cf", archive.path, "-C", contextRoot.path, "."],
-            environment: environment
-        )
-        try requireSuccess(
-            archiveResult,
-            operation: "Feature content archive creation"
-        )
-        let preparedDockerfile = prepared.url.appendingPathComponent("Dockerfile")
-        try AtomicFile.write(
-            Data("FROM scratch\nADD context.tar /tmp/build-features/\n".utf8),
-            to: preparedDockerfile
-        )
-        return NativeBuildInput(
-            contextRoot: prepared.url,
-            dockerfile: preparedDockerfile,
-            temporary: prepared
-        )
-    }
-
-    private func isFeatureContentStagingDockerfile(_ dockerfile: URL) throws -> Bool {
-        let contents = try String(contentsOf: dockerfile, encoding: .utf8)
-        let instructions = contents
-            .split(whereSeparator: \.isNewline)
-            .map {
-                $0.split(whereSeparator: \.isWhitespace)
-                    .joined(separator: " ")
-            }
-            .filter { !$0.isEmpty }
-        return instructions == [
-            "FROM scratch",
-            "COPY . /tmp/build-features/"
-        ]
     }
 
     private func buildDockerfile(

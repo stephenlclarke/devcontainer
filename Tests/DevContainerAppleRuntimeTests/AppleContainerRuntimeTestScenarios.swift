@@ -345,7 +345,7 @@ extension AppleContainerRuntimeTests {
             request: featureRequest,
             context: context
         ) {}
-        #expect(try fixture.log().contains("prepared-feature-context"))
+        #expect(try fixture.log().contains("direct-feature-copy-context"))
     }
 
     func exerciseNetworkAndVolumeMutations(
