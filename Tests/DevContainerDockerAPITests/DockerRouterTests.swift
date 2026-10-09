@@ -41,6 +41,154 @@ func `negotiation works with versioned and unversioned paths`() async throws {
 }
 
 @Test
+func `failed native container create releases only its new empty project claim`() async throws {
+    let directory = TestStorage.temporaryDirectory
+        .appendingPathComponent("failed-native-create-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+    let key = ProjectKey(rawValue: "\(getuid()):docker-api")
+    let runtime = InMemoryRuntime(
+        provider: .containerCompose,
+        containerCreateWillBegin: { _ in
+            throw DevContainerError(.runtimeUnavailable, message: "injected pre-create failure")
+        }
+    )
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:3.22"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store),
+        provider: .containerCompose
+    )
+    let body = try JSONSerialization.data(withJSONObject: ["Image": "alpine:3.22"])
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
+    )
+
+    #expect(response.status == 500)
+    #expect(try await store.project(key: key) == nil)
+    #expect(try await store.resources(project: key).isEmpty)
+    #expect(try await store.unfinishedOperations().isEmpty)
+    #expect(await runtime.listContainers(all: true, labels: [:], context: RuntimeRequestContext()).isEmpty)
+}
+
+@Test
+func `failed native create retains a new claim when its container exists without a journal record`() async throws {
+    let directory = TestStorage.temporaryDirectory
+        .appendingPathComponent("failed-native-create-untracked-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+    let key = ProjectKey(rawValue: "\(getuid()):docker-api")
+    let runtime = InMemoryRuntime(
+        provider: .containerCompose,
+        containerCreateDidComplete: { _ in
+            throw DevContainerError(.runtimeUnavailable, message: "simulated lost create response")
+        }
+    )
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:3.22"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store),
+        provider: .containerCompose
+    )
+    let body = try JSONSerialization.data(withJSONObject: ["Image": "alpine:3.22"])
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(
+            method: .post,
+            target: "/containers/create?name=partial",
+            body: body
+        )
+    )
+
+    #expect(response.status == 500)
+    #expect(try await store.project(key: key)?.reconciliationState == .failed)
+    #expect(try await store.resources(project: key).isEmpty)
+    let nativeContainers = await runtime.listContainers(
+        all: true,
+        labels: [:],
+        context: RuntimeRequestContext()
+    )
+    #expect(nativeContainers.count == 1)
+    #expect(nativeContainers.first?.spec.labels[RuntimeLabels.operation] != nil)
+}
+
+@Test
+func `failed native container create preserves an existing recovery claim`() async throws {
+    let directory = TestStorage.temporaryDirectory
+        .appendingPathComponent("failed-native-create-recovery-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteStateStore(path: directory.appendingPathComponent("state.sqlite"))
+    let key = ProjectKey(rawValue: "\(getuid()):docker-api")
+    _ = try await store.claimProject(
+        key: key,
+        provider: .containerCompose,
+        composeProject: nil,
+        projectDirectory: nil,
+        configurationHash: "recovery"
+    )
+    try await store.setProjectState(
+        key: key,
+        desiredState: .running,
+        reconciliationState: .applying,
+        generation: 1
+    )
+    let now = Date()
+    let recovery = OperationRecord(
+        id: OperationID(rawValue: "prior-native-create"),
+        project: key,
+        requestKind: "POST /containers/create",
+        requestHash: "prior-request",
+        createdAt: now,
+        updatedAt: now
+    )
+    try await store.beginOperation(recovery)
+    let runtime = InMemoryRuntime(
+        provider: .containerCompose,
+        containerCreateWillBegin: { _ in
+            throw DevContainerError(.runtimeUnavailable, message: "injected pre-create failure")
+        }
+    )
+    await runtime.seedImage(
+        ImageSnapshot(
+            id: "sha256:image",
+            references: ["alpine:3.22"],
+            createdAt: Date(),
+            size: 1
+        )
+    )
+    let router = DockerRouter(
+        runtime: runtime,
+        coordinator: ProjectCoordinator(store: store),
+        provider: .containerCompose
+    )
+    let body = try JSONSerialization.data(withJSONObject: ["Image": "alpine:3.22"])
+
+    let response = await router.respond(
+        to: DockerHTTPRequest(method: .post, target: "/containers/create", body: body)
+    )
+
+    #expect(response.status == 500)
+    #expect(try await store.project(key: key)?.reconciliationState == .failed)
+    #expect(try await store.resources(project: key).isEmpty)
+    #expect(try await store.unfinishedOperations() == [recovery])
+}
+
+@Test
 func `network addresses separate cidr prefixes for docker clients`() {
     let ipv4 = DockerRouter.networkAddress("192.0.2.10/24")
     #expect(ipv4.address == "192.0.2.10")

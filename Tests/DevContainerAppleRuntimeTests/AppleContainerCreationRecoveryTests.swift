@@ -5,6 +5,7 @@ import ContainerizationError
 import ContainerizationOCI
 import ContainerResource
 @testable import DevContainerAppleRuntime
+import DevContainerCore
 import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
@@ -56,6 +57,55 @@ struct AppleContainerCreationRecoveryTests {
         return ContainerSpec(
             name: "fixture", image: FakeAppleImageIdentityClient.digest, command: ["/bin/true"], labels: labels
         )
+    }
+
+    @Test func `native create absence probe succeeds without a pending intent`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime(
+            metadataStore: TestMetadataStore(), creator: AppleContainerCreateTests.Creator()
+        )
+
+        try await runtime.requireNoPendingContainerCreation(context: RuntimeRequestContext())
+    }
+
+    @Test func `native create absence probe rejects the current operation intent`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let context = RuntimeRequestContext(operationID: OperationID(rawValue: "pending-operation"))
+        let store = TestMetadataStore()
+        let runtime = try fixture.runtime(
+            metadataStore: store, creator: AppleContainerCreateTests.Creator()
+        )
+        var spec = ContainerSpec(name: "fixture", image: digest)
+        spec.labels[RuntimeLabels.operation] = context.operationID.rawValue
+        try await store.beginContainerCreation(
+            RuntimeContainerCreation(
+                runtimeID: "fixture", nativeCreatedAt: Date(), imageID: digest,
+                spec: spec, nativeConfiguration: Data()
+            )
+        )
+
+        do {
+            try await runtime.requireNoPendingContainerCreation(context: context)
+            Issue.record("pending native create intent unexpectedly passed absence proof")
+        } catch let error as DevContainerError {
+            #expect(error.code == .conflict)
+        }
+        #expect(await store.pendingContainerCreation(id: "fixture") != nil)
+    }
+
+    @Test func `native create absence probe refuses unsupported cli mode`() async throws {
+        let fixture = try FakeAppleCLI(distribution: "enhanced")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try fixture.runtime()
+
+        do {
+            try await runtime.requireNoPendingContainerCreation(context: RuntimeRequestContext())
+            Issue.record("CLI mode unexpectedly claimed native create absence proof")
+        } catch let error as DevContainerError {
+            #expect(error.code == .unsupportedCapability)
+        }
     }
 
     @Test(arguments: [
