@@ -71,6 +71,19 @@ LEGACY_LOCK_FIXTURES = {
     "foundation-stock.lock.json": "986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495",
 }
 
+# Exact released locks accompanying the archived pre-TLS package graph.
+PRE_TLS_LOCK_FIXTURES = {
+    "argument-parser.lock.json": "06c5ef150dc92876484ff849980e69ad967d4fb0b66c4024f9b7e4b7832b68ce",
+    "container-sdk-enhanced.lock.json": "a87c20734a05c410b8ba1c15fdc9ceadd8d1c0b3c0721d3d2b9b91a2318a9597",
+    "container-sdk-stock.lock.json": "8521bd3e9a475b20037eab18a5337a06572a2e900638b404907041709a57ef1b",
+    "containerization-enhanced.lock.json": "130525901ff3aa0d28a806128dee81c58bbd731ab64cfaab3364564be8b79289",
+    "containerization-stock.lock.json": "0918dab08b02c8b9aa5c13db8c2c165c245fee9ce579a7de4ac87b1e68c1600f",
+    "engine-api-enhanced.lock.json": "3d8d17831d07be278a3ae2a6e9d42fdc62ddd60c69aa104c847d7fa59bda901f",
+    "engine-api-stock.lock.json": "55e6fa9fc30c643fb315b8682f54ee71e335d4021b23aa43e0c1401bfb52a49a",
+    "foundation-enhanced.lock.json": "73dbf0ee81fa900bdff830610aae417befa67d3c221556837b0ebae342e8508b",
+    "foundation-stock.lock.json": "986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495",
+}
+
 # Pin the independently reviewed Engine API release source snapshot.
 ENGINE_REFRESH_PINS = {
     "enhanced-engine": "6e8c932fc8755a4b922fd239426e9029be0554e0",
@@ -245,6 +258,12 @@ for profile in ('stock', 'enhanced'):
             source = fixture / name
             self.assertEqual(digest(source.read_bytes()), expected_sha, name)
             shutil.copy2(source, root / name)
+        layers = root / "Tools/bazel/artifacts"
+        layers.mkdir(parents=True, exist_ok=True)
+        for name, expected_sha in PRE_TLS_LOCK_FIXTURES.items():
+            source = fixture / "layers" / name
+            self.assertEqual(digest(source.read_bytes()), expected_sha, name)
+            shutil.copy2(source, layers / name)
 
     def _layer_fixture(self, directory: str, source_root: Path | None = None,
                        archived: bool = True) -> Path:
@@ -295,7 +314,8 @@ for profile in ('stock', 'enhanced'):
                            for profile in ("stock", "enhanced") for group in foundation.GROUPS)):
                 destination = root / "Tools/bazel/artifacts" / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
+                if source_root.resolve() != repository_root.resolve():
+                    shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
             return root
         self._restore_previous_reviewed_inputs(root)
         for name, expected_sha in LEGACY_LOCK_FIXTURES.items():
