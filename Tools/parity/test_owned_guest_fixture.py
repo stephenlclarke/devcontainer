@@ -29,6 +29,125 @@ ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 class OwnedGuestFailureTests(unittest.TestCase):
+    def test_multi_fixture_candidate_guard_is_reused_for_later_e07_case_and_cleanup(self) -> None:
+        import guest_runtime
+        import owned_guest_fixture
+
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("C03-compose-resources", "D05-features", "E07-init-attachment")
+            candidate = {
+                "scope": "local-candidate-integration-only",
+                "candidateInvocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "sourceCommit": "a" * 40, "runtimeProfile": "stock",
+                "assetSHA256": "b" * 64, "candidateReceiptSHA256": "c" * 64,
+            }
+            guard_identity = {
+                "campaign": "candidate-campaign", "sourceCommit": candidate["sourceCommit"],
+                "scope": "unsigned-native-candidate-diagnostic",
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"], "runtimeProfile": "stock",
+                "diagnosticFixtures": sorted(selection),
+            }
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            environment = {"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                           "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                           "DEVCONTAINER_PARITY_GUARD": str(guard_path)}
+            runner = SimpleNamespace(lane="apple-stock", output=campaign / "apple-stock",
+                                     environment=environment, finalized_identity=None,
+                                     candidate_identity=candidate,
+                                     cleanup_differences=[],
+                                     _preserve_engine_on_uncertain_guest_cleanup=False)
+            owner_home = {"identity": {"campaign": "candidate-campaign", "lane": "apple-stock",
+                                        "sourceCommit": candidate["sourceCommit"]}, "root": str(home)}
+            (home / "owner.json").write_text(json.dumps(owner_home, sort_keys=True) + "\n")
+            (home / "owner.json").chmod(0o600)
+
+            fixture = SimpleNamespace(identifier="E07-init-attachment", expected={})
+            case_root = campaign / "owned-guest-runtime" / "apple-stock" / fixture.identifier
+            case_root.mkdir(mode=0o700, parents=True)
+            case_identity = {"campaign": campaign.name, "lane": "apple-stock",
+                             "fixture": fixture.identifier,
+                             "endpointSHA256": hashlib.sha256(b"/tmp/engine.sock").hexdigest(),
+                             **owned_guest_fixture._admitted_package_guest_identity(runner)}
+            case_owner = {"identity": case_identity, "root": str(case_root)}
+            (case_root / "owner.json").write_bytes(
+                json.dumps(case_owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+            raw = base / "raw"
+            raw.mkdir(mode=0o700)
+
+            class Journal:
+                def __init__(self):
+                    self.entries = {}
+
+                def put(self, name, payload):
+                    self.entries[name] = payload
+
+                def receipt(self):
+                    return {"status": "restored"}
+
+            journal = Journal()
+            selections = []
+
+            class Runtime:
+                def __init__(self, _runner, _journal, _socket, _compose, fixture_selection):
+                    self.journal = _journal
+                    self.fixture_selection = fixture_selection
+
+                def verify(self):
+                    selections.append(self.fixture_selection)
+                    owned_guest_fixture._active_provider_home(
+                        runner, fixture_selection=self.fixture_selection)
+
+            class Guest:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def operation(self):
+                    return {"ready": "true"}
+
+                def cleanup(self):
+                    return {"status": "passed", "remainingOwnedResources": []}
+
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.runner, bridge.repository, bridge.lane = runner, REPOSITORY, "apple-stock"
+            bridge.fixtures = [fixture]
+            bridge.fixture_selection = selection
+            bridge.retained = retained
+            bridge.inputs = {"workload": {"image": {}}}
+            bridge.socket, bridge.compose, bridge.container = Path("/tmp/engine.sock"), None, "/provider/container"
+            bridge.preparation_error = None
+            bridge.preparation = (home, journal, SimpleNamespace(), owner_home)
+            bridge._case_paths = mock.Mock(return_value=(case_root, journal, case_owner))
+            bridge._provision_event_sequence = 0
+            bridge.image_preexisting = False
+            bridge.loaded_image_id = None
+
+            with (mock.patch.object(owned_guest_fixture, "LaneRuntimeView", Runtime),
+                  mock.patch.object(guest_runtime, "ReleasedGuest", Guest),
+                  mock.patch.object(owned_guest_fixture, "assert_contract", return_value=[]),
+                  mock.patch.object(owned_guest_fixture, "ACCOUNT_HOME", base)):
+                owned_guest_fixture._active_provider_home(runner, fixture_selection=selection)
+                result = bridge.run(fixture, raw)
+
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(selections, [selection, selection])
+            self.assertEqual(case_identity["sourceCommit"], candidate["sourceCommit"])
+            self.assertEqual(case_identity["archiveSHA256"], candidate["assetSHA256"])
+            self.assertEqual(case_identity["candidateInvocation"], candidate["candidateInvocation"])
+            self.assertEqual(case_identity["candidateReceiptSHA256"], candidate["candidateReceiptSHA256"])
+
     def test_failed_e07_retains_only_bounded_stage_and_stream_diagnostics(self) -> None:
         import guest_runtime
         import owned_guest_fixture

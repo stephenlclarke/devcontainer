@@ -177,6 +177,21 @@ def _require_private_directory(path: Path, *, create: bool = False) -> None:
         raise ParityError("owned guest storage must be canonical, user-owned and private")
 
 
+def _admitted_package_guest_identity(runner) -> dict[str, Any]:
+    """Carry the package admitted for this guest case without relabeling candidates."""
+    finalized = getattr(runner, "finalized_identity", None)
+    if isinstance(finalized, dict):
+        return {"sourceCommit": finalized.get("sourceCommit"),
+                "archiveSHA256": finalized.get("archiveSHA256")}
+    candidate = getattr(runner, "candidate_identity", None)
+    if isinstance(candidate, dict):
+        return {"sourceCommit": candidate.get("sourceCommit"),
+                "archiveSHA256": candidate.get("assetSHA256"),
+                "candidateInvocation": candidate.get("candidateInvocation"),
+                "candidateReceiptSHA256": candidate.get("candidateReceiptSHA256")}
+    return {"sourceCommit": None, "archiveSHA256": None}
+
+
 def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None = None) -> tuple[Path, dict]:
     """Authenticate the same private HOME used by the active provider API."""
 
@@ -558,9 +573,8 @@ class OwnedGuestFixtureRunner:
             "campaign": self.runner.output.parent.name,
             "lane": self.lane,
             "fixture": fixture.identifier,
-            "sourceCommit": (self.runner.finalized_identity or {}).get("sourceCommit"),
-            "archiveSHA256": (self.runner.finalized_identity or {}).get("archiveSHA256"),
             "endpointSHA256": hashlib.sha256(str(self.socket).encode()).hexdigest(),
+            **_admitted_package_guest_identity(self.runner),
         }
         owner = {"identity": identity, "root": str(root)}
         owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -739,8 +753,7 @@ class OwnedGuestFixtureRunner:
             _require_private_directory(root, create=True)
             owner = {"identity": {"campaign": self.runner.output.parent.name, "lane": self.lane,
                                   "fixture": "owned-guest-preparation",
-                                  "sourceCommit": (self.runner.finalized_identity or {}).get("sourceCommit"),
-                                  "archiveSHA256": (self.runner.finalized_identity or {}).get("archiveSHA256")},
+                                  **_admitted_package_guest_identity(self.runner)},
                      "root": str(root)}
             owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
             (root / "owner.json").write_bytes(owner_bytes)
@@ -825,7 +838,8 @@ class OwnedGuestFixtureRunner:
         try:
             root, journal, owner = self._case_paths(fixture)
             runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose,
-                                      tuple(item.identifier for item in self.fixtures))
+                                      getattr(self, "fixture_selection",
+                                              tuple(item.identifier for item in self.fixtures)))
             runtime.verify()
             from guest_runtime import GUEST_API_VERSION, ReleasedGuest
 
