@@ -30,6 +30,7 @@ from run_lane import (
     candidate_selection,
     WORKFLOW_RETAINED,
     validate_candidate_fixture_set,
+    validate_d05_cache_selection,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
@@ -77,6 +78,28 @@ class UnsignedCandidateDiagnosticTests(unittest.TestCase):
         self.assertEqual(candidate_selection(arguments), {
             "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
             "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+
+    def test_warm_d05_cli_flag_is_parsed_without_changing_candidate_selection(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--d05-cache-state", "warm"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.d05_cache_state, "warm")
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertIsNotNone(candidate_selection(arguments))
+
+    def test_warm_d05_selection_is_one_native_admitted_fixture_only(self) -> None:
+        validate_d05_cache_selection("warm", "apple-stock", {"D05-features"}, True)
+        for state, lane, selected, admitted in (
+                ("warm", "docker", {"D05-features"}, True),
+                ("warm", "apple-stock", {"D05-features", "E07-init-attachment"}, True),
+                ("warm", "container-compose", {"D05-features"}, False),
+                ("unsupported", "apple-stock", {"D05-features"}, True)):
+            with self.subTest(state=state, lane=lane, selected=selected, admitted=admitted), self.assertRaises(
+                    ParityError):
+                validate_d05_cache_selection(state, lane, selected, admitted)
 
     def test_candidate_selection_is_explicit_and_excludes_finalized_inputs(self) -> None:
         selection = candidate_selection(argparse.Namespace(
@@ -1010,6 +1033,125 @@ class FixtureProbeTests(unittest.TestCase):
                 "/workspaces/fixture",
             ],
         )
+
+    def test_warm_d05_build_is_untimed_and_cache_failure_does_not_change_functional_pass(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace_root = root / "workspace-root"
+            workspace = workspace_root / "D05-features"
+            devcontainer = workspace / ".devcontainer"
+            devcontainer.mkdir(parents=True)
+            for relative in ("contract.json", ".devcontainer/devcontainer.json",
+                             ".devcontainer/devcontainer-lock.json", "probe.sh"):
+                path = workspace / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n", encoding="utf-8")
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = root / "repository"
+            runner.repository.mkdir()
+            runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
+            runner.candidate_selection = None
+            runner.finalized_identity = {
+                "scope": "finalized-native-package-runtime-input", "runtimeProfile": "stock",
+                "sourceCommit": "a" * 40, "archiveSHA256": "b" * 64,
+                "candidateReceiptSHA256": "c" * 64,
+            }
+            runner.candidate_identity = None
+            runner.d05_cache_state = "warm"
+            fixture = Fixture(directory=root / "source", identifier="D05-features",
+                              expected={"ready": "true"}, backends=("docker",), runner="devcontainer")
+            runner.create_fixture_workspace = mock.Mock(return_value=(workspace_root, workspace))
+            up = mock.Mock(returncode=0, stdout='{"remoteWorkspaceFolder":"/workspace"}', stderr="")
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+            calls = []
+
+            def invoke(arguments, timeout):
+                calls.append(("cli", arguments[0], timeout))
+                return up if arguments[0] == "up" else probe
+
+            runner.devcontainer = invoke
+            runner.remote_workspace_from_up = mock.Mock(return_value="/workspace")
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(side_effect=lambda _fixture: calls.append(("cleanup",)) or "")
+            runner.cleanup_fixture_workspace = mock.Mock(return_value="")
+            clocks = iter((10.0, 20.0, 21.0, 22.0))
+
+            def monotonic():
+                calls.append(("clock",))
+                return next(clocks)
+
+            def monotonic_ns():
+                calls.append(("clock-ns",))
+                return 100
+
+            def prepare(**kwargs):
+                calls.append(("warmup",))
+                return {"status": "warmup_completed_unverified"}
+
+            def verify(**kwargs):
+                calls.append(("verify",))
+                (kwargs["evidence_dir"] / "cache-verification.json").write_text("{}\n")
+                return {"status": "not_comparable", "performanceComparisonEligible": False,
+                        "reason": "one stage was not cached", "warmupReceiptSHA256": "d" * 64}
+
+            with (mock.patch("run_lane.prepare_d05_feature_cache", side_effect=prepare),
+                  mock.patch("run_lane.verify_d05_feature_cache", side_effect=verify),
+                  mock.patch("run_lane.time.monotonic", side_effect=monotonic),
+                  mock.patch("run_lane.time.monotonic_ns", side_effect=monotonic_ns),
+                  mock.patch("run_lane.assert_contract", return_value=[])):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["durationSeconds"], 11.0)
+        self.assertFalse(runner.d05_feature_cache_diagnostic["performanceComparisonEligible"])
+        self.assertLess(calls.index(("warmup",)), calls.index(("clock-ns",)))
+        self.assertLess(calls.index(("clock-ns",)), calls.index(("cli", "up", 1800)))
+        self.assertLess(calls.index(("cleanup",)), calls.index(("verify",)))
+
+    def test_warmup_invocation_error_keeps_functional_result_and_marks_cache_ineligible(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace_root = root / "workspace-root"
+            workspace = workspace_root / "D05-features"
+            workspace.mkdir(parents=True)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = root / "repository"
+            runner.repository.mkdir()
+            runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
+            runner.candidate_selection = None
+            runner.finalized_identity = {
+                "scope": "finalized-native-package-runtime-input", "runtimeProfile": "stock",
+                "sourceCommit": "a" * 40, "archiveSHA256": "b" * 64,
+                "candidateReceiptSHA256": "c" * 64,
+            }
+            runner.candidate_identity = None
+            runner.d05_cache_state = "warm"
+            fixture = Fixture(directory=root / "source", identifier="D05-features",
+                              expected={"ready": "true"}, backends=("docker",), runner="devcontainer")
+            runner.create_fixture_workspace = mock.Mock(return_value=(workspace_root, workspace))
+            up = mock.Mock(returncode=0, stdout='{"remoteWorkspaceFolder":"/workspace"}', stderr="")
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+            runner.devcontainer = mock.Mock(side_effect=[up, probe])
+            runner.remote_workspace_from_up = mock.Mock(return_value="/workspace")
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(return_value="")
+            runner.cleanup_fixture_workspace = mock.Mock(return_value="")
+
+            with (mock.patch("run_lane.prepare_d05_feature_cache", side_effect=OSError("warmup failed")),
+                  mock.patch("run_lane.verify_d05_feature_cache") as verify,
+                  mock.patch("run_lane.assert_contract", return_value=[])):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(runner.d05_feature_cache_diagnostic["performanceComparisonEligible"])
+        self.assertEqual(runner.d05_feature_cache_diagnostic["reason"], "cache warmup failed: OSError")
+        verify.assert_not_called()
 
     def test_frozen_reuse_and_rebuild_construction_uses_backend_helper(self) -> None:
         with TemporaryDirectory() as temporary:

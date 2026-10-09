@@ -44,6 +44,7 @@ from engine_fixture_routes import (
     ENGINE_FIXTURE_ROUTES,
     validate_engine_fixture_routes,
 )
+from feature_cache_diagnostic import prepare_d05_feature_cache, verify_d05_feature_cache
 
 
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
@@ -97,6 +98,17 @@ def validate_candidate_fixture_set(selected: set[str]) -> None:
         raise ParityError("unsigned candidate runner accepts only selected C03, D05 or E07 diagnostics")
 
 
+def validate_d05_cache_selection(state: str, lane: str, selected: set[str],
+                                 package_admitted: bool) -> None:
+    """Restrict warmup to one D05 run against an admitted native package."""
+    if state not in {"cold", "warm"}:
+        raise ParityError("D05 cache state must be cold or warm")
+    if state == "warm" and (
+            lane not in {"apple-stock", "container-compose"}
+            or not package_admitted or selected != {"D05-features"}):
+        raise ParityError("D05 warm-cache mode requires only D05-features on an admitted native package")
+
+
 def load_candidate_admitter(repository: Path):
     """Load the exact source checkout's retained candidate admission helper."""
     path = repository / "Tools/bazel/prepare_candidate.py"
@@ -137,6 +149,7 @@ def file_sha256(path: Path) -> str:
 
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/feature_cache_diagnostic.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
     "Tools/parity/e04_build_readiness.py",
@@ -208,7 +221,8 @@ class LaneRunner:
 
     def __init__(self, lane: str, repository: Path, evidence_root: Path,
                  selection: dict[str, Any] | None = None,
-                 candidate: dict[str, Any] | None = None) -> None:
+                 candidate: dict[str, Any] | None = None,
+                 d05_cache_state: str = "cold") -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -233,6 +247,7 @@ class LaneRunner:
         self.harness_repository = Path(__file__).resolve().parents[2]
         self.finalized_selection = selection
         self.candidate_selection = candidate
+        self.d05_cache_state = d05_cache_state
         if selection is not None and candidate is not None:
             raise ParityError("candidate and finalized package selections are mutually exclusive")
         self.finalized: dict[str, Any] | None = None
@@ -466,6 +481,9 @@ class LaneRunner:
             ]
         if getattr(self, "candidate_selection", None) is not None:
             validate_candidate_fixture_set(selected)
+        validate_d05_cache_selection(
+            getattr(self, "d05_cache_state", "cold"), self.lane, selected,
+            self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None)
 
         self.admit_finalized()
         self.admit_candidate()
@@ -605,6 +623,12 @@ class LaneRunner:
             payload["unsignedCandidate"] = self.candidate_identity
             payload["providerBinarySHA256"] = self.provider_hashes
             payload["parityHarnessSHA256"] = self.harness_sha256
+        if getattr(self, "d05_cache_state", "cold") == "warm":
+            payload["d05CacheState"] = "warm"
+            payload["d05FeatureCacheDiagnostic"] = getattr(
+                self, "d05_feature_cache_diagnostic",
+                {"status": "not_comparable", "performanceComparisonEligible": False,
+                 "reason": "D05 functional fixture did not complete"})
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -1132,7 +1156,28 @@ class LaneRunner:
             return self.run_engine_fixture(fixture, raw)
         workspace_root, workspace = self.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
+        d05_cache_warmup = None
+        d05_cache_warmup_error = None
+        d05_cache_evidence = self.output / "d05-feature-cache"
+        warm_d05 = (getattr(self, "d05_cache_state", "cold") == "warm"
+                    and fixture.identifier == "D05-features")
+        if warm_d05:
+            identity = getattr(self, "finalized_identity", None) or getattr(self, "candidate_identity", None)
+            if identity is None:
+                raise ParityError("D05 warm-cache mode requires an admitted native package")
+            try:
+                d05_cache_warmup = prepare_d05_feature_cache(
+                    lane=self.lane, fixture_id=fixture.identifier, workspace=workspace,
+                    backend_arguments=self.lifecycle_backend_arguments(),
+                    candidate_identity=identity, evidence_dir=d05_cache_evidence,
+                    invoke=lambda argv, timeout: self.devcontainer(list(argv), timeout=timeout))
+            except Exception as error:
+                d05_cache_warmup_error = type(error).__name__
+        functional_started_monotonic_ns = time.monotonic_ns() if warm_d05 else None
         started = time.monotonic()
+        cache_verification_seconds = 0.0
+        up_stdout: str | bytes = ""
+        up_stderr: str | bytes = ""
         status = "failed"
         observations: dict[str, str] = {}
         differences: list[str] = []
@@ -1152,6 +1197,7 @@ class LaneRunner:
                 ],
                 timeout=1800,
             )
+            up_stdout, up_stderr = up.stdout, up.stderr
             (raw / "up.stdout").write_text(up.stdout, encoding="utf-8")
             (raw / "up.stderr").write_text(up.stderr, encoding="utf-8")
             if up.returncode != 0:
@@ -1189,8 +1235,41 @@ class LaneRunner:
             status = "passed"
         except (OSError, ParityError, subprocess.TimeoutExpired) as error:
             diagnostic = str(error)
+            if warm_d05 and isinstance(error, subprocess.TimeoutExpired):
+                up_stdout = error.stdout or ""
+                up_stderr = error.stderr or ""
         finally:
             cleanup = self.cleanup_fixture(runtime_fixture)
+            if warm_d05:
+                verify_started = time.monotonic()
+                if d05_cache_warmup_error is not None:
+                    self.d05_feature_cache_diagnostic = {
+                        "status": "not_comparable", "performanceComparisonEligible": False,
+                        "reason": f"cache warmup failed: {d05_cache_warmup_error}",
+                    }
+                else:
+                    try:
+                        identity = getattr(self, "finalized_identity", None) or getattr(self, "candidate_identity", None)
+                        verification = verify_d05_feature_cache(
+                            lane=self.lane, fixture_id=fixture.identifier, workspace=workspace,
+                            candidate_identity=identity, warmup_receipt=d05_cache_warmup,
+                            functional_started_monotonic_ns=functional_started_monotonic_ns,
+                            up_stdout=up_stdout, up_stderr=up_stderr,
+                            evidence_dir=d05_cache_evidence)
+                        self.d05_feature_cache_diagnostic = {
+                            "status": verification["status"],
+                            "performanceComparisonEligible": verification["performanceComparisonEligible"],
+                            "reason": verification["reason"],
+                            "warmupReceiptSHA256": verification["warmupReceiptSHA256"],
+                            "cacheVerificationSHA256": hashlib.sha256(
+                                (d05_cache_evidence / "cache-verification.json").read_bytes()).hexdigest(),
+                        }
+                    except Exception as error:
+                        self.d05_feature_cache_diagnostic = {
+                            "status": "not_comparable", "performanceComparisonEligible": False,
+                            "reason": f"cache verification failed: {type(error).__name__}",
+                        }
+                cache_verification_seconds = time.monotonic() - verify_started
             workspace_cleanup = self.cleanup_fixture_workspace(workspace_root)
             if workspace_cleanup:
                 cleanup = f"{cleanup}{workspace_cleanup}"
@@ -1201,7 +1280,7 @@ class LaneRunner:
         return {
             "id": fixture.identifier,
             "status": status,
-            "durationSeconds": round(time.monotonic() - started, 3),
+            "durationSeconds": round(time.monotonic() - started - cache_verification_seconds, 3),
             "observations": observations,
             "differences": differences,
             "diagnostic": diagnostic,
@@ -2137,6 +2216,8 @@ def parse_args() -> argparse.Namespace:
                         help="prepared unsigned candidate invocation for native diagnostics only")
     parser.add_argument("--repository", type=Path,
                         help="product source checkout used for fixtures and source-bound inputs")
+    parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
+                        help="run only the D05 native diagnostic and optionally prepare a warm feature cache")
     return parser.parse_args()
 
 
@@ -2147,7 +2228,7 @@ def main() -> int:
     try:
         install_cancellation_handlers()
         return LaneRunner(args.lane, repository, evidence, finalized_selection(args),
-                          candidate_selection(args)).run()
+                          candidate_selection(args), args.d05_cache_state).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

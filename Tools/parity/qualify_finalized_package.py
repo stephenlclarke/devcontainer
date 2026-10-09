@@ -39,6 +39,7 @@ COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E04-image-build", "E06-network-volume"
 DIAGNOSTIC_FIXTURES = ("C03-compose-resources", "D05-features", "E07-init-attachment")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/feature_cache_diagnostic.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
     "Tools/parity/e04_build_readiness.py",
@@ -468,6 +469,16 @@ def diagnostic_fixture_selection(values: list[str] | None, component_fixture: st
     return fixtures
 
 
+def validate_d05_cache_request(state: str, diagnostic_fixtures: tuple[str, ...] | None,
+                               component_fixture: str | None) -> None:
+    """Keep warm-cache preparation outside all qualification and multi-fixture paths."""
+    if state not in {"cold", "warm"}:
+        raise ValueError("D05 cache state must be cold or warm")
+    if state == "warm" and (component_fixture is not None
+                            or diagnostic_fixtures != ("D05-features",)):
+        raise ValueError("warm D05 cache mode requires only the D05 native diagnostic")
+
+
 def validate_package_mode(*, candidate_invocation: str | None,
                           diagnostic_fixtures: tuple[str, ...] | None,
                           finalized_values: tuple[object | None, ...]) -> bool:
@@ -635,7 +646,7 @@ def diagnostic_result_payload(args: argparse.Namespace, cleanup: dict, host_payl
                 "finalizationProvenanceSHA256": args.provenance_sha256,
                 "trustedStateSHA256": args.state_sha256,
                 "archiveSHA256": args._component_package_proof["archiveSHA256"]})
-    return {
+    payload = {
         "schemaVersion": 1,
         "scope": "native-only-fixture-diagnostic",
         "status": status,
@@ -663,6 +674,20 @@ def diagnostic_result_payload(args: argparse.Namespace, cleanup: dict, host_payl
             "finalServiceSetSHA256", "hostGuardCleared", "restoration")},
         "failures": failures,
     }
+    if getattr(args, "d05_cache_state", "cold") == "warm":
+        lane_diagnostics = {}
+        for lane in ("apple-stock", "container-compose"):
+            results = json.loads((args.evidence / lane / "results.json").read_text(encoding="utf-8"))
+            lane_diagnostics[lane] = results.get("d05FeatureCacheDiagnostic", {})
+        payload["d05FeatureCacheDiagnostic"] = {
+            "state": "warm",
+            "comparisonEligible": all(
+                item.get("status") == "cache_proven_diagnostic_only"
+                and item.get("performanceComparisonEligible") is True
+                for item in lane_diagnostics.values()),
+            "lanes": lane_diagnostics,
+        }
+    return payload
 
 
 def finalize_component_result(args: argparse.Namespace, cleanup: dict, comparison: dict,
@@ -1338,13 +1363,17 @@ def finalized_args(args: argparse.Namespace) -> list[str]:
 
 def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[list[str], list[str]]:
     """Plan distinct maintained output roots for CLI and V01 runners."""
-    runner = (CONTROLLER.parent / "run_lane.py" if getattr(args, "candidate_invocation", None)
+    diagnostic_fixtures = getattr(args, "diagnostic_fixtures", None)
+    runner = (CONTROLLER.parent / "run_lane.py" if diagnostic_fixtures is not None
               else REPOSITORY / "Tools/parity/run_lane.py")
     selection_args = (["--candidate-invocation", args.candidate_invocation,
                        "--expected-source-commit", args.source_commit,
                        "--repository", str(REPOSITORY)] if getattr(args, "candidate_invocation", None)
-                      else finalized_args(args))
+                      else [*finalized_args(args), "--repository", str(REPOSITORY)]
+                      if diagnostic_fixtures is not None else finalized_args(args))
     cli = [sys.executable, str(runner), lane, str(evidence), *selection_args]
+    if diagnostic_fixtures is not None and getattr(args, "d05_cache_state", "cold") == "warm":
+        cli += ["--d05-cache-state", "warm"]
     vscode = [sys.executable, str(REPOSITORY / "Tools/parity/run_vscode.py"), lane,
               str(evidence / "vscode"), *finalized_args(args)]
     if lane == "docker":
@@ -2535,6 +2564,8 @@ def parse_args() -> argparse.Namespace:
                         help="run only the named CLI fixture as a non-qualifying component check")
     parser.add_argument("--diagnostic-fixture", action="append", choices=DIAGNOSTIC_FIXTURES,
                         help="run a selected native-only CLI diagnostic fixture; repeat for multiple fixtures")
+    parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
+                        help="prepare a D05 feature cache before timing its native diagnostic")
     parser.add_argument("--docker-reference", type=Path,
                         help="optional original Docker results file retained separately from diagnostic lane evidence")
     parser.add_argument("--docker-reference-sha256",
@@ -2586,6 +2617,8 @@ def main() -> int:
     diagnostic_fixtures = diagnostic_fixture_selection(getattr(args, "diagnostic_fixture", None),
                                                        component_fixture)
     args.diagnostic_fixtures = diagnostic_fixtures
+    args.d05_cache_state = getattr(args, "d05_cache_state", "cold")
+    validate_d05_cache_request(args.d05_cache_state, diagnostic_fixtures, component_fixture)
     finalized_values = (args.finalized_directory, args.provenance_sha256,
                         args.state_sha256, args.accepted_state)
     candidate_mode = validate_package_mode(
@@ -2656,7 +2689,7 @@ def main() -> int:
                                          package_admissions)
         if cli_only_mode:
             args._component_package_proof = package_proof
-    harness_repository = CONTROLLER.parents[2] if candidate_mode else REPOSITORY
+    harness_repository = CONTROLLER.parents[2] if candidate_mode or diagnostic_fixtures else REPOSITORY
     args._parity_harness_sha256 = load_run_lane(harness_repository).parity_harness_sha256(harness_repository)
     args._package_admissions = package_admissions
 
@@ -2708,6 +2741,7 @@ def main() -> int:
         operator_inputs["diagnosticFixtures"] = list(diagnostic_fixtures)
         operator_inputs["referenceInput"] = retained_reference
         operator_inputs["toolingIdentity"] = args._tooling_identity
+        operator_inputs["d05CacheState"] = args.d05_cache_state
     write_json(args.evidence / "operator-inputs.json", operator_inputs)
     if cli_only_mode:
         args._component_evidence_identity = capture_component_evidence_identity(

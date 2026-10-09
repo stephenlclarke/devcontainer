@@ -119,6 +119,31 @@ class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
 
 
 class SuiteLifecycleTests(unittest.TestCase):
+    def test_warm_d05_cache_is_limited_to_the_single_native_diagnostic(self) -> None:
+        qualify.validate_d05_cache_request("cold", None, None)
+        qualify.validate_d05_cache_request("warm", ("D05-features",), None)
+        for state, fixtures, component in (
+                ("warm", None, None),
+                ("warm", ("C03-compose-resources", "D05-features"), None),
+                ("warm", ("D05-features",), "E13-compose-signals"),
+                ("other", ("D05-features",), None)):
+            with self.subTest(state=state, fixtures=fixtures, component=component), self.assertRaisesRegex(
+                    ValueError, "warm D05 cache mode" if state == "warm" else "cache state"):
+                qualify.validate_d05_cache_request(state, fixtures, component)
+
+    def test_warm_native_diagnostic_command_uses_tool_runner_and_keeps_product_checkout(self) -> None:
+        args = argparse.Namespace(
+            diagnostic_fixtures=("D05-features",), d05_cache_state="warm",
+            candidate_invocation="candidate", source_commit="a" * 40,
+            finalized_directory=None, provenance_sha256=None, state_sha256=None, accepted_state=None,
+        )
+        cli, vscode = qualify.lane_commands(args, "apple-stock", Path("/evidence"))
+        self.assertEqual(Path(cli[1]), qualify.CONTROLLER.parent / "run_lane.py")
+        self.assertIn(str(qualify.REPOSITORY), cli)
+        self.assertIn("--d05-cache-state", cli)
+        self.assertIn("warm", cli)
+        self.assertNotIn("--d05-cache-state", vscode)
+
     def test_unsigned_candidate_mode_cannot_enter_full_or_finalized_qualification(self) -> None:
         fixtures = ("C03-compose-resources", "E07-init-attachment")
         self.assertTrue(qualify.validate_package_mode(
