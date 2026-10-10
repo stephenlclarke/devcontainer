@@ -40,6 +40,33 @@ def helper_service_path(root: Path, label: str) -> str:
     return str(root / "container/plugin-state" / PROVIDER_HELPER_LAYOUT[label][0] / "service.plist")
 
 
+class GuestConfigurationAdmissionTests(unittest.TestCase):
+    def test_final_readmission_rejects_changed_guest_before_package_or_runtime_work(self):
+        import owned_guest_fixture
+
+        args = argparse.Namespace(diagnostic_fixtures=('E07-init-attachment',),
+                                  _guest_input_admissions={lane: {'initialization': {'config': 'old'}}
+                                                           for lane in ('apple-stock', 'container-compose')})
+        with mock.patch.object(owned_guest_fixture, 'preflight_guest_inputs',
+                               return_value={'initialization': {'config': 'changed'}}), \
+                mock.patch.object(qualify, 'load_run_lane') as loader:
+            with self.assertRaisesRegex(ValueError, 'Guest input admission changed'):
+                qualify.admit_package_before_runtime(args)
+            loader.assert_not_called()
+        self.assertEqual(args._guest_input_admissions['apple-stock']['initialization']['config'], 'old')
+
+    def test_builder_selection_matches_every_supported_mode(self):
+        self.assertTrue(qualify.guest_builder_required(argparse.Namespace()))
+        for fixture in ('E04-image-build', 'C03-compose-resources', 'D02-dockerfile-config',
+                        'D03-users-environment', 'D05-features'):
+            with self.subTest(fixture=fixture):
+                self.assertTrue(qualify.guest_builder_required(argparse.Namespace(component_fixture=fixture)))
+                self.assertTrue(qualify.guest_builder_required(argparse.Namespace(diagnostic_fixtures=(fixture,))))
+        for fixture in ('E07-init-attachment', 'E06-network-volume', 'E14-compose-terminal-size'):
+            self.assertFalse(qualify.guest_builder_required(argparse.Namespace(component_fixture=fixture)))
+            self.assertFalse(qualify.guest_builder_required(argparse.Namespace(diagnostic_fixtures=(fixture,))))
+
+
 class NativeComposeFrontendEnvironmentTests(unittest.TestCase):
     def test_signed_compose_and_q_runtime_have_independent_source_pins(self) -> None:
         manifest = {"referencePins": {

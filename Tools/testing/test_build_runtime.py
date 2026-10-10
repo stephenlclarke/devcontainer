@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from build_runtime import ReleasedBuilder, admit_builder, host_build_dns, native_blob, require_native_image
+from build_runtime import (ReleasedBuilder, admit_builder, host_build_dns, native_blob, require_native_image,
+                           prepare_provider_configuration, verify_provider_configuration, bind_provider_configuration)
 from case_evidence import canonical, digest
 from guest_runtime import require_guest_cleanup
 from service_journal import ServiceJournal
@@ -36,6 +37,52 @@ class BuildRuntimeTests(unittest.TestCase):
         self.inventory, self.calls = [], []
         self.fail_start, self.ignore_delete = False, False
         self.builder = ReleasedBuilder(self.inputs, self.root, self.journal, self.command)
+
+    def prepare_guest_config(self, *, builder=True):
+        images = json.loads((Path(__file__).parents[1] / 'bazel/guest-images.lock.json').read_text())
+        image = next(item for item in images['images'] if item['name'] == 'stock-vminit')
+        inputs = {'initialization': {'image': image, 'sha256': 'a' * 64}}
+        if builder:
+            inputs['builder'] = self.inputs
+        owner = {'identity': {'campaign': 'test', 'lane': 'apple-stock'}, 'root': str(self.root)}
+        (self.root / 'owner.json').write_text(json.dumps(owner))
+        self.root.chmod(0o700)
+        (self.root / 'container').chmod(0o700)
+        payload = prepare_provider_configuration(self.root, owner, inputs, self.journal)
+        return payload, image
+
+    def test_guest_selection_precedes_api_and_builder_preserves_it(self):
+        payload, image = self.prepare_guest_config()
+        effective = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
+        self.assertEqual(effective['vminit']['image'], image['reference'])
+        self.assertEqual(effective['build'], {'image': self.inputs['image']['reference'], 'rosetta': False})
+        proof = verify_provider_configuration(self.root, payload, effective, effective)
+        self.assertEqual(proof['configSHA256'], digest(payload))
+        preparation = ServiceJournal(self.root / 'preparation.sqlite', {'case': 'prepare'}, create=True)
+        bind_provider_configuration(self.root, {'initialization': {'image': image}, 'builder': self.inputs}, preparation)
+        self.journal = preparation
+        builder = ReleasedBuilder(self.inputs, self.root, preparation, self.command)
+        builder.provision()
+        self.assertEqual(builder.config.read_bytes(), payload)
+        self.assertIn(('image = ' + json.dumps(image['reference'])).encode(), builder.config.read_bytes())
+
+    def test_loaded_image_cannot_substitute_for_selected_effective_guest(self):
+        payload, _image = self.prepare_guest_config(builder=False)
+        effective = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
+        effective['vminit']['image'] = 'ghcr.io/apple/containerization/vminit:0.45.0'
+        with self.assertRaisesRegex(ValueError, 'Effective provider configuration'):
+            selected = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
+            verify_provider_configuration(self.root, payload, selected, effective)
+        self.assertNotIn('build', json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected'])
+
+    def test_preselected_configuration_rejects_unbound_or_changed_bytes(self):
+        payload, _image = self.prepare_guest_config()
+        path = self.root / 'container/config/config.toml'
+        path.write_bytes(payload.replace(b'0.47.0', b'0.45.0'))
+        with self.assertRaisesRegex(ValueError, 'configuration changed'):
+            verify_provider_configuration(self.root, payload, {}, {})
+        with self.assertRaisesRegex(ValueError, 'pre-start journal'):
+            ReleasedBuilder(self.inputs, self.root, self.journal, self.command)
 
     def blob(self, document):
         payload = canonical(document)
@@ -75,7 +122,11 @@ class BuildRuntimeTests(unittest.TestCase):
     def test_both_released_builder_admissions_are_digest_preserving(self):
         with patch('build_runtime.require_image', side_effect=lambda image, root: {'image': image}) as require:
             for lane, image in zip(('apple-stock', 'container-compose'), self.lock['images']):
-                self.assertEqual(admit_builder(self.lock, lane, self.root), {'image': image, 'dnsArguments': []})
+                provider = ({'reference': image['reference'], 'archiveSHA256': image['archiveSHA256'],
+                             'source': image['reference'].rsplit('qualification-', 1)[1]}
+                            if lane == 'container-compose' else None)
+                self.assertEqual(admit_builder(self.lock, lane, self.root, provider_image=provider),
+                                 {'image': image, 'dnsArguments': []})
             self.assertEqual(require.call_count, 2)
 
     def test_q_builder_admission_requires_matching_locked_archive_identity(self):

@@ -1614,19 +1614,29 @@ def validate_inputs(args: argparse.Namespace, *,
     return expected
 
 
+def guest_builder_required(args: argparse.Namespace) -> bool:
+    component = getattr(args, "component_fixture", None)
+    selected = getattr(args, "diagnostic_fixtures", None) or ((component,) if component else None)
+    return selected is None or any(fixture in selected for fixture in (
+        "E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+        "D03-users-environment", "D05-features"))
+
+
 def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
     """Use the maintained admission API before changing any runtime state."""
     from owned_guest_fixture import preflight_guest_inputs
 
     guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
     selected_lanes = ("apple-stock", "container-compose") if getattr(args, "diagnostic_fixtures", None) else LANES
-    args._guest_input_admissions = {
+    guest_admissions = {
         lane: preflight_guest_inputs(
             REPOSITORY, lane, guest_retained,
-            builder=(lane != "docker" and (getattr(args, "component_fixture", None) is None
-                                           or args.component_fixture == "E04-image-build")))
+            builder=(lane != "docker" and guest_builder_required(args)))
         for lane in selected_lanes
     }
+    if getattr(args, "_guest_input_admissions", guest_admissions) != guest_admissions:
+        raise ValueError("Guest input admission changed during qualification")
+    args._guest_input_admissions = guest_admissions
     admit = load_run_lane(REPOSITORY).load_finalized_admitter(REPOSITORY)
     retained = RETAINED / "finalized-admissions"
     scratch = SSD / "finalized-admission"
@@ -1711,10 +1721,13 @@ def admit_unsigned_candidate_before_runtime(args: argparse.Namespace) -> dict[st
     args._candidate_receipt = receipt
     args._candidate_admissions = admissions
     guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
-    args._guest_input_admissions = {
-        lane: preflight_guest_inputs(REPOSITORY, lane, guest_retained)
+    guest_admissions = {
+        lane: preflight_guest_inputs(REPOSITORY, lane, guest_retained, builder=guest_builder_required(args))
         for lane in ("apple-stock", "container-compose")
     }
+    if getattr(args, "_guest_input_admissions", guest_admissions) != guest_admissions:
+        raise ValueError("Guest input admission changed during qualification")
+    args._guest_input_admissions = guest_admissions
     args._provider_helper_programs = {
         lane: admit_provider_helper_programs(lane, args)
         for lane in ("apple-stock", "container-compose")
@@ -2254,14 +2267,31 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
 
     def prepare_private_home(journal):
         nonlocal keychain_created
+        inputs = admitted_provider_inputs()
         run_keychain(root, "create", journal)
         keychain_created = True
+        from build_runtime import prepare_provider_configuration
+
+        prepare_provider_configuration(root, owner, inputs, journal)
+
+    def admitted_provider_inputs():
+        from owned_guest_fixture import admit_guest_inputs, guest_input_identity
+
+        inputs = admit_guest_inputs(REPOSITORY, lane,
+                                    getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED),
+                                    builder=guest_builder_required(args))
+        if guest_input_identity(inputs) != args._guest_input_admissions[lane]:
+            raise RuntimeError("Guest input identity changed before provider bootstrap")
+        return inputs
 
     primary_error = None
     startup_failure_row = None
     failure_retention_error = None
     suites_started = False
     try:
+        # Reauthenticate every selected input before the first service mutation;
+        # the quiesced callback checks again before private keychain/config writes.
+        admitted_provider_inputs()
         runtime.start(prepare_home=prepare_private_home)
         api_server_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
         api_server_sha = args._provider_hashes[api_server_key]
@@ -2286,6 +2316,19 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             "DEVCONTAINER_API_DEFINITION_SHA256": sha256(root / "selected-apiserver.plist"),
             "DEVCONTAINER_API_SERVER_SHA256": api_server_sha,
         })
+        from build_runtime import verify_provider_configuration
+        configuration_payload = runtime.journal.records()["guest-provider-configuration.toml"]
+        configuration_result = run(
+            [lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "property", "list", "--format", "json"],
+            env=lane_env, timeout=30, capture=True)
+        effective_configuration = json.loads(configuration_result.stdout)
+        configuration_selection = json.loads(runtime.journal.records()[
+            "guest-provider-configuration-intent.json"])["selected"]
+        configuration_proof = verify_provider_configuration(
+            root, configuration_payload, configuration_selection, effective_configuration)
+        runtime.journal.put("guest-provider-effective-configuration.json", json.dumps(
+            {**configuration_proof, "effective": effective_configuration}, sort_keys=True).encode())
+        runtime.verify()
         provider_started = True
         (evidence / f"{lane}-runtime-initialization.json").write_text(json.dumps(
             {"status": "api-and-helper-ready",
@@ -2295,6 +2338,7 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                  args._active_provider_runtimes)[lane],
              "providerHelperSHA256": {label: value["sha256"] for label, value in expected_helpers.items()},
              "providerHelperHome": helper_home,
+             "guestProviderConfiguration": configuration_proof,
              "guestImagesAndKernel": "admitted ReleasedGuest provisioning before owned Engine start"},
             sort_keys=True, indent=2) + "\n")
         cli, vscode = lane_commands(args, lane, evidence)

@@ -22,7 +22,7 @@ from exec_probe import exec_streams
 from network_volume_probe import NetworkVolumeFixture
 from engine_probe import request
 from build_fixture import BuildFixture
-from build_runtime import ReleasedBuilder, admit_builder
+from build_runtime import ReleasedBuilder, admit_builder, bind_provider_configuration
 from fault_probe import FaultFixture
 from attachment_probe import AttachmentFixture, FIXTURE as ATTACHMENT_FIXTURE
 from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
@@ -222,6 +222,11 @@ class ReleasedGuest:
         return journal.records()[name + ".log"]
 
     def provision(self):
+        # The qualifier selects configuration before API startup. Preparation
+        # uses a separate journal, so authenticate and bind those exact bytes
+        # again to these freshly admitted inputs before constructing a builder.
+        if (self.root / "container/config/config.toml").exists():
+            bind_provider_configuration(self.root, self.inputs, self.runtime.journal)
         self.runtime.journal.put("guest-inputs.json", canonical(self.inputs))
         with deadline(190):
             kernel = Path(self.inputs["kernel"]["files"]["kernel"])
