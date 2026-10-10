@@ -383,6 +383,8 @@ Support-archive collection in current source also limits each external probe to 
 
 Live runtime tests are deliberately not run on public pull-request code or GitHub-hosted macOS. They execute on an isolated physical runner only after a trusted exact commit has passed hosted checks.
 
+If the designated release runner needs its persistent notary profile restored, use the protected-main-only [Recover Notary Profile workflow](.github/workflows/recover-notary-profile.yml). It validates repository credentials in the runner user's login keychain and performs a read-only history check; it does not build or submit a release.
+
 ## Documentation
 
 Start with the [user guide](USER_GUIDE.md), then consult the

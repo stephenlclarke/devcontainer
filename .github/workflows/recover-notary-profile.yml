@@ -1,0 +1,64 @@
+name: Recover Notary Profile
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_control_sha:
+        description: Exact protected-main SHA containing this recovery workflow
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-notary-profile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    name: Validate persistent notary profile
+    if: >
+      github.repository == 'stephenlclarke/devcontainer' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.expected_control_sha == github.sha
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - devcontainer-release
+      - devcontainer-designated-mbp
+    environment: release
+    timeout-minutes: 3
+    steps:
+      - name: Check out exact protected-main control
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate dispatch context before using credentials
+        env:
+          EXPECTED_CONTROL_SHA: ${{ inputs.expected_control_sha }}
+          ACTUAL_CONTROL_SHA: ${{ github.sha }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          ACTUAL_RUNNER_NAME: ${{ runner.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${ACTUAL_REPOSITORY}" == "stephenlclarke/devcontainer" ]]
+          [[ "${ACTUAL_REF}" == "refs/heads/main" ]]
+          [[ "${EXPECTED_CONTROL_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_CONTROL_SHA}" == "${ACTUAL_CONTROL_SHA}" ]]
+          [[ "${ACTUAL_RUNNER_NAME}" == "devcontainer-release-StevesM5Pro" ]]
+
+      - name: Store and validate the notary profile in login keychain
+        env:
+          RECOVERY_EXPECTED_CONTROL_SHA: ${{ inputs.expected_control_sha }}
+          RECOVERY_PROFILE: ${{ vars.DEVCONTAINER_NOTARY_PROFILE }}
+          DEVCONTAINER_NOTARY_APPLE_ID: ${{ secrets.DEVCONTAINER_NOTARY_APPLE_ID }}
+          DEVCONTAINER_NOTARY_TEAM_ID: ${{ secrets.DEVCONTAINER_NOTARY_TEAM_ID }}
+          DEVCONTAINER_NOTARY_PASSWORD: ${{ secrets.DEVCONTAINER_NOTARY_PASSWORD }}
+        shell: bash
+        run: python3 Tools/release/recover_notary_profile.py
