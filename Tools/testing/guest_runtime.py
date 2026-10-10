@@ -38,6 +38,18 @@ from compose_terminal_probe import ComposeTerminalSizeFixture
 FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES, "C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
+# Historical locks remain readable; selecting a guest always requires its exact
+# official reference, manifest and arm64 config, never a version fallback.
+STOCK_INITIALIZATION_IMAGES = {
+    "ghcr.io/apple/containerization/vminit:0.45.0": (
+        "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",
+        "sha256:c7146472cafa9cb0334fb309054c38b2c7836149da9cf06b0906dfa494862c87",
+    ),
+    "ghcr.io/apple/containerization/vminit:0.47.0": (
+        "sha256:c5c20071df2a9f249f82c9c2940539bd568360540559921a29f9f8b78df67ade",
+        "sha256:9f6055935bd1bc0c3299f81b927d8b26e1fa57da5a542d20ce94895b789b4764",
+    ),
+}
 
 
 def require_guest_api(socket: Path) -> dict:
@@ -98,7 +110,13 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
                     or re.fullmatch(r"[0-9a-f]{40}", str(value.get("source", ""))) is None):
                 raise ValueError("Q provider image identity is malformed")
         selected_provider_images = provider_image_references
-    init_reference = ("ghcr.io/apple/containerization/vminit:0.45.0" if lane == "apple-stock" else
+    if lane == "apple-stock":
+        stock = by_name["stock-vminit"]
+        expected = STOCK_INITIALIZATION_IMAGES.get(stock["reference"])
+        if (stock["repository"] != "ghcr.io/apple/containerization/vminit"
+                or expected != (stock["manifest"], stock["config"])):
+            raise ValueError("Stock initialization reference differs from the exact reviewed official image")
+    init_reference = (by_name["stock-vminit"]["reference"] if lane == "apple-stock" else
                       selected_provider_images["guest"]["reference"] if selected_provider_images else
                       "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567")
     if by_name[names[lane]]["reference"] != init_reference:
