@@ -228,6 +228,8 @@ class ReleasedGuest:
         if (self.root / "container/config/config.toml").exists():
             bind_provider_configuration(self.root, self.inputs, self.runtime.journal)
         self.runtime.journal.put("guest-inputs.json", canonical(self.inputs))
+        starts_builder = self.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+                                         "D03-users-environment", "D05-features"}
         with deadline(190):
             kernel = Path(self.inputs["kernel"]["files"]["kernel"])
             self.command("guest-kernel", ["system", "kernel", "set", "--arch", "arm64", "--binary", str(kernel)])
@@ -240,7 +242,13 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
-        if self.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+            if "builder" in self.inputs and not starts_builder:
+                # Provider-only preparation must load the selected released
+                # builder locally before any build can try its remote tag.
+                # Admission authenticates the archive OCI closure; worker
+                # ownership later rechecks it through require_native_image.
+                self.command("guest-builder-preload", ["image", "load", "--input", self.inputs["builder"]["path"]])
+        if starts_builder:
             self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
             with deadline(300):
                 self.builder.provision()

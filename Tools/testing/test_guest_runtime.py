@@ -187,6 +187,43 @@ class GuestRuntimeTests(unittest.TestCase):
             fixture.return_value.cleanup.assert_called_once()
         self.assertEqual(events, ['guest', 'builder'])
 
+    def test_provider_preparation_preloads_admitted_builder_without_starting_worker(self):
+        self.case.fixture = 'E07-init-attachment'
+        self.inputs['builder'] = {'path': '/retained/exact-builder.tar',
+                                  'image': {'reference': 'ghcr.io/example/builder:qualified'}}
+        installed = self.root / 'container/kernels/vmlinux'
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(Path(self.inputs['kernel']['files']['kernel']).read_bytes())
+        (installed.parent / 'default.kernel-arm64').symlink_to(installed)
+        with patch.object(self.case, 'command', return_value=b'ghcr.io/example/builder:qualified\n') as command, \
+                patch('guest_runtime.ReleasedBuilder') as builder:
+            self.case.provision()
+            self.assertEqual([call.args[0] for call in command.call_args_list],
+                             ['guest-kernel', 'guest-initialization', 'guest-workload', 'guest-builder-preload'])
+            self.assertEqual(command.call_args.args[1],
+                             ['image', 'load', '--input', '/retained/exact-builder.tar'])
+            builder.assert_not_called()
+            self.assertIsNone(self.case.builder)
+        self.assertIn('guest-provisioned.json', self.journal.records())
+
+    def test_builder_preload_failure_cannot_publish_guest_preparation_success(self):
+        self.case.fixture = 'E07-init-attachment'
+        self.inputs['builder'] = {'path': '/retained/exact-builder.tar',
+                                  'image': {'reference': 'ghcr.io/example/builder:qualified'}}
+        installed = self.root / 'container/kernels/vmlinux'
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(Path(self.inputs['kernel']['files']['kernel']).read_bytes())
+        (installed.parent / 'default.kernel-arm64').symlink_to(installed)
+        def command(name, _arguments):
+            if name == 'guest-builder-preload':
+                raise ValueError('image import failed')
+        with patch.object(self.case, 'command', side_effect=command), \
+                patch('guest_runtime.ReleasedBuilder') as builder:
+            with self.assertRaisesRegex(ValueError, 'image import failed'):
+                self.case.provision()
+            builder.assert_not_called()
+        self.assertNotIn('guest-provisioned.json', self.journal.records())
+
     def test_c03_provisions_private_builder_without_prebuilding_volume_helper(self):
         self.case.fixture = 'C03-compose-resources'
         self.inputs['builder'] = {'admitted': 'fixture'}

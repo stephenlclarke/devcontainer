@@ -500,3 +500,5 @@ The [extended E07 diagnostic](docs/PR-e07-native-io-tracing.md) now records eigh
 The initial official 0.47.0 E07 trial retained a failed stock result, but image loading alone did not establish which initialization image booted. The native harness now selects and verifies the admitted initialization image in the leased private provider configuration before API startup, preserving builder selection and all service ownership checks. Fresh runtime validation is pending; historical failures remain unchanged.
 
 Native build fixtures now preserve the same admitted builder selection in the qualifier and lane preparation. This corrects the D05 warm setup identity mismatch before Engine startup; a fresh diagnostic is still required.
+
+Provider-only native preparation also imports its admitted builder archive before build fixtures run, keeping builder selection and local content aligned without adding readiness work. Prior missing-image failures remain retained; fresh validation is pending.
