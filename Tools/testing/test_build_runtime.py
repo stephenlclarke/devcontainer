@@ -68,10 +68,10 @@ class BuildRuntimeTests(unittest.TestCase):
 
     def test_loaded_image_cannot_substitute_for_selected_effective_guest(self):
         payload, _image = self.prepare_guest_config(builder=False)
-        effective = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
+        selected = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
+        effective = copy.deepcopy(selected)
         effective['vminit']['image'] = 'ghcr.io/apple/containerization/vminit:0.45.0'
         with self.assertRaisesRegex(ValueError, 'Effective provider configuration'):
-            selected = json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected']
             verify_provider_configuration(self.root, payload, selected, effective)
         self.assertNotIn('build', json.loads(self.journal.records()['guest-provider-configuration-intent.json'])['selected'])
 

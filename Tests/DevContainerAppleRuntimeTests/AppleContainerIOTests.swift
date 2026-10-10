@@ -71,6 +71,42 @@ struct AppleContainerIOTests {
         #expect(capture.lines.isEmpty)
     }
 
+    @Test func `init IO trace records failed writes EOF and process drain state`() {
+        let capture = TraceCapture()
+        let diagnostics = AppleContainerIODiagnostics(enabled: true, traceWriter: capture.append)
+
+        diagnostics.inputFailed(7, pendingWrites: 3)
+        diagnostics.inputEOFRequested(pendingWrites: 2)
+        diagnostics.inputEOFCompleted(pendingWrites: 0)
+        diagnostics.outputFrame(RuntimeIOFrame(channel: .standardOutput, data: Data(repeating: 0, count: 11)))
+        diagnostics.outputFrame(RuntimeIOFrame(channel: .standardError, data: Data(repeating: 0, count: 13)))
+        diagnostics.sourceEOF(.standardOutput)
+        diagnostics.sourceEOF(.standardError)
+        diagnostics.processExit(17)
+        diagnostics.drainTimedOut()
+        diagnostics.drainCompleted()
+
+        let lines = capture.lines
+        #expect(lines.contains {
+            $0.contains("event=input-write-failed bytes=7 total=7 pending=3")
+        })
+        #expect(lines.contains { $0.contains("event=input-eof-requested pending=2") })
+        #expect(lines.contains {
+            $0.contains("event=input-eof-completed submitted=0 completed=0 failed=7 pending=0")
+        })
+        #expect(lines.contains { $0.contains("event=output-eof channel=standardOutput bytes=11") })
+        #expect(lines.contains { $0.contains("event=output-eof channel=standardError bytes=13") })
+        #expect(lines.contains { $0.contains("event=process-exit code=17") })
+        #expect(lines.contains {
+            $0.contains("event=output-drain-timeout submitted=0 completed=0 failed=7 stdout=11 stderr=13")
+                && $0.contains("stdoutEOF=true stderrEOF=true exit=17")
+        })
+        #expect(lines.contains {
+            $0.contains("event=output-drain-completed submitted=0 completed=0 failed=7 stdout=11 stderr=13")
+                && $0.contains("stdoutEOF=true stderrEOF=true exit=17")
+        })
+    }
+
     @Test func `prestart attachments receive separate complete streams and real exit`() async throws {
         let channel = try AppleContainerIO(createdAt: Date(), terminal: false, openStandardInput: false)
         let first = channel.attach()
