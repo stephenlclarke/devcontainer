@@ -387,7 +387,7 @@ class UnsignedCandidateDiagnosticTests(unittest.TestCase):
 
 class ComponentBuilderSelectionTests(unittest.TestCase):
     def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str,
-                       runtime_profile=None, cache_state="cold"):
+                       runtime_profile=None, cache_state="cold", candidate_mode=False):
         import sys
 
         repository = Path(__file__).resolve().parents[2]
@@ -439,6 +439,10 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             runner.provider_hashes = {}
             runner.harness_sha256 = "f" * 64
             runner.finalized_identity = {"runtimeProfile": runtime_profile} if runtime_profile else None
+            if candidate_mode:
+                runner.finalized_selection, runner.finalized_identity = None, None
+                runner.candidate_selection = {}
+                runner.candidate_identity = {"runtimeProfile": runtime_profile}
             runner.d05_cache_state = cache_state
             runner.cleanup_differences = []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
@@ -452,7 +456,8 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             common_patches = (
                 mock.patch("run_lane.implemented_fixtures", return_value=fixtures),
                 mock.patch.object(owned_guest_fixture, "_retained_root", return_value=base),
-                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value={}),
+                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", side_effect=lambda *args, **kwargs:
+                                  events.append("input-builder" if kwargs.get("builder") else "input-no-builder") or {}),
                 mock.patch.object(owned_guest_fixture, "OwnedGuestFixtureRunner", Bridge),
                 mock.patch.object(runner, "admit_finalized"),
                 mock.patch.object(runner, "configure_docker_oracle",
@@ -475,7 +480,8 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                         common_patches[4], common_patches[5], common_patches[6], common_patches[7], \
                         common_patches[8], common_patches[9], common_patches[10], common_patches[11], \
                         common_patches[12], common_patches[13], common_patches[14], common_patches[15]:
-                    result = runner.run()
+                    with mock.patch.object(runner, "admit_candidate"), mock.patch.object(runner, "readmit_candidate"):
+                        result = runner.run()
             return result, builder, events
 
     def test_isolated_native_e06_prepares_authenticated_guest_before_engine(self) -> None:
@@ -535,16 +541,29 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
         self.assertLess(events.index("fixture:E14-compose-terminal-size"), events.index("guest-cleanup"))
         self.assertIn("guest-cleanup", events)
 
-    def test_warm_d05_only_admits_kernel_and_init_preparation_before_engine(self) -> None:
+    def test_warm_d05_admits_builder_selection_without_e04_readiness_work(self) -> None:
         result, builder, events = self._run_selection(
             "apple-stock", ("D05-features",), "D05-features", "stock", cache_state="warm")
         self.assertEqual(result, 0)
+        self.assertIn("input-builder", events)
+        self.assertNotIn("builder-start", events)
+        self.assertNotIn("builder-ready", events)
         builder.assert_not_called()
         self.assertLess(events.index("provider-required"), events.index("provision"))
         self.assertLess(events.index("provision"), events.index("engine"))
         self.assertLess(events.index("engine"), events.index("attach"))
         self.assertLess(events.index("attach"), events.index("fixture:D05-features"))
         self.assertIn("guest-cleanup", events)
+
+    def test_candidate_warm_d05_admits_same_builder_without_readiness_worker(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("D05-features",), "D05-features", "stock", cache_state="warm", candidate_mode=True)
+                self.assertEqual(result, 0)
+                self.assertIn("input-builder", events)
+                self.assertNotIn("builder-start", events)
+                builder.assert_not_called()
 
     def test_c03_only_native_diagnostic_provisions_default_kernel_without_other_fixture_work(self) -> None:
         for lane in ("apple-stock", "container-compose"):

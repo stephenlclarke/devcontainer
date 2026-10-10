@@ -534,6 +534,11 @@ class LaneRunner:
         native_e04_builder = (self.lane != "docker" and self.finalized_identity is not None
                               and self.finalized_identity.get("runtimeProfile") == "stock"
                               and any(fixture.identifier == "E04-image-build" for fixture in fixtures))
+        # Selection and provisioning are distinct: D05/C03 must preserve the
+        # pre-start builder image even when no E04 readiness worker is requested.
+        native_builder_inputs = (self.lane != "docker" and package_admitted and any(
+            fixture.identifier in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+                                   "D03-users-environment", "D05-features"} for fixture in fixtures))
         native_d05_cache_preparation = (
             self.lane != "docker" and getattr(self, "d05_cache_state", "cold") == "warm"
             and selected == {"D05-features"})
@@ -546,7 +551,7 @@ class LaneRunner:
 
             retained = _retained_root(self)
             self._owned_guest_inputs = admit_guest_inputs(
-                self.repository, self.lane, retained, builder=native_e04_builder)
+                self.repository, self.lane, retained, builder=native_builder_inputs)
             self._owned_guest_runner = OwnedGuestFixtureRunner(
                 self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
                 fixture_selection=tuple(fixture.identifier for fixture in fixtures),

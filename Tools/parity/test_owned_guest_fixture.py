@@ -897,7 +897,8 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
 
         inputs = {"kernel": {"sha256": "a" * 64},
                   "initialization": {"archiveSHA256": "b" * 64},
-                  "workload": {"archiveSHA256": "c" * 64}}
+                  "workload": {"archiveSHA256": "c" * 64},
+                  "builder": {"archiveSHA256": "d" * 64}}
         events = []
         owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
         root, journal = Path("/private/provider-home"), mock.Mock()
@@ -939,8 +940,8 @@ class NativeProvisionBeforeEngineTests(unittest.TestCase):
 
         self.assertEqual(guests[0].fixture, "E07-init-attachment")
         self.assertIsNone(guests[0].socket)
-        self.assertNotIn("builder", inputs)
-        self.assertEqual(admit.call_args_list, [mock.call(REPOSITORY, "apple-stock", Path("/retained"), builder=False)] * 2)
+        self.assertIn("builder", inputs)
+        self.assertEqual(admit.call_args_list, [mock.call(REPOSITORY, "apple-stock", Path("/retained"), builder=True)] * 2)
         self.assertEqual(events.count("kernel-and-init-provision"), 1)
         self.assertLess(events.index("api-verify"), events.index("kernel-and-init-provision"))
 

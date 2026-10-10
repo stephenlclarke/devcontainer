@@ -658,7 +658,7 @@ class OwnedGuestFixtureRunner:
         self.preparation = (root, journal, runtime, owner)
         runtime.verify()
         before = admit_guest_inputs(self.repository, self.lane, self.retained,
-                                    builder=self.builder_required)
+                                    builder=(self.builder_required or "builder" in self.inputs))
         if guest_input_identity(before) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed before native provisioning")
         if first is not None or self.builder_required or getattr(self, "provider_required", False):
@@ -670,7 +670,7 @@ class OwnedGuestFixtureRunner:
             guest.provision()
         runtime.verify()
         after = admit_guest_inputs(self.repository, self.lane, self.retained,
-                                   builder=self.builder_required)
+                                   builder=(self.builder_required or "builder" in self.inputs))
         if guest_input_identity(after) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed during native provisioning")
         self.inputs = after
