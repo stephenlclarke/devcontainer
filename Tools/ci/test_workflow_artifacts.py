@@ -304,7 +304,7 @@ class WorkflowArtifactTests(unittest.TestCase):
             )
             self.assertNotIn("devcontainer-ultuk2m30000", labels)
 
-        self.assertEqual(checked, 2)
+        self.assertEqual(checked, 3)
 
     def test_runner_specification_parser_covers_yaml_forms(self) -> None:
         contents = """
