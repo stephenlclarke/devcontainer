@@ -4,12 +4,17 @@
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
 import io
+import importlib.util
+import os
+import pwd
+import socket
+import stat as stat_module
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -223,7 +228,44 @@ class RecoveryCommandTests(unittest.TestCase):
             self.environment, DEVCONTAINER_NOTARY_TEAM_ID="WRONGTEAM"
         )
         calls = []
-        with self.assertRaisesRegex(recovery.RecoveryError, "signing authority"):
+        non_macos_runner_uid = 1001
+        original_stat = Path.stat
+
+        def stat_with_runner_owned_keychain(path, *args, **kwargs):
+            if path == self.keychain:
+                return os.stat_result(
+                    (
+                        stat_module.S_IFREG | 0o600,
+                        1,
+                        0,
+                        1,
+                        non_macos_runner_uid,
+                        non_macos_runner_uid,
+                        0,
+                        0,
+                        0,
+                        0,
+                    )
+                )
+            return original_stat(path, *args, **kwargs)
+
+        with (
+            patch.object(recovery, "EXPECTED_UID", non_macos_runner_uid),
+            patch.object(recovery.os, "getuid", return_value=non_macos_runner_uid),
+            patch.object(
+                recovery.pwd,
+                "getpwuid",
+                return_value=SimpleNamespace(pw_name="sclarke"),
+            ),
+            patch.object(
+                recovery.socket,
+                "gethostname",
+                return_value="StevesM5Pro.local",
+            ),
+            patch.object(Path, "home", return_value=Path("/Users/sclarke")),
+            patch.object(Path, "stat", stat_with_runner_owned_keychain),
+            self.assertRaisesRegex(recovery.RecoveryError, "signing authority"),
+        ):
             recovery.recover_profile(
                 environment,
                 command_runner=lambda *args: calls.append(args),
@@ -358,18 +400,28 @@ class RecoveryWorkflowTests(unittest.TestCase):
         self.assertNotIn("unlock-keychain", helper)
         self.assertNotIn('"submit"', helper)
 
-    @patch.object(recovery, "recover_profile", side_effect=RuntimeError("private-value"))
-    def test_unexpected_errors_are_suppressed(self, recover_profile) -> None:
+    @patch.object(
+        recovery, "recover_profile", side_effect=RuntimeError("private-value")
+    )
+    def test_unexpected_errors_are_suppressed(
+        self, recover_profile
+    ) -> None:
         with patch.object(recovery.sys, "stderr") as stderr:
             self.assertEqual(recovery.main(), 1)
         self.assertNotIn("private-value", str(stderr.write.call_args))
 
-    @patch.object(recovery, "recover_profile", side_effect=recovery.RecoveryError("safe failure"))
-    def test_expected_error_is_reported_without_traceback(self, recover_profile) -> None:
+    @patch.object(
+        recovery, "recover_profile", side_effect=recovery.RecoveryError("safe failure")
+    )
+    def test_expected_error_is_reported_without_traceback(
+        self, recover_profile
+    ) -> None:
         output = io.StringIO()
         with patch.object(recovery.sys, "stderr", output):
             self.assertEqual(recovery.main(), 1)
-        self.assertEqual(output.getvalue(), "Notary profile recovery failed: safe failure\n")
+        self.assertEqual(
+            output.getvalue(), "Notary profile recovery failed: safe failure\n"
+        )
 
     @patch.object(recovery, "recover_profile")
     def test_success_reports_only_generic_confirmation(self, recover_profile) -> None:

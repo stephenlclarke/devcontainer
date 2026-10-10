@@ -218,7 +218,8 @@ def main() -> int:
         return 1
     except Exception:
         print(
-            "Notary profile recovery failed due to an internal error; details suppressed.",
+            "Notary profile recovery failed due to an internal error; "
+            "details suppressed.",
             file=sys.stderr,
         )
         return 1
