@@ -134,6 +134,67 @@ class RecoveryCommandTests(unittest.TestCase):
                 keychain=self.keychain,
             )
 
+    def test_store_failure_classifier_emits_only_fixed_categories(self) -> None:
+        secret = "do-not-disclose-this-service-response"
+        cases = (
+            (
+                f"HTTP status code: 401 Invalid credentials {secret}".encode(),
+                "Apple rejected the notarization credentials.",
+            ),
+            (
+                f"HTTP 403 username or password is incorrect {secret}".encode(),
+                "Apple rejected the notarization credentials.",
+            ),
+            (
+                f"Keychain is locked {secret}".encode(),
+                "The login keychain is locked or denied noninteractive access.",
+            ),
+            (
+                f"errSecInteractionNotAllowed {secret}".encode(),
+                "The login keychain is locked or denied noninteractive access.",
+            ),
+            (
+                f"unrecognized private response {secret}".encode(),
+                "Credential validation failed for another reason; command output suppressed.",
+            ),
+            (
+                b"\xff private response " + secret.encode(),
+                "Credential validation failed for another reason; command output suppressed.",
+            ),
+        )
+        for output, expected in cases:
+            with self.subTest(expected=expected):
+                message = recovery._classify_store_failure(output)
+                self.assertEqual(message, expected)
+                self.assertNotIn(secret, message)
+
+    def test_authentication_store_failure_is_classified_without_echoing_output(
+        self,
+    ) -> None:
+        calls: list[tuple[str, ...]] = []
+        secret_output = b"HTTP status code: 401 private credential diagnostic"
+
+        def runner(arguments, timeout):
+            calls.append(tuple(arguments))
+            if (
+                arguments[0].endswith("/security")
+                and arguments[1] == "default-keychain"
+            ):
+                return subprocess.CompletedProcess(
+                    arguments, 0, b'"' + str(self.keychain).encode() + b'"\n', b""
+                )
+            return subprocess.CompletedProcess(
+                arguments, 65, secret_output, secret_output
+            )
+
+        with self.assertRaises(recovery.RecoveryError) as caught:
+            self.run_recovery(runner)
+        self.assertEqual(
+            str(caught.exception), "Apple rejected the notarization credentials."
+        )
+        self.assertNotIn("private credential diagnostic", str(caught.exception))
+        self.assertEqual(len(calls), 2)
+
     def test_stores_then_histories_fixed_profile_without_exposing_output(self) -> None:
         calls: list[tuple[str, ...]] = []
         secret_output = b"test-app-password user@example.test 4MEB7MUTAV"

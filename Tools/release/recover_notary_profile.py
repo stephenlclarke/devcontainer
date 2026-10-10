@@ -121,6 +121,34 @@ def _history_is_valid(output: bytes) -> bool:
     return isinstance(value, dict) and isinstance(value.get("history"), list)
 
 
+def _classify_store_failure(output: bytes) -> str:
+    """Map captured notarytool output to fixed diagnostics without echoing it."""
+    message = output.decode("utf-8", errors="replace").casefold()
+    authentication_markers = (
+        "http status code: 401",
+        "http status code: 403",
+        "http 401",
+        "http 403",
+        "invalid credentials",
+        "username or password is incorrect",
+        "authentication failed",
+    )
+    if any(marker in message for marker in authentication_markers):
+        return "Apple rejected the notarization credentials."
+
+    keychain_markers = (
+        "keychain is locked",
+        "interaction not allowed",
+        "interaction is not allowed",
+        "errsecinteractionnotallowed",
+        "user interaction is not allowed",
+        "could not be unlocked",
+    )
+    if any(marker in message for marker in keychain_markers):
+        return "The login keychain is locked or denied noninteractive access."
+    return "Credential validation failed for another reason; command output suppressed."
+
+
 def recover_profile(
     environment: Mapping[str, str],
     *,
@@ -181,8 +209,7 @@ def recover_profile(
         ) from error
     if stored.returncode != 0:
         raise RecoveryError(
-            "notarytool credential validation failed "
-            f"(exit {stored.returncode}); output suppressed"
+            _classify_store_failure(stored.stdout + b"\n" + stored.stderr)
         )
 
     try:
