@@ -22,7 +22,7 @@ PATCHES = (
     {"identity": "zstd", "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
      "location": "https://github.com/facebook/zstd.git", "patch": "zstd-public-module.patch",
      "sha256": "4750e8650eaa5205db05a5d792478633b6d30154cea31fdba628b5b97cc15927"},
-    {"identity": "containerization", "revision": "6db16197bbad8196a78132f86529daa89125aafb",
+    {"identity": "containerization", "revision": "c0607ac9aa5b759141506fbd8fc01f423d433f1e",
      "location": "https://github.com/stephenlclarke/containerization.git",
      "patch": "containerization-ext4-unaligned.patch",
      "sha256": "960284f67cca0ba416da98f624934454e092d204b4525daf9902e0a0bbe7038d"},
@@ -56,13 +56,14 @@ class PatchState:
     disposition: str
 
 
-def run(command: Sequence[str], *, cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def run(command: Sequence[str], *, cwd: Path, timeout: int = 30,
+        umask: int = -1) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True,
-                          timeout=timeout, check=False)
+                          timeout=timeout, check=False, umask=umask)
 
 
-def checked(command: Sequence[str], *, cwd: Path, timeout: int = 30) -> str:
-    result = run(command, cwd=cwd, timeout=timeout)
+def checked(command: Sequence[str], *, cwd: Path, timeout: int = 30, umask: int = -1) -> str:
+    result = run(command, cwd=cwd, timeout=timeout, umask=umask)
     if result.returncode:
         raise ValueError("command failed: " + " ".join(command) + ": " + result.stderr.strip())
     return result.stdout.strip()
@@ -162,7 +163,7 @@ def expected_patch_output(spec: PatchSpec, paths: Sequence[str]) -> dict[str, tu
         checked(["git", "add", "--all"], cwd=tree)
         checked(["git", "commit", "-q", "-m", "pinned baseline"], cwd=tree)
         checked(["git", "apply", "--check", str(spec.patch)], cwd=tree)
-        checked(["git", "apply", str(spec.patch)], cwd=tree)
+        checked(["git", "apply", str(spec.patch)], cwd=tree, umask=0o022)
         checked(["git", "add", "--all"], cwd=tree)
         modes = {}
         for row in checked(["git", "ls-files", "--stage", "-z"], cwd=tree).split("\0"):
@@ -304,7 +305,8 @@ def prepare(root: Path, scratch_path: Path, profile: str | None = None,
             if status_paths(state.spec):
                 raise ValueError("SwiftPM checkout changed after preflight: " + state.spec.identity)
             verify_checkout_identity(state.spec)
-            checked(["git", "apply", str(state.spec.patch)], cwd=state.spec.checkout)
+            # Git recreates patched files; preserve reviewed modes without changing the caller's private umask.
+            checked(["git", "apply", str(state.spec.patch)], cwd=state.spec.checkout, umask=0o022)
             applied.append(state)
         for state in states:
             verify_applied(state)
@@ -312,7 +314,8 @@ def prepare(root: Path, scratch_path: Path, profile: str | None = None,
         for state in reversed(applied):
             try:
                 verify_applied(state)
-                checked(["git", "apply", "--reverse", str(state.spec.patch)], cwd=state.spec.checkout)
+                checked(["git", "apply", "--reverse", str(state.spec.patch)],
+                        cwd=state.spec.checkout, umask=0o022)
                 if status_paths(state.spec):
                     raise ValueError("rollback left checkout changes: " + state.spec.identity)
             except (OSError, ValueError, subprocess.SubprocessError) as rollback_error:

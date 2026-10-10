@@ -127,6 +127,15 @@ public protocol RuntimeRecoveryProbe: Sendable {
     func requireRecoveryQuiescence(context: RuntimeRequestContext) async throws
 }
 
+/// Read-only check for write-ahead native create intents owned by one request.
+public protocol RuntimeContainerCreationProbe: Sendable {
+    func requireNoPendingContainerCreation(context: RuntimeRequestContext) async throws
+}
+
+public enum RuntimeOperationLabel {
+    public static let key = "io.github.stephenlclarke.devcontainer.operation"
+}
+
 public protocol ImageRuntime: Sendable {
     func listImages(context: RuntimeRequestContext) async throws -> [ImageSnapshot]
     func inspectImage(reference: String, context: RuntimeRequestContext) async throws -> ImageSnapshot

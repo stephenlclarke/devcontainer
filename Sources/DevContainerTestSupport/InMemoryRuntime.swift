@@ -18,7 +18,11 @@ import DevContainerModel
 import DevContainerRuntimeSPI
 import Foundation
 
-public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
+public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe, RuntimeContainerCreationProbe {
+    public func requireNoPendingContainerCreation(context: RuntimeRequestContext) throws {
+        try context.checkActive()
+    }
+
     public func requireRecoveryQuiescence(context: RuntimeRequestContext) throws {
         // This fake's mutations are synchronous and have no native RPCs.
         try context.checkActive()
@@ -28,6 +32,8 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
     private let execSession: (any RuntimeProcessSession)?
     private let attachmentSession: (any RuntimeProcessSession)?
     private let descriptorDelay: Duration?
+    private let containerCreateWillBegin: (@Sendable (ContainerSpec) throws -> Void)?
+    private let containerCreateDidComplete: (@Sendable (ContainerSnapshot) throws -> Void)?
     private let containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)?
     private let buildImageStream: (@Sendable (ImageBuildRequest) async throws
         -> AsyncThrowingStream<Data, any Error>)?
@@ -59,11 +65,15 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
             -> AsyncThrowingStream<Data, any Error>)? = nil,
         buildImageStream: (@Sendable (ImageBuildRequest) async throws
             -> AsyncThrowingStream<Data, any Error>)? = nil,
-        containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)? = nil
+        containerExitWait: (@Sendable (ContainerSnapshot) async throws -> any RuntimeContainerExitWait)? = nil,
+        containerCreateWillBegin: (@Sendable (ContainerSpec) throws -> Void)? = nil,
+        containerCreateDidComplete: (@Sendable (ContainerSnapshot) throws -> Void)? = nil
     ) {
         self.execSession = execSession
         self.attachmentSession = attachmentSession
         self.descriptorDelay = descriptorDelay
+        self.containerCreateWillBegin = containerCreateWillBegin
+        self.containerCreateDidComplete = containerCreateDidComplete
         self.containerExitWait = containerExitWait
         self.buildImageStream = buildImageStream
         self.pullImageStream = pullImageStream
@@ -224,6 +234,9 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         guard let image = image(reference: spec.image) else {
             throw DevContainerError(.notFound, message: "image \(spec.image) was not found")
         }
+        if let containerCreateWillBegin {
+            try containerCreateWillBegin(spec)
+        }
         let runtimeID = RuntimeID(rawValue: Self.identifier())
         let dockerID = DockerID(rawValue: Self.identifier())
         let snapshot = ContainerSnapshot(
@@ -237,6 +250,9 @@ public actor InMemoryRuntime: DevContainerRuntime, RuntimeRecoveryProbe {
         containers[runtimeID] = snapshot
         dockerToRuntime[dockerID] = runtimeID
         appendEvent(resourceID: dockerID.rawValue, action: .create, attributes: spec.labels)
+        if let containerCreateDidComplete {
+            try containerCreateDidComplete(snapshot)
+        }
         return snapshot
     }
 

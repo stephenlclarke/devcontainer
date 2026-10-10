@@ -1,0 +1,1174 @@
+{
+  "archiveSHA256": "6f58d9f3390f33c9db3fecbc233ef46d62397a8b7223149b7e0555756fc0edc9",
+  "asset": "foundation-stock-darwin-arm64-opt.tar.gz",
+  "compiledOutputBEP": {
+    "eventsSHA256": "3757143a43ed911608db63220d47adc0af380b6c83bda4851ca05b2b167496cb",
+    "files": {
+      "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_swift_configuration_toml/ConfigurationTOML.swiftdoc": {
+        "sha256": "156cc91e502fd1e26da5b052b167cb6ac80dbea2c8111fe8c6a9486e9aed3c7c",
+        "size": 4876
+      },
+      "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_swift_configuration_toml/ConfigurationTOML.swiftmodule": {
+        "sha256": "d5c3aee3e54bedf3a79d623a94ec2439c1d19ddc0ade991bf76cb73d6457e357",
+        "size": 47412
+      },
+      "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_swift_configuration_toml/libConfigurationTOML.rspm.__impl.a": {
+        "sha256": "0f3814625b6e6cdc4cc768b668b85e8abebc09a9cf9314a444d45cf19fe4099c",
+        "size": 157560
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_async_http_client/AsyncHTTPClient.swiftdoc": {
+        "sha256": "0f5f3ca3634ed8b8c83f6212db89658cd417cff8301fe0c414ce56d1d0f75979",
+        "size": 122192
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_async_http_client/AsyncHTTPClient.swiftmodule": {
+        "sha256": "93b84dec53d375363fa7713bdb912a6f40f9cee1aef6af812f48c473995190d9",
+        "size": 987748
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_async_http_client/libAsyncHTTPClient.rspm.__impl.a": {
+        "sha256": "ee8f17be9ba3b05072349a50979f487fb17c49f57efafd98c7d69bf910f2831e",
+        "size": 4319000
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_async_http_client/libCAsyncHTTPClient.rspm_c.lo": {
+        "sha256": "b7f1dfbe12bd5d87afc4961beef6f72a6aa133e587d5506ceee9bb34472c16c1",
+        "size": 984
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_2/GRPCCore.swiftdoc": {
+        "sha256": "f1c80c8833f9eb14e3ad770aefa293b265d1145051f66dd46c8d42c8d0aefd04",
+        "size": 226632
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_2/GRPCCore.swiftmodule": {
+        "sha256": "8f69d126c9383cae060f9177fc2f06d473a747609fab8fb262044539febbf17f",
+        "size": 1678288
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_2/libGRPCCore.rspm.__impl.a": {
+        "sha256": "98bc2d6fb469517cd62cf44662302b568a74492ee5b58017844341f14da59e74",
+        "size": 3049008
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportCore.swiftdoc": {
+        "sha256": "a8f2389041b7150a78c3e34d00061cd61c958861abd35a1e819f2ece0e0fa2e1",
+        "size": 90800
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportCore.swiftmodule": {
+        "sha256": "09d113bf10784a6d12e4cd3e9f614401681b132aef7ace8f8e5b3fd95613b47f",
+        "size": 770220
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2.swiftdoc": {
+        "sha256": "839aed63e4a1d93014ed5123cd03ef219cff6b7595ea6f76f707a86c2d3ae501",
+        "size": 408
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2.swiftmodule": {
+        "sha256": "b0756d7fd6b3bb7de5032acb416fc01ecefc61308f586675ab208d5b3b0ea545",
+        "size": 18764
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2Posix.swiftdoc": {
+        "sha256": "6f6e94f2a23134cafa625c9e99e700bb094a3db46a64a41c945aa946a8424102",
+        "size": 35700
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2Posix.swiftmodule": {
+        "sha256": "4ba6b3fa0768d6350f99b0751597e3c0132e38edd84b8443870202e51d7af254",
+        "size": 139100
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2TransportServices.swiftdoc": {
+        "sha256": "d0669d3596e702ee16a025454aff325b9ac1bfbd0a811a4ca1a0d28fc7f6bd6d",
+        "size": 25120
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/GRPCNIOTransportHTTP2TransportServices.swiftmodule": {
+        "sha256": "c0e66eb3a123d89199334dce32d282cb60177893f1db3ef13df3dce4d7ca882d",
+        "size": 111636
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/libCGRPCNIOTransportZlib.rspm_c.lo": {
+        "sha256": "ff6711ea730771b91a789654a22e29d1863bacb5cccfb8bbd858fd87d0a43323",
+        "size": 840
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/libGRPCNIOTransportCore.rspm.__impl.a": {
+        "sha256": "b556f7c56c314081ecf90376e1046c0e9ba55c643cf588e98966b214aa3b02ba",
+        "size": 4468784
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/libGRPCNIOTransportHTTP2.rspm.__impl.a": {
+        "sha256": "d65c46302136bc320f0ce20ed9f6d0f3affc2da8e8d61ba6da1089c8456c9d05",
+        "size": 4488
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/libGRPCNIOTransportHTTP2Posix.rspm.__impl.a": {
+        "sha256": "969118396ddb6febddd73c5e3aa85538160e0cb4ca2edb351a4561c22f838475",
+        "size": 602936
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_nio_transport/libGRPCNIOTransportHTTP2TransportServices.rspm.__impl.a": {
+        "sha256": "0819afb244c134730960b9f7944ce8a75c7d4b95f39d8a507bfcefc4c4e5b115",
+        "size": 272688
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_protobuf/GRPCProtobuf.swiftdoc": {
+        "sha256": "0cda9a49b6593db01b8e80d912b30ab543274e2f97b0bc22fea58b15be499b1b",
+        "size": 40760
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_protobuf/GRPCProtobuf.swiftmodule": {
+        "sha256": "f00e00dc33e8b6021fdb5d2b5ca5cd2bacfd1c4f1cbe7ee20ede8ed29cc15455",
+        "size": 279956
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_grpc_swift_protobuf/libGRPCProtobuf.rspm.__impl.a": {
+        "sha256": "94e53cf212e43adfc44fbeb099b85fb067b350b7dc1bd327f505164350bb10d4",
+        "size": 767312
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_algorithms/Algorithms.swiftdoc": {
+        "sha256": "786b992320c6a35c693daad0e5c0cf7b2c89a70ece1cecf1174cff333a9cd81b",
+        "size": 151808
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_algorithms/Algorithms.swiftmodule": {
+        "sha256": "a127aed2a102c3d0fc37ec16601b1f4f5e61ff7f4c24a557737154f9a68fc95a",
+        "size": 1351280
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_algorithms/libAlgorithms.rspm.__impl.a": {
+        "sha256": "5d7d2947fb54b07da1934536b115b6ef55da81c170d33b9bc784fd16eb3d4819",
+        "size": 1984832
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_asn1/SwiftASN1.swiftdoc": {
+        "sha256": "f8b2ebb4e1a13f120bc20ae7a8beacfc67868536ddfdbfc8d73936b98eec1efb",
+        "size": 105592
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_asn1/SwiftASN1.swiftmodule": {
+        "sha256": "2a013eaad1a034fade0fb7c8bd923517bb7acdbd0b410d64a819b270bc8e68cf",
+        "size": 1708424
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_asn1/libSwiftASN1.rspm.__impl.a": {
+        "sha256": "50b78e526b5e830842f64cdef64e944ad01a411ecb9dd73b5bf077f9dae64150",
+        "size": 1217096
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_async_algorithms/AsyncAlgorithms.swiftdoc": {
+        "sha256": "a5e01ae2fb4c112e60321132740c9bd89d5758ca626f86df07e3091926af8281",
+        "size": 114140
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_async_algorithms/AsyncAlgorithms.swiftmodule": {
+        "sha256": "c2dd6a2f41d2d57b6c72674221d5a47bc3b07b37c7c141bc07b6c49f2147116a",
+        "size": 1061340
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_async_algorithms/libAsyncAlgorithms.rspm.__impl.a": {
+        "sha256": "e968e0f672a1f11b6d3bb0a048fa91593ba5f7fbecfd669df1d9ca1d5ab044ae",
+        "size": 3464912
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_atomics/Atomics.swiftdoc": {
+        "sha256": "c81e07656b6c9ae9ddc85335147a90a0a5bcae8d7d97d3bc2dc980fabe73a009",
+        "size": 118640
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_atomics/Atomics.swiftmodule": {
+        "sha256": "1c800701a5dd11ab32702842147d80ba3dad2b5b37b7a6350ff23a59cdf46b55",
+        "size": 1849716
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_atomics/libAtomics.rspm.__impl.a": {
+        "sha256": "a82b294b181d76fd3421665031d8fd3b681f520b79bd1c0fe0a0103f4334a155",
+        "size": 474088
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_atomics/lib_AtomicsShims.rspm_c.lo": {
+        "sha256": "e57597bb20e1ae1080acf44229c53b69c59077d14af88793ae4845554967323f",
+        "size": 920
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/X509.swiftdoc": {
+        "sha256": "a1fd2fa58dafa5221804330c299f03c5654736ccfd5d8fbc7efda2559e86453a",
+        "size": 195256
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/X509.swiftmodule": {
+        "sha256": "f0971b0ecf941796fd888ac76d155c83f2a2f8fdb87799919cbeeabd0db868a3",
+        "size": 3754160
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/_CertificateInternals.swiftdoc": {
+        "sha256": "51a1fc4bc5901f7acc17b7e07e9cdf6dbb7471c49602f86ece700b48fdaadb9c",
+        "size": 1028
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/_CertificateInternals.swiftmodule": {
+        "sha256": "62a2cfa5bff44d968ba724755ebac085387ffd3d89e4bff13877a4d2524d1caa",
+        "size": 119984
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/libX509.rspm.__impl.a": {
+        "sha256": "6d9326669eada1d796d2a032e609b3f15b9ec10972486e4bc54dfc5d22fafe5d",
+        "size": 5638824
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_certificates/lib_CertificateInternals.rspm.__impl.a": {
+        "sha256": "5d9c5197c2bdaf37f1b637927555717cf5c7117484fafbe66192c9fb4532898d",
+        "size": 97864
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/BitCollections.swiftdoc": {
+        "sha256": "9159ab7fdf2c96e461ab33c7ffb8b9cab54f35763268f1574cd22ddc98557605",
+        "size": 162488
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/BitCollections.swiftmodule": {
+        "sha256": "cf2efdfda6bf6421d355a3ab3e1ddd5c163d3626c94ad2bbaed0721cea5ff2b8",
+        "size": 416064
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/Collections.swiftdoc": {
+        "sha256": "f5d8bff0e0c0959cbff36ffee816007cb94b7a65f0603f4e9bf6d3d1615a72df",
+        "size": 8156
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/Collections.swiftmodule": {
+        "sha256": "7b08c408d1221eee7aa82e1ecb117a017d3f6b6b2b0ba680391aa3de6cc12929",
+        "size": 24304
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/ContainersPreview.swiftdoc": {
+        "sha256": "82f8e564e956fccd81d70714673a26a7c6fe9b4073b21760a01a53969d7c2c35",
+        "size": 3184
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/ContainersPreview.swiftmodule": {
+        "sha256": "c16d1eeb7b4a6b5d950fbabe90df03bab3e3bf6f9696af32b4df163b48bfa997",
+        "size": 91944
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/DequeModule.swiftdoc": {
+        "sha256": "a225e4fbfb5826a9702bae9c76a5842e69b1e2e63b9297fe469f072864c7e12d",
+        "size": 181700
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/DequeModule.swiftmodule": {
+        "sha256": "9688e0a0924fc81f3cadb5f6af7a12ff6c6175ff963f9462cff40747956e7f67",
+        "size": 954312
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/HashTreeCollections.swiftdoc": {
+        "sha256": "3dec6c2b2b0b8f1318aad2cdf39d108cac3b178ec9b56c24342112db3c51781e",
+        "size": 182568
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/HashTreeCollections.swiftmodule": {
+        "sha256": "d452234c7445d183b80ad4409d14eaa58e1991d5ae5147c196aa24482b2ef51a",
+        "size": 1255656
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/HeapModule.swiftdoc": {
+        "sha256": "4ede621a1f9719155f9d85444a54d3bf83ebb8fb929561fb2e09c17f62427eba",
+        "size": 16924
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/HeapModule.swiftmodule": {
+        "sha256": "402233be7a3e7f13d4624c21d911299828f401738d06275db848db4c9119122c",
+        "size": 138808
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/InternalCollectionsUtilities.swiftdoc": {
+        "sha256": "41d40b6b628c48068d6ca4628820ac25c157a6eb661aebefae5a8b986da335c1",
+        "size": 18480
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/InternalCollectionsUtilities.swiftmodule": {
+        "sha256": "3c3456c2fb796137449af971ff8d55ae9be3fbca00ca20612baad8d3e4476330",
+        "size": 257864
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/OrderedCollections.swiftdoc": {
+        "sha256": "52bb91117c2ffcc96fde53ebce47c7f9ea1aec30f168cd56d657ac348813c435",
+        "size": 338956
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/OrderedCollections.swiftmodule": {
+        "sha256": "41091a0d637e4c3a9f27f5e4da83df5ac95d530f37b57cde7c71f457ffc02afb",
+        "size": 1029460
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/_RopeModule.swiftdoc": {
+        "sha256": "26074fd6479736c5bd8ce64789913a9b83bae7fc03da88e8fe9d49433a04061e",
+        "size": 14240
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/_RopeModule.swiftmodule": {
+        "sha256": "51252113468c94cc98a36daa4bd61fbe2a616e0a9e3138f2fe685c75ae10b0b1",
+        "size": 1047652
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libBitCollections.rspm.__impl.a": {
+        "sha256": "648368d70a46a358e3376ac4ce3ba88dcf726075b0d751df8a80cb84b430320a",
+        "size": 561536
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libCollections.rspm.__impl.a": {
+        "sha256": "0c85c2ccedd49eaed65280597685a49e6d9a8b226428ac3a9c7c100da863deeb",
+        "size": 9992
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libContainersPreview.rspm.__impl.a": {
+        "sha256": "2245335023c4ebe0e73c6dd8ead352420e88aadde578fa2fc757aac2d8e91ba8",
+        "size": 83584
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libDequeModule.rspm.__impl.a": {
+        "sha256": "8a883de91ee084866d4fc068c1994a8262440087f0f69e24f33bd31f07383ebe",
+        "size": 464448
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libHashTreeCollections.rspm.__impl.a": {
+        "sha256": "30e2c13ac279747501cfbc591f463565eebd05e522556fcb01d2bb775be4ea4d",
+        "size": 1229632
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libHeapModule.rspm.__impl.a": {
+        "sha256": "a080676f0fb5f8c64af83fe27569ca9ac76f436160d83f8fdd32c7c182ce1215",
+        "size": 66952
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libInternalCollectionsUtilities.rspm.__impl.a": {
+        "sha256": "128fd0e33f3852f37f5b3de96e8fa4e8737b671ab4103652d6e31c13dd5f3188",
+        "size": 170256
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/libOrderedCollections.rspm.__impl.a": {
+        "sha256": "53f9c042ca026dea065fc0af2471fc45ebbae4670e3ade436c89f1cd385ad702",
+        "size": 906056
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_collections/lib_RopeModule.rspm.__impl.a": {
+        "sha256": "8d37d5c8f5a40c9b4686bc3c721929ded1a29d614b39d00f56183770dbce6ba8",
+        "size": 1740200
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_configuration/Configuration.swiftdoc": {
+        "sha256": "2cbddeb4815c3ccc93ca9c89926a628d6fe2321c0a32fdf088bd56db491b0136",
+        "size": 428872
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_configuration/Configuration.swiftmodule": {
+        "sha256": "125303c4142228424c658fcff2cb0c790c38309a79b2b3ef3d2791fd73d28482",
+        "size": 676600
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_configuration/libConfiguration.rspm.__impl.a": {
+        "sha256": "6f2939ba3fac5a8c32f800b6d059b4a5ab17adb614c1a5a1a00ebfd5939d95f6",
+        "size": 2223120
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/Crypto.swiftdoc": {
+        "sha256": "7f1c7f4a4ce7fddff89d3dec85f1fc26047e015af5c235e8d4d30d8f47ce87e5",
+        "size": 1176
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/Crypto.swiftmodule": {
+        "sha256": "62a761966220567b8f4727fb2e01fa670630b7283a2fc15c90993d04055649aa",
+        "size": 36588
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/CryptoBoringWrapper.swiftdoc": {
+        "sha256": "4ea0cf279a3e5f932e499a60eda5b0255e1658bc95d6ef8c497455ff3260f840",
+        "size": 9452
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/CryptoBoringWrapper.swiftmodule": {
+        "sha256": "d94e2a8fa7295972e607319920718e5d565c877039f57a5a9ba3024a07c0bf16",
+        "size": 163028
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/CryptoExtras.swiftdoc": {
+        "sha256": "636ee4027b4ed5cfc4295e2bcaa9206c6fec91f07eeb1f9c8ddad6d8def3dfbb",
+        "size": 109848
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/CryptoExtras.swiftmodule": {
+        "sha256": "df13ea6b1f4c1bcba6fd600b31af77f0e51854f6f13e25eee895975172894825",
+        "size": 600272
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/_CryptoExtras.swiftdoc": {
+        "sha256": "078de9756b3b88ddb5c6d19cc40811229d20fa53d001543732fa9b8b9a60c7f8",
+        "size": 400
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/_CryptoExtras.swiftmodule": {
+        "sha256": "68a6e76b9c30eb52706957462651eda1ad6ce3d032be4b29f0702fd05a94a52d",
+        "size": 18660
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCCryptoBoringSSL.rspm_assembly.lo": {
+        "sha256": "5611c0947ad18548a72d897bbc22a7320620ed89c4241e26b3ac45b3e23b6e93",
+        "size": 118912
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCCryptoBoringSSL.rspm_cxx.lo": {
+        "sha256": "14358469c336c531904620369fa0ee77bdd10af85929436f7f7eb79a61b8df82",
+        "size": 2760232
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCCryptoBoringSSLShims.rspm_c.lo": {
+        "sha256": "5d4bc23aabdb98a3def00d33a3b72455202b63489331b1ee32e9d36e11521c32",
+        "size": 6544
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCrypto.rspm.__impl.a": {
+        "sha256": "85ec7d62b920618a922935569a0403ea6930957745c8263be702f54e3995398a",
+        "size": 383328
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCryptoBoringWrapper.rspm.__impl.a": {
+        "sha256": "85ad1c7ac1d5d50804515921defbf30f87cf72dc7afd6ee910bcdd6ae04e6506",
+        "size": 255208
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/libCryptoExtras.rspm.__impl.a": {
+        "sha256": "97c89a8be7effdc6edad2bf1515373036a82ddb77b2f1dbe18540de1761b82b3",
+        "size": 1913152
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_crypto/lib_CryptoExtras.rspm.__impl.a": {
+        "sha256": "17caabc2ffcb56537c86cafeb86b14b1f87504c75e28549664a87962e7f20e7e",
+        "size": 4192
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/Instrumentation.swiftdoc": {
+        "sha256": "cbcd44a73e394f0298fbb47d19bd8bacdeb2dc1fce7ca049ddd8591a86cc22e0",
+        "size": 13660
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/Instrumentation.swiftmodule": {
+        "sha256": "8d7099c851b262c24dc79a0b51c3ae07855aaec7c7b9a9749a4dd7dfa05a25bc",
+        "size": 44188
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/Tracing.swiftdoc": {
+        "sha256": "8823e9e1ab44bb78cedf191270204fb63c7253b8a7e7b20f87033eeab03cec00",
+        "size": 108224
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/Tracing.swiftmodule": {
+        "sha256": "f253691effb824beb040d4613810311b6045f77efa876a66f975bb98d82a9b0b",
+        "size": 215124
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/libInstrumentation.rspm.__impl.a": {
+        "sha256": "a3b453c5402b8694359535a77030c27df5e592ca65e18cb69883c8ca9f512812",
+        "size": 53552
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_distributed_tracing/libTracing.rspm.__impl.a": {
+        "sha256": "969c7004e6a642cadb823695ba1d093eed96ab3ec4c331818e1a2a03b8669cc5",
+        "size": 329712
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_log/Logging.swiftdoc": {
+        "sha256": "a754b794589384f6c1b1fd558efff11c583a9eaacb2997b98aac1e31128dbc3d",
+        "size": 103324
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_log/Logging.swiftmodule": {
+        "sha256": "80ca6235692daf27e54041febe2e476eb4be96e42ec96f11322a066f8e1c259e",
+        "size": 381132
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_log/libLogging.rspm.__impl.a": {
+        "sha256": "56a335bc5c632232bce10ee2afd8dbf29bd7441e71fd12bdb312187dcdba287a",
+        "size": 466312
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/CoreMetrics.swiftdoc": {
+        "sha256": "442b87ae377a7cbd70f8b233767e0f0c56606cb146ae580fb28d741c235cc89c",
+        "size": 67676
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/CoreMetrics.swiftmodule": {
+        "sha256": "dc190d108929703e4c8c575094405e6e24123146b53c0ad576c3c1f7dd6e3686",
+        "size": 225056
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/Metrics.swiftdoc": {
+        "sha256": "f937542225b1e6189e79fd12cec0c4e05861012cc6ef47da69dacd77d18b0bd6",
+        "size": 4028
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/Metrics.swiftmodule": {
+        "sha256": "fc76802bf9c499d16e079f304d5c2edbbe2859ff7e28ca248ad9dc8025cbb28d",
+        "size": 60788
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/libCoreMetrics.rspm.__impl.a": {
+        "sha256": "9f9006f4f65469408e766872b29b3b4c833caab530a106f26fb33e476b061fc0",
+        "size": 247336
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_metrics/libMetrics.rspm.__impl.a": {
+        "sha256": "a4e2b14c280a2de0d2c12fb4902f486a1e072fdb4a5e97737a5629ca522b085d",
+        "size": 18152
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIO.swiftdoc": {
+        "sha256": "05ad25fffde6f9582f55035824ec6e72bdf4f4cf3e8ac23572093093e8a90361",
+        "size": 388
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIO.swiftmodule": {
+        "sha256": "6da65e8a257b8f893cf79c90ac658aafed4bde2cb55f46e5cea7c2df5fbd4946",
+        "size": 18672
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOConcurrencyHelpers.swiftdoc": {
+        "sha256": "2f1e307bfcabf66cc87b03987844e41e2da8ce277dc9cf973c79e3ea66fde7bf",
+        "size": 33568
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOConcurrencyHelpers.swiftmodule": {
+        "sha256": "d0d6f7eadc02aa36573babc34a96286dc69095137c5a9c052eb29a8194429935",
+        "size": 477876
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOCore.swiftdoc": {
+        "sha256": "c4b5e920c46979d6868833283d56095b7a596160fa5c9a7d646a618599033fd9",
+        "size": 741252
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOCore.swiftmodule": {
+        "sha256": "26c2f0a6c63f0a28cb154423bb95f4e6a8b5dc4be0689658106b8dc87e97ce0e",
+        "size": 3476000
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOEmbedded.swiftdoc": {
+        "sha256": "31356e78364fab436a6a7455c9f411779d833c50f238a9b54d99a2fd21df7265",
+        "size": 62460
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOEmbedded.swiftmodule": {
+        "sha256": "d9a5d4c34a9b326dbc9ef6a12b1a0e1edc21e5d0297b96039cc78e2ebc11261d",
+        "size": 355616
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFileSystem.swiftdoc": {
+        "sha256": "8fa2983adf60305413d380ea492e2846d987bbde841c6ad233772fa75110862b",
+        "size": 400
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFileSystem.swiftmodule": {
+        "sha256": "a1f8c85f42589bf0dd86576444f522ad20d97588f3b671688ce1362ca097b0ca",
+        "size": 18664
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFoundationCompat.swiftdoc": {
+        "sha256": "4799df9d815236a431c3a811a9d109770ec761842c2fc6d30c81a13256b1f50b",
+        "size": 2512
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFoundationCompat.swiftmodule": {
+        "sha256": "e3d71401be25aadb0ea3c87e1b3436c938e3d95c6bee83cccfa46fae10a68fa3",
+        "size": 66912
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFoundationEssentialsCompat.swiftdoc": {
+        "sha256": "66099d8cd60ee3f4af567ddbefbd116481acc70d39c4a9b39874f092852892d3",
+        "size": 20928
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOFoundationEssentialsCompat.swiftmodule": {
+        "sha256": "4eeff7e0d721fd641a277afed2ccee57c5fea1ca54f74d6c6462f5164141f1c3",
+        "size": 114912
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOHTTP1.swiftdoc": {
+        "sha256": "9bbd0c3759134e08cf914d84bda569ffc474ae05e067aba9e36ca7f310c36b6f",
+        "size": 113072
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOHTTP1.swiftmodule": {
+        "sha256": "40ab05cdcbde77cb1e10fdf9851aeec579a67e689dd5a678b490fa580270262a",
+        "size": 658540
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOPosix.swiftdoc": {
+        "sha256": "da4b0867771ec5b8c86608271a805c213bcb8b44f4cbe4437562a2304808d75b",
+        "size": 156304
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOPosix.swiftmodule": {
+        "sha256": "5cbfd5acf0aa7c45f5f8be68315bc4f84388199c2394a0a395e1229458b9640d",
+        "size": 944860
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOTLS.swiftdoc": {
+        "sha256": "3c3cfc911101b559159898759e195aa0da36c2645092706dafd67778d1ee08b7",
+        "size": 10340
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOTLS.swiftmodule": {
+        "sha256": "c95116641da4413a9693baad4c43113e0309849d82f0d235e603b165c8a68ecc",
+        "size": 95052
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOWebSocket.swiftdoc": {
+        "sha256": "3aa0ec4ec5daa3996fc5e5d30693b3a724ab65a29e3abba24f5c77dcafe160c4",
+        "size": 43468
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/NIOWebSocket.swiftmodule": {
+        "sha256": "93e2d4d736e2021783503d07486b2a90cfc6b59f89b3eba8b2af875f99b37d1e",
+        "size": 293416
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIOBase64.swiftdoc": {
+        "sha256": "fad34c5fead30cf94c38610ddc30202a067006b6b83cc7c46d8202c3dc05a2a5",
+        "size": 1532
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIOBase64.swiftmodule": {
+        "sha256": "f1ad0eeddd9c09c50474c652458ce47efec6c142955cc594f2f040d2e8ee13bc",
+        "size": 93824
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIODataStructures.swiftdoc": {
+        "sha256": "81de8260fb02c963c36103cbcd72129c580985dd705c655c5901a25d359cfc1f",
+        "size": 1020
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIODataStructures.swiftmodule": {
+        "sha256": "a9b4de063b1a1de67c9e0dda8cba2228a3f5f5bfcc089d5c9b8bac68442a4943",
+        "size": 216492
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIOFileSystem.swiftdoc": {
+        "sha256": "fd22b7edc179c2b829831fe8c1f32a1f798f117c231a00ff49fa9b77c7967459",
+        "size": 152780
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/_NIOFileSystem.swiftmodule": {
+        "sha256": "e72ce7535e6007519500ce9406f5a63dc8f62a9bfee71f82e8c131f3c2a65fe2",
+        "size": 638116
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOAtomics.rspm_c.lo": {
+        "sha256": "f9a56423d88ae6ef8accce97dbdaabd6d3c9316613776011ad5cf64714563cef",
+        "size": 60496
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIODarwin.rspm_c.lo": {
+        "sha256": "55e2154b9cee9bf7a75c13598dcda69f50c2c2c9631f79ffb4e011a2b5598861",
+        "size": 3056
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOFreeBSD.rspm_c.lo": {
+        "sha256": "f6e525c21e66bdeb284829bfbf2b883edcee93da62e3c87f1706f85ce34300b6",
+        "size": 824
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOLLHTTP.rspm_c.lo": {
+        "sha256": "8016135165f219a6b57041dfcf3e0ce383b65622a507d07500ee0c57c677e6f1",
+        "size": 81440
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOLinux.rspm_c.lo": {
+        "sha256": "14a7eec68973dc473f17645069c36d2cb27f6c557ecb98ce8f7b56b5b08d1aae",
+        "size": 1544
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOOpenBSD.rspm_c.lo": {
+        "sha256": "7f4efbd5790d476586eb1c006981800c45794c92d1217531eabd801325838bfd",
+        "size": 824
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOPosix.rspm_c.lo": {
+        "sha256": "0fe144950bbdee6067ca055ada86a1d9a3b73e339f8eb208c3c00252448c9276",
+        "size": 1136
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOSHA1.rspm_c.lo": {
+        "sha256": "fbce7fe3a5d6d5d110567a7f061c65f75656cc912c30e052757da7b332c1c078",
+        "size": 3272
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOWASI.rspm_c.lo": {
+        "sha256": "86c574d825ad9c43bcd937f25cb28d7d9a4464def5d563e7d4a038a6d80b47f4",
+        "size": 512
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libCNIOWindows.rspm_c.lo": {
+        "sha256": "80cc4bb2bb6317868214349f048732a2b222fcae12ab001fe3741feb6fa2a568",
+        "size": 920
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIO.rspm.__impl.a": {
+        "sha256": "de0979757e41236b64f8b4d24b366cea11c0efb2d1d1d1222823280789c2acc4",
+        "size": 3720
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOConcurrencyHelpers.rspm.__impl.a": {
+        "sha256": "e6c4849185985fad2979c0337c789d183e34d685dd8edd229b17debb493fe61b",
+        "size": 431904
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOCore.rspm.__impl.a": {
+        "sha256": "9866d3162d8c3fa1e9c03f7a62ef0cf5b2368dacee4162e7b4607e09d6cc95e6",
+        "size": 3741344
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOEmbedded.rspm.__impl.a": {
+        "sha256": "bfecc7fcf7077c279572984db80667b0a2e20948883df9aba8f91afa52f6c89b",
+        "size": 654896
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOFileSystem.rspm.__impl.a": {
+        "sha256": "69c68b7935ecde40cd6777cbf10d037fce7617201ef5b06dc09cef6a4c05bb1b",
+        "size": 3896
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOFoundationCompat.rspm.__impl.a": {
+        "sha256": "bec250229563d96d43d4a2ddb4c5a744cd69e4b45f225ac0f67e1a17136edeb2",
+        "size": 24144
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOFoundationEssentialsCompat.rspm.__impl.a": {
+        "sha256": "26cf00beaa0d04ea69f9b72694189d32290275bc06fdb41927544234bcb97806",
+        "size": 82024
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOHTTP1.rspm.__impl.a": {
+        "sha256": "bf01b4fe1e874c5cdab444f01f113bf1cbc461dc18b30a1959f086613d4f72d6",
+        "size": 1587336
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOPosix.rspm.__impl.a": {
+        "sha256": "b7759671d17bc58924919ad1f00c883b1a0422f060617a2f09863c75a65bd369",
+        "size": 3402368
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOTLS.rspm.__impl.a": {
+        "sha256": "e9e49c7c37bfac36066143cbbb63d4e94f93a26c1505ec2318e0a1da10ad8b46",
+        "size": 193648
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/libNIOWebSocket.rspm.__impl.a": {
+        "sha256": "156b01acf4938b60c23617746894780b2cfc5d6d5ae9b6211c284d2405e37aa1",
+        "size": 400032
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/lib_NIOBase64.rspm.__impl.a": {
+        "sha256": "444ca5bada429c87c615e3481bbb97deed9648fef641d8e08dfaa53fc482acfb",
+        "size": 28016
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/lib_NIODataStructures.rspm.__impl.a": {
+        "sha256": "10e2b9e15715646f158987052c6b9ab5151be9e8d574182c7db4739445e15bbb",
+        "size": 161232
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio/lib_NIOFileSystem.rspm.__impl.a": {
+        "sha256": "938bd3ffc25e4e34e1e64725efab48ae293af530ca6da5fa5fa0b1b6fe1507a2",
+        "size": 2676952
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOCertificateReloading.swiftdoc": {
+        "sha256": "513562b625bc0665df7249b38c52042b00328b5e1abc963d8c0f3c5a40e5e074",
+        "size": 33560
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOCertificateReloading.swiftmodule": {
+        "sha256": "93ec6a66b066b04e0a78fe3dbd261f62b067041826ab3f771133899cf5f48b01",
+        "size": 102680
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOExtras.swiftdoc": {
+        "sha256": "411238c9148006481f495a229ae7889f5160a98d0bc77158acff49ec3a362942",
+        "size": 69440
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOExtras.swiftmodule": {
+        "sha256": "581654816424487c397b805b141d042a155a57aa0fa7759cd16fa2ae84bf8644",
+        "size": 409992
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOHTTPCompression.swiftdoc": {
+        "sha256": "c7dfc59088a657dfa9f15a95362f7e7ebb3130db9d63b99aec81ce1654a5dcdd",
+        "size": 17876
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOHTTPCompression.swiftmodule": {
+        "sha256": "fb78ffee2d24667a50bfa584f67978c39991676e3ebbbdccefb23eab4955dc05",
+        "size": 173328
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOSOCKS.swiftdoc": {
+        "sha256": "1b6f93ecbccd058622dda37395d1a72b61705a5eb2e09f3a21876b57e8934660",
+        "size": 18908
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/NIOSOCKS.swiftmodule": {
+        "sha256": "4920cc3a1ab1b9dc904ef94303b7575b2d4def1abccb63f40bf47b05728b2346",
+        "size": 210688
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/libCNIOExtrasZlib.rspm_c.lo": {
+        "sha256": "c4e343ea1a8b64a450f74d1b30defad3b0a669410991936e8400f40629f79600",
+        "size": 74200
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/libNIOCertificateReloading.rspm.__impl.a": {
+        "sha256": "990fbd2103b93f0dc8f21a9cd8eb3a7a4d82f7dde2b32f254ef5a20185d60f0c",
+        "size": 407104
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/libNIOExtras.rspm.__impl.a": {
+        "sha256": "33f365acd4c05968e131e7a59f770d802bed6fef724935fbdd47fc9c5b257b92",
+        "size": 933192
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/libNIOHTTPCompression.rspm.__impl.a": {
+        "sha256": "2456019ab9c9e6e28a8161cdde89a2eeef2a50eee5697573f3496e6767a49129",
+        "size": 378232
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_extras/libNIOSOCKS.rspm.__impl.a": {
+        "sha256": "e10bf986ec11ccbbb776e2eb57d4dab2b59ba273a0ba345a97f49dbcc38cdcf5",
+        "size": 349792
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/NIOHPACK.swiftdoc": {
+        "sha256": "a6a9a547dae5388aa00c3f14716648c0eec83b3bd448dd25760db6e8caf2d73f",
+        "size": 40644
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/NIOHPACK.swiftmodule": {
+        "sha256": "21595b29ac505f6650f8be8d8cf8e45600c153a78dfa47df7dfc9eabbd429f46",
+        "size": 563176
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/NIOHTTP2.swiftdoc": {
+        "sha256": "85b335aa659f0dccc4fa63fd75740843d8f81c7d7d02df68f582ad42eea91e40",
+        "size": 180948
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/NIOHTTP2.swiftmodule": {
+        "sha256": "9523286e36ebc28e08395df52b29f75995609a964e010ee6ebafde6a5d1718fd",
+        "size": 1391432
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/libNIOHPACK.rspm.__impl.a": {
+        "sha256": "1fc882bc2ddb9ba313b842713541d1be787b06192928ae2e1f310363681de849",
+        "size": 538752
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_http2/libNIOHTTP2.rspm.__impl.a": {
+        "sha256": "2ad4838b64897298fd1967c5a6a89385bd4a4e067a08bbf84c74e9e393b7e8dc",
+        "size": 3589112
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/NIOSSL.swiftdoc": {
+        "sha256": "fe7371a2d959392183af2c3c497445c7d8b59e2fb544dfb2a7fb250084fbba2c",
+        "size": 118812
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/NIOSSL.swiftmodule": {
+        "sha256": "bd8373fe646690819ff4231055e88c24e997b0dff9ac560acf8b6b8290658e3e",
+        "size": 791340
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libCNIOBoringSSL.rspm_assembly.lo": {
+        "sha256": "03aafbfd877bd759330dfb0c18cd272274f4253b1214adf8216b04f6baf803d7",
+        "size": 118624
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libCNIOBoringSSL.rspm_cxx.lo": {
+        "sha256": "d1f7b8bc75e559be14e42457f04a4a2748c995485909fb7d97f442895670b01e",
+        "size": 3389248
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libCNIOBoringSSLShims.rspm_c.lo": {
+        "sha256": "e14a401a770dcdc532b38d7b52f3c88563ecd8ba8b65504b3392b542c48fdd94",
+        "size": 2056
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_ssl/libNIOSSL.rspm.__impl.a": {
+        "sha256": "20ac35f30fada123780a60d9d8652ebe040f3ca4c7abf3e592fde45906f5c70b",
+        "size": 1669648
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_transport_services/NIOTransportServices.swiftdoc": {
+        "sha256": "d706d512ca187d38b52b4eb327cd56ea1600e9a3d79dad4b380eb87ea9052a1e",
+        "size": 87152
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_transport_services/NIOTransportServices.swiftmodule": {
+        "sha256": "3d1a9114323b09234c8ecfb3287db3375f13f6208ca1c29189e2bf0c9711a621",
+        "size": 381624
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_nio_transport_services/libNIOTransportServices.rspm.__impl.a": {
+        "sha256": "9120757ead3d0d060d58092b2e6a811efd3c28109993bf83142a33775ab43d26",
+        "size": 1751208
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_numerics/RealModule.swiftdoc": {
+        "sha256": "c82c670cb4f62581bd48744c22666ec06a57ddee71a77e98fa4a7b371c6a941e",
+        "size": 40312
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_numerics/RealModule.swiftmodule": {
+        "sha256": "fb964e2f65c5513ea457144ea743fb303a89c976edb71882091c14dbed8675ad",
+        "size": 158948
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_numerics/libRealModule.rspm.__impl.a": {
+        "sha256": "fda73a8ea12589270da102e827c5c5ff74cde84504304d5bda0a70c32d821250",
+        "size": 104048
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_numerics/lib_NumericsShims.rspm_c.lo": {
+        "sha256": "e8a9165c4f1b38ccf6ce679b05822c6403bb9e07030661e525a4a719f8605bb8",
+        "size": 512
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_protobuf/SwiftProtobuf.swiftdoc": {
+        "sha256": "6fc01c75456a016d512a8915bc115c1ebd51b815437a042bcad7ae1c026dc9c7",
+        "size": 400680
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_protobuf/SwiftProtobuf.swiftmodule": {
+        "sha256": "115e015e372b103961b0fc33cf5847c40d8b9f7366ba8d16cba1245a637535d1",
+        "size": 2548288
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_protobuf/libSwiftProtobuf.rspm.__impl.a": {
+        "sha256": "2a52bb9ff53b7af0fc3544f07b881be4a4f312994e77eefc8500242584035139",
+        "size": 5634824
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_context/ServiceContextModule.swiftdoc": {
+        "sha256": "026f5d483bd3b5012c12a972d3ace3f292bb8937b6aa53c5b9efaf9ecf9ef8c3",
+        "size": 17500
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_context/ServiceContextModule.swiftmodule": {
+        "sha256": "33ac823ccf384077f4f31e79302ae3b626992a6a8facc9547b0ea39af603728d",
+        "size": 41232
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_context/libServiceContextModule.rspm.__impl.a": {
+        "sha256": "bc47b836f9befaaaf0389f40c8b50ef0d17d78adedbd451ec433d9b75000107f",
+        "size": 55760
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/ConcurrencyHelpers.swiftdoc": {
+        "sha256": "a63eb7d6feb59431d50afee4519a16f34614063c1fae274ca251ad9237df5fe9",
+        "size": 3124
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/ConcurrencyHelpers.swiftmodule": {
+        "sha256": "ca34666bc28a61a0d0d5fe125e3e0585bf23f0753c65db61e990a5430bca0784",
+        "size": 46048
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/ServiceLifecycle.swiftdoc": {
+        "sha256": "2e7244972b62d1a4e4fc62e97cfdd044320ae5a35cc7f6a499af0888c43ee1ac",
+        "size": 31044
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/ServiceLifecycle.swiftmodule": {
+        "sha256": "7c60ef07c3e6532e9ce9a8588d4acbe99b1294355232f18fcbdfceaedd40517b",
+        "size": 161000
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/UnixSignals.swiftdoc": {
+        "sha256": "c503a29c53dd768e47be3fb2888b16b04aa79bdc8501883b7b70153cf037b886",
+        "size": 3176
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/UnixSignals.swiftmodule": {
+        "sha256": "9653083e0213e011affc37cb948e6e514d6e5c4c568ad743f6eb601d63c6838d",
+        "size": 49236
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/libConcurrencyHelpers.rspm.__impl.a": {
+        "sha256": "b4c7e290923f1b19e25187837523fd6e72135f6fb9bd91f2bbb054fe2231076e",
+        "size": 25352
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/libServiceLifecycle.rspm.__impl.a": {
+        "sha256": "a2e32624579c3b37b8fce049a828e0aad1f331b56bad206bec56a97a706ca7d4",
+        "size": 597320
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_service_lifecycle/libUnixSignals.rspm.__impl.a": {
+        "sha256": "6c86cc0ecb79f97da9491948e7c71869eb2eedfdcbc40b42c43d0ddefa9258bf",
+        "size": 143952
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_system/SystemPackage.swiftdoc": {
+        "sha256": "9c286b03e24b78a16475a6456a88c3b6f4dc018f4fd90eef3776ccb7dd37ff1d",
+        "size": 171032
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_system/SystemPackage.swiftmodule": {
+        "sha256": "98f47b6a5d53b6698b615314de9ffe18bf79cc898e9e768702e44cce0fa38a59",
+        "size": 774756
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_system/libCSystem.rspm_c.lo": {
+        "sha256": "9e70c6cb71df68a08b048952821126257744c18de66b4e27f3c2c0bff9fedd24",
+        "size": 1552
+      },
+      "bazel-out/darwin_arm64-opt-ST-3780099ea937/bin/external/+dependencies+swiftpkg_swift_system/libSystemPackage.rspm.__impl.a": {
+        "sha256": "08858023e2c6f68a268b6f1fc5d20ef571741380d25b05a1b1613ee5c3375746",
+        "size": 885376
+      },
+      "bazel-out/darwin_arm64-opt-ST-6bd6b075af93/bin/external/+dependencies+swiftpkg_zstd/liblibzstd.rspm_assembly.lo": {
+        "sha256": "e0d5a8f6b6ecbcdbd97b6f5681ebf40b78b657f607551fec1e9b1d7200026afd",
+        "size": 520
+      },
+      "bazel-out/darwin_arm64-opt-ST-6bd6b075af93/bin/external/+dependencies+swiftpkg_zstd/liblibzstd.rspm_c.lo": {
+        "sha256": "b8bbafaf5f72f12c9aaf2df0a01e46a742d32c9d83fb440bf6596ab30339daa9",
+        "size": 620632
+      },
+      "bazel-out/darwin_arm64-opt-ST-da1acd5050f7/bin/external/+dependencies+swiftpkg_swift_toml/TOML.swiftdoc": {
+        "sha256": "951c15c4682c16fda75c274aac0acf603272ebae29b4067d7d3334275a0773ca",
+        "size": 24528
+      },
+      "bazel-out/darwin_arm64-opt-ST-da1acd5050f7/bin/external/+dependencies+swiftpkg_swift_toml/TOML.swiftmodule": {
+        "sha256": "2a9315ac745e8b8355211442113f798dd458ec78472b134e8badcdde144ed633",
+        "size": 226928
+      },
+      "bazel-out/darwin_arm64-opt-ST-da1acd5050f7/bin/external/+dependencies+swiftpkg_swift_toml/libCTomlPlusPlus.rspm_cxx.lo": {
+        "sha256": "e055680a3fae5bd267b9ecf4d4aed4d1264221fbd170c8b6b48d501ca002e718",
+        "size": 219352
+      },
+      "bazel-out/darwin_arm64-opt-ST-da1acd5050f7/bin/external/+dependencies+swiftpkg_swift_toml/libTOML.rspm.__impl.a": {
+        "sha256": "a59138031b32a4fea6f79947196af5026b747a32e1e89af7b7f20f7707ce1ddc",
+        "size": 627056
+      }
+    }
+  },
+  "configuredRoot": "//:products",
+  "developmentProof": false,
+  "evidenceAsset": "foundation-stock-evidence.json",
+  "evidenceSHA256": "3de86b1c82180f754950071758fcbc6547216e95ffd11818d89a47f28ad71ec0",
+  "group": "foundation",
+  "lower": {
+    "argument-parser": {
+      "archiveSHA256": "05390252b4cb98ad15e5e14578c2549efc882bfb424bd827080aa11d640cc003",
+      "evidenceSHA256": "6898336341bc81b5b693d3daaf28422089cf742927d3f04ba23d8939d3a58399",
+      "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
+    }
+  },
+  "producerCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
+  "profile": "stock",
+  "reachedSources": {
+    "async-http-client": {
+      "repository": "swiftpkg_async_http_client",
+      "sourceCommit": "f95c908967e98c68c5ce3fd61a7974e7e869e303",
+      "sourceLocation": "https://github.com/swift-server/async-http-client.git"
+    },
+    "grpc-swift-2": {
+      "repository": "swiftpkg_grpc_swift_2",
+      "sourceCommit": "ac33066eb6edb1a21a6ca172ea8184a9b06f3cc7",
+      "sourceLocation": "https://github.com/grpc/grpc-swift-2.git"
+    },
+    "grpc-swift-nio-transport": {
+      "repository": "swiftpkg_grpc_swift_nio_transport",
+      "sourceCommit": "eaad084d6c26ff1f2e96f9c2ab76ef84d7165ab6",
+      "sourceLocation": "https://github.com/grpc/grpc-swift-nio-transport.git"
+    },
+    "grpc-swift-protobuf": {
+      "repository": "swiftpkg_grpc_swift_protobuf",
+      "sourceCommit": "176c5a434fd76f6f479848d1a8f7d44967534168",
+      "sourceLocation": "https://github.com/grpc/grpc-swift-protobuf.git"
+    },
+    "swift-algorithms": {
+      "repository": "swiftpkg_swift_algorithms",
+      "sourceCommit": "87e50f483c54e6efd60e885f7f5aa946cee68023",
+      "sourceLocation": "https://github.com/apple/swift-algorithms.git"
+    },
+    "swift-asn1": {
+      "repository": "swiftpkg_swift_asn1",
+      "sourceCommit": "d9a5b37470adc940d22c3bcd5ca6953a516b727f",
+      "sourceLocation": "https://github.com/apple/swift-asn1.git"
+    },
+    "swift-async-algorithms": {
+      "repository": "swiftpkg_swift_async_algorithms",
+      "sourceCommit": "3da39bbc4e687d4192af7c9cf4eab805745a0b9c",
+      "sourceLocation": "https://github.com/apple/swift-async-algorithms.git"
+    },
+    "swift-atomics": {
+      "repository": "swiftpkg_swift_atomics",
+      "sourceCommit": "0442cb5a3f98ab802acb777929fdb446bda11a34",
+      "sourceLocation": "https://github.com/apple/swift-atomics.git"
+    },
+    "swift-certificates": {
+      "repository": "swiftpkg_swift_certificates",
+      "sourceCommit": "c8aece90ea05f9866bd392a5bf13b5cae56c0e03",
+      "sourceLocation": "https://github.com/apple/swift-certificates.git"
+    },
+    "swift-collections": {
+      "repository": "swiftpkg_swift_collections",
+      "sourceCommit": "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
+      "sourceLocation": "https://github.com/apple/swift-collections.git"
+    },
+    "swift-configuration": {
+      "repository": "swiftpkg_swift_configuration",
+      "sourceCommit": "be76c4ad929eb6c4bcaf3351799f2adf9e6848a9",
+      "sourceLocation": "https://github.com/apple/swift-configuration"
+    },
+    "swift-configuration-toml": {
+      "repository": "swiftpkg_swift_configuration_toml",
+      "sourceCommit": "4ea16b4dfa4b023cecae5ae0368402c4d846d613",
+      "sourceLocation": "https://github.com/mattt/swift-configuration-toml"
+    },
+    "swift-crypto": {
+      "repository": "swiftpkg_swift_crypto",
+      "sourceCommit": "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+      "sourceLocation": "https://github.com/apple/swift-crypto.git"
+    },
+    "swift-distributed-tracing": {
+      "repository": "swiftpkg_swift_distributed_tracing",
+      "sourceCommit": "dc4030184203ffafbb2ec614352487235d747fe0",
+      "sourceLocation": "https://github.com/apple/swift-distributed-tracing.git"
+    },
+    "swift-log": {
+      "repository": "swiftpkg_swift_log",
+      "sourceCommit": "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+      "sourceLocation": "https://github.com/apple/swift-log.git"
+    },
+    "swift-metrics": {
+      "repository": "swiftpkg_swift_metrics",
+      "sourceCommit": "087e8074afa97040c3b870c8664fe5482fb87cc4",
+      "sourceLocation": "https://github.com/apple/swift-metrics"
+    },
+    "swift-nio": {
+      "repository": "swiftpkg_swift_nio",
+      "sourceCommit": "a931f2c1de8dd49381ce3bf2e279d033f68d8865",
+      "sourceLocation": "https://github.com/apple/swift-nio.git"
+    },
+    "swift-nio-extras": {
+      "repository": "swiftpkg_swift_nio_extras",
+      "sourceCommit": "41449336c8ecfadac6b4b5be75f9c3c306e61ced",
+      "sourceLocation": "https://github.com/apple/swift-nio-extras.git"
+    },
+    "swift-nio-http2": {
+      "repository": "swiftpkg_swift_nio_http2",
+      "sourceCommit": "0f3e54e29c944c2e835ad52159da7d9e1c94ac69",
+      "sourceLocation": "https://github.com/apple/swift-nio-http2.git"
+    },
+    "swift-nio-ssl": {
+      "repository": "swiftpkg_swift_nio_ssl",
+      "sourceCommit": "03827c1a9fdb2b6b00a4e93ede8861520263af8c",
+      "sourceLocation": "https://github.com/apple/swift-nio-ssl.git"
+    },
+    "swift-nio-transport-services": {
+      "repository": "swiftpkg_swift_nio_transport_services",
+      "sourceCommit": "67787bb645a5e67d2edcdfbe48a216cc549222d5",
+      "sourceLocation": "https://github.com/apple/swift-nio-transport-services.git"
+    },
+    "swift-numerics": {
+      "repository": "swiftpkg_swift_numerics",
+      "sourceCommit": "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+      "sourceLocation": "https://github.com/apple/swift-numerics.git"
+    },
+    "swift-protobuf": {
+      "repository": "swiftpkg_swift_protobuf",
+      "sourceCommit": "55d7a1cc5666b85c13464aea1c4b4a90feccb4c8",
+      "sourceLocation": "https://github.com/apple/swift-protobuf.git"
+    },
+    "swift-service-context": {
+      "repository": "swiftpkg_swift_service_context",
+      "sourceCommit": "d0997351b0c7779017f88e7a93bc30a1878d7f29",
+      "sourceLocation": "https://github.com/apple/swift-service-context.git"
+    },
+    "swift-service-lifecycle": {
+      "repository": "swiftpkg_swift_service_lifecycle",
+      "sourceCommit": "7f9326b0326ff86e3646295ea6e891f68c471c5e",
+      "sourceLocation": "https://github.com/swift-server/swift-service-lifecycle"
+    },
+    "swift-system": {
+      "repository": "swiftpkg_swift_system",
+      "sourceCommit": "869129b7bf4ecc57b97d0193ad29690ca2134750",
+      "sourceLocation": "https://github.com/apple/swift-system.git"
+    },
+    "swift-toml": {
+      "repository": "swiftpkg_swift_toml",
+      "sourceCommit": "827506c90475e82d5a7f191f950fb3025cbdc0d6",
+      "sourceLocation": "https://github.com/mattt/swift-toml.git"
+    },
+    "zstd": {
+      "repository": "swiftpkg_zstd",
+      "sourceCommit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "sourceLocation": "https://github.com/facebook/zstd.git"
+    }
+  },
+  "recipeSHA256": {
+    "artifactBuild": "0b135d42637b994c24ce79f9b83c5708bcca1d4f2f415bef2d2e0f200eb8a0c2",
+    "bazelConfiguration": "f038a75ea10af057b227b63b37934a64243b5ca70e0ba8cadc3a64486ebb321e",
+    "configuredOutputs": "14ce1859c329222cbb10c2642553eb142f2f6f49db52fa02aeef8d9334900768",
+    "dependencyExtension": "8dbc2f830e0be2d1ddb6729f941a62997eef3bb475b590e5b77f9bc2d3abcc99",
+    "importer": "ab6cf862d45ed991abd4bbb3a83963b1cb8ea30d103d8d92a4b0178036ec6003",
+    "launcher": "aee681d8038c67e57f0d06e194240147deb5c61ed7f00f87b5ad9099624ed987",
+    "moduleGraph": "97568a4272c98150752765905d6c78a07e1cd26dcacd271e28aa82a1f9fbe815",
+    "moduleRules": "cc7af64da9e8cd452666b175e5b386cc269cc36315c07384f0e898818abceca7",
+    "producer": "6443d5f36ddb098d7db91abadf070baaab94a49cb089a5a7a899a3874af1a014",
+    "rootBuild": "f82ba9db41fce5694f865c33aa56e5fcb8cae1305ca5b5be367d1a5f23e562f3",
+    "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
+    "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
+    "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
+    "swiftPackageManifest": "f77f14603ace0bed2ec3cd60e1a0b7a2d043a33cd181c42a4f22d398c569100a",
+    "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
+  },
+  "repository": "stephenlclarke/devcontainer",
+  "schema": 1,
+  "selectedTargets": [
+    "@swiftpkg_async_http_client//:AsyncHTTPClient.rspm.__impl",
+    "@swiftpkg_async_http_client//:CAsyncHTTPClient.rspm_c",
+    "@swiftpkg_grpc_swift_2//:GRPCCore.rspm.__impl",
+    "@swiftpkg_grpc_swift_nio_transport//:CGRPCNIOTransportZlib.rspm_c",
+    "@swiftpkg_grpc_swift_nio_transport//:GRPCNIOTransportCore.rspm.__impl",
+    "@swiftpkg_grpc_swift_nio_transport//:GRPCNIOTransportHTTP2.rspm.__impl",
+    "@swiftpkg_grpc_swift_nio_transport//:GRPCNIOTransportHTTP2Posix.rspm.__impl",
+    "@swiftpkg_grpc_swift_nio_transport//:GRPCNIOTransportHTTP2TransportServices.rspm.__impl",
+    "@swiftpkg_grpc_swift_protobuf//:GRPCProtobuf.rspm.__impl",
+    "@swiftpkg_swift_algorithms//:Algorithms.rspm.__impl",
+    "@swiftpkg_swift_asn1//:SwiftASN1.rspm.__impl",
+    "@swiftpkg_swift_async_algorithms//:AsyncAlgorithms.rspm.__impl",
+    "@swiftpkg_swift_atomics//:Atomics.rspm.__impl",
+    "@swiftpkg_swift_atomics//:_AtomicsShims.rspm_c",
+    "@swiftpkg_swift_certificates//:X509.rspm.__impl",
+    "@swiftpkg_swift_certificates//:_CertificateInternals.rspm.__impl",
+    "@swiftpkg_swift_collections//:BitCollections.rspm.__impl",
+    "@swiftpkg_swift_collections//:Collections.rspm.__impl",
+    "@swiftpkg_swift_collections//:ContainersPreview.rspm.__impl",
+    "@swiftpkg_swift_collections//:DequeModule.rspm.__impl",
+    "@swiftpkg_swift_collections//:HashTreeCollections.rspm.__impl",
+    "@swiftpkg_swift_collections//:HeapModule.rspm.__impl",
+    "@swiftpkg_swift_collections//:InternalCollectionsUtilities.rspm.__impl",
+    "@swiftpkg_swift_collections//:OrderedCollections.rspm.__impl",
+    "@swiftpkg_swift_collections//:_RopeModule.rspm.__impl",
+    "@swiftpkg_swift_configuration//:Configuration.rspm.__impl",
+    "@swiftpkg_swift_configuration_toml//:ConfigurationTOML.rspm.__impl",
+    "@swiftpkg_swift_crypto//:CCryptoBoringSSL.rspm_assembly",
+    "@swiftpkg_swift_crypto//:CCryptoBoringSSL.rspm_cxx",
+    "@swiftpkg_swift_crypto//:CCryptoBoringSSLShims.rspm_c",
+    "@swiftpkg_swift_crypto//:Crypto.rspm.__impl",
+    "@swiftpkg_swift_crypto//:CryptoBoringWrapper.rspm.__impl",
+    "@swiftpkg_swift_crypto//:CryptoExtras.rspm.__impl",
+    "@swiftpkg_swift_crypto//:_CryptoExtras.rspm.__impl",
+    "@swiftpkg_swift_distributed_tracing//:Instrumentation.rspm.__impl",
+    "@swiftpkg_swift_distributed_tracing//:Tracing.rspm.__impl",
+    "@swiftpkg_swift_log//:Logging.rspm.__impl",
+    "@swiftpkg_swift_metrics//:CoreMetrics.rspm.__impl",
+    "@swiftpkg_swift_metrics//:Metrics.rspm.__impl",
+    "@swiftpkg_swift_nio//:CNIOAtomics.rspm_c",
+    "@swiftpkg_swift_nio//:CNIODarwin.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOFreeBSD.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOLLHTTP.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOLinux.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOOpenBSD.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOPosix.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOSHA1.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOWASI.rspm_c",
+    "@swiftpkg_swift_nio//:CNIOWindows.rspm_c",
+    "@swiftpkg_swift_nio//:NIO.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOConcurrencyHelpers.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOCore.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOEmbedded.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOFileSystem.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOFoundationCompat.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOFoundationEssentialsCompat.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOHTTP1.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOPosix.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOTLS.rspm.__impl",
+    "@swiftpkg_swift_nio//:NIOWebSocket.rspm.__impl",
+    "@swiftpkg_swift_nio//:_NIOBase64.rspm.__impl",
+    "@swiftpkg_swift_nio//:_NIODataStructures.rspm.__impl",
+    "@swiftpkg_swift_nio//:_NIOFileSystem.rspm.__impl",
+    "@swiftpkg_swift_nio_extras//:CNIOExtrasZlib.rspm_c",
+    "@swiftpkg_swift_nio_extras//:NIOCertificateReloading.rspm.__impl",
+    "@swiftpkg_swift_nio_extras//:NIOExtras.rspm.__impl",
+    "@swiftpkg_swift_nio_extras//:NIOHTTPCompression.rspm.__impl",
+    "@swiftpkg_swift_nio_extras//:NIOSOCKS.rspm.__impl",
+    "@swiftpkg_swift_nio_http2//:NIOHPACK.rspm.__impl",
+    "@swiftpkg_swift_nio_http2//:NIOHTTP2.rspm.__impl",
+    "@swiftpkg_swift_nio_ssl//:CNIOBoringSSL.rspm_assembly",
+    "@swiftpkg_swift_nio_ssl//:CNIOBoringSSL.rspm_cxx",
+    "@swiftpkg_swift_nio_ssl//:CNIOBoringSSLShims.rspm_c",
+    "@swiftpkg_swift_nio_ssl//:NIOSSL.rspm.__impl",
+    "@swiftpkg_swift_nio_transport_services//:NIOTransportServices.rspm.__impl",
+    "@swiftpkg_swift_numerics//:RealModule.rspm.__impl",
+    "@swiftpkg_swift_numerics//:_NumericsShims.rspm_c",
+    "@swiftpkg_swift_protobuf//:SwiftProtobuf.rspm.__impl",
+    "@swiftpkg_swift_service_context//:ServiceContextModule.rspm.__impl",
+    "@swiftpkg_swift_service_lifecycle//:ConcurrencyHelpers.rspm.__impl",
+    "@swiftpkg_swift_service_lifecycle//:ServiceLifecycle.rspm.__impl",
+    "@swiftpkg_swift_service_lifecycle//:UnixSignals.rspm.__impl",
+    "@swiftpkg_swift_system//:CSystem.rspm_c",
+    "@swiftpkg_swift_system//:SystemPackage.rspm.__impl",
+    "@swiftpkg_swift_toml//:CTomlPlusPlus.rspm_cxx",
+    "@swiftpkg_swift_toml//:TOML.rspm.__impl",
+    "@swiftpkg_zstd//:libzstd.rspm_assembly",
+    "@swiftpkg_zstd//:libzstd.rspm_c"
+  ],
+  "sourceGraph": null,
+  "sourcePins": {
+    "async-http-client": "f95c908967e98c68c5ce3fd61a7974e7e869e303",
+    "grpc-swift-2": "ac33066eb6edb1a21a6ca172ea8184a9b06f3cc7",
+    "grpc-swift-nio-transport": "eaad084d6c26ff1f2e96f9c2ab76ef84d7165ab6",
+    "grpc-swift-protobuf": "176c5a434fd76f6f479848d1a8f7d44967534168",
+    "swift-algorithms": "87e50f483c54e6efd60e885f7f5aa946cee68023",
+    "swift-asn1": "d9a5b37470adc940d22c3bcd5ca6953a516b727f",
+    "swift-async-algorithms": "3da39bbc4e687d4192af7c9cf4eab805745a0b9c",
+    "swift-atomics": "0442cb5a3f98ab802acb777929fdb446bda11a34",
+    "swift-certificates": "c8aece90ea05f9866bd392a5bf13b5cae56c0e03",
+    "swift-collections": "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
+    "swift-configuration": "be76c4ad929eb6c4bcaf3351799f2adf9e6848a9",
+    "swift-configuration-toml": "4ea16b4dfa4b023cecae5ae0368402c4d846d613",
+    "swift-crypto": "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+    "swift-distributed-tracing": "dc4030184203ffafbb2ec614352487235d747fe0",
+    "swift-http-structured-headers": "933538faa42c432d385f02e07df0ace7c5ecfc47",
+    "swift-http-types": "bff4b6903cdc99dda49649dd52f46c11cfd3ed50",
+    "swift-log": "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+    "swift-metrics": "087e8074afa97040c3b870c8664fe5482fb87cc4",
+    "swift-nio": "a931f2c1de8dd49381ce3bf2e279d033f68d8865",
+    "swift-nio-extras": "41449336c8ecfadac6b4b5be75f9c3c306e61ced",
+    "swift-nio-http2": "0f3e54e29c944c2e835ad52159da7d9e1c94ac69",
+    "swift-nio-ssl": "03827c1a9fdb2b6b00a4e93ede8861520263af8c",
+    "swift-nio-transport-services": "67787bb645a5e67d2edcdfbe48a216cc549222d5",
+    "swift-numerics": "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+    "swift-protobuf": "55d7a1cc5666b85c13464aea1c4b4a90feccb4c8",
+    "swift-service-context": "d0997351b0c7779017f88e7a93bc30a1878d7f29",
+    "swift-service-lifecycle": "7f9326b0326ff86e3646295ea6e891f68c471c5e",
+    "swift-system": "869129b7bf4ecc57b97d0193ad29690ca2134750",
+    "swift-toml": "827506c90475e82d5a7f191f950fb3025cbdc0d6",
+    "yams": "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+    "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
+  },
+  "tag": "layer-foundation-stock-6f58d9f3390f33c9db3f",
+  "targetCommit": "7484dad510c394cc43f864ff7ef6da45d6105b9f",
+  "toolchain": {
+    "bazelVersion": "8.8.0",
+    "sdkSettingsSHA256": "7b93ad7e534cc4b31c6a4e39d19b5e0288acf2168c2649479a796d1cb51939fb",
+    "sdkVersion": "27.0",
+    "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+    "swiftcSHA256": "cf81104bf554eef05e28a8bb5285c763f1323b4511b944d755d8bdd6cb8db717",
+    "xcodeVersion": "Xcode 27.0\nBuild version 27A266a"
+  }
+}

@@ -96,7 +96,8 @@ if CommandLine.arguments.dropFirst().first == "--forward-signals" {
                 + "printf \"child-stderr\\n\" >&2; "
                 + "if [ \"$RELAY_EARLY_SIGNAL\" = 1 ]; then kill -USR1 \"$PPID\"; fi; "
                 + "if [ \"$RELAY_DELAY_PID_MARKER\" = 1 ]; then /bin/sleep 1; fi; "
-                + "printf '%s\\n' \"$$\" > \"$RELAY_PID_MARKER\"; "
+                + "printf '%s\\n' \"$$\" > \"$RELAY_PID_MARKER.tmp\"; "
+                + "/bin/mv \"$RELAY_PID_MARKER.tmp\" \"$RELAY_PID_MARKER\" || exit 83; "
                 + ": > \"$RELAY_READY_MARKER\"; "
                 + "i=0; while [ \"$i\" -lt 250 ]; do /bin/sleep 0.02; i=$((i + 1)); done; exit 84"
         ],

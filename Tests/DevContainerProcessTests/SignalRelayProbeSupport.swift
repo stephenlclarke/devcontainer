@@ -28,6 +28,19 @@ func waitForSignalMarker(_ url: URL) async throws -> Bool {
     return false
 }
 
+func waitForSignalPIDMarker(_ url: URL, checks: Int = 400) async throws -> pid_t? {
+    for _ in 0 ..< checks {
+        if let value = try? String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            let pid = pid_t(value), pid > 1
+        {
+            return pid
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    return nil
+}
+
 func waitForMarkerValue(_ url: URL, expected: String, checks: Int = 400) async throws -> Bool {
     for _ in 0 ..< checks {
         if (try? String(contentsOf: url, encoding: .utf8)) == expected {
@@ -453,13 +466,13 @@ struct SignalRelayProbe {
 
     mutating func observe() async throws -> SignalRelayProbeResult {
         recordPhase("waiting-child-pid")
-        let pidFile = try await waitForSignalMarker(pidMarker)
-        if pidFile {
-            captureChildIdentity()
+        let childPID = try await waitForSignalPIDMarker(pidMarker)
+        if let childPID {
+            captureChildIdentity(pid: childPID)
         }
         recordPhase("waiting-ready-marker")
         let readyFile = try await waitForSignalMarker(ready)
-        let readyObserved = readyFile && pidFile
+        let readyObserved = readyFile && childPID != nil
         recordPhase("waiting-competing-call-rejection")
         let competingRequestRejected = try await waitForSignalMarker(competingRejectedMarker)
         sendUserSignalIfNeeded(readyObserved: readyObserved)
@@ -510,12 +523,8 @@ struct SignalRelayProbe {
         return (exited, exited ? process.terminationStatus : -1)
     }
 
-    private mutating func captureChildIdentity() {
-        guard let rawPID = try? String(contentsOf: pidMarker, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            let pid = pid_t(rawPID), pid > 1,
-            let wrapperIdentity
-        else {
+    private mutating func captureChildIdentity(pid: pid_t) {
+        guard let wrapperIdentity else {
             failOwnership("child pid marker or wrapper identity unavailable")
             return
         }

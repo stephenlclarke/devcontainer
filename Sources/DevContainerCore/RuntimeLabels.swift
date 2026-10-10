@@ -15,13 +15,14 @@
 //===----------------------------------------------------------------------===//
 
 import DevContainerModel
+import DevContainerRuntimeSPI
 
 public enum RuntimeLabels {
     public static let namespace = "io.github.stephenlclarke.devcontainer"
     public static let project = "\(namespace).project"
     public static let provider = "\(namespace).provider"
     public static let generation = "\(namespace).generation"
-    public static let operation = "\(namespace).operation"
+    public static let operation = RuntimeOperationLabel.key
     public static let configurationHash = "\(namespace).config-hash"
     public static let dockerID = "\(namespace).docker-id"
 

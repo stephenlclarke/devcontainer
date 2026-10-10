@@ -198,9 +198,52 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
         } catch {
             await coordinator.failMutation(
                 session,
-                errorCode: Self.mutationErrorCode(error)
+                errorCode: Self.mutationErrorCode(error),
+                confirmedNativeResourceAbsence: confirmsFailedContainerCreateIsAbsent(
+                    request: request,
+                    mutation: mutation,
+                    context: session.context
+                )
             )
             throw error
+        }
+    }
+
+    private func confirmsFailedContainerCreateIsAbsent(
+        request: DockerHTTPRequest,
+        mutation: ProjectMutation,
+        context: RuntimeRequestContext
+    ) async -> Bool {
+        guard mutation.provider == .containerCompose,
+              request.method == .post,
+              let target = try? ParsedTarget(request.target),
+              stripAPIVersion(target.path) == "/containers/create"
+        else {
+            return false
+        }
+        guard let creationProbe = runtime as? any RuntimeContainerCreationProbe else {
+            return false
+        }
+        do {
+            try await creationProbe.requireNoPendingContainerCreation(context: context)
+            let containers = try await runtime.listContainers(
+                all: true,
+                labels: [:],
+                context: context
+            )
+            guard !containers.contains(where: {
+                $0.spec.labels[RuntimeLabels.operation] == context.operationID.rawValue
+            }) else {
+                return false
+            }
+            if let name = target.first("name"),
+               containers.contains(where: { $0.spec.name == name })
+            {
+                return false
+            }
+            return true
+        } catch {
+            return false
         }
     }
 

@@ -77,6 +77,7 @@ private struct ActiveProjectMutation: Sendable {
     let operationID: OperationID
     let generation: Int64
     let lockKey: String
+    let createdProjectClaim: Bool
 }
 
 public actor ProjectCoordinator {
@@ -140,6 +141,7 @@ public actor ProjectCoordinator {
         await acquireMutationLock(lockKey)
         do {
             try baseContext.checkActive()
+            let createdProjectClaim = try await store.project(key: request.project) == nil
             let claim = try await claim(
                 project: request.project,
                 provider: request.provider,
@@ -173,7 +175,8 @@ public actor ProjectCoordinator {
                 request: request,
                 operationID: operationID,
                 generation: generation,
-                lockKey: lockKey
+                lockKey: lockKey,
+                createdProjectClaim: createdProjectClaim
             )
             return ProjectMutationSession(context: context, token: token)
         } catch {
@@ -218,13 +221,23 @@ public actor ProjectCoordinator {
 
     public func failMutation(
         _ session: ProjectMutationSession,
-        errorCode: String?
+        errorCode: String?,
+        confirmedNativeResourceAbsence: Bool = false
     ) async {
         guard let active = activeMutations.removeValue(forKey: session.token) else {
             return
         }
         defer { releaseMutationLock(active.lockKey) }
         await recordFailure(active, errorCode: errorCode)
+        if confirmedNativeResourceAbsence,
+           active.createdProjectClaim,
+           active.request.provider == .containerCompose,
+           active.request.requestKind == "POST /containers/create",
+           active.request.releaseProjectWhenEmpty,
+           await (try? store.resources(project: active.request.project).isEmpty) == true
+        {
+            try? await store.releaseProject(key: active.request.project)
+        }
     }
 
     private func recordFailure(

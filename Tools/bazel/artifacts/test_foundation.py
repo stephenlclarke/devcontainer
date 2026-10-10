@@ -71,6 +71,19 @@ LEGACY_LOCK_FIXTURES = {
     "foundation-stock.lock.json": "986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495",
 }
 
+# Exact released locks accompanying the archived pre-TLS package graph.
+PRE_TLS_LOCK_FIXTURES = {
+    "argument-parser.lock.json": "06c5ef150dc92876484ff849980e69ad967d4fb0b66c4024f9b7e4b7832b68ce",
+    "container-sdk-enhanced.lock.json": "a87c20734a05c410b8ba1c15fdc9ceadd8d1c0b3c0721d3d2b9b91a2318a9597",
+    "container-sdk-stock.lock.json": "8521bd3e9a475b20037eab18a5337a06572a2e900638b404907041709a57ef1b",
+    "containerization-enhanced.lock.json": "130525901ff3aa0d28a806128dee81c58bbd731ab64cfaab3364564be8b79289",
+    "containerization-stock.lock.json": "0918dab08b02c8b9aa5c13db8c2c165c245fee9ce579a7de4ac87b1e68c1600f",
+    "engine-api-enhanced.lock.json": "3d8d17831d07be278a3ae2a6e9d42fdc62ddd60c69aa104c847d7fa59bda901f",
+    "engine-api-stock.lock.json": "55e6fa9fc30c643fb315b8682f54ee71e335d4021b23aa43e0c1401bfb52a49a",
+    "foundation-enhanced.lock.json": "73dbf0ee81fa900bdff830610aae417befa67d3c221556837b0ebae342e8508b",
+    "foundation-stock.lock.json": "986d309ad2ced14a5656a6d9291e174a7e5afc12ea8d7db649fed809eebf6495",
+}
+
 # Pin the independently reviewed Engine API release source snapshot.
 ENGINE_REFRESH_PINS = {
     "enhanced-engine": "6e8c932fc8755a4b922fd239426e9029be0554e0",
@@ -86,19 +99,20 @@ ENGINE_REFRESH_INPUTS = {
 
 class FoundationTests(unittest.TestCase):
     def test_legacy_producer_ast_guard_is_stable_or_fails_closed_across_python_ast_versions(self) -> None:
-        root = Path(__file__).resolve().parents[3]
-        candidates = [sys.executable, "/usr/bin/python3"]
-        candidates.extend(shutil.which(f"python3.{minor}") for minor in (9, 12, 13, 14, 15))
-        candidates.append(shutil.which("python3"))
-        interpreters = []
-        seen = set()
-        for candidate in candidates:
-            if candidate and Path(candidate).is_file():
-                identity = os.path.realpath(candidate)
-                if identity not in seen:
-                    seen.add(identity)
-                    interpreters.append(candidate)
-        code = """
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._layer_fixture(directory, archived=False)
+            candidates = [sys.executable, "/usr/bin/python3"]
+            candidates.extend(shutil.which(f"python3.{minor}") for minor in (9, 12, 13, 14, 15))
+            candidates.append(shutil.which("python3"))
+            interpreters = []
+            seen = set()
+            for candidate in candidates:
+                if candidate and Path(candidate).is_file():
+                    identity = os.path.realpath(candidate)
+                    if identity not in seen:
+                        seen.add(identity)
+                        interpreters.append(candidate)
+            code = """
 import ast
 import inspect
 import json
@@ -119,11 +133,11 @@ for profile in ('stock', 'enhanced'):
         admitted = foundation._legacy_recipe_compatible(root, lock, profile, group)
         assert admitted == (expected_admission and (group in {'foundation', 'containerization', 'engine-api'} or (profile == 'enhanced' and group == 'container-sdk'))), (profile, group)
 """
-        environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
-        for executable in interpreters:
-            with self.subTest(interpreter=executable):
-                subprocess.run([executable, "-c", code], cwd=root, env=environment,
-                               check=True, capture_output=True, text=True)
+            environment = dict(os.environ, PYTHONPATH=str(root / "Tools/bazel"))
+            for executable in interpreters:
+                with self.subTest(interpreter=executable):
+                    subprocess.run([executable, "-c", code], cwd=root, env=environment,
+                                   check=True, capture_output=True, text=True)
 
     def test_legacy_producer_ast_guard_does_not_normalize_string_literals(self) -> None:
         source = (Path(__file__).resolve().parent / "foundation.py").read_text()
@@ -222,11 +236,41 @@ for profile in ('stock', 'enhanced'):
             self.assertEqual(digest(data), previous[name], name)
             (root / name).write_bytes(data)
 
+    def _copy_engine_refresh_snapshot(self, root: Path) -> None:
+        """Seed compatibility tests from the immutable pre-transition inputs."""
+        fixture = Path(__file__).resolve().parent / "fixtures/stock-xpc-clock-transition"
+        root.mkdir(parents=True, exist_ok=True)
+        for name, expected in ENGINE_REFRESH_INPUTS.items():
+            source = fixture / (name + ".before")
+            self.assertEqual(digest(source.read_bytes()), expected, name)
+            shutil.copy2(source, root / name)
+
+    def _copy_pre_tls_snapshot(self, root: Path) -> None:
+        """Seed current-source compatibility tests with the exact parent graph."""
+        fixture = Path(__file__).resolve().parent / "fixtures/devcontainer-pre-tls"
+        expected = {
+            "Package.swift": "096e5d9aa6d7b6f7987de62965bec52e870045a7ffd5262be423c7d0967eacee",
+            "Package.resolved": "f0fd634dcfe88f316f53e9f9f42883adeb402e127ebf6e6be26fd13cc62b5ec9",
+            "Package.stock.resolved": "24d5a40e2b1535c8d509488b7f7b4f8812863de151c97056b6f7be493e5518fb",
+        }
+        root.mkdir(parents=True, exist_ok=True)
+        for name, expected_sha in expected.items():
+            source = fixture / name
+            self.assertEqual(digest(source.read_bytes()), expected_sha, name)
+            shutil.copy2(source, root / name)
+        layers = root / "Tools/bazel/artifacts"
+        layers.mkdir(parents=True, exist_ok=True)
+        for name, expected_sha in PRE_TLS_LOCK_FIXTURES.items():
+            source = fixture / "layers" / name
+            self.assertEqual(digest(source.read_bytes()), expected_sha, name)
+            shutil.copy2(source, layers / name)
+
     def _layer_fixture(self, directory: str, source_root: Path | None = None,
                        archived: bool = True) -> Path:
         """Copy package inputs and immutable archived locks used by the verifier."""
         source_root = source_root or Path(__file__).resolve().parents[3]
         source_root = Path(source_root)
+        repository_root = Path(__file__).resolve().parents[3]
         lock_fixture_root = Path(__file__).resolve().parent / "fixtures/legacy-00a6549"
         root = Path(directory)
         files = (
@@ -243,11 +287,19 @@ for profile in ('stock', 'enhanced'):
             "Tools/bazel/rules-license-empty-provider.patch",
             "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
             "Tools/bazel/artifacts/compiled_outputs.bzl", "Tools/bazel/artifacts/BUILD.bazel",
+            "Tools/bazel/artifacts/argument_parser.py",
+            "Tools/bazel/artifacts/release_asset.py",
+            "Tools/bazel/package_checks/cli_process.py",
         )
         for relative in files:
+            if (source_root.resolve() == repository_root.resolve()
+                    and relative in {"Package.swift", "Package.resolved", "Package.stock.resolved"}):
+                continue
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_root / relative, destination)
+        if source_root.resolve() == repository_root.resolve():
+            self._copy_pre_tls_snapshot(root)
         if archived:
             # Historical manifests must use their reviewed graph validator bytes.
             old_graph = Path(__file__).resolve().parent / "fixtures/stock-xpc-clock-transition/source_graph-before.py"
@@ -262,7 +314,8 @@ for profile in ('stock', 'enhanced'):
                            for profile in ("stock", "enhanced") for group in foundation.GROUPS)):
                 destination = root / "Tools/bazel/artifacts" / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
+                if source_root.resolve() != repository_root.resolve():
+                    shutil.copy2(source_root / "Tools/bazel/artifacts" / name, destination)
             return root
         self._restore_previous_reviewed_inputs(root)
         for name, expected_sha in LEGACY_LOCK_FIXTURES.items():
@@ -427,6 +480,23 @@ for profile in ('stock', 'enhanced'):
                         foundation.verify_consumer(
                             root / f"Tools/bazel/artifacts/{group}-enhanced.lock.json",
                             root, None, {}, "enhanced", group)
+
+    def test_current_tls_graph_rejects_the_archived_enhanced_sdk_lock(self) -> None:
+        repository = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._layer_fixture(directory)
+            for name in ("Package.swift", "Package.resolved", "Package.stock.resolved"):
+                shutil.copy2(repository / name, root / name)
+            pins = foundation.source_records(root, "enhanced")
+            self.assertEqual(pins["container"]["revision"], "38a53cb6ba8f48413534c3c4112f72489ecbecc6")
+            self.assertEqual(pins["containerization"]["revision"], "c0607ac9aa5b759141506fbd8fc01f423d433f1e")
+            self.assertEqual(pins["container-engine-api"]["revision"], "6e8c932fc8755a4b922fd239426e9029be0554e0")
+            self.assertEqual(pins["swift-nio-ssl"]["location"],
+                             "https://github.com/stephenlclarke/swift-nio-ssl.git")
+            self.assertEqual(pins["swift-nio-ssl"]["revision"], "aee34db2144717ddce7bd145e45cf4fb9dab73fb")
+            old_sdk = json.loads((root / "Tools/bazel/artifacts/container-sdk-enhanced.lock.json").read_text())
+            self.assertFalse(foundation._legacy_upper_pin_delta(root, "enhanced"))
+            self.assertFalse(foundation._legacy_recipe_compatible(root, old_sdk, "enhanced", "container-sdk"))
 
     def test_only_stock_archives_accept_exact_legacy_inputs_at_baseline_pins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -601,7 +671,7 @@ for profile in ('stock', 'enhanced'):
                         lower_path.write_text(json.dumps(changed, indent=2, sort_keys=True) + "\n")
                         self.assertFalse(foundation._legacy_recipe_compatible(root, lock, profile, group))
 
-    def test_new_q_pin_and_replaced_sdk_lock_reconstruct_original_archive_locks(self) -> None:
+    def test_historical_q_pin_and_replaced_sdk_lock_reconstruct_original_archive_locks(self) -> None:
         """A live Q/SDK lock advance must not rewrite the archived lock fixture."""
         source_root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
@@ -620,6 +690,8 @@ for profile in ('stock', 'enhanced'):
                 "Tools/bazel/rules-license-empty-provider.patch",
                 "Tools/bazel/artifacts/foundation.py", "Tools/bazel/artifacts/foundation_import.bzl",
                 "Tools/bazel/artifacts/compiled_outputs.bzl", "Tools/bazel/artifacts/BUILD.bazel",
+                "Tools/bazel/artifacts/argument_parser.py", "Tools/bazel/artifacts/release_asset.py",
+                "Tools/bazel/package_checks/cli_process.py",
                 "Tools/bazel/artifacts/container-sdk-enhanced.lock.json",
             )
             for relative in source_files:
@@ -627,6 +699,7 @@ for profile in ('stock', 'enhanced'):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / relative, destination)
 
+            self._copy_engine_refresh_snapshot(current)
             self._restore_previous_reviewed_inputs(current)
             manifest = (current / "Package.swift").read_bytes()
             self.assertEqual(json.loads((current / "Package.resolved").read_text())["originHash"],

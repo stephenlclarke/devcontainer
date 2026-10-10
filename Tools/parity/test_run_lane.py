@@ -27,6 +27,13 @@ from run_lane import (
     LaneRunner,
     PARITY_HARNESS,
     finalized_selection,
+    candidate_selection,
+    WORKFLOW_RETAINED,
+    validate_candidate_fixture_set,
+    validate_d05_cache_selection,
+    validate_init_io_trace_selection,
+    validate_attachment_generation_selection,
+    init_io_trace_environment,
     create_socket_root,
     install_cancellation_handlers,
     resolver_nameservers,
@@ -60,6 +67,226 @@ class FinalizedSelectionTests(unittest.TestCase):
                 runner.lane = lane
                 runner.finalized_selection = selection
                 self.assertEqual(runner.lifecycle_backend_arguments(), expected)
+
+
+class UnsignedCandidateDiagnosticTests(unittest.TestCase):
+    def test_attachment_generation_cli_defaults_to_canonical_two(self) -> None:
+        with mock.patch("run_lane.sys.argv", ["run_lane.py", "apple-stock", "/tmp/evidence"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.attachment_generations, 2)
+
+    def test_eight_generations_require_one_native_candidate_e07(self) -> None:
+        validate_attachment_generation_selection(2, "docker", {"E01-engine-negotiation"}, False)
+        validate_attachment_generation_selection(8, "apple-stock", {"E07-init-attachment"}, True)
+        validate_attachment_generation_selection(8, "container-compose", {"E07-init-attachment"}, True)
+        for generations, lane, selected, candidate in (
+                (8, "docker", {"E07-init-attachment"}, True),
+                (8, "apple-stock", {"E07-init-attachment"}, False),
+                (8, "container-compose", {"D05-features", "E07-init-attachment"}, True),
+                (3, "apple-stock", {"E07-init-attachment"}, True),
+                (True, "apple-stock", {"E07-init-attachment"}, True)):
+            with self.subTest(generations=generations, lane=lane, selected=selected), self.assertRaises(
+                    ParityError):
+                validate_attachment_generation_selection(generations, lane, selected, candidate)
+
+    def test_eight_generation_cli_option_is_explicit(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--attachment-generations", "8"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.attachment_generations, 8)
+        self.assertEqual(candidate_selection(arguments)["expected_source_commit"],
+                         "5f22bd379c408383daa252b5fc666077fe42e5d3")
+
+    def test_actual_candidate_cli_arguments_do_not_look_like_partial_finalized_selection(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertEqual(candidate_selection(arguments), {
+            "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+            "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+
+    def test_warm_d05_cli_flag_is_parsed_without_changing_candidate_selection(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--d05-cache-state", "warm"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertEqual(arguments.d05_cache_state, "warm")
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertIsNotNone(candidate_selection(arguments))
+
+    def test_init_io_trace_cli_flag_is_parsed_for_candidate_diagnostic(self) -> None:
+        with mock.patch("run_lane.sys.argv", [
+                "run_lane.py", "apple-stock", "/tmp/evidence",
+                "--candidate-invocation", "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "--expected-source-commit", "5f22bd379c408383daa252b5fc666077fe42e5d3",
+                "--repository", "/tmp/product", "--trace-init-io"]):
+            arguments = __import__("run_lane").parse_args()
+        self.assertTrue(arguments.trace_init_io)
+        self.assertIsNone(finalized_selection(arguments))
+        self.assertIsNotNone(candidate_selection(arguments))
+
+    def test_init_io_trace_requires_one_admitted_native_e07_and_is_explicit(self) -> None:
+        validate_init_io_trace_selection(True, "apple-stock", {"E07-init-attachment"}, True)
+        for lane, selected, admitted in (
+                ("docker", {"E07-init-attachment"}, True),
+                ("container-compose", {"D05-features", "E07-init-attachment"}, True),
+                ("apple-stock", {"E07-init-attachment"}, False)):
+            with self.subTest(lane=lane, selected=selected, admitted=admitted), self.assertRaisesRegex(
+                    ParityError, "only E07"):
+                validate_init_io_trace_selection(True, lane, selected, admitted)
+        base = {"PATH": "/usr/bin", "DEVCONTAINER_TRACE_INIT_IO": "1"}
+        self.assertEqual(init_io_trace_environment(base, False), {"PATH": "/usr/bin"})
+        self.assertEqual(init_io_trace_environment(base, True), base)
+
+    def test_warm_d05_selection_is_one_native_admitted_fixture_only(self) -> None:
+        validate_d05_cache_selection("warm", "apple-stock", {"D05-features"}, True)
+        for state, lane, selected, admitted in (
+                ("warm", "docker", {"D05-features"}, True),
+                ("warm", "apple-stock", {"D05-features", "E07-init-attachment"}, True),
+                ("warm", "container-compose", {"D05-features"}, False),
+                ("unsupported", "apple-stock", {"D05-features"}, True)):
+            with self.subTest(state=state, lane=lane, selected=selected, admitted=admitted), self.assertRaises(
+                    ParityError):
+                validate_d05_cache_selection(state, lane, selected, admitted)
+
+    def test_candidate_selection_is_explicit_and_excludes_finalized_inputs(self) -> None:
+        selection = candidate_selection(argparse.Namespace(
+            candidate_invocation="47387ce0-3819-4eca-b06e-11356ce4568d",
+            expected_source_commit="5f22bd379c408383daa252b5fc666077fe42e5d3"))
+        self.assertEqual(selection, {
+            "candidate_invocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+            "expected_source_commit": "5f22bd379c408383daa252b5fc666077fe42e5d3"})
+        finalized_arguments = argparse.Namespace(
+            candidate_invocation="candidate",
+            finalized_directory=Path("/final"),
+            finalization_provenance_sha256="b" * 64,
+            finalization_state=Path("/state"), expected_source_commit="a" * 40)
+        with self.assertRaisesRegex(ParityError, "mutually exclusive"):
+            candidate_selection(finalized_arguments)
+        docker_arguments = argparse.Namespace(
+            candidate_invocation="candidate", expected_source_commit="a" * 40,
+            lane="docker")
+        with self.assertRaisesRegex(ParityError, "native-only"):
+            candidate_selection(docker_arguments)
+        validate_candidate_fixture_set({"C03-compose-resources", "E07-init-attachment"})
+        with self.assertRaisesRegex(ParityError, "only selected C03"):
+            validate_candidate_fixture_set({"E01-engine-negotiation"})
+
+    def test_candidate_execution_uses_only_admitted_candidate_paths(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "container-compose"
+        runner.repository = Path("/product")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.finalized_selection = None
+        runner.candidate = {"executables": {"devcontainer": "/candidate/devcontainer",
+                                            "devcontainer-engine": "/candidate/engine",
+                                            "devcontainer-compose": "/candidate/compose"}}
+        runner.finalized = None
+        runner.devcontainer_docker = "/ignored/docker"
+        runner.provider_paths = {"DEVCONTAINER_COMPOSE_BIN": "/provider/compose"}
+        self.assertEqual(runner.package_executable("devcontainer"), "/candidate/devcontainer")
+        self.assertEqual(runner.devcontainers_command(), ["/candidate/devcontainer"])
+        self.assertEqual(runner.lifecycle_backend_arguments(), [])
+
+    def test_candidate_readmission_rejects_wrong_source_profile_and_inventory(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.harness_repository = Path("/tooling")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        bad_receipts = (
+            {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "b" * 40},
+            {"schemaVersion": 2, "runtimeProfile": "enhanced", "commit": "a" * 40},
+            {"schemaVersion": 1, "runtimeProfile": "stock", "commit": "a" * 40},
+        )
+        def git_output(command, **_kwargs):
+            return "a" * 40 if command[-1] == "HEAD" else ""
+
+        with (mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+              mock.patch("run_lane.subprocess.check_output", side_effect=git_output)):
+            for receipt in bad_receipts:
+                candidate_module = SimpleNamespace(
+                    Path=Path, retained_candidate=mock.Mock(return_value=(receipt, {})),
+                    admit_candidate=mock.Mock(),
+                    canonical=lambda value: json.dumps(value, sort_keys=True))
+                with (self.subTest(receipt=receipt),
+                      mock.patch("run_lane.load_candidate_admitter", return_value=candidate_module),
+                      self.assertRaisesRegex(ParityError, "schema-2 stock package")):
+                    runner.readmit_candidate(first=True)
+                candidate_module.admit_candidate.assert_not_called()
+
+            candidate_module = SimpleNamespace(
+                Path=Path, retained_candidate=mock.Mock(return_value=(
+                    {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "a" * 40}, {})),
+                admit_candidate=mock.Mock(side_effect=ValueError("candidate inventory is incomplete")),
+                canonical=lambda value: json.dumps(value, sort_keys=True))
+            with (mock.patch("run_lane.load_candidate_admitter", return_value=candidate_module),
+                  self.assertRaisesRegex(ParityError, "inventory is incomplete")):
+                runner.readmit_candidate(first=True)
+
+    def test_candidate_readmission_uses_account_retained_authority_not_lane_home(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.harness_repository = Path("/tooling")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        runner.harness_sha256 = "f" * 64
+        receipt = {"schemaVersion": 2, "runtimeProfile": "stock", "commit": "a" * 40,
+                   "referenceRuntime": {"lockSHA256": "1" * 64}}
+        admission = {"scope": "local-candidate-integration-only",
+                     "candidateInvocation": "candidate", "sourceCommit": "a" * 40,
+                     "runtimeProfile": "stock", "assetSHA256": "b" * 64,
+                     "preparationSHA256": "c" * 64, "inventorySHA256": "d" * 64,
+                     "dependencyLockSHA256": "e" * 64, "executables": {"devcontainer": "/candidate/devcontainer"},
+                     "terminalLaunchers": {"arm64": "1" * 64, "amd64": "2" * 64},
+                     "goSDKLicenseSHA256": "3" * 64}
+        module = SimpleNamespace(
+            Path=Path, retained_candidate=mock.Mock(return_value=(receipt, {})),
+            admit_candidate=mock.Mock(return_value=admission),
+            canonical=lambda value: json.dumps(value, sort_keys=True))
+        def git_output(command, **_kwargs):
+            return "a" * 40 if command[-1] == "HEAD" else ""
+
+        with (mock.patch("run_lane.parity_harness_sha256", return_value="f" * 64),
+              mock.patch("run_lane.subprocess.check_output", side_effect=git_output),
+              mock.patch("run_lane.load_candidate_admitter", return_value=module),
+              mock.patch.object(Path, "home", return_value=Path("/wrong-transaction-home"))):
+            runner.readmit_candidate(first=True)
+        module.retained_candidate.assert_called_once_with(
+            WORKFLOW_RETAINED / "bazel-evidence.sqlite", "candidate", "devcontainer")
+        module.admit_candidate.assert_called_once_with(
+            WORKFLOW_RETAINED, "candidate", "stock", "devcontainer")
+
+    def test_candidate_readmission_rejects_changed_product_checkout_before_authority_read(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "apple-stock"
+        runner.repository = Path("/product")
+        runner.candidate_selection = {"candidate_invocation": "candidate",
+                                      "expected_source_commit": "a" * 40}
+        runner.provider_paths = {}
+        runner.provider_hashes = {}
+        git_output = mock.Mock(side_effect=["a" * 40, " M Tests/Parity/manifest.json"])
+        with mock.patch("run_lane.subprocess.check_output", git_output):
+            with self.assertRaisesRegex(ParityError, "not clean"):
+                runner.admit_candidate()
+        git_output.assert_called()
 
     def test_devcontainer_preserves_literal_backend_flag_after_separator(self) -> None:
         runner = LaneRunner.__new__(LaneRunner)
@@ -159,7 +386,8 @@ class FinalizedSelectionTests(unittest.TestCase):
 
 
 class ComponentBuilderSelectionTests(unittest.TestCase):
-    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str, runtime_profile=None):
+    def _run_selection(self, lane: str, fixture_ids: tuple[str, ...], selected: str,
+                       runtime_profile=None, cache_state="cold", candidate_mode=False):
         import sys
 
         repository = Path(__file__).resolve().parents[2]
@@ -177,10 +405,15 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             events = []
 
             class Bridge:
-                def __init__(self, *_args, **_kwargs):
+                def __init__(self, _runner, owned, **kwargs):
                     self.preparation_error = None
+                    self.fixtures = owned
+                    self.provider_required = kwargs.get("provider_required", False)
+                    self.builder_required = kwargs.get("builder_required", False)
 
                 def prepare_native_provider(self):
+                    if self.provider_required:
+                        events.append("provider-required")
                     events.append("provision")
 
                 def prepare_native_builder(self):
@@ -206,6 +439,11 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             runner.provider_hashes = {}
             runner.harness_sha256 = "f" * 64
             runner.finalized_identity = {"runtimeProfile": runtime_profile} if runtime_profile else None
+            if candidate_mode:
+                runner.finalized_selection, runner.finalized_identity = None, None
+                runner.candidate_selection = {}
+                runner.candidate_identity = {"runtimeProfile": runtime_profile}
+            runner.d05_cache_state = cache_state
             runner.cleanup_differences = []
             runner._preserve_engine_on_uncertain_guest_cleanup = False
             builder = mock.Mock(side_effect=lambda: events.append("buildx-bootstrap"))
@@ -218,7 +456,8 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
             common_patches = (
                 mock.patch("run_lane.implemented_fixtures", return_value=fixtures),
                 mock.patch.object(owned_guest_fixture, "_retained_root", return_value=base),
-                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value={}),
+                mock.patch.object(owned_guest_fixture, "admit_guest_inputs", side_effect=lambda *args, **kwargs:
+                                  events.append("input-builder" if kwargs.get("builder") else "input-no-builder") or {}),
                 mock.patch.object(owned_guest_fixture, "OwnedGuestFixtureRunner", Bridge),
                 mock.patch.object(runner, "admit_finalized"),
                 mock.patch.object(runner, "configure_docker_oracle",
@@ -241,7 +480,8 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
                         common_patches[4], common_patches[5], common_patches[6], common_patches[7], \
                         common_patches[8], common_patches[9], common_patches[10], common_patches[11], \
                         common_patches[12], common_patches[13], common_patches[14], common_patches[15]:
-                    result = runner.run()
+                    with mock.patch.object(runner, "admit_candidate"), mock.patch.object(runner, "readmit_candidate"):
+                        result = runner.run()
             return result, builder, events
 
     def test_isolated_native_e06_prepares_authenticated_guest_before_engine(self) -> None:
@@ -301,6 +541,52 @@ class ComponentBuilderSelectionTests(unittest.TestCase):
         self.assertLess(events.index("fixture:E14-compose-terminal-size"), events.index("guest-cleanup"))
         self.assertIn("guest-cleanup", events)
 
+    def test_warm_d05_admits_builder_selection_without_e04_readiness_work(self) -> None:
+        result, builder, events = self._run_selection(
+            "apple-stock", ("D05-features",), "D05-features", "stock", cache_state="warm")
+        self.assertEqual(result, 0)
+        self.assertIn("input-builder", events)
+        self.assertNotIn("builder-start", events)
+        self.assertNotIn("builder-ready", events)
+        builder.assert_not_called()
+        self.assertLess(events.index("provider-required"), events.index("provision"))
+        self.assertLess(events.index("provision"), events.index("engine"))
+        self.assertLess(events.index("engine"), events.index("attach"))
+        self.assertLess(events.index("attach"), events.index("fixture:D05-features"))
+        self.assertIn("guest-cleanup", events)
+
+    def test_candidate_warm_d05_admits_same_builder_without_readiness_worker(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("D05-features",), "D05-features", "stock", cache_state="warm", candidate_mode=True)
+                self.assertEqual(result, 0)
+                self.assertIn("input-builder", events)
+                self.assertNotIn("builder-start", events)
+                builder.assert_not_called()
+
+    def test_c03_only_native_diagnostic_provisions_default_kernel_without_other_fixture_work(self) -> None:
+        for lane in ("apple-stock", "container-compose"):
+            with self.subTest(lane=lane):
+                result, builder, events = self._run_selection(
+                    lane, ("C03-compose-resources",), "C03-compose-resources", "stock")
+                self.assertEqual(result, 0)
+                self.assertNotIn("builder-start", events)
+                self.assertLess(events.index("provider-required"), events.index("provision"))
+                self.assertLess(events.index("provision"), events.index("engine"))
+                self.assertLess(events.index("engine"), events.index("attach"))
+                self.assertLess(events.index("attach"), events.index("fixture:C03-compose-resources"))
+                self.assertEqual([event for event in events if event.startswith("fixture:")],
+                                 ["fixture:C03-compose-resources"])
+                self.assertIn("guest-cleanup", events)
+
+        result, builder, events = self._run_selection(
+            "docker", ("C03-compose-resources",), "C03-compose-resources")
+        self.assertEqual(result, 0)
+        self.assertNotIn("provider-required", events)
+        self.assertNotIn("provision", events)
+        self.assertNotIn("attach", events)
+
     def test_finalized_e04_component_starts_and_proves_native_builder_before_legacy_fixture(self) -> None:
         for lane in ("apple-stock", "container-compose"):
             with self.subTest(lane=lane):
@@ -359,6 +645,7 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
                 "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
                 "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_TRACE_INIT_IO": "1",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DEVCONTAINER_BACKEND": "operator-choice",
                 "DEVCONTAINER_CONFIG": "/operator/config.toml",
@@ -384,6 +671,7 @@ class SafeEnvironmentTests(unittest.TestCase):
                 "DEVCONTAINER_API_DEFINITION_SHA256": "d" * 64,
                 "DEVCONTAINER_API_SERVER_SHA256": "e" * 64,
                 "DEVCONTAINER_API_SERVICE_PID": "1234",
+                "DEVCONTAINER_TRACE_INIT_IO": "1",
                 "DEVCONTAINER_COMPOSE_PROVIDER_SHA256": "a" * 64,
                 "DOCKER_CONTEXT": "fixture",
                 "HOME": "/Users/operator",
@@ -865,6 +1153,125 @@ class FixtureProbeTests(unittest.TestCase):
                 "/workspaces/fixture",
             ],
         )
+
+    def test_warm_d05_build_is_untimed_and_cache_failure_does_not_change_functional_pass(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace_root = root / "workspace-root"
+            workspace = workspace_root / "D05-features"
+            devcontainer = workspace / ".devcontainer"
+            devcontainer.mkdir(parents=True)
+            for relative in ("contract.json", ".devcontainer/devcontainer.json",
+                             ".devcontainer/devcontainer-lock.json", "probe.sh"):
+                path = workspace / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n", encoding="utf-8")
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = root / "repository"
+            runner.repository.mkdir()
+            runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
+            runner.candidate_selection = None
+            runner.finalized_identity = {
+                "scope": "finalized-native-package-runtime-input", "runtimeProfile": "stock",
+                "sourceCommit": "a" * 40, "archiveSHA256": "b" * 64,
+                "candidateReceiptSHA256": "c" * 64,
+            }
+            runner.candidate_identity = None
+            runner.d05_cache_state = "warm"
+            fixture = Fixture(directory=root / "source", identifier="D05-features",
+                              expected={"ready": "true"}, backends=("docker",), runner="devcontainer")
+            runner.create_fixture_workspace = mock.Mock(return_value=(workspace_root, workspace))
+            up = mock.Mock(returncode=0, stdout='{"remoteWorkspaceFolder":"/workspace"}', stderr="")
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+            calls = []
+
+            def invoke(arguments, timeout):
+                calls.append(("cli", arguments[0], timeout))
+                return up if arguments[0] == "up" else probe
+
+            runner.devcontainer = invoke
+            runner.remote_workspace_from_up = mock.Mock(return_value="/workspace")
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(side_effect=lambda _fixture: calls.append(("cleanup",)) or "")
+            runner.cleanup_fixture_workspace = mock.Mock(return_value="")
+            clocks = iter((10.0, 20.0, 21.0, 22.0))
+
+            def monotonic():
+                calls.append(("clock",))
+                return next(clocks)
+
+            def monotonic_ns():
+                calls.append(("clock-ns",))
+                return 100
+
+            def prepare(**kwargs):
+                calls.append(("warmup",))
+                return {"status": "warmup_completed_unverified"}
+
+            def verify(**kwargs):
+                calls.append(("verify",))
+                (kwargs["evidence_dir"] / "cache-verification.json").write_text("{}\n")
+                return {"status": "not_comparable", "performanceComparisonEligible": False,
+                        "reason": "one stage was not cached", "warmupReceiptSHA256": "d" * 64}
+
+            with (mock.patch("run_lane.prepare_d05_feature_cache", side_effect=prepare),
+                  mock.patch("run_lane.verify_d05_feature_cache", side_effect=verify),
+                  mock.patch("run_lane.time.monotonic", side_effect=monotonic),
+                  mock.patch("run_lane.time.monotonic_ns", side_effect=monotonic_ns),
+                  mock.patch("run_lane.assert_contract", return_value=[])):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["durationSeconds"], 11.0)
+        self.assertFalse(runner.d05_feature_cache_diagnostic["performanceComparisonEligible"])
+        self.assertLess(calls.index(("warmup",)), calls.index(("clock-ns",)))
+        self.assertLess(calls.index(("clock-ns",)), calls.index(("cli", "up", 1800)))
+        self.assertLess(calls.index(("cleanup",)), calls.index(("verify",)))
+
+    def test_warmup_invocation_error_keeps_functional_result_and_marks_cache_ineligible(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace_root = root / "workspace-root"
+            workspace = workspace_root / "D05-features"
+            workspace.mkdir(parents=True)
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.output = root / "evidence"
+            runner.repository = root / "repository"
+            runner.repository.mkdir()
+            runner.devcontainer_docker = "/usr/bin/docker"
+            runner.lane = "apple-stock"
+            runner.finalized_selection = {"release": True}
+            runner.candidate_selection = None
+            runner.finalized_identity = {
+                "scope": "finalized-native-package-runtime-input", "runtimeProfile": "stock",
+                "sourceCommit": "a" * 40, "archiveSHA256": "b" * 64,
+                "candidateReceiptSHA256": "c" * 64,
+            }
+            runner.candidate_identity = None
+            runner.d05_cache_state = "warm"
+            fixture = Fixture(directory=root / "source", identifier="D05-features",
+                              expected={"ready": "true"}, backends=("docker",), runner="devcontainer")
+            runner.create_fixture_workspace = mock.Mock(return_value=(workspace_root, workspace))
+            up = mock.Mock(returncode=0, stdout='{"remoteWorkspaceFolder":"/workspace"}', stderr="")
+            probe = mock.Mock(returncode=0, stdout="ready=true\n", stderr="")
+            runner.devcontainer = mock.Mock(side_effect=[up, probe])
+            runner.remote_workspace_from_up = mock.Mock(return_value="/workspace")
+            runner.additional_fixture_observations = mock.Mock(return_value={})
+            runner.cleanup_fixture = mock.Mock(return_value="")
+            runner.cleanup_fixture_workspace = mock.Mock(return_value="")
+
+            with (mock.patch("run_lane.prepare_d05_feature_cache", side_effect=OSError("warmup failed")),
+                  mock.patch("run_lane.verify_d05_feature_cache") as verify,
+                  mock.patch("run_lane.assert_contract", return_value=[])):
+                result = runner.run_fixture(fixture)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(runner.d05_feature_cache_diagnostic["performanceComparisonEligible"])
+        self.assertEqual(runner.d05_feature_cache_diagnostic["reason"], "cache warmup failed: OSError")
+        verify.assert_not_called()
 
     def test_frozen_reuse_and_rebuild_construction_uses_backend_helper(self) -> None:
         with TemporaryDirectory() as temporary:

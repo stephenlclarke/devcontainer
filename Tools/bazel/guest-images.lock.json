@@ -27,9 +27,9 @@
     {
       "name": "stock-vminit",
       "repository": "ghcr.io/apple/containerization/vminit",
-      "manifest": "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",
-      "config": "sha256:c7146472cafa9cb0334fb309054c38b2c7836149da9cf06b0906dfa494862c87",
-      "reference": "ghcr.io/apple/containerization/vminit:0.45.0"
+      "manifest": "sha256:c5c20071df2a9f249f82c9c2940539bd568360540559921a29f9f8b78df67ade",
+      "config": "sha256:9f6055935bd1bc0c3299f81b927d8b26e1fa57da5a542d20ce94895b789b4764",
+      "reference": "ghcr.io/apple/containerization/vminit:0.47.0"
     },
     {
       "name": "alpine-workload",

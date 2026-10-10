@@ -1,8 +1,8 @@
 {
-  "archiveSHA256": "ed7e61ef7be42255f487c84dcbb309335e2299dbe393e8aacfec68b6272e9810",
+  "archiveSHA256": "e681c395b29590d9e52b8360fab9943fff361b4d9f2bbecf8a4032d490ad3f32",
   "asset": "engine-api-enhanced-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "2adc686107c1477b994b93f29e673898913e4d5018a242df7b532d8b8299e01a",
+    "eventsSHA256": "d12938a4eb42737a62788e95ac73f715902531d8bf4d46e9ca86f4f508f56c4d",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-02f1c27084ad/bin/external/+dependencies+swiftpkg_container_engine_api/ContainerEngineGateway.swiftdoc": {
         "sha256": "41d54eef3f2543a26492ed44bfec1d64cdf1bf325c514b888605c16ada83d18b",
@@ -92,8 +92,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "qualification.json",
-  "evidenceSHA256": "ff7cddd0d6b308ade6afc074fa347ce8d2e961b20b01d61e0f1ba33a92bff18a",
+  "evidenceAsset": "engine-api-enhanced-qualification.json",
+  "evidenceSHA256": "1ecb086f1ffc4cad05a416d58e32e3a7e0a49daed8b9a102cd4590fe6ddbd167",
   "group": "engine-api",
   "lower": {
     "argument-parser": {
@@ -102,12 +102,12 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     },
     "foundation": {
-      "archiveSHA256": "f4127f90bdf789c726486ae198abef6a1a63ff85cbb36aff75f492f63ea1b133",
-      "evidenceSHA256": "beb4e2d3f13c276449932f69739994ba6e9067cbc62fa9b6c4846d338c6c1b6b",
-      "tag": "layer-foundation-enhanced-f4127f90bdf789c72648"
+      "archiveSHA256": "c3ac95db61f17adc5ca1a32778d3a4d230b4d76dfb57efcca2a0e4c1696abc69",
+      "evidenceSHA256": "71a98e9c02c18de45026a4eef713eced8cfd94dbaf784c7cd5d6e4cad504f579",
+      "tag": "layer-foundation-enhanced-c3ac95db61f17adc5ca1"
     }
   },
-  "producerCommit": "ad16a99b8b5eddcd07199280ca56219b8875466d",
+  "producerCommit": "91232b7ad9fdbb67067e59814ec912dcaceaafbf",
   "profile": "enhanced",
   "reachedSources": {
     "container-engine-api": {
@@ -126,12 +126,12 @@
     "launcher": "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923",
     "moduleGraph": "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e",
     "moduleRules": "594a401a02f4d1e25683d030ac6f50b3eefa9ed6e6756eaa13d057d161b057e5",
-    "producer": "4ed29109a7e12926f81ec611c0ebaf9c6acf71b5299ca21f4604edf99dc08ed9",
+    "producer": "d738886033454b9c525a317b28bb25d00ec323c28679ac6c4079e949a40ab8fc",
     "rootBuild": "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c",
     "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
-    "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
+    "sourceGraphValidator": "df1e509f43957d0e72319bca273eea277ba9c0c8c2e3292ac13767c63607f536",
     "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
-    "swiftPackageManifest": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
+    "swiftPackageManifest": "1453a5acff8ab2cfe05b3237a6ac6cba6620ff793a0e538a0a0e22db3b4365b7",
     "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
   },
   "repository": "stephenlclarke/container-engine-api",
@@ -149,7 +149,7 @@
   "sourcePins": {
     "container-engine-api": "6e8c932fc8755a4b922fd239426e9029be0554e0"
   },
-  "tag": "layer-engine-api-enhanced-ed7e61ef7be42255f487",
+  "tag": "layer-engine-api-enhanced-e681c395b29590d9e52b",
   "targetCommit": "6e8c932fc8755a4b922fd239426e9029be0554e0",
   "toolchain": {
     "bazelVersion": "8.8.0",

@@ -51,6 +51,7 @@ class Fixture:
         go_license = self.stage / signing.GO_LICENSE
         go_license.parent.mkdir(parents=True, exist_ok=True)
         go_license.write_text("Go BSD license notice\n")
+        go_license.chmod(0o644)
         reference = self.stage / signing.REFERENCE
         for relative in signing.REFERENCE_FILES - {"node"}:
             path = reference / relative

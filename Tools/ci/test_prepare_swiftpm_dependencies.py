@@ -78,6 +78,7 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
                               "sha256": hashlib.sha256(patch_bytes).hexdigest()})
             self.checkouts.append(checkout)
             git(checkout, "reset", "--hard", "-q")
+            (checkout / filename).chmod(0o644)
 
         self._write_lock("Package.resolved", self.rows)
         stock = [
@@ -127,6 +128,18 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
         self.assertEqual(result["status"], "unmodified")
         self.assertEqual(after, before)
         self.assertEqual((self.root / "Package.resolved").read_bytes(), stock_lock)
+
+    def test_private_umask_preserves_reviewed_modes_and_caller_permissions(self) -> None:
+        original_umask = os.umask(0o077)
+        try:
+            result = self._prepare()
+            self.assertEqual(result["status"], "prepared")
+            self.assertEqual(self._prepare(), result)
+            for checkout, filename in zip(self.checkouts, ("Package.swift", "Runtime.swift", "Responder.swift")):
+                self.assertEqual((checkout / filename).stat().st_mode & 0o777, 0o644)
+            self.assertEqual(os.umask(0o077), 0o077)
+        finally:
+            os.umask(original_umask)
 
     def test_stock_profile_rejects_enhanced_active_lock(self) -> None:
         with self.assertRaisesRegex(ValueError, "active Package.resolved differs"):
@@ -289,6 +302,16 @@ class PrepareSwiftPMDependenciesTests(unittest.TestCase):
 
 
 class CheckedInSwiftPMDependencyPinsTests(unittest.TestCase):
+    def test_enhanced_patch_recipient_rejects_previous_tls_graph(self) -> None:
+        changed = json.loads((MODULE.ROOT / "Package.resolved").read_text())
+        pin = next(row for row in changed["pins"] if row["identity"] == "containerization")
+        pin["state"]["revision"] = "6db16197bbad8196a78132f86529daa89125aafb"
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "Package.resolved"
+            lock.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "unexpected pin: containerization"):
+                MODULE.validate_lock(lock, "enhanced", MODULE.PATCHES)
+
     def test_stock_sdk_rejects_old_source_revision_location_and_version_tag(self) -> None:
         original = json.loads((MODULE.ROOT / "Package.stock.resolved").read_text())
         for mode in ("old_revision", "old_location", "version_tag"):
