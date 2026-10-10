@@ -7,3 +7,5 @@ This change adds a narrowly scoped manual workflow for the exact protected-main 
 The workflow has read-only repository permissions, uses the `release` environment, and runs no build, signing, submission, stapling, artifact upload, or publication steps. It does not alter release assets or retry existing submissions.
 
 Validation is limited to focused mocked tests and workflow structure checks, including failure-path tests that model the designated host independently of the hosted test runner's UID. Dispatch remains an explicit operator action after merge to protected `main`; no workflow was dispatched as part of this change.
+
+Credential validation failures are classified into fixed authentication, keychain-access, or other messages. Captured service responses are never echoed. Focused mocked validation passes 49 tests with 100% helper line coverage; this diagnostic addition does not change credentials, permissions, retry behavior, or release gates.
