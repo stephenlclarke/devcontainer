@@ -1,0 +1,88 @@
+name: Verify Notary Identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_control_sha:
+        description: Exact protected-main SHA containing this identity check
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-notary-identity-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify configured Apple identity
+    if: >
+      github.repository == 'stephenlclarke/devcontainer' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.expected_control_sha == github.sha
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - devcontainer-release
+      - devcontainer-designated-mbp
+    environment: release
+    timeout-minutes: 3
+    steps:
+      - name: Validate exact control and designated runner
+        env:
+          EXPECTED_CONTROL_SHA: ${{ inputs.expected_control_sha }}
+          ACTUAL_CONTROL_SHA: ${{ github.sha }}
+          ACTUAL_REF: ${{ github.ref }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          ACTUAL_RUNNER_NAME: ${{ runner.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${ACTUAL_REPOSITORY}" == "stephenlclarke/devcontainer" ]]
+          [[ "${ACTUAL_REF}" == "refs/heads/main" ]]
+          [[ "${EXPECTED_CONTROL_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_CONTROL_SHA}" == "${ACTUAL_CONTROL_SHA}" ]]
+          [[ "${ACTUAL_RUNNER_NAME}" == "devcontainer-release-StevesM5Pro" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+          [[ "$(id -u)" == "501" ]]
+          [[ "$(id -un)" == "sclarke" ]]
+          [[ "$(hostname -s)" == "StevesM5Pro" ]]
+
+      - name: Compare secret identities without revealing them
+        env:
+          DEVCONTAINER_NOTARY_APPLE_ID: ${{ secrets.DEVCONTAINER_NOTARY_APPLE_ID }}
+          DEVCONTAINER_NOTARY_TEAM_ID: ${{ secrets.DEVCONTAINER_NOTARY_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import sys
+
+          EXPECTED_APPLE_ID_SHA256 = "b8a4146971b7db822e9148c32b3fc3012b65c1b172d721042fa8c06d8384c96d"
+          EXPECTED_TEAM_ID_SHA256 = "39bdc5dbd3c1f5af3aa4bc892a287e2af2623e8a804d438bb22323a359e3acf6"
+
+          def matches_secret(name, expected_hash):
+              value = os.environ.get(name, "")
+              try:
+                  actual_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
+              except UnicodeError:
+                  return False
+              return hmac.compare_digest(actual_hash, expected_hash)
+
+          apple_id_matches = matches_secret(
+              "DEVCONTAINER_NOTARY_APPLE_ID", EXPECTED_APPLE_ID_SHA256
+          )
+          team_id_matches = matches_secret(
+              "DEVCONTAINER_NOTARY_TEAM_ID", EXPECTED_TEAM_ID_SHA256
+          )
+          print("Configured Apple ID: " + ("MATCH" if apple_id_matches else "MISMATCH"))
+          print("Configured team ID: " + ("MATCH" if team_id_matches else "MISMATCH"))
+          if not apple_id_matches or not team_id_matches:
+              sys.exit(1)
+          PY

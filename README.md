@@ -8,6 +8,8 @@ Executing native qualification sets a private `0077` umask before signed-package
 
 The released Engine Bazel launcher now has an inert runfiles smoke test that exercises its real `--help` path and catches missing Python inputs before runtime qualification. See the [runfiles correction](docs/PR-released-engine-runfiles.md).
 
+Before recovering a notary profile, operators can manually run the read-only [Notary Identity verification workflow](.github/workflows/verify-notary-identity.yml) to compare the configured Apple ID and team without printing secret values or changing the keychain.
+
 <!-- markdownlint-disable MD013 MD033 -->
 <p>
   <img align="left" hspace="20" src="docs/images/devcontainer-icon.png" width="147" alt="devcontainer icon: a blue glass cube overlapping the standard three-row container service panel" />
