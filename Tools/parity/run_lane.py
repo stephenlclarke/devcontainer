@@ -1039,8 +1039,10 @@ class LaneRunner:
         )
         (self.output / "buildx-bootstrap.log").write_text(
             bootstrap.stdout + bootstrap.stderr, encoding="utf-8")
-        if (bootstrap.returncode != 0
-                or f"BuildKit version: {pins['buildKitVersion']}" not in bootstrap.stdout):
+        reported_versions = [line.partition(":")[2].strip()
+                             for line in bootstrap.stdout.splitlines()
+                             if line.startswith("BuildKit version:")]
+        if bootstrap.returncode != 0 or reported_versions != [pins["buildKitVersion"]]:
             raise ParityError("fresh Docker BuildKit builder did not report its pinned version")
         container = self.docker_builder_resource("container", container_name)
         volume = self.docker_builder_resource("volume", volume_name)
